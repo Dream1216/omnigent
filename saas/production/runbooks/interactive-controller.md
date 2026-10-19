@@ -120,6 +120,17 @@ offline Runner, expanded capacity or unexpected grant is not admitted.
 
 ## Verification boundaries
 
+An orphaned Run can finish logically and release its dispatch while its physical
+stop remains unknown. The private record remains draining and blocks all new
+claims. The background sweeper may retire the finished in-memory handle only
+after the original machine/fence/capability passes the existing mTLS terminal
+and released-dispatch check, model requests drain, preparation quiesces, and
+no execution or dispatch task remains live. Missing verification stays pending.
+Only an actual stop acknowledgement and durable recovery confirmation clear
+the barrier; logical release never proves physical stop or replays the input.
+The Agent continues machine heartbeats and GC while this known barrier is
+pending. Other authority failures and poisoned workers still terminate it.
+
 Run configuration and grant/recovery wiring checks from the checkout root:
 
 ```sh

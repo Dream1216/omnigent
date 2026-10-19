@@ -82,6 +82,7 @@ class _Active:
     bound: bool = False
     drained: bool = False
     stopped: bool = False
+    executing: bool = False
     cancellation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     finished: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
@@ -115,6 +116,7 @@ class ProductionInteractiveExecutor:
         assert_authority: Callable[[], None],
         verify_recovery: Callable[[InteractiveCleanupRecord], Awaitable[None]],
         confirm_recovery: Callable[[InteractiveCleanupRecord], Awaitable[None]],
+        verify_released: Callable[[InteractiveRecoveryRecord], Awaitable[None]] | None = None,
         inspect_revocation: Callable[[InteractiveRecoveryRecord], Awaitable[bool]] | None = None,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         meter_factory: Callable[[ManagedMeteringGrant], ProviderUsageMeter] | None = None,
@@ -129,6 +131,7 @@ class ProductionInteractiveExecutor:
         )
         self._assert_authority, self._verify_recovery = assert_authority, verify_recovery
         self._confirm_recovery = confirm_recovery
+        self._verify_released = verify_released
         self._inspect_revocation = inspect_revocation
         self._client_factory = client_factory
         self._meter_factory = meter_factory or (
@@ -148,10 +151,7 @@ class ProductionInteractiveExecutor:
 
     def assert_claimable(self) -> None:
         self.assert_production_ready()
-        if any(
-            record.phase != "terminal" and record.run_id not in self._active
-            for record in self._journal.records()
-        ):
+        if any(record.phase != "terminal" for record in self._journal.records()):
             raise RunnerControlError(
                 "interactive_controller_recovery_pending",
                 "Interactive execution is unavailable until recovery completes",
@@ -278,6 +278,7 @@ class ProductionInteractiveExecutor:
             except (Exception, asyncio.CancelledError):
                 self._retain_unstarted(lease)
                 raise
+            active.executing = True
         authorized, scope = active.authorized, active.record.scope
 
         async def launch(frame: HostLaunchRunnerFrame, connection) -> HostLaunchRunnerFrame:
@@ -421,6 +422,8 @@ class ProductionInteractiveExecutor:
         except Exception:  # noqa: BLE001 - do not expose transport or credential diagnostics.
             self._put(active, phase="draining", outcome="failed")
             raise _unavailable() from None
+        finally:
+            active.executing = False
 
     def _retain_unstarted(self, lease: RunnerControlClientLease) -> None:
         if lease.run_id in self._active:
@@ -484,7 +487,11 @@ class ProductionInteractiveExecutor:
                 active = [
                     self._active[row.run_id] for row in records if row.run_id in self._active
                 ]
-                finishing = [row.finished for row in active if row.record.phase == "draining"]
+                finishing = [
+                    row.finished
+                    for row in active
+                    if row.record.phase == "draining" and not row.finished.is_set()
+                ]
                 if not finishing:
                     return await self._stop_owned_session(
                         records, active, runner_id, cancel_inputs
@@ -594,7 +601,13 @@ class ProductionInteractiveExecutor:
         active = self._active.get(lease.run_id)
         if active is None:
             return
-        if not active.drained or (result != "succeeded" and not active.stopped):
+        if not active.drained:
+            raise _unavailable()
+        if not active.stopped and result == "orphaned":
+            self._put(active, phase="draining", outcome="orphaned")
+            active.finished.set()
+            return
+        if result != "succeeded" and not active.stopped:
             raise _unavailable()
         self._put(active, phase="terminal", outcome=result, process_stopped=active.stopped)
         if active.handle is not None:
@@ -603,6 +616,53 @@ class ProductionInteractiveExecutor:
             await self._channels.forget(active.record.scope.session_id)
         active.finished.set()
         del self._active[lease.run_id]
+
+    async def _retire_orphaned(self, record: InteractiveRecoveryRecord) -> bool:
+        async with self._lifecycle:
+            active = self._active.get(record.run_id)
+            if active is None:
+                return True
+            if (
+                self._verify_released is None
+                or active.record != record
+                or record.phase != "draining"
+                or record.outcome != "orphaned"
+                or not active.finished.is_set()
+                or active.executing
+                or any(
+                    task is not None and not task.done()
+                    for task in (active.preparation, active.dispatching)
+                )
+            ):
+                return False
+            if (
+                record.connection_generation != self._generation
+                or record.product_revision != self._revision
+                or record.image_digest != self._image
+                or certificate_sha256(record.grant) != record.certificate_sha256
+            ):
+                raise _unavailable()
+            await self._verify_recovery(record)
+            try:
+                await self._verify_released(record)
+            except RunnerControlError as error:
+                if error.code == "interactive_controller_recovery_pending":
+                    return False
+                raise
+            if not await self._seal(active):
+                return False
+            await self._driver.quiesce_preparation(active.authorized)
+            await asyncio.to_thread(active.meter.close, 0)
+            if active.handle is not None:
+                await self._driver.release(active.handle)
+            if (
+                self._active.get(record.run_id) is not active
+                or self._journal.read(record.run_id) != record
+            ):
+                return False
+            # Retain durable unknown-stop facts; ordinary recovery must still obtain an ACK.
+            del self._active[record.run_id]
+            return True
 
     async def reconcile_physical_gc(self, *, limit: int) -> int:
         async with self._recovering:
@@ -654,7 +714,7 @@ class ProductionInteractiveExecutor:
                 self._gc_offset = offset + max(0, limit - completed)
             for candidate in candidates[: max(0, limit - completed)]:
                 record = self._journal.read(candidate.run_id)
-                if record.run_id in self._active:
+                if not await self._retire_orphaned(record):
                     continue
                 await self._verify_recovery(record)
                 security_stop = (

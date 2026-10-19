@@ -209,6 +209,68 @@ class _IdleClient(_Client):
 
 
 @pytest.mark.asyncio
+async def test_pending_recovery_keeps_heartbeat_and_gc_alive_without_new_claims() -> None:
+    stop, barrier_observed, allow_cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class Pending(_Executor):
+        pending = False
+
+        async def prepare_finalization(self, lease, *, result):
+            await super().prepare_finalization(lease, result=result)
+            return "orphaned"
+
+        def assert_claimable(self):
+            super().assert_claimable()
+            if self.pending:
+                barrier_observed.set()
+                raise RunnerControlError("interactive_controller_recovery_pending", "Pending")
+
+        async def finalize(self, lease, *, result):
+            await super().finalize(lease, result=result)
+            self.pending = True
+
+        async def reconcile_physical_gc(self, *, limit):
+            self.gc_limits.append(limit)
+            if self.pending and allow_cleanup.is_set():
+                self.pending = False
+                return 1
+            return 0
+
+    class Client(_Client):
+        claims = 0
+
+        async def claim_run(self):
+            self.claims += 1
+            if self.claims == 1:
+                return LEASE
+            stop.set()
+            return None
+
+        async def release_run(self, lease):
+            self.releases += 1
+            return False
+
+    client, executor = Client(stop), Pending(result="orphaned")
+    agent = ProductionRunnerAgent(
+        client, executor, poll_interval_seconds=0.05, physical_gc_interval_seconds=1
+    )  # type: ignore[arg-type]
+    running = asyncio.create_task(agent.run(stop))
+    try:
+        await asyncio.wait_for(barrier_observed.wait(), 3)
+        before = client.runner_heartbeats
+        await asyncio.sleep(0.2)
+        assert not running.done() and client.claims == 1 and client.releases == 1
+        assert client.runner_heartbeats > before
+        allow_cleanup.set()
+        stats = await asyncio.wait_for(asyncio.shield(running), 3)
+        assert stats.physical_gc_deleted == 1 and client.claims == 2
+        assert executor.calls == [LEASE] and executor.finalized == ["orphaned"]
+    finally:
+        stop.set()
+        await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_agent_claims_executes_transitions_and_releases_one_terminal_lease() -> None:
     stop = asyncio.Event()
     client = _Client(stop)

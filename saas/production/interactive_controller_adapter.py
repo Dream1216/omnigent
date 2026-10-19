@@ -256,6 +256,10 @@ class ProductionInteractiveControllerAdapter:
                 capability_token=record.grant.capability_token,
             )
 
+        async def verify_released(record):
+            # This RPC checks the original authenticated dispatch is terminal and released.
+            await inspect_revocation(record)
+
         executor = ProductionInteractiveExecutor(
             authorize_model=authorize,
             grant_for_run=grant,
@@ -269,6 +273,7 @@ class ProductionInteractiveControllerAdapter:
             assert_authority=assert_authority,
             verify_recovery=verify_recovery,
             confirm_recovery=confirm_recovery,
+            verify_released=verify_released,
             inspect_revocation=inspect_revocation,
         )
         self._executor = executor

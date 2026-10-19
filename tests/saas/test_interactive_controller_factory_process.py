@@ -346,6 +346,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
         "public_archive",
         "late_customer_metering",
         "controller_crash_recovery",
+        "orphaned_stop_recovery",
     }
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
@@ -1152,6 +1153,23 @@ def _serve_controller(
             official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
             auth_provider=app.state.saas_http_integration.auth_provider,
         )
+        stop_permitted, unknown_stop_observed = threading.Event(), threading.Event()
+        if scenario == "orphaned_stop_recovery":
+            physical = adapter._executor._driver
+            original_outcome, original_stop = physical.outcome, physical.stop
+
+            async def reject_observed_outcome(authorized, handle):
+                assert await original_outcome(authorized, handle) == "succeeded"
+                raise RunnerControlError("isolated_outcome_rejected", "Unavailable")
+
+            async def withhold_stop(record):
+                if not stop_permitted.is_set():
+                    unknown_stop_observed.set()
+                    return False
+                return await original_stop(record)
+
+            monkeypatch.setattr(physical, "outcome", reject_observed_outcome)
+            monkeypatch.setattr(physical, "stop", withhold_stop)
         preparation_calls, rejected_auth = [], []
         if scenario == "model_auth_before_prepare":
             original_issue = ModelRunCredentialService.issue
@@ -1375,6 +1393,128 @@ def _serve_controller(
             )
 
             expected_runs = 1
+
+            if scenario == "orphaned_stop_recovery":
+
+                def orphan_released():
+                    assert not adapter._task.done(), "controller exited before orphan release"
+                    with factory() as db:
+                        run = db.scalars(sa.select(RunRecord)).one()
+                        dispatch = db.get(RunDispatchRecord, run.id)
+                        return run.status == "orphaned" and dispatch.status == "released"
+
+                _wait(orphan_released, "orphaned logical finalization and dispatch release")
+                assert unknown_stop_observed.is_set()
+                with factory() as db:
+                    run = db.scalars(sa.select(RunRecord)).one()
+                    assert db.get(RunDispatchRecord, run.id).physical_recovery_fence is None
+                    assert (
+                        db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
+                    )
+                record = adapter._journal.read(run.id)
+                assert record.phase == "draining" and record.outcome == "orphaned"
+                assert not record.process_stopped and record.official_runner_id
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
+                    assert app.state.tunnel_registry.get(record.official_runner_id) is not None
+                with pytest.raises(RunnerControlError) as pending:
+                    adapter._executor.assert_claimable()
+                assert pending.value.code == "interactive_controller_recovery_pending"
+                denied = httpx.post(
+                    "http://127.0.0.1:8090/v1/chat/completions",
+                    trust_env=False,
+                    headers={"Authorization": "Bearer " + private_bearers[0]},
+                    json=_document(conversation.model_override, limit=32),
+                )
+                assert denied.status_code == 403
+                stop_permitted.set()
+
+                def recovered_by_background():
+                    assert not adapter._task.done(), "controller exited during orphan recovery"
+                    with factory() as db:
+                        return (
+                            db.get(RunDispatchRecord, run.id).physical_recovery_fence
+                            == run.fence_token
+                        )
+
+                _wait(
+                    recovered_by_background,
+                    "background GC actual Host stop and mTLS receipt",
+                    timeout=70,
+                )
+                record = adapter._journal.read(run.id)
+                assert (
+                    record.phase == "terminal"
+                    and record.process_stopped
+                    and record.outcome == "orphaned"
+                )
+                assert run.id not in adapter._executor._active
+                adapter._executor.assert_claimable()
+                with factory() as db:
+                    assert db.get(RunRecord, run.id).status == "orphaned"
+                    recovered = db.scalars(
+                        sa.select(RunEventRecord).where(
+                            RunEventRecord.run_id == run.id,
+                            RunEventRecord.event_type == "run.interactive_physical_recovered",
+                        )
+                    ).one()
+                    assert recovered.payload["proof_sha256"] == physical_recovery_proof_sha256(
+                        record
+                    )
+                    for model, expected in (
+                        (TaskRecord, 1),
+                        (ModelRunTokenRecord, 1),
+                        (UsageEventRecord, 2),
+                        (BillingMeteringReceiptRecord, 2),
+                    ):
+                        assert db.scalar(sa.select(sa.func.count()).select_from(model)) == expected
+                    budget = db.scalars(
+                        sa.select(ModelProviderBudgetReservationRecord).where(
+                            ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+                        )
+                    ).one()
+                    assert budget.status == "settled" and budget.settled_tokens == 22
+
+                def stopped_tunnel():
+                    with OmnigentStoreAdapter("0.2.0").bind(runtime):
+                        return app.state.tunnel_registry.get(record.official_runner_id) is None
+
+                _wait(stopped_tunnel, "actual stopped Runner tunnel disconnect")
+                assert [row["status"] for row in observed] == [200, 403]
+                (exchange / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "passed": True,
+                            "production_factory": True,
+                            "controller_adapter": True,
+                            "physical_host": True,
+                            "actual_litellm": True,
+                            "production_pki": False,
+                            "scenario": scenario,
+                            "official_store_backend": host_store._engine.dialect.name,
+                            "physical_gc_interval_seconds": (
+                                adapter._config.physical_gc_interval_seconds
+                            ),
+                            "task_count": 1,
+                            "supplier_calls": 1,
+                            "usage_facts": 2,
+                            "settled_tokens": 22,
+                            "test_model_token_ttl_seconds": 28800,
+                            "host_stop_acknowledged": True,
+                            "durable_stop_receipts": 1,
+                            "gateway_request_statuses": [200, 403],
+                            "logical_release_before_physical_stop": True,
+                            "recovery_fence_confirmed": True,
+                            "live_runner_observed_before_stop": True,
+                            "background_gc_without_manual_sweep": True,
+                            "injected_outcome_rejection": True,
+                            "stop_ack_withheld_by_test_gate": True,
+                            "actual_network_loss_simulated": False,
+                            "manual_run_heartbeat": False,
+                            "managed_resource_termination_proven": False,
+                        }
+                    )
+                )
+                return
 
             if scenario == "controller_crash_recovery":
                 _wait(request_waiting.is_set, "third request actual partial stream")

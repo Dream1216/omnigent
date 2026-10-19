@@ -443,8 +443,15 @@ class ProductionRunnerAgent:
                 # A timeout leaves an uninterruptible daemon/DB call with an
                 # unknown commit result.  The current lease may be recovered,
                 # but this process incarnation must never claim another Run.
-                await asyncio.to_thread(self._executor.assert_claimable)
                 await self._client.heartbeat_runner()
+                try:
+                    await asyncio.to_thread(self._executor.assert_claimable)
+                except RunnerControlError as error:
+                    if error.code != "interactive_controller_recovery_pending":
+                        raise
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(stop.wait(), timeout=self._poll_interval)
+                    continue
                 lease = await self._client.claim_run()
                 if lease is None:
                     try:

@@ -562,8 +562,8 @@ async def test_cancelling_unknown_preparation_cannot_invent_a_stop_ack(controlle
     await c.executor.cancel(c.lease)
     assert await execution == "orphaned"
     assert await c.executor.prepare_finalization(c.lease, result="cancelled") == "orphaned"
-    with pytest.raises(RunnerControlError):
-        await c.executor.finalize(c.lease, result="orphaned")
+    await c.executor.finalize(c.lease, result="orphaned")
+    assert c.lease.run_id in c.executor._active
     assert not c.inputs and not c.journal.read(c.lease.run_id).process_stopped
 
 
@@ -751,8 +751,7 @@ async def test_cancellation_needs_exact_physical_stop_before_terminal_release(
         await c.executor.finalize(c.lease, result=result)
         assert c.journal.read(c.lease.run_id).process_stopped
     else:
-        with pytest.raises(RunnerControlError):
-            await c.executor.finalize(c.lease, result=result)
+        await c.executor.finalize(c.lease, result=result)
         assert c.lease.run_id in c.executor._active
     assert len(c.inputs) == 1
     assert set(c.stops) == {token_bound_runner_id("x" * 43)}
