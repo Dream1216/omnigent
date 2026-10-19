@@ -109,7 +109,7 @@ async def controller_case(interactive_http, tmp_path):
         def assert_production_ready(self):
             pass
 
-        async def prepare(self, actual, *, previous, on_launch):
+        async def prepare(self, actual, *, previous, on_launch, on_preparation=None):
             if previous is not None:
                 assert previous.channel_value == self.channel.secret_value
                 prepared.set()

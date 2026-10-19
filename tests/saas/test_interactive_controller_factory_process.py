@@ -78,7 +78,10 @@ from saas.control_plane.scheduling_models import (
 from saas.production.external_host_credential import arm_external_host_credential
 from saas.production.interactive_controller_adapter import ProductionInteractiveControllerAdapter
 from saas.production.interactive_execution import InteractiveConversationStore
-from saas.production.interactive_recovery import physical_recovery_proof_sha256
+from saas.production.interactive_recovery import (
+    InteractiveRecoveryRecord,
+    physical_recovery_proof_sha256,
+)
 from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
 from saas.production.litellm_configuration_attestation import LiteLLMConfigurationAttestor
 from saas.production.model_run_credentials import ModelRunCredentialService
@@ -1071,9 +1074,42 @@ def _serve_controller(
         public_origin=ORIGIN,
         adapter_contract_version="0.2.0",
     )
+    creation_checkpoints = []
     adapter = None
     try:
         adapter = ProductionInteractiveControllerAdapter(config=release, source=source)
+        if cluster is not None:
+            from omnigent.onboarding.sandboxes.kubernetes import KubernetesSandboxLauncher
+
+            start_host = KubernetesSandboxLauncher.start_host
+
+            def observe_creation(launcher, sandbox_id, *, host_id, **values):
+                candidates = [
+                    row
+                    for row in adapter._journal.records()
+                    if isinstance(row, InteractiveRecoveryRecord)
+                    and row.managed_preparation is not None
+                    and row.managed_preparation.resource_name == sandbox_id
+                    and row.managed_preparation.host_id == host_id
+                ]
+                assert len(candidates) == 1
+                row = candidates[0]
+                binding = row.managed_preparation
+                assert row.phase == "preparing" and not row.process_stopped
+                assert row.official_runner_id is None
+                assert binding.provider == launcher.provider == cluster["provider"]
+                assert binding.namespace == launcher._resolve_namespace()
+                assert (
+                    binding.image_reference_sha256
+                    == sha256(launcher._resolve_image().encode()).hexdigest()
+                )
+                path = adapter._journal.root / f"{row.run_id}.json"
+                assert path.stat().st_mode & 0o777 == 0o600
+                assert json.loads(path.read_bytes())["schema_version"] == 3
+                creation_checkpoints.append(binding)
+                return start_host(launcher, sandbox_id, host_id=host_id, **values)
+
+            monkeypatch.setattr(KubernetesSandboxLauncher, "start_host", observe_creation)
         request_control = adapter._client._request
 
         async def observe_control_failure(action, values):
@@ -2262,6 +2298,7 @@ def _serve_controller(
                     assert db.scalar(sa.select(sa.func.count()).select_from(TaskRecord)) == 1
                     assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 2
             if cluster is not None:
+                assert creation_checkpoints
                 with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     managed = delegate.get_conversation(conversation.id)
                     assert managed.host_id == record.host_id != "c" * 32
@@ -2270,6 +2307,16 @@ def _serve_controller(
                         managed.inference_snapshot["managed_launch"]["sandbox_provider"]
                         == cluster["provider"]
                     )
+                    host = host_store.get_host(record.host_id)
+                    binding = next(
+                        item for item in creation_checkpoints if item.host_id == record.host_id
+                    )
+                    assert host.user_id == runtime.runtime_user_key
+                    assert host.sandbox_provider == binding.provider
+                    assert host.sandbox_id == binding.resource_name
+                if scenario == "single":
+                    assert len(creation_checkpoints) == 1
+                    assert record.managed_preparation == creation_checkpoints[0]
             if scenario in {"public_stop", "public_archive"}:
                 with httpx.Client(
                     base_url=ORIGIN,
@@ -2326,6 +2373,12 @@ def _serve_controller(
                         "physical_gc_interval_seconds": gc_interval,
                         "sandbox_provider": cluster["provider"] if cluster is not None else None,
                         "managed_host": cluster is not None,
+                        "creation_checkpoint_before_sdk": bool(creation_checkpoints)
+                        if cluster is not None
+                        else None,
+                        "managed_preparation_binding": asdict(creation_checkpoints[-1])
+                        if creation_checkpoints
+                        else None,
                         "test_model_token_ttl_seconds": 90
                         if scenario == "tools_cross_run"
                         else 28800,

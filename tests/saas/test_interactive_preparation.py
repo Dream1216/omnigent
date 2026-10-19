@@ -11,7 +11,11 @@ import pytest
 from fastapi import FastAPI
 
 from omnigent.host.frames import HostLaunchRunnerFrame, encode_host_frame
-from omnigent.server.managed_hosts import ManagedLaunchTracker
+from omnigent.server.managed_hosts import (
+    ManagedLaunchTracker,
+    ManagedSandboxConfig,
+    ManagedSandboxDeployment,
+)
 from saas.production import interactive_driver as module
 from saas.production.interactive_driver import OfficialInteractiveDriver
 from saas.production.runner_control import RunnerControlError
@@ -32,7 +36,14 @@ def _preparing(c, monkeypatch):
     )
     app.state.runner_router = object()
     app.state.tunnel_registry = object()
-    app.state.sandbox_config = object()
+    app.state.sandbox_config = ManagedSandboxDeployment.single(
+        ManagedSandboxConfig(
+            server_url="https://next.test",
+            launcher_factory=lambda: None,
+            token_ttl_s=3600,
+            provider="kubernetes",
+        )
+    )
     app.state.managed_launches = ManagedLaunchTracker()
     conversation = SimpleNamespace(host_id=None, agent_id=None)
     dependencies = SimpleNamespace(
@@ -73,6 +84,11 @@ def _preparing(c, monkeypatch):
         wired.append(True)
         return frame
 
+    async def checkpoint(_binding):
+        pass
+
+    # This fixture proves worker lifetime, not resource identity or creation.
+    monkeypatch.setattr(module, "bind_managed_preparation", lambda deployment, **_: deployment)
     monkeypatch.setattr(module.official, "_run_managed_launch", launch)
     monkeypatch.setattr(module.official, "ensure_runner_connected", connect)
     return SimpleNamespace(**locals())
@@ -85,7 +101,9 @@ async def test_cancelled_prepare_keeps_actual_worker_and_denies_late_runner_laun
 ):
     p = _preparing(controller_case, monkeypatch)
     execution = asyncio.create_task(
-        p.driver.prepare(p.authorized, previous=None, on_launch=p.wire)
+        p.driver.prepare(
+            p.authorized, previous=None, on_launch=p.wire, on_preparation=p.checkpoint
+        )
     )
     quiescence = None
     try:

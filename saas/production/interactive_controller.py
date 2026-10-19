@@ -29,6 +29,7 @@ from saas.production.interactive_recovery import (
     InteractiveCleanupRecord,
     InteractiveRecoveryJournal,
     InteractiveRecoveryRecord,
+    ManagedPreparationBinding,
     UnstartedInteractiveRecoveryRecord,
     certificate_sha256,
 )
@@ -52,6 +53,7 @@ class InteractivePhysicalDriver(Protocol):
         *,
         previous: InteractiveRecoveryRecord | None,
         on_launch: Callable[[HostLaunchRunnerFrame, object], Awaitable[HostLaunchRunnerFrame]],
+        on_preparation: Callable[[ManagedPreparationBinding], Awaitable[None]],
     ) -> object: ...
 
     async def dispatch(self, authorized: AuthorizedInteractiveInput, handle: object) -> None: ...
@@ -158,8 +160,9 @@ class ProductionInteractiveExecutor:
         raise _unavailable()
 
     def _put(self, active: _Active, **changes) -> None:
-        active.record = replace(active.record, updated_at=datetime.now(timezone.utc), **changes)
-        self._journal.put(active.record)
+        updated = replace(active.record, updated_at=datetime.now(timezone.utc), **changes)
+        self._journal.put(updated)
+        active.record = updated
 
     async def _bind(self, active: _Active, channel: HostModelChannel) -> None:
         async def renew():
@@ -278,6 +281,12 @@ class ProductionInteractiveExecutor:
         async def launch(frame: HostLaunchRunnerFrame, connection) -> HostLaunchRunnerFrame:
             if active.bound or cancellation.is_set():
                 raise _unavailable()
+            preparation = active.record.managed_preparation
+            if preparation is not None and (
+                connection.host_id != preparation.host_id
+                or connection.owner != authorized.runtime.runtime_user_key
+            ):
+                raise _unavailable()
             channel = host_model_channel(
                 frame, scope=scope, public_origin=self._channels.public_origin
             )
@@ -294,6 +303,18 @@ class ProductionInteractiveExecutor:
             )
             await self._bind(active, channel)
             return prepare_host_model_channel(frame, channel=channel)
+
+        async def preparing(binding: ManagedPreparationBinding) -> None:
+            if (
+                self._active.get(lease.run_id) is not active
+                or active.record.phase != "preparing"
+                or active.record.process_stopped
+                or active.record.official_runner_id is not None
+                or authorized.launch["host_type"] != "managed"
+                or binding.provider != authorized.launch["sandbox_provider"]
+            ):
+                raise _unavailable()
+            self._put(active, managed_preparation=binding)
 
         try:
             async with self._lifecycle:
@@ -320,7 +341,12 @@ class ProductionInteractiveExecutor:
                     )
                 self._put(active, phase="preparing")
                 active.preparation = asyncio.create_task(
-                    self._driver.prepare(authorized, previous=previous, on_launch=launch),
+                    self._driver.prepare(
+                        authorized,
+                        previous=previous,
+                        on_launch=launch,
+                        on_preparation=preparing,
+                    ),
                     name="interactive-prepare",
                 )
             try:

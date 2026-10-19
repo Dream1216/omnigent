@@ -6,6 +6,7 @@ import asyncio
 import copy
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from threading import Event
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -16,10 +17,11 @@ from omnigent.harness_aliases import canonicalize_harness
 from omnigent.host.frames import HostLaunchRunnerFrame, decode_host_frame, encode_host_frame
 from omnigent.runtime import session_stream
 from omnigent.server.host_registry import host_owner_scope
-from omnigent.server.managed_hosts import parse_repo_workspace
+from omnigent.server.managed_hosts import ManagedSandboxDeployment, parse_repo_workspace
 from omnigent.server.routes._sessions import orchestration as official
 from saas.compatibility import OmnigentStoreAdapter
 from saas.production.interactive_controller import _unavailable
+from saas.production.interactive_preparation import bind_managed_preparation
 from saas.production.interactive_recovery import InteractiveRecoveryRecord
 from saas.production.interactive_runtime import AuthorizedInteractiveInput
 
@@ -91,7 +93,7 @@ class _Handle:
 @dataclass(slots=True)
 class _Preparation:
     task: asyncio.Task
-    stopping: asyncio.Event
+    stopping: Event
 
 
 def _observe_preparation(task: asyncio.Task) -> None:
@@ -100,9 +102,7 @@ def _observe_preparation(task: asyncio.Task) -> None:
 
 
 class _LaunchRegistry:
-    def __init__(
-        self, delegate, authorized, wire, tasks, *, stopping: asyncio.Event | None = None
-    ):
+    def __init__(self, delegate, authorized, wire, tasks, *, stopping: Event | None = None):
         self._delegate, self._authorized, self._wire, self._tasks = (
             delegate,
             authorized,
@@ -209,13 +209,19 @@ class OfficialInteractiveDriver:
     def _key(self, authorized):
         return authorized.runtime.physical_workspace_id, authorized.session_id
 
-    async def prepare(self, authorized, *, previous, on_launch):
+    async def prepare(self, authorized, *, previous, on_launch, on_preparation=None):
         key = self._key(authorized)
         if key in self._handles or key in self._preparations:
             raise _unavailable()
-        stopping = asyncio.Event()
+        stopping = Event()
         task = asyncio.create_task(
-            self._prepare(authorized, previous=previous, on_launch=on_launch, stopping=stopping),
+            self._prepare(
+                authorized,
+                previous=previous,
+                on_launch=on_launch,
+                on_preparation=on_preparation,
+                stopping=stopping,
+            ),
             name="interactive-physical-preparation",
         )
         entry = _Preparation(task, stopping)
@@ -235,7 +241,7 @@ class OfficialInteractiveDriver:
             del self._preparations[key]
         return handle
 
-    async def _prepare(self, authorized, *, previous, on_launch, stopping):
+    async def _prepare(self, authorized, *, previous, on_launch, on_preparation, stopping):
         self.assert_production_ready()
         key = self._key(authorized)
         if key in self._handles:
@@ -245,6 +251,20 @@ class OfficialInteractiveDriver:
         state.host_registry = _LaunchRegistry(
             state.host_registry, authorized, on_launch, tasks, stopping=stopping
         )
+        if authorized.launch["host_type"] == "managed":
+            if on_preparation is None or not isinstance(
+                state.sandbox_config, ManagedSandboxDeployment
+            ):
+                raise _unavailable()
+            state.sandbox_config = bind_managed_preparation(
+                state.sandbox_config,
+                provider=authorized.launch["sandbox_provider"],
+                host_store=self._official.host_store,
+                owner=authorized.runtime.runtime_user_key,
+                checkpoint=on_preparation,
+                stopping=stopping,
+                loop=asyncio.get_running_loop(),
+            )
         store = self._official.conversation_store
         with self._adapter.bind(authorized.runtime):
             conversation = await asyncio.to_thread(store.get_conversation, authorized.session_id)

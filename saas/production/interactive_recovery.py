@@ -28,6 +28,36 @@ class InteractiveRecoveryError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedPreparationBinding:
+    """Actual pre-create resource reference, not evidence that a workload exists or stopped."""
+
+    provider: str
+    namespace: str
+    resource_name: str
+    host_id: str
+    cluster_sha256: str
+    image_reference_sha256: str
+
+    def __post_init__(self):
+        if (
+            not isinstance(self.provider, str)
+            or self.provider not in {"kubernetes", "agent_sandbox"}
+            or any(
+                not isinstance(value, str)
+                or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value) is None
+                for value in (self.namespace, self.resource_name)
+            )
+            or not isinstance(self.host_id, str)
+            or re.fullmatch(r"[0-9a-f]{32}", self.host_id) is None
+            or any(
+                not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in (self.cluster_sha256, self.image_reference_sha256)
+            )
+        ):
+            raise InteractiveRecoveryError()
+
+
+@dataclass(frozen=True, slots=True)
 class InteractiveRecoveryRecord:
     run_id: UUID
     fence_token: int
@@ -48,6 +78,7 @@ class InteractiveRecoveryRecord:
     outcome: str | None = None
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     stop_kind: str | None = None
+    managed_preparation: ManagedPreparationBinding | None = None
 
     def __post_init__(self):
         if (
@@ -72,6 +103,17 @@ class InteractiveRecoveryRecord:
             or type(self.process_stopped) is not bool
             or self.outcome not in {None, "succeeded", "failed", "cancelled", "orphaned"}
             or self.stop_kind not in {None, "never_started"}
+            or (
+                self.managed_preparation is not None
+                and (
+                    not isinstance(self.managed_preparation, ManagedPreparationBinding)
+                    or self.stop_kind == "never_started"
+                    or (
+                        self.host_id is not None
+                        and self.host_id != self.managed_preparation.host_id
+                    )
+                )
+            )
             or (
                 self.stop_kind == "never_started"
                 and (
@@ -211,12 +253,17 @@ def _encode(record: InteractiveCleanupRecord) -> bytes:
     document: dict[str, object] = {"schema_version": 1, "record": asdict(record)}
     if isinstance(record, UnstartedInteractiveRecoveryRecord):
         document = {"schema_version": 2, "record_type": "unstarted", "record": asdict(record)}
-    elif record.stop_kind is not None:
-        document = {"schema_version": 2, "record_type": "interactive", "record": asdict(record)}
     else:
         value = asdict(record)
-        value.pop("stop_kind")
-        document["record"] = value
+        if record.managed_preparation is not None:
+            document = {"schema_version": 3, "record_type": "interactive", "record": value}
+        else:
+            value.pop("managed_preparation")
+            if record.stop_kind is not None:
+                document = {"schema_version": 2, "record_type": "interactive", "record": value}
+            else:
+                value.pop("stop_kind")
+                document["record"] = value
     raw = json.dumps(
         document,
         sort_keys=True,
@@ -247,6 +294,22 @@ def _uuid(value):
 def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 3
+        ):
+            if (
+                set(document) != {"schema_version", "record_type", "record"}
+                or document["record_type"] != "interactive"
+            ):
+                raise ValueError
+            document["record"]["managed_preparation"] = ManagedPreparationBinding(
+                **document["record"]["managed_preparation"]
+            )
+            document = {"schema_version": 1, "record": document["record"]}
+        elif isinstance(document, dict) and "managed_preparation" in document.get("record", {}):
+            raise ValueError
         if (
             isinstance(document, dict)
             and type(document.get("schema_version")) is int
@@ -399,6 +462,26 @@ class InteractiveRecoveryJournal:
             previous is not None
             and previous.stop_kind is not None
             and record.stop_kind != previous.stop_kind
+        ):
+            raise InteractiveRecoveryError()
+        if (
+            previous is not None
+            and previous.managed_preparation is not None
+            and previous.managed_preparation != record.managed_preparation
+        ):
+            raise InteractiveRecoveryError()
+        if (
+            previous is not None
+            and previous.managed_preparation is None
+            and record.managed_preparation is not None
+            and (
+                previous.phase != "preparing"
+                or record.phase != "preparing"
+                or previous.official_runner_id is not None
+                or record.official_runner_id is not None
+                or previous.process_stopped
+                or record.process_stopped
+            )
         ):
             raise InteractiveRecoveryError()
         if previous is not None and any(

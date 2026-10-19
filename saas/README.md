@@ -252,6 +252,23 @@ continue through terminal preparation; the successful terminal RPC closes their
 gate before another can start. A heartbeat rejection is still an error, never
 ignored as an expected stale fence or replayed under another mutation.
 
+Managed Kubernetes and Agent Sandbox creation first checkpoints the actual
+reserved resource name, namespace, provider and official Host owner binding in
+that Run's existing private Journal. The SDK cannot create before this write is
+acknowledged; missing persistence, wrong Host ownership, stopped preparation or
+unverified cluster TLS makes the provider unavailable. Cluster and image fields
+are hashes of the verified client configuration and resolved image reference,
+not cluster UIDs or image-content attestations. They do not establish resource
+existence, deletion authority, or a physical stop acknowledgement.
+The official direct Agent Sandbox factory is supported with no warm pool;
+configured warm-pool allocation remains unavailable before claim creation.
+
+Records containing this immutable reference use private format v3. Ordinary v1
+and no-launch v2 encoding remains unchanged; old consumers reject v3. All old
+Controllers must be drained before cutover, and rollback must restore the
+matching private-volume and database snapshots rather than downgrade the files.
+Actual unknown-resource deletion and cross-Pod recovery remain release gates.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

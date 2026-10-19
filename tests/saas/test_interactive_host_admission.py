@@ -152,7 +152,16 @@ async def test_managed_driver_uses_the_official_app_tracker_before_provisioning(
         object(),
         object(),
     )
-    app.state.sandbox_config = object()
+    from omnigent.server.managed_hosts import ManagedSandboxConfig, ManagedSandboxDeployment
+
+    app.state.sandbox_config = ManagedSandboxDeployment.single(
+        ManagedSandboxConfig(
+            server_url="https://next.test",
+            launcher_factory=lambda: None,
+            token_ttl_s=3600,
+            provider="kubernetes",
+        )
+    )
     official = SimpleNamespace(
         conversation_store=a.conversations, host_store=a.hosts, agent_store=object()
     )
@@ -164,8 +173,14 @@ async def test_managed_driver_uses_the_official_app_tracker_before_provisioning(
 
     provision = AsyncMock(side_effect=ProvisionReached)
     monkeypatch.setattr(module.official, "_run_managed_launch", provision)
+
+    async def checkpoint(_binding):
+        pass
+
     with pytest.raises(ProvisionReached):
-        await driver.prepare(a.authorized, previous=None, on_launch=None)
+        await driver.prepare(
+            a.authorized, previous=None, on_launch=None, on_preparation=checkpoint
+        )
     provision.assert_awaited_once()
     assert provision.call_args.kwargs["tracker"] is tracker
     assert tracker.get(conversation.id) is not None
