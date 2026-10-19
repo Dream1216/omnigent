@@ -1074,7 +1074,7 @@ def _serve_controller(
         public_origin=ORIGIN,
         adapter_contract_version="0.2.0",
     )
-    creation_checkpoints = []
+    creation_checkpoints, resource_checkpoints = [], []
     adapter = None
     try:
         adapter = ProductionInteractiveControllerAdapter(config=release, source=source)
@@ -1110,6 +1110,30 @@ def _serve_controller(
                 return start_host(launcher, sandbox_id, host_id=host_id, **values)
 
             monkeypatch.setattr(KubernetesSandboxLauncher, "start_host", observe_creation)
+            wait_running = KubernetesSandboxLauncher._wait_for_pod_running
+
+            def observe_created(launcher, namespace, sandbox_id):
+                candidates = [
+                    row
+                    for row in adapter._journal.records()
+                    if isinstance(row, InteractiveRecoveryRecord)
+                    and row.managed_preparation is not None
+                    and row.managed_preparation.resource_name == sandbox_id
+                    and row.managed_preparation.namespace == namespace
+                ]
+                assert len(candidates) == 1
+                row = candidates[0]
+                assert row.phase == "preparing" and row.official_runner_id is None
+                assert row.managed_resources is not None and not row.process_stopped
+                path = adapter._journal.root / f"{row.run_id}.json"
+                assert json.loads(path.read_bytes())["schema_version"] == 4
+                assert path.stat().st_mode & 0o777 == 0o600
+                resource_checkpoints.append(row.managed_resources)
+                return wait_running(launcher, namespace, sandbox_id)
+
+            monkeypatch.setattr(
+                KubernetesSandboxLauncher, "_wait_for_pod_running", observe_created
+            )
         request_control = adapter._client._request
 
         async def observe_control_failure(action, values):
@@ -2317,6 +2341,14 @@ def _serve_controller(
                 if scenario == "single":
                     assert len(creation_checkpoints) == 1
                     assert record.managed_preparation == creation_checkpoints[0]
+                    assert len(resource_checkpoints) == 1
+                    assert record.managed_resources == resource_checkpoints[0]
+                    from saas.production.interactive_preparation import inspect_managed_resources
+
+                    assert (
+                        inspect_managed_resources(app.state.sandbox_config, record)
+                        == record.managed_resources
+                    )
             if scenario in {"public_stop", "public_archive"}:
                 with httpx.Client(
                     base_url=ORIGIN,
@@ -2379,6 +2411,14 @@ def _serve_controller(
                         "managed_preparation_binding": asdict(creation_checkpoints[-1])
                         if creation_checkpoints
                         else None,
+                        "created_resource_checkpoint_before_sdk_wait": bool(resource_checkpoints)
+                        if cluster is not None
+                        else None,
+                        "managed_resource_binding": asdict(resource_checkpoints[-1])
+                        if resource_checkpoints
+                        else None,
+                        "resource_binding_revalidated": cluster is not None
+                        and scenario == "single",
                         "test_model_token_ttl_seconds": 90
                         if scenario == "tools_cross_run"
                         else 28800,

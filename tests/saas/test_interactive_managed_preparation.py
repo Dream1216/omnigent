@@ -19,6 +19,7 @@ from omnigent.server.managed_hosts import (
     ManagedSandboxDeployment,
     _kubernetes_launcher_factory,
 )
+from omnigent.stores.host_store import Host
 from saas.production import interactive_preparation as module
 from saas.production.interactive_preparation import bind_managed_preparation
 from saas.production.interactive_recovery import (
@@ -59,8 +60,22 @@ def _launcher(tmp_path, monkeypatch, provider="kubernetes", launcher_type=None, 
     )
     delegate._api_client = SimpleNamespace(configuration=configuration)
     trace, recorded, stopping = [], [], Event()
-    host = SimpleNamespace(
-        host_id="c" * 32, user_id="owned-user", sandbox_provider=provider, sandbox_id="owned-job"
+    host = Host(
+        host_id="c" * 32,
+        name="owned-host",
+        user_id="owned-user",
+        status="offline",
+        created_at=0,
+        updated_at=0,
+        sandbox_provider=provider,
+        sandbox_id="owned-job",
+    )
+    token = "isolated-host-token-not-a-real-credential"
+    host_store = SimpleNamespace(
+        get_host=lambda _: host,
+        resolve_launch_token=lambda identity, value: (
+            host if identity == host.host_id and value == token else None
+        ),
     )
     monkeypatch.setattr(delegate, "_load_clients", lambda: trace.append("load-config"))
     monkeypatch.setattr(delegate, "_close_clients", lambda: trace.append("close-client"))
@@ -89,9 +104,10 @@ def _launcher(tmp_path, monkeypatch, provider="kubernetes", launcher_type=None, 
         selected = bind_managed_preparation(
             deployment,
             provider=provider,
-            host_store=SimpleNamespace(get_host=lambda _: host),
+            host_store=host_store,
             owner="owned-user",
             checkpoint=callback,
+            checkpoint_resources=checkpoint,
             stopping=stopping,
             loop=asyncio.get_running_loop(),
         )
@@ -142,6 +158,7 @@ async def test_official_direct_provider_factory_is_checkpointed(provider):
         host_store=None,
         owner="owned-user",
         checkpoint=checkpoint,
+        checkpoint_resources=checkpoint,
         stopping=Event(),
         loop=asyncio.get_running_loop(),
     ).default.launcher_factory()
@@ -187,7 +204,8 @@ async def test_actual_reserved_reference_is_checkpointed_before_scripted_sdk_cre
 ):
     p = _launcher(tmp_path, monkeypatch, provider)
     assert (
-        await asyncio.to_thread(p.wrap().start_host, "owned-job", host_id="c" * 32) == "/workspace"
+        await asyncio.to_thread(p.wrap().start_host, "owned-job", host_id="c" * 32, token=p.token)
+        == "/workspace"
     )
     binding = p.recorded[0]
     assert binding.provider == provider and binding.namespace == "owned-runners"
@@ -218,7 +236,9 @@ async def test_missing_checkpoint_ack_or_stop_never_reaches_sdk_create(
 
     monkeypatch.setattr(module, "_CHECKPOINT_TIMEOUT_SECONDS", 0.03)
     with pytest.raises((RunnerControlError, OSError)):
-        await asyncio.to_thread(p.wrap(checkpoint).start_host, "owned-job", host_id="c" * 32)
+        await asyncio.to_thread(
+            p.wrap(checkpoint).start_host, "owned-job", host_id="c" * 32, token=p.token
+        )
     assert "create" not in p.trace and p.trace[-1] == "close-client"
 
 
@@ -238,7 +258,7 @@ async def test_foreign_or_changed_host_binding_is_not_a_create_authority(
     p = _launcher(tmp_path, monkeypatch)
     setattr(p.host, field, value)
     with pytest.raises(RunnerControlError):
-        await asyncio.to_thread(p.wrap().start_host, "owned-job", host_id="c" * 32)
+        await asyncio.to_thread(p.wrap().start_host, "owned-job", host_id="c" * 32, token=p.token)
     assert not p.recorded and "create" not in p.trace
 
 
@@ -250,7 +270,7 @@ async def test_unverified_cluster_config_is_unavailable_before_creation(
     p = _launcher(tmp_path, monkeypatch)
     setattr(p.configuration, field, False)
     with pytest.raises(RunnerControlError):
-        await asyncio.to_thread(p.wrap().start_host, "owned-job", host_id="c" * 32)
+        await asyncio.to_thread(p.wrap().start_host, "owned-job", host_id="c" * 32, token=p.token)
     assert not p.recorded and "create" not in p.trace
 
 

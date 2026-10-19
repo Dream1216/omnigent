@@ -209,7 +209,9 @@ class OfficialInteractiveDriver:
     def _key(self, authorized):
         return authorized.runtime.physical_workspace_id, authorized.session_id
 
-    async def prepare(self, authorized, *, previous, on_launch, on_preparation=None):
+    async def prepare(
+        self, authorized, *, previous, on_launch, on_preparation=None, on_resources=None
+    ):
         key = self._key(authorized)
         if key in self._handles or key in self._preparations:
             raise _unavailable()
@@ -220,6 +222,7 @@ class OfficialInteractiveDriver:
                 previous=previous,
                 on_launch=on_launch,
                 on_preparation=on_preparation,
+                on_resources=on_resources,
                 stopping=stopping,
             ),
             name="interactive-physical-preparation",
@@ -241,7 +244,9 @@ class OfficialInteractiveDriver:
             del self._preparations[key]
         return handle
 
-    async def _prepare(self, authorized, *, previous, on_launch, on_preparation, stopping):
+    async def _prepare(
+        self, authorized, *, previous, on_launch, on_preparation, on_resources, stopping
+    ):
         self.assert_production_ready()
         key = self._key(authorized)
         if key in self._handles:
@@ -252,8 +257,10 @@ class OfficialInteractiveDriver:
             state.host_registry, authorized, on_launch, tasks, stopping=stopping
         )
         if authorized.launch["host_type"] == "managed":
-            if on_preparation is None or not isinstance(
-                state.sandbox_config, ManagedSandboxDeployment
+            if (
+                on_preparation is None
+                or on_resources is None
+                or not isinstance(state.sandbox_config, ManagedSandboxDeployment)
             ):
                 raise _unavailable()
             state.sandbox_config = bind_managed_preparation(
@@ -262,6 +269,7 @@ class OfficialInteractiveDriver:
                 host_store=self._official.host_store,
                 owner=authorized.runtime.runtime_user_key,
                 checkpoint=on_preparation,
+                checkpoint_resources=on_resources,
                 stopping=stopping,
                 loop=asyncio.get_running_loop(),
             )

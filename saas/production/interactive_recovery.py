@@ -58,6 +58,28 @@ class ManagedPreparationBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedResourceBinding:
+    """Observed SDK-created objects, not a workload termination acknowledgement."""
+
+    workload_uid: str
+    token_secret_uid: str
+    pod_template_sha256: str
+    host_token_sha256: str
+
+    def __post_init__(self):
+        try:
+            for value in (self.workload_uid, self.token_secret_uid):
+                _uuid(value)
+        except (TypeError, ValueError, AttributeError):
+            raise InteractiveRecoveryError() from None
+        if self.workload_uid == self.token_secret_uid or any(
+            not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in (self.pod_template_sha256, self.host_token_sha256)
+        ):
+            raise InteractiveRecoveryError()
+
+
+@dataclass(frozen=True, slots=True)
 class InteractiveRecoveryRecord:
     run_id: UUID
     fence_token: int
@@ -79,6 +101,7 @@ class InteractiveRecoveryRecord:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     stop_kind: str | None = None
     managed_preparation: ManagedPreparationBinding | None = None
+    managed_resources: ManagedResourceBinding | None = None
 
     def __post_init__(self):
         if (
@@ -112,6 +135,13 @@ class InteractiveRecoveryRecord:
                         self.host_id is not None
                         and self.host_id != self.managed_preparation.host_id
                     )
+                )
+            )
+            or (
+                self.managed_resources is not None
+                and (
+                    not isinstance(self.managed_resources, ManagedResourceBinding)
+                    or self.managed_preparation is None
                 )
             )
             or (
@@ -255,9 +285,13 @@ def _encode(record: InteractiveCleanupRecord) -> bytes:
         document = {"schema_version": 2, "record_type": "unstarted", "record": asdict(record)}
     else:
         value = asdict(record)
-        if record.managed_preparation is not None:
+        if record.managed_resources is not None:
+            document = {"schema_version": 4, "record_type": "interactive", "record": value}
+        elif record.managed_preparation is not None:
+            value.pop("managed_resources")
             document = {"schema_version": 3, "record_type": "interactive", "record": value}
         else:
+            value.pop("managed_resources")
             value.pop("managed_preparation")
             if record.stop_kind is not None:
                 document = {"schema_version": 2, "record_type": "interactive", "record": value}
@@ -294,6 +328,22 @@ def _uuid(value):
 def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 4
+        ):
+            if (
+                set(document) != {"schema_version", "record_type", "record"}
+                or document["record_type"] != "interactive"
+            ):
+                raise ValueError
+            document["record"]["managed_resources"] = ManagedResourceBinding(
+                **document["record"]["managed_resources"]
+            )
+            document["schema_version"] = 3
+        elif isinstance(document, dict) and "managed_resources" in document.get("record", {}):
+            raise ValueError
         if (
             isinstance(document, dict)
             and type(document.get("schema_version")) is int
@@ -468,6 +518,28 @@ class InteractiveRecoveryJournal:
             previous is not None
             and previous.managed_preparation is not None
             and previous.managed_preparation != record.managed_preparation
+        ):
+            raise InteractiveRecoveryError()
+        if record.managed_resources is not None and (
+            previous is None
+            or (
+                previous.managed_resources is None
+                and (
+                    previous.managed_preparation is None
+                    or previous.phase != "preparing"
+                    or record.phase != "preparing"
+                    or previous.official_runner_id is not None
+                    or record.official_runner_id is not None
+                    or previous.process_stopped
+                    or record.process_stopped
+                )
+            )
+        ):
+            raise InteractiveRecoveryError()
+        if (
+            previous is not None
+            and previous.managed_resources is not None
+            and previous.managed_resources != record.managed_resources
         ):
             raise InteractiveRecoveryError()
         if (

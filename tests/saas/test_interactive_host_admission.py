@@ -179,7 +179,11 @@ async def test_managed_driver_uses_the_official_app_tracker_before_provisioning(
 
     with pytest.raises(ProvisionReached):
         await driver.prepare(
-            a.authorized, previous=None, on_launch=None, on_preparation=checkpoint
+            a.authorized,
+            previous=None,
+            on_launch=None,
+            on_preparation=checkpoint,
+            on_resources=checkpoint,
         )
     provision.assert_awaited_once()
     assert provision.call_args.kwargs["tracker"] is tracker

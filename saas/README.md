@@ -269,6 +269,19 @@ Controllers must be drained before cutover, and rollback must restore the
 matching private-volume and database snapshots rather than downgrade the files.
 Actual unknown-resource deletion and cross-Pod recovery remain release gates.
 
+After the original SDK creates a direct workload, the controller reads its
+actual UID and token Secret UID, verifies the managed labels, Host ID, token
+digest, image reference and Pod template, and checkpoints immutable hashes in
+the same Journal before the SDK continues. A missing write acknowledgement
+cannot admit a Runner. A returned creation result is retained even while Stop
+is pending. The token itself never enters this new metadata or diagnostic path.
+
+These observations use private format v4; v1/v2/v3 bytes remain unchanged, and
+older consumers reject v4. Read-only recovery inspection requires identical
+client configuration, object UIDs, token digest and template; missing objects
+are unavailable, not a termination acknowledgement. These facts do not authorize
+name-only deletion, prove that containers stopped, or close cross-Pod recovery.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

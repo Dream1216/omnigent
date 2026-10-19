@@ -84,6 +84,24 @@ and original credential files at 0400, with identical hashes and exclusive
 locking. This is not a credential rotation policy or cross-node HA guarantee;
 `local-path` volumes remain node-affine.
 
+## Managed creation metadata
+
+Direct Kubernetes and Agent Sandbox launch requires `get` on the specific
+execution namespace's token Secrets, in addition to the existing create/delete
+rights. The controller reads the one reserved Secret by name to verify its UID
+and token digest; it does not list or watch Secrets. Keep this permission in the
+dedicated runner namespace, never at cluster scope or in the Server/credential
+namespace. Sandbox ServiceAccounts remain powerless and receive no token mount
+or `pods/exec`. Missing read permission makes managed launch unavailable.
+
+Private format v4 preserves the actual workload and token Secret UIDs, the
+verified token digest and Pod-template hash after SDK creation, before Runner
+model admission. Retain the matching private volume and original credentials;
+drain older consumers before cutover. Normal v1/v2/v3 records retain their old
+encoding. UID observations and read-only revalidation are not deletion or
+container-termination receipts. Do not clear pending cleanup based on a missing
+object, cancelled coroutine, SDK return or foreground-delete request alone.
+
 ## Database admission during a leased Run
 
 Fleet bootstrap and the default direct Runner admission still require the

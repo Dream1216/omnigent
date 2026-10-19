@@ -102,7 +102,11 @@ async def test_cancelled_prepare_keeps_actual_worker_and_denies_late_runner_laun
     p = _preparing(controller_case, monkeypatch)
     execution = asyncio.create_task(
         p.driver.prepare(
-            p.authorized, previous=None, on_launch=p.wire, on_preparation=p.checkpoint
+            p.authorized,
+            previous=None,
+            on_launch=p.wire,
+            on_preparation=p.checkpoint,
+            on_resources=p.checkpoint,
         )
     )
     quiescence = None

@@ -30,6 +30,7 @@ from saas.production.interactive_recovery import (
     InteractiveRecoveryJournal,
     InteractiveRecoveryRecord,
     ManagedPreparationBinding,
+    ManagedResourceBinding,
     UnstartedInteractiveRecoveryRecord,
     certificate_sha256,
 )
@@ -54,6 +55,7 @@ class InteractivePhysicalDriver(Protocol):
         previous: InteractiveRecoveryRecord | None,
         on_launch: Callable[[HostLaunchRunnerFrame, object], Awaitable[HostLaunchRunnerFrame]],
         on_preparation: Callable[[ManagedPreparationBinding], Awaitable[None]],
+        on_resources: Callable[[ManagedResourceBinding], Awaitable[None]],
     ) -> object: ...
 
     async def dispatch(self, authorized: AuthorizedInteractiveInput, handle: object) -> None: ...
@@ -283,7 +285,8 @@ class ProductionInteractiveExecutor:
                 raise _unavailable()
             preparation = active.record.managed_preparation
             if preparation is not None and (
-                connection.host_id != preparation.host_id
+                active.record.managed_resources is None
+                or connection.host_id != preparation.host_id
                 or connection.owner != authorized.runtime.runtime_user_key
             ):
                 raise _unavailable()
@@ -316,6 +319,18 @@ class ProductionInteractiveExecutor:
                 raise _unavailable()
             self._put(active, managed_preparation=binding)
 
+        async def resources(binding: ManagedResourceBinding) -> None:
+            if (
+                self._active.get(lease.run_id) is not active
+                or active.record.phase != "preparing"
+                or active.record.process_stopped
+                or active.record.official_runner_id is not None
+                or active.record.managed_preparation is None
+                or authorized.launch["host_type"] != "managed"
+            ):
+                raise _unavailable()
+            self._put(active, managed_resources=binding)
+
         try:
             async with self._lifecycle:
                 if cancellation.is_set():
@@ -346,6 +361,7 @@ class ProductionInteractiveExecutor:
                         previous=previous,
                         on_launch=launch,
                         on_preparation=preparing,
+                        on_resources=resources,
                     ),
                     name="interactive-prepare",
                 )
