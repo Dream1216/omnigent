@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "0810d7358ad0c9bfdaa22ee572fad129bcadbc824a4c793312469e562779a1fb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "8edfc6ce14782323b1b761bca9658e9a35656a0f79cd13894007b41fc0525f2e",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,
@@ -505,6 +516,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "d54fc63b0ff55986500c4e2d97e1aea573eb3d09a72eccbec8e2adf0ce0749e4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "55d3c600baa9783cd1edf464bbd847009becb38207833c080cf70c4c9688a670",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,
@@ -794,6 +816,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "6cbaa3b75a172cb303adb91c65c97e9276831a669baa1971c4d7f36ce4864d4d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "464cf062888b04dda00fc1a7013f6fbe9b19963ee07493509e4ff7640b2d7db8",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,
@@ -1053,6 +1086,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "109f613e6ac1de0a3131074aa24709d1074f1ea96f3693d83692552b1111e3c1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "703bd21d8dc34ea62eb5c113478d9c4d63e05e5ab2b3406fccdbef991d4f3176",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,
@@ -1307,6 +1351,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "42ef6ee337e786ceeafde811e00b186c8e75eebba5ae733f316bce99cbdd22e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "94b4e57eb2d84efbda5e1604bdd571e3b17cf6f30c4c58b10423ffca6348eeb4",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,
@@ -1536,6 +1591,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "2edc61638ecb0ebdc9f45b1ac4d56ee1008d5bc6a595e7573217e24a571a0d5f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "0d27abc50d2458a26d7ff3a4fb5b707cd2fbd35488349ce485dd6aa4bd8b3e45",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,
@@ -1772,6 +1838,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "4c36e99cde4d1618301a82a51773c1d59ba05432adf82859674163613a77baf1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "3349a019fd4ea6ce810de89317474130a98e907c781e2b8dda7c6f0681700874",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,
@@ -1973,6 +2050,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "923a15b12d1a4a566d44b1c8e90fc98561e7484783792639e1b9de9399662924",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "6aec0e00b0e59c282324c72dcab9f2f4cb75af38846a86bfe12d649868d49a30",
     # Source-derived model cutoff shared-audit delivery.
     (
         16,

@@ -15,6 +15,7 @@ The independent Staff console manages encrypted connections, immutable model dra
 - `publication-recovery`: recover the original publication after a lost response or reload without submitting another command or sending inference.
 - `ordinary-disablement`: confirm a checked tenant/model/protocol cutoff, then inspect its receipt and current catalog state without rewriting the publication or actively stopping in-flight work.
 - `disablement-recovery`: recover a synchronous cutoff receipt after response loss or reload by read-only lookup; do not fabricate a projection operation or repeat the write.
+- `security-revocation-intent`: a fresh Staff API operator can escalate a retained cutoff to a distinct stop intent; its admission receipt is not physical completion.
 - `staff-authority`: a current fresh Staff operator can mutate; a security auditor can read but cannot edit.
 - `small-screen`: the same console entry remains usable on a narrow viewport without horizontal overflow.
 - `tenant-candidate-discovery`: customers can inspect their scoped candidate metadata in existing-session and landing model menus, including mobile; candidates remain disabled until runtime authorization is implemented.
@@ -24,6 +25,7 @@ The independent Staff console manages encrypted connections, immutable model dra
 - Open `/platform-admin`, authenticate in the independent Staff realm, then select the managed-model connections navigation item. The page contains connection creation, credential rotation, operation receipts, model drafts, test funding, verification, and tenant candidate catalogs when their capabilities are configured. Start a test from its draft row; inspect the latest receipt from the same row or refresh the current command. For publication, inspect the target tenant catalog, start a new independent command, then confirm publication from the verified draft row.
 - Open `/platform-admin#model-connections` after Staff authentication, including after a page reload. This reaches the same view directly.
 - In the checked tenant catalog, use Ordinary disablement, confirm or cancel, and inspect the cutoff receipt. A readonly auditor can inspect but cannot stop models. Editing the tenant invalidates the old scope, including late responses.
+- Staff API clients may escalate that receipt with `POST /v2/platform-admin/model-publication-disablements/{disablement_id}/revoke`, the exact generation and an opaque idempotency key; no browser control or physical-completion projection is available yet.
 - Use either route on desktop or mobile. The Tenant Owner Beta model-provider console is a separate legacy entry, not an alternative Staff login.
 - As a customer in the SaaS app, open an existing conversation's model pill, then its configuration submenu; or open New session, choose a harness, then Edit. The Platform models section shows tenant candidate names, DeepSeek as the channel, LiteLLM as the transport, and the unavailable reason. A candidate cannot be selected. Ordinary OSS servers retain their host-owned catalogs without probing the SaaS API.
 
@@ -37,6 +39,7 @@ Preconditions: these Staff console tests own their HTTPS server, disposable SQLi
 - Bounded verification, cost confirmation and cancellation, lost-response recovery, explicit unknown costs, readonly receipt inspection, direct-view reload, and mobile: `tests/saas/test_platform_admin_browser.py::test_real_chromium_model_verification_recovery_cost_and_readonly_receipt`.
 - Tenant scope, publication confirmation and cancellation, lost-response/reload recovery, readonly catalog, disabled runtime, and mobile: `tests/saas/test_platform_admin_browser.py::test_real_chromium_tenant_model_publication_lost_receipt_and_readonly_catalog`.
 - Ordinary disablement, tenant-scope race, cancellation, lost response/reload with one write, readonly receipts and desktop/mobile: `tests/saas/test_model_disablement_browser.py::test_real_chromium_model_disablement_scope_recovery_readonly_and_mobile`.
+- Security intent admission, exact cutoff, recovery and no inference: `tests/saas/test_model_revocations.py::test_staff_can_escalate_a_cutoff_to_a_distinct_durable_security_intent`. This is an isolated API test, not a browser or physical Agent drive.
 - Independent realm, navigation, and role/page/action boundaries: `tests/saas/test_platform_admin_browser.py::test_real_chromium_platform_console_role_page_and_action_matrix`.
 
 Run the selected test directly with `.venv/bin/pytest -q`. Each journey drives the visible controls and cross-checks the control-plane API. Real PostgreSQL budget/role checks and real LiteLLM/provider protocol checks are separate acceptance lanes, not supplied by these browser tests.

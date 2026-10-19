@@ -26,6 +26,7 @@ from saas.control_plane.model_deployments import (
 )
 from saas.control_plane.model_disablement import DISABLEMENT_EVENT, publication_is_disabled
 from saas.control_plane.model_pricing import PlatformModelPricingPolicy
+from saas.control_plane.model_revocations import ModelSecurityRevocationService
 from saas.control_plane.model_routing_models import (
     ModelConnectionRecord,
     ModelCredentialVersionRecord,
@@ -272,6 +273,9 @@ class ModelPublicationService:
             engine, query_name_prefix="saas.model_publications", immediate=True
         )
         self._authorization, self._pricing = authorization, pricing
+        self.security_revocations = ModelSecurityRevocationService(
+            engine, authorization=authorization
+        )
 
     def disable(
         self,

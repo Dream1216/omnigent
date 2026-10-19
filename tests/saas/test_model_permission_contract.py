@@ -25,6 +25,8 @@ _MODEL_ROUTES = {
         "GET /v2/platform-admin/model-operations/{operation_id}/publication",
         "GET /v2/platform-admin/model-publication-disablements",
         "GET /v2/platform-admin/model-publication-disablements/{disablement_id}",
+        "GET /v2/platform-admin/model-publication-revocations",
+        "GET /v2/platform-admin/model-publication-revocations/{revocation_id}",
     ),
     "platform.model_provider.manage": (
         "PUT /v2/platform-admin/model-provider",
@@ -40,6 +42,7 @@ _MODEL_ROUTES = {
     "platform.model_provider.publish": (
         "POST /v2/platform-admin/model-deployments/{deployment_id}/publish",
         "POST /v2/platform-admin/model-publications/{publication_id}/disable",
+        "POST /v2/platform-admin/model-publication-disablements/{disablement_id}/revoke",
     ),
 }
 
@@ -54,7 +57,7 @@ def test_registered_model_routes_have_exact_permission_declarations(enabled):
         for method in route.methods
     }
     expected = {surface: name for name, surfaces in _MODEL_ROUTES.items() for surface in surfaces}
-    assert len(expected) == len(registered) == 21
+    assert len(expected) == len(registered) == 24
     assert registered == set(expected)
     declared = {
         surface: {

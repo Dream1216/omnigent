@@ -526,6 +526,45 @@ class ModelPublicationDisablementRecord(SaasBase):
     )
 
 
+class ModelPublicationRevocationRecord(SaasBase):
+    """Retained security intent, distinct from an ordinary publication cutoff."""
+
+    __tablename__ = "saas_model_publication_revocations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    disablement_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_model_publication_disablements.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    public_model_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    wire_api: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    through_generation: Mapped[int] = mapped_column(nullable=False)
+    principal_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
+    )
+    staff_session_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_platform_auth_sessions.id", ondelete="RESTRICT"), nullable=False
+    )
+    staff_security_version: Mapped[int] = mapped_column(nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint("disablement_id", name="uq_model_revocation_cutoff"),
+        sa.UniqueConstraint("principal_id", "idempotency_key", name="uq_model_revocation_key"),
+        sa.CheckConstraint(
+            "through_generation>0 AND staff_security_version>0",
+            name="ck_model_revocation_generation",
+        ),
+        sa.CheckConstraint(_hex64("request_hash"), name="ck_model_revocation_hash"),
+        sa.CheckConstraint(
+            "length(idempotency_key) BETWEEN 1 AND 128", name="ck_model_revocation_key"
+        ),
+    )
+
+
 class ModelRunTokenRecord(SaasBase):
     """Hashed model credential; identity and financial authority stay on the real Run."""
 

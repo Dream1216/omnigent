@@ -24,6 +24,10 @@ from saas.control_plane.model_gateway_audit import (
     ModelGatewayAuditPublisher,
     verify_gateway_audit_function,
 )
+from saas.control_plane.model_revocation_audit import (
+    ModelRevocationAuditPublisher,
+    verify_revocation_audit_function,
+)
 from saas.control_plane.outbox import DispatchResult, OutboxDispatcher, OutboxPublisher
 from saas.control_plane.postgresql_role_authority import (
     count_direct_acl_authorities,
@@ -167,6 +171,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
     with engine.connect() as connection:
         gateway_audit_oid = verify_gateway_audit_function(connection)
         disablement_audit_oid = verify_disablement_audit_function(connection)
+        revocation_audit_oid = verify_revocation_audit_function(connection)
         schema_facts = connection.execute(
             sa.text(
                 "SELECT current_database(), current_schema(), current_schemas(false), "
@@ -376,7 +381,8 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "JOIN dispatcher ON acl.grantee = dispatcher.oid "
                 "WHERE namespace.nspname !~ '^pg_' "
                 "AND namespace.nspname <> 'information_schema' "
-                "AND object.oid NOT IN (:gateway_audit_oid,:disablement_audit_oid) UNION ALL "
+                "AND object.oid NOT IN ("
+                ":gateway_audit_oid,:disablement_audit_oid,:revocation_audit_oid) UNION ALL "
                 "SELECT 1 FROM pg_type object "
                 "JOIN pg_namespace namespace ON namespace.oid = object.typnamespace "
                 "CROSS JOIN LATERAL aclexplode(object.typacl) acl "
@@ -414,6 +420,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
             {
                 "gateway_audit_oid": gateway_audit_oid or 0,
                 "disablement_audit_oid": disablement_audit_oid or 0,
+                "revocation_audit_oid": revocation_audit_oid or 0,
             },
         ).scalar_one()
         owned_tables = connection.execute(
@@ -758,7 +765,9 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
         owned_tables
         or forbidden_table_privileges
         or executable_security_definers
-        != int(gateway_audit_oid is not None) + int(disablement_audit_oid is not None)
+        != int(gateway_audit_oid is not None)
+        + int(disablement_audit_oid is not None)
+        + int(revocation_audit_oid is not None)
         or forbidden_schema_privileges
     ):
         raise RuntimeError(
@@ -930,6 +939,8 @@ def main() -> int:
         publisher = ModelGatewayAuditPublisher(engine, publisher)
         publisher.validate_outbox_configuration()
         publisher = ModelDisablementAuditPublisher(engine, publisher)
+        publisher.validate_outbox_configuration()
+        publisher = ModelRevocationAuditPublisher(engine, publisher)
         publisher.validate_outbox_configuration()
         dispatcher = OutboxDispatcher(sessions, publisher, max_attempts=max_attempts)
         stop = threading.Event()

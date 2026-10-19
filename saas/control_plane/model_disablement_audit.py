@@ -30,15 +30,24 @@ def verify_disablement_audit_function(connection: Connection) -> int | None:
 
 
 class ModelDisablementAuditPublisher:
+    _event_type = DISABLEMENT_EVENT
+    _reference_key = "disablement_id"
+    _function_name = "public.saas_audit_model_disablement_v1"
+    _failure_prefix = "model_disablement_audit"
+    _query_name = "saas.model_disablement_audit.retain_evidence"
+
     def __init__(self, engine: Engine, fallback: OutboxPublisher) -> None:
         self._engine, self._fallback = engine, fallback
 
     def validate_outbox_configuration(self) -> None:
         if self._engine.dialect.name != "postgresql":
-            raise RuntimeError("model_disablement_audit_requires_postgresql")
+            raise RuntimeError(f"{self._failure_prefix}_requires_postgresql")
         with self._engine.connect() as db:
-            if verify_disablement_audit_function(db) is None:
-                raise RuntimeError("model_disablement_audit_function_unavailable")
+            if self._verify_function(db) is None:
+                raise RuntimeError(f"{self._failure_prefix}_function_unavailable")
+
+    def _verify_function(self, connection: Connection) -> int | None:
+        return verify_disablement_audit_function(connection)
 
     def publish(
         self,
@@ -49,7 +58,7 @@ class ModelDisablementAuditPublisher:
         aggregate_key: str,
         payload: dict[str, object],
     ) -> None:
-        if event_type != DISABLEMENT_EVENT and payload.get("event_type") != DISABLEMENT_EVENT:
+        if event_type != self._event_type and payload.get("event_type") != self._event_type:
             self._fallback.publish(
                 event_id=event_id,
                 event_type=event_type,
@@ -62,13 +71,13 @@ class ModelDisablementAuditPublisher:
             if (
                 not isinstance(event_id, UUID)
                 or not event_id.int
-                or event_type != DISABLEMENT_EVENT
+                or event_type != self._event_type
                 or aggregate_type != "platform_model"
-                or set(payload) != {"event_type", "schema_version", "disablement_id"}
+                or set(payload) != {"event_type", "schema_version", self._reference_key}
                 or payload["event_type"] != event_type
                 or type(payload["schema_version"]) is not int
                 or payload["schema_version"] != 1
-                or payload["disablement_id"] != aggregate_key
+                or payload[self._reference_key] != aggregate_key
                 or not isinstance(aggregate_key, str)
                 or not UUID(aggregate_key).int
                 or str(UUID(aggregate_key)) != aggregate_key
@@ -76,30 +85,27 @@ class ModelDisablementAuditPublisher:
                 raise ValueError
         except (ValueError, TypeError, KeyError):
             raise OutboxPublishError(
-                "model_disablement_audit_envelope_rejected",
+                f"{self._failure_prefix}_envelope_rejected",
                 retryable=False,
                 pre_side_effect=True,
             ) from None
         try:
             with (
-                query_name_scope("saas.model_disablement_audit.retain_evidence"),
+                query_name_scope(self._query_name),
                 self._engine.begin() as db,
             ):
                 result = db.scalar(
-                    sa.text(
-                        "SELECT public.saas_audit_model_disablement_v1("
-                        ":event_id,CAST(:payload AS jsonb))"
-                    ),
+                    sa.text(f"SELECT {self._function_name}(:event_id,CAST(:payload AS jsonb))"),
                     {"event_id": event_id, "payload": json.dumps(payload)},
                 )
                 if type(result) is not bool:
-                    raise RuntimeError("model_disablement_audit_result_invalid")
+                    raise RuntimeError(f"{self._failure_prefix}_result_invalid")
         except DBAPIError as error:
             invalid = getattr(error.orig, "sqlstate", None) == "22023"
             raise OutboxPublishError(
-                "model_disablement_audit_evidence_rejected"
+                f"{self._failure_prefix}_evidence_rejected"
                 if invalid
-                else "model_disablement_audit_unavailable",
+                else f"{self._failure_prefix}_unavailable",
                 retryable=not invalid,
                 pre_side_effect=invalid,
             ) from None

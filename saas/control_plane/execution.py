@@ -902,38 +902,48 @@ class ExecutionControlPlane:
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
             run = self._scoped_run(db, request, project_id, run_id, lock=True)
-            if run.status in TERMINAL_RUN_STATUSES or run.status == "cancelling":
-                return RunMutation(
-                    run.id, run.status, run.version, run.event_sequence, replayed=True
-                )
-            run.cancel_requested_at = requested_at
-            if run.status in {"created", "queued"}:
-                run.status = "cancelled"
-                run.terminal_at = requested_at
-                self._finalize_reservations(db, run, succeeded=False)
-                event_type = "run.cancelled"
-            elif run.status in _LEASED_STATUSES:
-                run.status = "cancelling"
-                event_type = "run.cancelling"
-            else:
-                raise ExecutionControlPlaneError(
-                    "run_cancel_invalid", f"Run in {run.status} cannot be cancelled"
-                )
-            run.version += 1
-            self._append_event(
+            return self._cancel_in_session(
                 db,
                 run,
-                event_type=event_type,
-                payload={
-                    "status": run.status,
-                    "reason": cleaned_reason,
-                    "requested_by": str(request.actor_id),
-                },
+                requested_at=requested_at,
+                payload={"reason": cleaned_reason, "requested_by": str(request.actor_id)},
                 trace_id=request.trace_id,
             )
-            if run.status == "cancelled":
-                self._clear_lease(run)
-            return RunMutation(run.id, run.status, run.version, run.event_sequence)
+
+    @classmethod
+    def _cancel_in_session(
+        cls,
+        db: Session,
+        run: RunRecord,
+        *,
+        requested_at: datetime,
+        payload: dict[str, object],
+        trace_id: str,
+    ) -> RunMutation:
+        """Apply an already-authorized cancellation through one execution lifecycle."""
+        if run.status in TERMINAL_RUN_STATUSES or run.status == "cancelling":
+            return RunMutation(run.id, run.status, run.version, run.event_sequence, replayed=True)
+        run.cancel_requested_at = requested_at
+        if run.status in {"created", "queued"}:
+            run.status, run.terminal_at = "cancelled", requested_at
+            cls._finalize_reservations(db, run, succeeded=False)
+        elif run.status in _LEASED_STATUSES:
+            run.status = "cancelling"
+        else:
+            raise ExecutionControlPlaneError(
+                "run_cancel_invalid", f"Run in {run.status} cannot be cancelled"
+            )
+        run.version += 1
+        cls._append_event(
+            db,
+            run,
+            event_type=f"run.{run.status}",
+            payload={**payload, "status": run.status},
+            trace_id=trace_id,
+        )
+        if run.status == "cancelled":
+            cls._clear_lease(run)
+        return RunMutation(run.id, run.status, run.version, run.event_sequence)
 
     def recover_expired_runs(
         self,

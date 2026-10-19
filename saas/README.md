@@ -165,6 +165,29 @@ not the worker clock. Downgrade refuses to drop this delivery authority while
 cutoffs or their audit facts are retained. This is an audit-delivery contract,
 not proof of production worker deployment or completed active revocation.
 
+### Model security revocation intent
+
+To escalate an existing ordinary cutoff, a fresh Staff operator may call
+`POST /v2/platform-admin/model-publication-disablements/{disablement_id}/revoke`
+with `expected_generation` and an opaque `Idempotency-Key`. It retains a distinct
+immutable `revocation_id` and its audit intent in one transaction. Concurrent
+Staff commands cannot create two intents for the same cutoff. Read the original
+receipt using `GET /v2/platform-admin/model-publication-revocations/{revocation_id}`
+or recover one's own command through the collection's `idempotency_key` query.
+The admission receipt's `execution_complete=false` is not a live completion
+projection or a fabricated physical-stop acknowledgement.
+
+The App gateway observes retained security intent during accepted I/O. The
+existing Scheduler Worker uses its Executor login to cancel only affected
+interactive Runs, through the same quota/event lifecycle as normal cancellation.
+Queued Runs terminate; leased Runs enter `cancelling`. The machine capability
+stays available for trusted stop/finalization reporting, not new inference.
+The cutoff never covers later publication generations or another tenant/model/
+protocol. The shared audit chain records the original Staff action; unknown
+supplier costs remain held. Staff gains no Run table authority, and Executor
+reads no Staff credentials. Physical stop/progress receipts, a Staff console
+control and production acceptance remain unfinished independent gates.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

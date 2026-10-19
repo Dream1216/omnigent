@@ -1,3 +1,3 @@
 """Packaged control-plane schema binding shared by trusted Runner components."""
 
-CONTROL_PLANE_SCHEMA_REVISION = "lm2m00000001"
+CONTROL_PLANE_SCHEMA_REVISION = "lm2n00000001"

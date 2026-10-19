@@ -1042,6 +1042,46 @@ def create_platform_admin_app(
             **model_publication_service().disablement_receipt(principal, disablement_id),
         }
 
+    @app.get("/v2/platform-admin/model-publication-revocations")
+    def find_model_revocation(request: Request, idempotency_key: str):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "revocation": model_publication_service().security_revocations.find(
+                principal, idempotency_key=idempotency_key
+            ),
+        }
+
+    @app.get("/v2/platform-admin/model-publication-revocations/{revocation_id}")
+    def get_model_revocation(request: Request, revocation_id: UUID):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().security_revocations.receipt(principal, revocation_id),
+        }
+
+    @app.post(
+        "/v2/platform-admin/model-publication-disablements/{disablement_id}/revoke",
+        status_code=202,
+    )
+    async def request_model_revocation(request: Request, disablement_id: UUID):
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(), request.headers.get("content-type", ""), _ModelDisablementCommand
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().security_revocations.request(
+                principal,
+                disablement_id=disablement_id,
+                **command.model_dump(),
+                idempotency_key=request.headers.get("Idempotency-Key", ""),
+            ),
+        }
+
     @app.post("/v2/platform-admin/model-publications/{publication_id}/disable")
     async def disable_model_publication(request: Request, publication_id: UUID):
         principal, _token = authenticate(request)
