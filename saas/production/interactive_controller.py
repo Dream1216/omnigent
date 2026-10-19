@@ -312,6 +312,7 @@ class ProductionInteractiveExecutor:
             if (
                 self._active.get(lease.run_id) is not active
                 or active.record.phase != "preparing"
+                or active.record.managed_preparation is not None
                 or active.record.process_stopped
                 or active.record.official_runner_id is not None
                 or authorized.launch["host_type"] != "managed"

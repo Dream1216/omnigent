@@ -347,6 +347,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
         "late_customer_metering",
         "controller_crash_recovery",
         "orphaned_stop_recovery",
+        "create_ack_rejected",
     }
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
@@ -626,7 +627,9 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                     actual["upstream_url"] + "/evidence", trust_env=False
                 ).json()
                 assert len(after_calls["requests"]) - len(before_calls["requests"]) == (
-                    4
+                    0
+                    if scenario == "create_ack_rejected"
+                    else 4
                     if scenario in {"tools_cross_run", "controller_crash_recovery"}
                     else 2
                     if scenario == "cancel_unknown_stream"
@@ -1135,6 +1138,31 @@ def _serve_controller(
             monkeypatch.setattr(
                 KubernetesSandboxLauncher, "_wait_for_pod_running", observe_created
             )
+        rejected_create, issued_without_launch = [], []
+        if scenario == "create_ack_rejected":
+            assert cluster is not None
+            from omnigent.onboarding.sandboxes.agent_sandbox import AgentSandboxLauncher
+
+            selected_launcher = (
+                KubernetesSandboxLauncher
+                if cluster["provider"] == "kubernetes"
+                else AgentSandboxLauncher
+            )
+            create_workload = selected_launcher._create_workload
+            issue_model = ModelRunCredentialService.issue
+
+            def reject_create_ack(launcher, namespace, manifest):
+                create_workload(launcher, namespace, manifest)
+                rejected_create.append(True)
+                raise OSError("isolated-create-ack-rejected")
+
+            def capture_issued(service, authorized, lease):
+                credential = issue_model(service, authorized, lease)
+                issued_without_launch.append(credential)
+                return credential
+
+            monkeypatch.setattr(selected_launcher, "_create_workload", reject_create_ack)
+            monkeypatch.setattr(ModelRunCredentialService, "issue", capture_issued)
         request_control = adapter._client._request
 
         async def observe_control_failure(action, values):
@@ -1393,6 +1421,141 @@ def _serve_controller(
             )
 
             expected_runs = 1
+
+            if scenario == "create_ack_rejected":
+
+                def failed_create_released():
+                    assert not adapter._task.done(), "controller stopped after failed creation"
+                    with factory() as db:
+                        run = db.scalars(sa.select(RunRecord)).one()
+                        return (
+                            run.status == "orphaned"
+                            and db.get(RunDispatchRecord, run.id).status == "released"
+                        )
+
+                _wait(failed_create_released, "failed managed creation logical release")
+                with factory() as db:
+                    run = db.scalars(sa.select(RunRecord)).one()
+                record = adapter._journal.read(run.id)
+                assert record.phase == "draining" and record.outcome == "orphaned"
+                assert record.managed_preparation and record.managed_resources
+                assert not record.process_stopped and record.official_runner_id is None
+                assert rejected_create == [True] and not resource_checkpoints
+                from saas.production.interactive_preparation import (
+                    _direct_launcher,
+                    inspect_managed_resources,
+                )
+
+                assert (
+                    inspect_managed_resources(app.state.sandbox_config, record)
+                    == record.managed_resources
+                )
+
+                def owned_pod_started():
+                    selected = app.state.sandbox_config.for_provider(cluster["provider"])
+                    launcher = _direct_launcher(selected, cluster["provider"])
+                    try:
+                        launcher._load_clients()
+                        result = launcher._load_core().list_namespaced_pod(
+                            record.managed_preparation.namespace, _request_timeout=10
+                        )
+                        pods = launcher._api_client.sanitize_for_serialization(result)["items"]
+                        owned = [
+                            pod
+                            for pod in pods
+                            if any(
+                                ref.get("uid") == record.managed_resources.workload_uid
+                                and ref.get("controller") is True
+                                for ref in pod["metadata"].get("ownerReferences", [])
+                            )
+                        ]
+                        return len(owned) == 1 and any(
+                            item["name"] == "host"
+                            and set(item.get("state", {})) & {"running", "terminated"}
+                            for item in owned[0].get("status", {}).get("containerStatuses", [])
+                        )
+                    finally:
+                        launcher._close_clients()
+
+                _wait(owned_pod_started, "actual retained managed Host container")
+                assert (
+                    asyncio.run_coroutine_threadsafe(
+                        adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                    ).result(20)
+                    == 0
+                )
+                record = adapter._journal.read(run.id)
+                assert not record.process_stopped and record.phase != "terminal"
+                with pytest.raises(RunnerControlError) as pending:
+                    adapter._executor.assert_claimable()
+                assert pending.value.code == "interactive_controller_recovery_pending"
+                assert len(issued_without_launch) == 1
+                denied = httpx.post(
+                    "http://127.0.0.1:8090/v1/chat/completions",
+                    trust_env=False,
+                    headers={"Authorization": "Bearer " + issued_without_launch[0].value},
+                    json=_document(conversation.model_override, limit=32),
+                )
+                assert denied.status_code == 403
+                with factory() as db:
+                    assert db.get(RunDispatchRecord, run.id).physical_recovery_fence is None
+                    for model, expected in (
+                        (TaskRecord, 1),
+                        (ModelRunTokenRecord, 1),
+                        (UsageEventRecord, 0),
+                        (BillingMeteringReceiptRecord, 0),
+                    ):
+                        assert db.scalar(sa.select(sa.func.count()).select_from(model)) == expected
+                    assert (
+                        db.scalar(
+                            sa.select(sa.func.count())
+                            .select_from(ModelProviderBudgetReservationRecord)
+                            .where(ModelProviderBudgetReservationRecord.purpose == "tenant_run")
+                        )
+                        == 0
+                    )
+                    assert (
+                        db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
+                    )
+                assert [item["status"] for item in observed] == [403]
+                (exchange / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "passed": True,
+                            "production_factory": True,
+                            "controller_adapter": True,
+                            "actual_litellm": True,
+                            "production_pki": False,
+                            "scenario": scenario,
+                            "official_store_backend": host_store._engine.dialect.name,
+                            "managed_host": True,
+                            "sandbox_provider": cluster["provider"],
+                            "physical_gc_interval_seconds": (
+                                adapter._config.physical_gc_interval_seconds
+                            ),
+                            "creation_checkpoint_before_sdk": len(creation_checkpoints) == 1,
+                            "managed_preparation_binding": asdict(record.managed_preparation),
+                            "managed_resource_binding": asdict(record.managed_resources),
+                            "resource_binding_revalidated": True,
+                            "sdk_wait_not_reached": True,
+                            "actual_create_followed_by_injected_ack_error": True,
+                            "unknown_resources_retained_pending": True,
+                            "claim_barrier_retained": True,
+                            "physical_recovery_fence_still_unconfirmed": True,
+                            "gateway_request_statuses": [403],
+                            "task_count": 1,
+                            "supplier_calls": 0,
+                            "usage_facts": 0,
+                            "settled_tokens": 0,
+                            "test_model_token_ttl_seconds": 28800,
+                            "host_stop_acknowledged": False,
+                            "manual_run_heartbeat": False,
+                            "actual_network_loss_simulated": False,
+                            "actual_managed_resource_termination_proven": False,
+                        }
+                    )
+                )
+                return
 
             if scenario == "orphaned_stop_recovery":
 

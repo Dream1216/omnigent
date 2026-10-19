@@ -102,6 +102,16 @@ encoding. UID observations and read-only revalidation are not deletion or
 container-termination receipts. Do not clear pending cleanup based on a missing
 object, cancelled coroutine, SDK return or foreground-delete request alone.
 
+Each scoped launcher permits one startup and one workload submission. Repeated
+preparation, direct resume/terminate and Agent Sandbox's name-conflict wake are
+unavailable until a UID-bound lifecycle can authorize them. SDK best-effort
+name-only deletion is suppressed for this instance only. A failed creation ACK
+can retain freshly verified workload/Secret facts, but still fails startup;
+missing observations remain pending, never stopped. The legacy global reaper
+and delayed unknown creations still require the separate reviewed termination
+path before production admission. Do not treat these local SDK barriers as
+complete resource termination or enable the feature on that basis.
+
 ## Database admission during a leased Run
 
 Fleet bootstrap and the default direct Runner admission still require the

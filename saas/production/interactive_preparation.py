@@ -9,7 +9,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from typing import Any, cast
 from urllib.parse import urlsplit
 
@@ -93,9 +93,19 @@ class _CheckpointedLauncher:
         self._delegate, self._host_store, self._owner = delegate, host_store, owner
         self._checkpoint, self._stopping, self._loop = checkpoint, stopping, loop
         self._checkpoint_resources = checkpoint_resources
+        self._start_lock = Lock()
+        self._started = self._submitted = False
 
     def __getattr__(self, name):
         return getattr(self._delegate, name)
+
+    def terminate(self, sandbox_id):
+        del sandbox_id
+        raise _unavailable()
+
+    def resume(self, sandbox_id):
+        del sandbox_id
+        raise _unavailable()
 
     def _persist(self, callback, value):
         async def persist():
@@ -114,6 +124,10 @@ class _CheckpointedLauncher:
             raise _unavailable() from None
 
     def start_host(self, sandbox_id: str, *, host_id: str, **kwargs):
+        with self._start_lock:
+            if self._started:
+                raise _unavailable()
+            self._started = True
         try:
             if self._stopping.is_set():
                 raise _unavailable()
@@ -135,25 +149,60 @@ class _CheckpointedLauncher:
             if self._stopping.is_set():
                 raise _unavailable()
             create = self._delegate._create_workload
+            cleanup = self._delegate._best_effort_delete
+            custom = self._delegate._load_custom if binding.provider == "agent_sandbox" else None
 
             def observe_resources(namespace, manifest):
                 if namespace != binding.namespace:
                     raise _unavailable()
-                create(namespace, manifest)
-                if _binding(self._delegate, sandbox_id, host_id) != binding:
-                    raise _unavailable()
-                actual = read_managed_resources(
-                    self._delegate, binding, host_token_sha256=hash_host_launch_token(token)
-                )
-                self._persist(self._checkpoint_resources, actual)
+                with self._start_lock:
+                    if self._submitted:
+                        raise _unavailable()
+                    self._submitted = True
+
+                def retain_observed():
+                    if _binding(self._delegate, sandbox_id, host_id) != binding:
+                        raise _unavailable()
+                    actual = read_managed_resources(
+                        self._delegate, binding, host_token_sha256=hash_host_launch_token(token)
+                    )
+                    self._persist(self._checkpoint_resources, actual)
+
+                try:
+                    create(namespace, manifest)
+                except Exception as error:  # noqa: BLE001 - a failed ACK can follow a committed create.
+                    if getattr(error, "status", None) != 409:
+                        retain_observed()
+                    raise _unavailable() from None
+                retain_observed()
 
             self._delegate._create_workload = observe_resources
+            # Retain unknown effects for UID-bound recovery; a name is not cleanup authority.
+            self._delegate._best_effort_delete = lambda *_: None
+            if custom is not None:
+                self._delegate._load_custom = lambda: _CreateOnlyCustom(custom())
             try:
                 return self._delegate.start_host(sandbox_id, host_id=host_id, **kwargs)
             finally:
                 self._delegate._create_workload = create
+                self._delegate._best_effort_delete = cleanup
+                if custom is not None:
+                    self._delegate._load_custom = custom
         finally:
             self._delegate._close_clients()
+
+
+class _CreateOnlyCustom:
+    def __init__(self, delegate):
+        self._delegate = delegate
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def patch_namespaced_custom_object(self, *_args, **_kwargs):
+        from kubernetes.client.rest import ApiException
+
+        raise ApiException(status=409, reason="Managed workload already exists")
 
 
 def bind_managed_preparation(
