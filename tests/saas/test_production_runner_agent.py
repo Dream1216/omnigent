@@ -229,6 +229,58 @@ async def test_agent_claims_executes_transitions_and_releases_one_terminal_lease
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("heartbeat_failure", (False, True))
+async def test_terminal_transition_waits_for_an_inflight_heartbeat_without_hiding_its_error(
+    heartbeat_failure,
+):
+    stop, entered, release, prepared = (asyncio.Event() for _ in range(4))
+
+    class Client(_Client):
+        async def heartbeat_run(self, lease):
+            result = await super().heartbeat_run(lease)
+            if self.run_heartbeats == 2:
+                entered.set()
+                await release.wait()
+                if heartbeat_failure:
+                    raise RunnerControlError("isolated_heartbeat_denied", "Heartbeat unavailable")
+                if "succeeded" in self.transitions:
+                    raise RunnerControlError("capability_fence_stale", "Fence is stale")
+            return result
+
+    class Executor(_Executor):
+        async def prepare_finalization(self, lease, *, result):
+            await asyncio.wait_for(entered.wait(), 1)
+            return await super().prepare_finalization(lease, result=result)
+
+        async def prepare_terminal_transition(self, lease):
+            prepared.set()
+            return await super().prepare_terminal_transition(lease)
+
+    client, executor = Client(stop), Executor()
+    agent = ProductionRunnerAgent(client, executor)
+    agent._heartbeat_interval = 0.01
+    running = asyncio.create_task(agent.run(stop))
+    try:
+        await asyncio.wait_for(prepared.wait(), 2)
+        assert "succeeded" not in client.transitions, "terminal RPC raced an inflight heartbeat"
+    finally:
+        release.set()
+        if heartbeat_failure:
+            with pytest.raises(RunnerControlError) as denied:
+                await asyncio.wait_for(running, 2)
+            assert denied.value.code == "isolated_heartbeat_denied"
+        else:
+            result = await asyncio.wait_for(running, 2)
+    if heartbeat_failure:
+        assert client.transitions == ["starting", "running"]
+        assert client.releases == 0 and not executor.finalized
+        return
+    assert result.completed == result.released == 1
+    assert client.transitions == ["starting", "running", "succeeded"]
+    assert executor.finalized == ["succeeded"] and client.releases == 1
+
+
+@pytest.mark.asyncio
 async def test_run_heartbeat_remains_live_during_terminal_preparation() -> None:
     stop = asyncio.Event()
     finalization_heartbeat = asyncio.Event()

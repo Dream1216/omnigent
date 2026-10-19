@@ -69,7 +69,7 @@ from saas.control_plane.platform_models import (
 )
 from saas.control_plane.resolver import load_runtime_compatibility_policy
 from saas.control_plane.rls import RlsContext, apply_rls_context
-from saas.control_plane.scheduling import SchedulingControlPlane
+from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingError
 from saas.control_plane.scheduling_models import (
     CapabilityTokenRecord,
     RunDispatchRecord,
@@ -957,8 +957,41 @@ def _serve_controller(
         "security_revoke_stream": "P0_CANCEL_STREAM: security revoke after the stream starts",
         "controller_crash_recovery": "P0_MANAGED_TOOL P0_CRASH_RECOVERY: write one unique marker",
     }.get(scenario, "Build the requested page")
+
+    class ObservedAuthority(ProductionRunnerMachineAuthority):
+        def _observe(self, operation, values):
+            try:
+                return operation(**values)
+            except SchedulingError as error:
+                with factory() as db:
+                    row = db.get(RunRecord, values["run_id"])
+                    dispatch = db.get(RunDispatchRecord, values["run_id"])
+                    facts = {
+                        "action": operation.__name__,
+                        "error_code": error.code,
+                        "observed_at": datetime.now(timezone.utc).isoformat(),
+                        "requested_fence": values["fence_token"],
+                        "run_status": row.status if row else None,
+                        "run_fence": row.fence_token if row else None,
+                        "lease_expires_at": str(row.lease_expires_at) if row else None,
+                        "dispatch_status": dispatch.status if dispatch else None,
+                        "dispatch_generation": dispatch.dispatch_generation if dispatch else None,
+                        "selected_machine_matches": dispatch.selected_runner_id
+                        == values["runner_id"]
+                        if dispatch
+                        else None,
+                    }
+                (exchange / "control-rejection.json").write_text(json.dumps(facts))
+                raise
+
+        def heartbeat_run(self, **values):
+            return self._observe(super().heartbeat_run, values)
+
+        def transition_run(self, **values):
+            return self._observe(super().transition_run, values)
+
     control = MutualTlsRunnerControlServer(
-        ProductionRunnerMachineAuthority(
+        ObservedAuthority(
             SchedulingControlPlane(workers["executor"]),
             ExecutionControlPlane(workers["executor"]),
             product_revision=case.product_revision,

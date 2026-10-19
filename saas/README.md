@@ -238,6 +238,20 @@ no-launch markers use private format v2, which old Controllers must not consume.
 The cutover must drain all old consumers; rollback must restore the matching
 private-volume and database snapshots as part of the existing maintenance plan.
 
+Physical preparation retains its original task while provider worker threads are
+running. Cancelling the caller or timing out quiescence does not forget that
+task or admit a duplicate preparation for the session. The ten-second bounded
+wait returns unavailable without discarding a still-running task. A stopped
+preparation also refuses a late Runner launch; late listeners are released after the task
+actually settles. This is not a Sandbox termination acknowledgement. Unknown
+resource creation still requires durable provider bindings and recovery proof;
+neither a completed thread nor a cancelled coroutine clears that gate.
+
+Run terminal mutations serialize with in-flight Run heartbeat RPCs. Heartbeats
+continue through terminal preparation; the successful terminal RPC closes their
+gate before another can start. A heartbeat rejection is still an error, never
+ignored as an expected stale fence or replayed under another mutation.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

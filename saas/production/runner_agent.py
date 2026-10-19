@@ -210,12 +210,16 @@ class ProductionRunnerAgent:
         lease: RunnerControlClientLease,
         stop: asyncio.Event,
         terminalizing: asyncio.Event,
+        mutation_lock: asyncio.Lock,
     ) -> str:
         while not stop.is_set():
             try:
                 await asyncio.wait_for(stop.wait(), timeout=self._heartbeat_interval)
             except TimeoutError:
-                state = await self._client.heartbeat_run(lease)
+                async with mutation_lock:
+                    if stop.is_set():
+                        break
+                    state = await self._client.heartbeat_run(lease)
                 status = state.get("status")
                 if status == "cancelling":
                     return "cancelling"
@@ -288,15 +292,25 @@ class ProductionRunnerAgent:
         cancellation = asyncio.Event()
         heartbeat_stop = asyncio.Event()
         terminalizing = asyncio.Event()
+        mutation_lock = asyncio.Lock()
         execution = asyncio.create_task(
             self._executor.execute(lease, cancellation=cancellation),
             name=f"runner-execute-{lease.run_id}",
         )
         heartbeat = asyncio.create_task(
-            self._heartbeat_lease(lease, heartbeat_stop, terminalizing),
+            self._heartbeat_lease(lease, heartbeat_stop, terminalizing, mutation_lock),
             name=f"runner-heartbeat-{lease.run_id}",
         )
         stopped = asyncio.create_task(stop.wait(), name=f"runner-stop-{lease.run_id}")
+
+        async def transition_terminal(target: str):
+            async with mutation_lock:
+                if heartbeat.done():
+                    await heartbeat
+                mutation = await self._client.transition_run(lease, target_status=target)
+                heartbeat_stop.set()
+                return mutation
+
         durable_cancellation = False
         result = "orphaned"
         try:
@@ -382,7 +396,7 @@ class ProductionRunnerAgent:
                 await self._client.transition_run(lease, target_status="cancelling")
             terminalizing.set()
             try:
-                await self._client.transition_run(lease, target_status=result)
+                await transition_terminal(result)
             except RunnerControlError as error:
                 # Only a known nonterminal outcome permits a different terminal command.
                 if error.code not in {
@@ -400,7 +414,7 @@ class ProductionRunnerAgent:
                 result = await self._cancel_execution(lease, execution, cancellation)
                 result = await self._prepare_terminal_result(lease, result)
                 await self._executor.prepare_terminal_transition(lease)
-                await self._client.transition_run(lease, target_status=result)
+                await transition_terminal(result)
             heartbeat_stop.set()
             durable_status = await heartbeat
             if durable_status not in {"stopped", "cancelling", "terminal"}:

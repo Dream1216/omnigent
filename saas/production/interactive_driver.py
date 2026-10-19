@@ -23,6 +23,8 @@ from saas.production.interactive_controller import _unavailable
 from saas.production.interactive_recovery import InteractiveRecoveryRecord
 from saas.production.interactive_runtime import AuthorizedInteractiveInput
 
+_PREPARATION_QUIESCE_TIMEOUT_S = 10
+
 
 @dataclass(slots=True)
 class InteractiveTurnObservation:
@@ -86,8 +88,21 @@ class _Handle:
     listener: asyncio.Task[None] | None = None
 
 
+@dataclass(slots=True)
+class _Preparation:
+    task: asyncio.Task
+    stopping: asyncio.Event
+
+
+def _observe_preparation(task: asyncio.Task) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
 class _LaunchRegistry:
-    def __init__(self, delegate, authorized, wire, tasks):
+    def __init__(
+        self, delegate, authorized, wire, tasks, *, stopping: asyncio.Event | None = None
+    ):
         self._delegate, self._authorized, self._wire, self._tasks = (
             delegate,
             authorized,
@@ -95,6 +110,7 @@ class _LaunchRegistry:
             tasks,
         )
         self._snapshot = copy.deepcopy(authorized.conversation.inference_snapshot)
+        self._stopping = stopping
 
     def __getattr__(self, name):
         return getattr(self._delegate, name)
@@ -140,7 +156,8 @@ class _LaunchRegistry:
         if not isinstance(frame, HostLaunchRunnerFrame):
             return self._delegate.send_text(connection, data)
         if (
-            frame.session_id != self._authorized.session_id
+            (self._stopping is not None and self._stopping.is_set())
+            or frame.session_id != self._authorized.session_id
             or "saas.model-channel.v1" not in connection.hello.capabilities
             or (
                 self._authorized.launch["host_type"] == "external"
@@ -178,6 +195,7 @@ class OfficialInteractiveDriver:
         self._adapter = OmnigentStoreAdapter(contract_version)
         self._handles: dict[tuple[int, str], _Handle] = {}
         self._launch_tasks: dict[tuple[int, str], set[asyncio.Task]] = {}
+        self._preparations: dict[tuple[int, str], _Preparation] = {}
 
     def assert_production_ready(self) -> None:
         state = self._app.state
@@ -192,13 +210,41 @@ class OfficialInteractiveDriver:
         return authorized.runtime.physical_workspace_id, authorized.session_id
 
     async def prepare(self, authorized, *, previous, on_launch):
+        key = self._key(authorized)
+        if key in self._handles or key in self._preparations:
+            raise _unavailable()
+        stopping = asyncio.Event()
+        task = asyncio.create_task(
+            self._prepare(authorized, previous=previous, on_launch=on_launch, stopping=stopping),
+            name="interactive-physical-preparation",
+        )
+        entry = _Preparation(task, stopping)
+        self._preparations[key] = entry
+        task.add_done_callback(_observe_preparation)
+        try:
+            handle = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # A cancelled await does not stop the provider's underlying worker thread.
+            stopping.set()
+            raise
+        except Exception:
+            if self._preparations.get(key) is entry:
+                del self._preparations[key]
+            raise
+        if self._preparations.get(key) is entry:
+            del self._preparations[key]
+        return handle
+
+    async def _prepare(self, authorized, *, previous, on_launch, stopping):
         self.assert_production_ready()
         key = self._key(authorized)
         if key in self._handles:
             raise _unavailable()
         tasks = self._launch_tasks.setdefault(key, set())
         state = SimpleNamespace(**self._app.state._state)
-        state.host_registry = _LaunchRegistry(state.host_registry, authorized, on_launch, tasks)
+        state.host_registry = _LaunchRegistry(
+            state.host_registry, authorized, on_launch, tasks, stopping=stopping
+        )
         store = self._official.conversation_store
         with self._adapter.bind(authorized.runtime):
             conversation = await asyncio.to_thread(store.get_conversation, authorized.session_id)
@@ -319,11 +365,27 @@ class OfficialInteractiveDriver:
             )
 
     async def quiesce_preparation(self, authorized):
-        tasks = self._launch_tasks.get(self._key(authorized), set())
+        key = self._key(authorized)
+        entry = self._preparations.get(key)
+        if entry is not None:
+            entry.stopping.set()
+        tasks = self._launch_tasks.get(key, set())
         for task in tuple(tasks):
             task.cancel()
         if tasks:
             await asyncio.gather(*tuple(tasks), return_exceptions=True)
+        if entry is not None:
+            done, _ = await asyncio.wait({entry.task}, timeout=_PREPARATION_QUIESCE_TIMEOUT_S)
+            if not done:
+                raise _unavailable()
+            try:
+                handle = entry.task.result()
+            except Exception:  # noqa: BLE001 - a failed pipeline is not a stop acknowledgement.
+                handle = None
+            if handle is not None and self._handles.get(key) is handle:
+                await self.release(handle)
+            if self._preparations.get(key) is entry:
+                del self._preparations[key]
 
     async def stop(self, record: InteractiveRecoveryRecord) -> bool:
         if record.host_id is None or record.official_runner_id is None:
@@ -350,6 +412,9 @@ class OfficialInteractiveDriver:
     async def release(self, handle):
         handle = cast(_Handle, handle)
         key = self._key(handle.authorized)
+        preparing = self._preparations.get(key)
+        if preparing is not None and not preparing.task.done():
+            raise _unavailable()
         self._handles.pop(key, None)
         self._launch_tasks.pop(key, None)
         if handle.listener is not None:
