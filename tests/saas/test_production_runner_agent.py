@@ -265,8 +265,11 @@ async def test_run_heartbeat_remains_live_during_terminal_preparation() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("result", ("succeeded", "failed", "timed_out"))
 @pytest.mark.parametrize("cancel_failure", (False, True))
+@pytest.mark.parametrize(
+    "error_code", ("run_transition_invalid", "runner_control_cancellation_required")
+)
 async def test_committed_cancellation_wins_a_known_rejected_terminal_transition(
-    result: str, cancel_failure: bool
+    result: str, cancel_failure: bool, error_code: str
 ) -> None:
     stop = asyncio.Event()
 
@@ -283,7 +286,7 @@ async def test_committed_cancellation_wins_a_known_rejected_terminal_transition(
             if target_status == result:
                 assert not self.rejected
                 self.rejected = True
-                raise RunnerControlError("run_transition_invalid", "known no-mutation rejection")
+                raise RunnerControlError(error_code, "known nonterminal outcome")
             return await super().transition_run(lease, target_status=target_status)
 
     client = Client(stop)
@@ -329,7 +332,12 @@ async def test_cancellation_observed_during_preparation_stops_before_terminal_re
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "code", ("runner_control_transport_unavailable", "run_transition_invalid")
+    "code",
+    (
+        "runner_control_transport_unavailable",
+        "run_transition_invalid",
+        "runner_control_cancellation_required",
+    ),
 )
 async def test_terminal_failure_without_confirmed_cancellation_never_replays(code: str) -> None:
     stop = asyncio.Event()

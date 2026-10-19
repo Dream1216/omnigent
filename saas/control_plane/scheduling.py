@@ -877,6 +877,55 @@ class SchedulingControlPlane:
                     project_id=capability.project_id,
                 ),
             )
+            if _pool.queue_class == INTERACTIVE_QUEUE_CLASS and target_status in {
+                "succeeded",
+                "failed",
+                "timed_out",
+            }:
+                from saas.control_plane.model_revocations import (
+                    executor_run_revocation,
+                    lock_model_security_scope,
+                )
+
+                run = execution._run(db, run_id, lock=True)
+                execution._require_lease(run, lease_token, fence_token, checked_at)
+                marker = cast(dict[str, object], run.input.get("execution", {})).get(
+                    "model_publication"
+                )
+                if marker is not None:
+                    if (
+                        not isinstance(marker, dict)
+                        or not isinstance(marker.get("public_model_id"), str)
+                        or marker.get("wire_api")
+                        not in {"openai_chat_completions", "openai_responses"}
+                    ):
+                        raise SchedulingError(
+                            "interactive_model_publication_invalid", "Model binding is invalid"
+                        )
+                    lock_model_security_scope(
+                        db,
+                        tenant_id=run.tenant_id,
+                        public_model_id=marker["public_model_id"],
+                        wire_api=marker["wire_api"],
+                    )
+                    checked_at = checked_at if now is not None else _utcnow()
+                    if now is None and db.get_bind().dialect.name == "postgresql":
+                        checked_at = cast(
+                            datetime, db.scalar(sa.select(sa.func.clock_timestamp()))
+                        )
+                    execution._require_lease(run, lease_token, fence_token, checked_at)
+                    revocation = executor_run_revocation(db, run_id)
+                    if revocation is not None:
+                        return execution._cancel_in_session(
+                            db,
+                            run,
+                            requested_at=checked_at,
+                            payload={
+                                "reason": "managed_model_security_revocation",
+                                "model_revocation_id": str(revocation),
+                            },
+                            trace_id=_text(trace_id, field="trace_id", maximum=128),
+                        )
             return execution.transition_run_in_transaction(
                 db,
                 run_id=run_id,
@@ -1068,7 +1117,7 @@ class SchedulingControlPlane:
                 raise SchedulingError(
                     "interactive_recovery_binding_invalid", "Recovery is unavailable"
                 )
-            if run.status != "orphaned" or dispatch.status != "released":
+            if run.status not in TERMINAL_RUN_STATUSES or dispatch.status != "released":
                 raise SchedulingError(
                     "interactive_controller_recovery_pending", "Recovery is pending"
                 )

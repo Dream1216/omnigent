@@ -39,6 +39,28 @@ def _error(code: str) -> PlatformSecurityError:
     return PlatformSecurityError(code, "Model security revocation is unavailable or changed")
 
 
+def lock_model_security_scope(
+    db: Session, *, tenant_id: UUID, public_model_id: str, wire_api: str
+):
+    """Serialize intent admission with managed terminal transitions, not model traffic."""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    if (
+        db.scalar(sa.text("SELECT pg_catalog.current_setting('transaction_isolation')"))
+        != "read committed"
+    ):
+        raise _error("platform_model_revocation_isolation_unavailable")
+    scope = canonical_verification_document(
+        {"tenant_id": str(tenant_id), "public_model_id": public_model_id, "wire_api": wire_api}
+    )
+    key = int.from_bytes(
+        sha256(("managed-model-security:" + scope).encode("ascii")).digest()[:8],
+        "big",
+        signed=True,
+    )
+    db.execute(sa.text("SELECT pg_catalog.pg_advisory_xact_lock(:key)"), {"key": key})
+
+
 def revoked_run_publication(run):
     """Match only the immutable tenant/model/protocol/version selected by this Run."""
     marker = run.input["execution"]["model_publication"]
@@ -68,6 +90,18 @@ def run_security_revoked(db: Session, run_id: UUID) -> bool:
                 .exists()
             )
         )
+    )
+
+
+def executor_run_revocation(db: Session, run_id: UUID) -> UUID | None:
+    from saas.control_plane.execution_models import RunRecord
+
+    return db.scalar(
+        sa.select(Revocation.id)
+        .select_from(Revocation, Publication, RunRecord)
+        .where(RunRecord.id == run_id, revoked_run_publication(RunRecord))
+        .order_by(Revocation.created_at, Revocation.id)
+        .limit(1)
     )
 
 
@@ -149,6 +183,12 @@ class ModelSecurityRevocationService:
             cutoff = db.get(Cutoff, disablement_id)
             if cutoff is None or cutoff.through_generation != expected_generation:
                 raise _error("platform_model_revocation_conflict")
+            lock_model_security_scope(
+                db,
+                tenant_id=cutoff.tenant_id,
+                public_model_id=cutoff.public_model_id,
+                wire_api=cutoff.wire_api,
+            )
             if db.scalar(
                 sa.select(Revocation.id).where(Revocation.disablement_id == disablement_id)
             ):

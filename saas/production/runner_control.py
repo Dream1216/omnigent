@@ -1451,11 +1451,19 @@ class MutualTlsRunnerControlClient:
             "transition_run", {**self._run_values(lease), "target_status": target_status}
         )
         required = {"event_sequence", "run_id", "run_version", "status", "version"}
-        if (
-            set(response) != required
-            or response["run_id"] != str(lease.run_id)
-            or response["status"] != target_status
-        ):
+        if set(response) != required or response["run_id"] != str(lease.run_id):
+            raise RunnerControlError(
+                "runner_control_response_invalid", "Runner control response is invalid"
+            )
+        if response["status"] == "cancelling" and target_status in {
+            "succeeded",
+            "failed",
+            "timed_out",
+        }:
+            raise RunnerControlError(
+                "runner_control_cancellation_required", "Durable cancellation requires cleanup"
+            )
+        if response["status"] != target_status:
             raise RunnerControlError(
                 "runner_control_response_invalid", "Runner control response is invalid"
             )

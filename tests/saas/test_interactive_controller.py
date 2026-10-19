@@ -470,6 +470,9 @@ async def test_public_idle_stop_updates_recovery_only_after_exact_ack(controller
     assert record.phase == "terminal" and record.outcome == "succeeded"
     assert record.process_stopped is ack
     assert len(cancellations) == len(c.stops) == 1
+    assert await c.executor.reconcile_physical_gc(limit=32) == int(ack)
+    assert c.confirmed == ([c.lease.run_id] if ack else [])
+    assert c.journal.read(c.lease.run_id).outcome == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -706,6 +709,105 @@ async def test_restart_reconciles_original_usage_and_never_dispatches_old_input(
     assert len(c.inputs) == len(c.gateway_calls) == 1
     assert not list(record.grant.spool_directory.glob("*.pending.json"))
     assert all(call["capability_token"] == c.lease.capability_token for call in c.references.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ("cancelled", "failed"))
+async def test_stopped_terminal_without_usage_spool_still_delivers_physical_receipt(
+    controller_case, terminal
+):
+    c = controller_case
+    assert await c.executor.execute(c.lease, cancellation=asyncio.Event()) == "succeeded"
+    assert await c.executor.prepare_finalization(c.lease, result=terminal) == terminal
+    await c.executor.finalize(c.lease, result=terminal)
+    record = c.journal.read(c.lease.run_id)
+    assert record.phase == "terminal" and record.process_stopped
+    assert not list(record.grant.spool_directory.glob("*.pending.json"))
+    stop_count = len(c.stops)
+    assert await c.executor.reconcile_physical_gc(limit=32) == 1
+    assert c.confirmed == [c.lease.run_id] and len(c.stops) == stop_count
+    assert c.journal.read(c.lease.run_id).outcome == terminal
+    assert await c.executor.reconcile_physical_gc(limit=32) == 0
+    assert len(c.inputs) == len(c.gateway_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_idle_runner_without_stop_remains_reusable_and_unconfirmed(
+    controller_case,
+):
+    c = controller_case
+    assert await c.executor.execute(c.lease, cancellation=asyncio.Event()) == "succeeded"
+    assert await c.executor.prepare_finalization(c.lease, result="succeeded") == "succeeded"
+    await c.executor.finalize(c.lease, result="succeeded")
+    assert not c.journal.read(c.lease.run_id).process_stopped
+    assert await c.executor.reconcile_physical_gc(limit=32) == 0
+    assert not c.confirmed and not c.stops
+
+
+@pytest.mark.asyncio
+async def test_terminal_stop_receipt_retry_retains_proof_without_usage_files(controller_case):
+    c = controller_case
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await c.executor.prepare_finalization(c.lease, result="cancelled")
+    await c.executor.finalize(c.lease, result="cancelled")
+    attempts = []
+
+    async def confirm(record):
+        attempts.append(physical_recovery_proof_sha256(record))
+        if len(attempts) == 1:
+            raise RunnerControlError("isolated_stop_receipt_lost_ack", "Unavailable")
+        await c.confirm(record)
+
+    c.executor._confirm_recovery = confirm
+    with pytest.raises(RunnerControlError):
+        await c.executor.reconcile_physical_gc(limit=32)
+    retained = c.journal.read(c.lease.run_id)
+    assert retained.process_stopped and retained.outcome == "cancelled"
+    assert not list(retained.grant.spool_directory.glob("*.pending.json"))
+    assert c.lease.run_id not in c.executor._confirmed_recoveries
+    stop_count = len(c.stops)
+    assert await c.executor.reconcile_physical_gc(limit=32) == 1
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    assert c.confirmed == [c.lease.run_id] and len(c.stops) == stop_count
+    assert await c.executor.reconcile_physical_gc(limit=32) == 0
+    assert len(c.inputs) == len(c.gateway_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_background_stop_receipt_does_not_hold_the_public_stop_lifecycle(controller_case):
+    c = controller_case
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await c.executor.prepare_finalization(c.lease, result="cancelled")
+    await c.executor.finalize(c.lease, result="cancelled")
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def confirm(record):
+        started.set()
+        await finish.wait()
+        await c.confirm(record)
+
+    async def cancel_inputs():
+        return {"queued": False, "physical_run_id": str(c.lease.run_id)}
+
+    c.executor._confirm_recovery = confirm
+    gc = asyncio.create_task(c.executor.reconcile_physical_gc(limit=32))
+    stop = None
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        stop = asyncio.create_task(
+            c.executor.stop_session(
+                c.context,
+                c.authorized.session_id,
+                c.journal.read(c.lease.run_id).official_runner_id,
+                cancel_inputs,
+            )
+        )
+        assert await asyncio.wait_for(asyncio.shield(stop), 0.5) == {"queued": False}
+    finally:
+        finish.set()
+        await gc
+        if stop is not None:
+            await stop
 
 
 @pytest.mark.asyncio

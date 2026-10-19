@@ -7,9 +7,11 @@ import httpx
 import pytest
 import sqlalchemy as sa
 
+from saas.control_plane.execution import ExecutionControlPlane, ExecutionControlPlaneError
 from saas.control_plane.execution_models import RunEventRecord, RunRecord
 from saas.control_plane.model_revocation_execution import ModelRevocationRunCanceller
 from saas.control_plane.model_revocations import run_security_revoked
+from saas.control_plane.scheduling import SchedulingControlPlane
 from saas.control_plane.scheduling_models import CapabilityTokenRecord
 from tests.saas.test_interactive_execution_http import _message, _post
 from tests.saas.test_interactive_execution_http import interactive_http as interactive_http
@@ -104,3 +106,66 @@ async def test_executor_applies_bounded_idempotent_cancellation_and_preserves_st
         assert all(
             e.payload["model_revocation_id"] == str(receipt["revocation_id"]) for e in events
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ("succeeded", "failed", "timed_out"))
+@pytest.mark.parametrize("security", (False, True))
+async def test_model_terminal_transition_observes_security_intent_without_waiting_for_poll(
+    interactive_http, tmp_path, target, security
+):
+    p = await _setup(interactive_http, tmp_path)
+    cutoff = _disable(p.f)
+    receipt = _revoke(p.f, cutoff) if security else None
+    c, lease = p.connection, p.lease
+    result = SchedulingControlPlane(p.f.factory).authenticated_run_transition(
+        ExecutionControlPlane(p.f.factory),
+        runner_id=c.runner_id,
+        connection_generation=c.connection_generation,
+        connection_token=c.connection_token,
+        run_id=lease.run_id,
+        lease_token=lease.lease_token,
+        fence_token=lease.fence_token,
+        capability_token=lease.capability_token,
+        target_status=target,
+        trace_id="isolated-model-terminal-race",
+    )
+    assert result.status == ("cancelling" if security else target)
+    with p.f.factory() as db:
+        assert db.get(RunRecord, lease.run_id).status == result.status
+        if security:
+            assert db.get(CapabilityTokenRecord, lease.capability_id).revoked_at is None
+            event = db.scalars(
+                sa.select(RunEventRecord).where(
+                    RunEventRecord.run_id == lease.run_id,
+                    RunEventRecord.event_type == "run.cancelling",
+                )
+            ).one()
+            assert event.payload["model_revocation_id"] == str(receipt["revocation_id"])
+    assert ModelRevocationRunCanceller(p.f.factory).cancel_pending() == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ("lease_token", "fence_token"))
+async def test_terminal_security_check_cannot_mutate_with_an_invalid_lease(
+    interactive_http, tmp_path, changed
+):
+    p = await _setup(interactive_http, tmp_path)
+    _revoke(p.f, _disable(p.f))
+    c, lease = p.connection, p.lease
+    fields = {"lease_token": lease.lease_token, "fence_token": lease.fence_token}
+    fields[changed] = uuid4() if changed == "lease_token" else lease.fence_token + 1
+    with pytest.raises(ExecutionControlPlaneError):
+        SchedulingControlPlane(p.f.factory).authenticated_run_transition(
+            ExecutionControlPlane(p.f.factory),
+            runner_id=c.runner_id,
+            connection_generation=c.connection_generation,
+            connection_token=c.connection_token,
+            run_id=lease.run_id,
+            capability_token=lease.capability_token,
+            target_status="succeeded",
+            trace_id="isolated-invalid-terminal-lease",
+            **fields,
+        )
+    with p.f.factory() as db:
+        assert db.get(RunRecord, lease.run_id).status == "running"

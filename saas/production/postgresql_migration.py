@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "0810d7358ad0c9bfdaa22ee572fad129bcadbc824a4c793312469e562779a1fb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "8edfc6ce14782323b1b761bca9658e9a35656a0f79cd13894007b41fc0525f2e",
     # Source-derived retained model security revocation authority.
     (
         16,
@@ -516,6 +527,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "81e5e4b15bd2715c9404979f9ad5f35dd4578e1f97fa5263e4334cb11f53acc9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "9b23549145153bc9a193c578174882b6aa47731dd97177410008bb17221f5fd9",
     # Source-derived retained model security revocation authority.
     (
         16,
@@ -816,6 +838,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "5113ce2e378b8c3ed6c9a6b64a023ebae367e6adc3b0127fc7921ca02f505a42",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "d0b3a1cb56a00dc84868b5fe7a3d677302cdb9c13fe7058170db9e8828ad1fc7",
     # Source-derived retained model security revocation authority.
     (
         16,
@@ -1086,6 +1119,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "39d0304ceacca2d5292f5119e9aacef7ad1a5b850e8ee969155d49c4ec0d67cb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "c326ed62d526b91ce153ab7c8878388c4b1dddc50e556859a72ba64e12ae6538",
     # Source-derived retained model security revocation authority.
     (
         16,
@@ -1351,6 +1395,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "42ef6ee337e786ceeafde811e00b186c8e75eebba5ae733f316bce99cbdd22e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "94b4e57eb2d84efbda5e1604bdd571e3b17cf6f30c4c58b10423ffca6348eeb4",
     # Source-derived retained model security revocation authority.
     (
         16,
@@ -1591,6 +1646,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "9327dfbce27a45d9aecb76aa691a6f6d884dd4545203105a06349e12228f3945",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "4eaf929b385143a9dda9e5d696c2b3284dba6fcf923baa50dcadfa6d634c1d81",
     # Source-derived retained model security revocation authority.
     (
         16,
@@ -1838,6 +1904,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "abd993435f0ca805c77455c4fabf31e5c744dc6d82fe259b124744b04082963f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "c18718dbde6dd5015261e6f2a07bbc7b7054df2c50e68fcf7e7a9a4a6ed1bf81",
     # Source-derived retained model security revocation authority.
     (
         16,
@@ -2050,6 +2127,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "dbdb8aa75795a8d45754f5f8761c958c387f477a86920b50632dc4ec4f99c3a0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "5fb748c9246931788d52f39389e65d7ca3382c465f3a134b34a5867450eca020",
     # Source-derived retained model security revocation authority.
     (
         16,

@@ -115,6 +115,60 @@ def test_generic_run_event_cannot_forge_a_physical_recovery_receipt(recovery_cas
         assert db.get(RunDispatchRecord, lease.run_id).physical_recovery_fence is None
 
 
+@pytest.mark.parametrize("terminal", ("succeeded", "failed", "cancelled", "timed_out"))
+def test_stopped_terminal_run_receipt_keeps_outcome_and_revoked_authority(
+    interactive_http, terminal
+):
+    f = interactive_http
+    scheduling, pool, domain, schema = _controller(f)
+    run_id = _admit(f)
+    connection = _register(f, scheduling, pool, domain, schema, key="terminal-stop-controller")
+    now = datetime.now(timezone.utc)
+    lease = _claim(scheduling, connection, now=now)
+    execution = ExecutionControlPlane(f.factory)
+    for status in (
+        "starting",
+        "running",
+        *(("cancelling",) if terminal == "cancelled" else ()),
+        terminal,
+    ):
+        execution.transition_run(
+            run_id=run_id,
+            lease_token=lease.lease_token,
+            fence_token=lease.fence_token,
+            target_status=status,
+            trace_id="isolated-terminal-stop",
+            now=now,
+        )
+    values = _confirmation(connection, lease, now)
+    with pytest.raises(SchedulingError, match="pending"):
+        scheduling.confirm_interactive_recovery(**values)
+    scheduling.release_dispatch(
+        run_id=run_id,
+        runner_id=connection.runner_id,
+        connection_generation=connection.connection_generation,
+        connection_token=connection.connection_token,
+        fence_token=lease.fence_token,
+        requeue=False,
+        now=now,
+    )
+    assert scheduling.confirm_interactive_recovery(**values) is False
+    assert scheduling.confirm_interactive_recovery(**values) is True
+    with f.factory() as db:
+        run, dispatch = db.get(RunRecord, run_id), db.get(RunDispatchRecord, run_id)
+        assert run.status == terminal and dispatch.status == "released"
+        assert dispatch.physical_recovery_fence == lease.fence_token
+        assert db.get(CapabilityTokenRecord, lease.capability_id).revoked_at is not None
+        assert db.get(RunnerRegistrationRecord, connection.runner_id).active_leases == 0
+        events = db.scalars(
+            sa.select(RunEventRecord).where(
+                RunEventRecord.run_id == run_id,
+                RunEventRecord.event_type == "run.interactive_physical_recovered",
+            )
+        ).all()
+        assert len(events) == 1 and events[0].payload["proof_sha256"] == "b" * 64
+
+
 def test_foreign_registered_machine_cannot_confirm_the_original_recovery(recovery_case):
     f, scheduling, original, lease, _, later = recovery_case
     with f.factory() as db:

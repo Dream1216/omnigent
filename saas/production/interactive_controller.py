@@ -523,13 +523,20 @@ class ProductionInteractiveExecutor:
                 for row in self._journal.records()
                 if row.phase != "terminal"
                 or any(row.grant.spool_directory.glob("*.pending.json"))
-                or (row.outcome == "orphaned" and row.run_id not in self._confirmed_recoveries)
+                or (
+                    row.run_id not in self._confirmed_recoveries
+                    and (
+                        row.outcome == "orphaned"
+                        or (row.process_stopped and row.official_runner_id is not None)
+                    )
+                )
             ]
             for candidate in candidates[:limit]:
                 record = self._journal.read(candidate.run_id)
                 if record.run_id in self._active:
                     continue
                 await self._verify_recovery(record)
+                confirmation_required = False
                 async with self._lifecycle:
                     if (
                         record.run_id in self._active
@@ -544,7 +551,10 @@ class ProductionInteractiveExecutor:
                     ):
                         raise _unavailable()
                     if record.phase != "terminal" or (
-                        record.outcome == "orphaned"
+                        (
+                            record.outcome == "orphaned"
+                            or (record.process_stopped and record.official_runner_id is not None)
+                        )
                         and record.run_id not in self._confirmed_recoveries
                     ):
                         stopped = (
@@ -557,12 +567,20 @@ class ProductionInteractiveExecutor:
                         if not record.process_stopped:
                             record = replace(record, process_stopped=True)
                             self._journal.put(record)
-                        await self._confirm_recovery(record)
+                        confirmation_required = True
+                if confirmation_required:
+                    await self._confirm_recovery(record)
+                    async with self._lifecycle:
+                        if (
+                            record.run_id in self._active
+                            or self._journal.read(record.run_id) != record
+                        ):
+                            continue
                         record = replace(
                             record,
                             phase="terminal",
                             process_stopped=True,
-                            outcome="orphaned",
+                            outcome=record.outcome if record.phase == "terminal" else "orphaned",
                         )
                         self._journal.put(record)
                         self._confirmed_recoveries.add(record.run_id)

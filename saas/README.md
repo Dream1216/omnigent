@@ -185,8 +185,35 @@ stays available for trusted stop/finalization reporting, not new inference.
 The cutoff never covers later publication generations or another tenant/model/
 protocol. The shared audit chain records the original Staff action; unknown
 supplier costs remain held. Staff gains no Run table authority, and Executor
-reads no Staff credentials. Physical stop/progress receipts, a Staff console
+reads no Staff credentials. Public stop/progress projection, a Staff console
 control and production acceptance remain unfinished independent gates.
+
+An acknowledged stop of an identified physical Runner is retained through the
+existing mTLS historical-recovery command after its Run is terminal and dispatch
+capacity is released. The original machine, capability, connection generation,
+fence and certificate bindings remain required; recording cleanup cannot mint
+execution or model authority. It preserves the Run outcome and shared event
+chain. Delivery does not depend on pending usage files: a lost acknowledgement
+retries the same private proof, never the task. Receipt I/O is outside the public
+Stop lifecycle lock, with an unchanged-record check before local checkpointing.
+An unstopped successful idle Runner remains reusable and is not treated as
+physically stopped. Unstarted and unknown-launch cases do not acquire a synthetic
+Runner identifier merely to make this receipt complete. This is not a Staff live
+progress API or proof that every revoked idle/terminal race has been closed.
+
+Intent admission and managed model terminal transitions share a tenant/model/
+protocol transaction lock under READ COMMITTED. A terminal result committed
+first remains terminal; an intent committed first retains `cancelling` before
+the Runner can publish success, failure or timeout. The control client recognizes
+only this validated nonterminal reply as requiring physical cleanup. It stops
+and prepares before a distinct `cancelled`/`orphaned` command; unknown transport
+results are never replayed. Ordinary cutoff alone still permits completion.
+
+Schema `lm2o00000001` extends the existing physical-recovery trigger to released
+terminal interactive Runs. It preserves executor-only writes, exact scope/fence
+binding, immutable receipts, and the original Run outcome. Its downgrade restores
+orphan-only admission without deleting retained receipts; Runner cluster admission
+requires the exact packaged schema head before execution resumes.
 
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without

@@ -1377,6 +1377,10 @@ def _serve_controller(
                 from saas.control_plane.model_revocation_execution import (
                     ModelRevocationRunCanceller,
                 )
+                from saas.control_plane.model_revocations import revoked_run_publication
+                from saas.control_plane.model_routing_models import (
+                    ModelPublicationRevocationRecord,
+                )
                 from tests.saas.test_model_revocation_execution_postgresql import _staff
 
                 source_service, staff_actor = case.revocation_source
@@ -1407,9 +1411,67 @@ def _serve_controller(
                     )
                     assert receipt["revocation_requested"] and not receipt["execution_complete"]
                     canceller = ModelRevocationRunCanceller(workers["executor"])
-                    changes = canceller.cancel_pending()
-                    assert len(changes) == 1 and changes[0].run_id == original_run.id
-                    assert changes[0].status == "cancelling"
+                    changes, observations = [], []
+
+                    def cancellation_observed():
+                        # SKIP LOCKED may defer a busy Run to the next recovery cycle.
+                        mutations = canceller.cancel_pending()
+                        changes.extend(mutations)
+                        with factory() as db:
+                            current = db.get(RunRecord, original_run.id)
+                            matches = bool(
+                                db.scalar(
+                                    sa.select(sa.literal(1))
+                                    .select_from(
+                                        ModelPublicationRevocationRecord,
+                                        ModelPublicationVersionRecord,
+                                        RunRecord,
+                                    )
+                                    .where(
+                                        RunRecord.id == original_run.id,
+                                        revoked_run_publication(RunRecord),
+                                    )
+                                    .limit(1)
+                                )
+                            )
+                            observations.append(
+                                {"status": current.status, "mutations": len(mutations)}
+                            )
+                            (exchange / "revocation-finalization.json").write_text(
+                                json.dumps(
+                                    {
+                                        "run_id": str(current.id),
+                                        "status": current.status,
+                                        "terminal_at": current.terminal_at,
+                                        "cancel_requested_at": current.cancel_requested_at,
+                                        "intent_created_at": receipt["created_at"],
+                                        "publication_matches_intent": matches,
+                                        "poll_mutation_count": len(changes),
+                                        "poll_observations": observations,
+                                    },
+                                    default=str,
+                                )
+                            )
+                            assert matches and len(changes) <= 1
+                            return current.status in {"cancelling", "cancelled"}
+
+                    _wait(cancellation_observed, "durable security cancellation", timeout=15)
+                    with factory() as db:
+                        current = db.get(RunRecord, original_run.id)
+                        assert len(changes) <= 1
+                        assert current.status in {"cancelling", "cancelled"}
+                        event = db.scalars(
+                            sa.select(RunEventRecord).where(
+                                RunEventRecord.run_id == original_run.id,
+                                RunEventRecord.event_type == "run.cancelling",
+                            )
+                        ).one()
+                        assert event.payload["model_revocation_id"] == str(
+                            receipt["revocation_id"]
+                        )
+                    if changes:
+                        assert changes[0].run_id == original_run.id
+                        assert changes[0].status == "cancelling"
                     assert canceller.cancel_pending() == ()
                     _wait(released, "security-revoked Run terminal release", timeout=150)
                     record = adapter._journal.read(original_run.id)
@@ -1420,6 +1482,23 @@ def _serve_controller(
                         staff_actor, idempotency_key="physical-security-revoke-001"
                     )
                     assert found == receipt and not found["execution_complete"]
+                asyncio.run_coroutine_threadsafe(
+                    adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                ).result(20)
+                with factory() as db:
+                    assert (
+                        db.get(RunDispatchRecord, original_run.id).physical_recovery_fence
+                        == original_run.fence_token
+                    )
+                    stopped = db.scalars(
+                        sa.select(RunEventRecord).where(
+                            RunEventRecord.run_id == original_run.id,
+                            RunEventRecord.event_type == "run.interactive_physical_recovered",
+                        )
+                    ).one()
+                    assert stopped.payload["proof_sha256"] == physical_recovery_proof_sha256(
+                        adapter._journal.read(original_run.id)
+                    )
                 denied = httpx.post(
                     "http://127.0.0.1:8090/v1/chat/completions",
                     trust_env=False,
@@ -1477,6 +1556,7 @@ def _serve_controller(
                             "scenario": scenario,
                             "official_store_backend": host_store._engine.dialect.name,
                             "host_stop_acknowledged": True,
+                            "durable_stop_receipts": 1,
                             "staff_intent_executor_cancel": True,
                             "revocation_id": str(receipt["revocation_id"]),
                             "admission_receipt_not_live_progress": True,
@@ -1933,6 +2013,27 @@ def _serve_controller(
                 assert asyncio.run_coroutine_threadsafe(
                     adapter._executor._driver.stop(record), app_loop
                 ).result(20)
+            if scenario in {"public_stop", "public_archive"}:
+                asyncio.run_coroutine_threadsafe(
+                    adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                ).result(20)
+                with factory() as db:
+                    for stopped_run in runs:
+                        stopped_record = adapter._journal.read(stopped_run.id)
+                        assert stopped_record.process_stopped
+                        assert (
+                            db.get(RunDispatchRecord, stopped_run.id).physical_recovery_fence
+                            == stopped_run.fence_token
+                        )
+                        recovered = db.scalars(
+                            sa.select(RunEventRecord).where(
+                                RunEventRecord.run_id == stopped_run.id,
+                                RunEventRecord.event_type == "run.interactive_physical_recovered",
+                            )
+                        ).one()
+                        assert recovered.payload["proof_sha256"] == physical_recovery_proof_sha256(
+                            stopped_record
+                        )
             adapter.assert_production_ready()
             gc_interval = adapter._config.physical_gc_interval_seconds
             (exchange / "result.json").write_text(
@@ -1984,6 +2085,9 @@ def _serve_controller(
                         if scenario == "cancel_unknown_stream"
                         else None,
                         "host_stop_acknowledged": True,
+                        "durable_stop_receipts": expected_runs
+                        if scenario in {"public_stop", "public_archive"}
+                        else None,
                         "manual_run_heartbeat": False,
                     }
                 )

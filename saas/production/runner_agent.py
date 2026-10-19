@@ -384,8 +384,11 @@ class ProductionRunnerAgent:
             try:
                 await self._client.transition_run(lease, target_status=result)
             except RunnerControlError as error:
-                # Only a known rolled-back rejection permits a different terminal command.
-                if error.code != "run_transition_invalid" or result not in {
+                # Only a known nonterminal outcome permits a different terminal command.
+                if error.code not in {
+                    "run_transition_invalid",
+                    "runner_control_cancellation_required",
+                } or result not in {
                     "succeeded",
                     "failed",
                     "timed_out",
