@@ -1079,11 +1079,72 @@ def _serve_controller(
         adapter_contract_version="0.2.0",
     )
     creation_checkpoints, resource_checkpoints = [], []
+    secret_submission_checkpoints, workload_submission_checkpoints = [], []
     adapter = None
     try:
         adapter = ProductionInteractiveControllerAdapter(config=release, source=source)
         if cluster is not None:
+            from kubernetes.client import CoreV1Api
+
             from omnigent.onboarding.sandboxes.kubernetes import KubernetesSandboxLauncher
+            from saas.production.interactive_resources import (
+                CREATION_ANNOTATION,
+                INPUT_TEMPLATE_ANNOTATION,
+            )
+
+            create_secret = CoreV1Api.create_namespaced_secret
+
+            def observe_secret_submission(client, namespace, body, **kwargs):
+                candidates = [
+                    row
+                    for row in adapter._journal.records()
+                    if row.managed_preparation is not None
+                    and row.managed_preparation.namespace == namespace
+                    and row.managed_creation is not None
+                    and row.managed_creation.nonce
+                    == body["metadata"]["annotations"][CREATION_ANNOTATION]
+                ]
+                assert len(candidates) == 1
+                row = candidates[0]
+                assert row.managed_creation.secret_submitted
+                assert row.managed_creation.secret_uid is None
+                assert not row.managed_creation.workload_submitted
+                secret_submission_checkpoints.append(row.run_id)
+                return create_secret(client, namespace, body, **kwargs)
+
+            monkeypatch.setattr(CoreV1Api, "create_namespaced_secret", observe_secret_submission)
+            from omnigent.onboarding.sandboxes.agent_sandbox import AgentSandboxLauncher
+
+            selected_launcher = (
+                KubernetesSandboxLauncher
+                if cluster["provider"] == "kubernetes"
+                else AgentSandboxLauncher
+            )
+            submit_workload = selected_launcher._create_workload
+
+            def observe_workload_submission(launcher, namespace, manifest):
+                rows = [
+                    row
+                    for row in adapter._journal.records()
+                    if row.managed_preparation is not None
+                    and row.managed_preparation.namespace == namespace
+                    and row.managed_preparation.resource_name == manifest["metadata"]["name"]
+                ]
+                assert len(rows) == 1
+                row = rows[0]
+                assert row.managed_creation is not None
+                assert row.managed_creation.workload_submitted
+                assert row.managed_creation.secret_uid is not None
+                annotations = manifest["spec"]["template"]["metadata"]["annotations"]
+                assert annotations[CREATION_ANNOTATION] == row.managed_creation.nonce
+                assert (
+                    annotations[INPUT_TEMPLATE_ANNOTATION]
+                    == row.managed_creation.input_template_sha256
+                )
+                workload_submission_checkpoints.append(row.run_id)
+                return submit_workload(launcher, namespace, manifest)
+
+            monkeypatch.setattr(selected_launcher, "_create_workload", observe_workload_submission)
 
             start_host = KubernetesSandboxLauncher.start_host
 
@@ -1109,7 +1170,10 @@ def _serve_controller(
                 )
                 path = adapter._journal.root / f"{row.run_id}.json"
                 assert path.stat().st_mode & 0o777 == 0o600
-                assert json.loads(path.read_bytes())["schema_version"] == 3
+                assert json.loads(path.read_bytes())["schema_version"] == 5
+                assert row.managed_creation is not None
+                assert not row.managed_creation.secret_submitted
+                assert not row.managed_creation.workload_submitted
                 creation_checkpoints.append(binding)
                 return start_host(launcher, sandbox_id, host_id=host_id, **values)
 
@@ -1130,7 +1194,9 @@ def _serve_controller(
                 assert row.phase == "preparing" and row.official_runner_id is None
                 assert row.managed_resources is not None and not row.process_stopped
                 path = adapter._journal.root / f"{row.run_id}.json"
-                assert json.loads(path.read_bytes())["schema_version"] == 4
+                assert json.loads(path.read_bytes())["schema_version"] == 5
+                assert row.managed_creation is not None and row.managed_creation.workload_submitted
+                assert row.managed_creation.secret_uid == row.managed_resources.token_secret_uid
                 assert path.stat().st_mode & 0o777 == 0o600
                 resource_checkpoints.append(row.managed_resources)
                 return wait_running(launcher, namespace, sandbox_id)
@@ -1439,6 +1505,7 @@ def _serve_controller(
                 record = adapter._journal.read(run.id)
                 assert record.phase == "draining" and record.outcome == "orphaned"
                 assert record.managed_preparation and record.managed_resources
+                assert record.managed_creation and record.managed_creation.workload_submitted
                 assert not record.process_stopped and record.official_runner_id is None
                 assert rejected_create == [True] and not resource_checkpoints
                 from saas.production.interactive_preparation import (
@@ -1534,6 +1601,11 @@ def _serve_controller(
                                 adapter._config.physical_gc_interval_seconds
                             ),
                             "creation_checkpoint_before_sdk": len(creation_checkpoints) == 1,
+                            "write_ahead_secret_and_workload_acknowledged": (
+                                secret_submission_checkpoints
+                                == workload_submission_checkpoints
+                                == [record.run_id]
+                            ),
                             "managed_preparation_binding": asdict(record.managed_preparation),
                             "managed_resource_binding": asdict(record.managed_resources),
                             "resource_binding_revalidated": True,
@@ -2719,6 +2791,13 @@ def _serve_controller(
                         else None,
                         "managed_resource_binding": asdict(resource_checkpoints[-1])
                         if resource_checkpoints
+                        else None,
+                        "write_ahead_secret_and_workload_acknowledged": (
+                            secret_submission_checkpoints
+                            == workload_submission_checkpoints
+                            == [record.run_id]
+                        )
+                        if cluster is not None
                         else None,
                         "resource_binding_revalidated": cluster is not None
                         and scenario == "single",

@@ -184,6 +184,7 @@ async def test_managed_driver_uses_the_official_app_tracker_before_provisioning(
             on_launch=None,
             on_preparation=checkpoint,
             on_resources=checkpoint,
+            on_creation=checkpoint,
         )
     provision.assert_awaited_once()
     assert provision.call_args.kwargs["tracker"] is tracker

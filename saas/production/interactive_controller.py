@@ -29,6 +29,7 @@ from saas.production.interactive_recovery import (
     InteractiveCleanupRecord,
     InteractiveRecoveryJournal,
     InteractiveRecoveryRecord,
+    ManagedCreationIntent,
     ManagedPreparationBinding,
     ManagedResourceBinding,
     UnstartedInteractiveRecoveryRecord,
@@ -56,6 +57,7 @@ class InteractivePhysicalDriver(Protocol):
         on_launch: Callable[[HostLaunchRunnerFrame, object], Awaitable[HostLaunchRunnerFrame]],
         on_preparation: Callable[[ManagedPreparationBinding], Awaitable[None]],
         on_resources: Callable[[ManagedResourceBinding], Awaitable[None]],
+        on_creation: Callable[[ManagedCreationIntent], Awaitable[None]],
     ) -> object: ...
 
     async def dispatch(self, authorized: AuthorizedInteractiveInput, handle: object) -> None: ...
@@ -333,6 +335,18 @@ class ProductionInteractiveExecutor:
                 raise _unavailable()
             self._put(active, managed_resources=binding)
 
+        async def creation(intent: ManagedCreationIntent) -> None:
+            if (
+                self._active.get(lease.run_id) is not active
+                or active.record.phase != "preparing"
+                or active.record.process_stopped
+                or active.record.official_runner_id is not None
+                or active.record.managed_preparation is None
+                or authorized.launch["host_type"] != "managed"
+            ):
+                raise _unavailable()
+            self._put(active, managed_creation=intent)
+
         try:
             async with self._lifecycle:
                 if cancellation.is_set():
@@ -364,6 +378,7 @@ class ProductionInteractiveExecutor:
                         on_launch=launch,
                         on_preparation=preparing,
                         on_resources=resources,
+                        on_creation=creation,
                     ),
                     name="interactive-prepare",
                 )

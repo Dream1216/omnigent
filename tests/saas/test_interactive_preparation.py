@@ -107,6 +107,7 @@ async def test_cancelled_prepare_keeps_actual_worker_and_denies_late_runner_laun
             on_launch=p.wire,
             on_preparation=p.checkpoint,
             on_resources=p.checkpoint,
+            on_creation=p.checkpoint,
         )
     )
     quiescence = None

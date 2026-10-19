@@ -110,7 +110,14 @@ async def controller_case(interactive_http, tmp_path):
             pass
 
         async def prepare(
-            self, actual, *, previous, on_launch, on_preparation=None, on_resources=None
+            self,
+            actual,
+            *,
+            previous,
+            on_launch,
+            on_preparation=None,
+            on_resources=None,
+            on_creation=None,
         ):
             if previous is not None:
                 assert previous.channel_value == self.channel.secret_value

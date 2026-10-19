@@ -23,6 +23,7 @@ async def test_one_reserved_creation_cannot_submit_the_workload_twice(tmp_path, 
     c = _case(tmp_path, monkeypatch)
 
     def twice(*args, **kwargs):
+        c.submit_secret()
         c.p.delegate._create_workload("owned-runners", c.job)
         c.p.delegate._create_workload("owned-runners", c.job)
 
@@ -39,6 +40,7 @@ async def test_checkpointed_sdk_does_not_run_name_only_best_effort_cleanup(tmp_p
     monkeypatch.setattr(c.p.delegate, "_best_effort_delete", lambda *args: deleted.append(args))
 
     def failed(*args, **kwargs):
+        c.submit_secret()
         c.p.delegate._create_workload("owned-runners", c.job)
         c.p.delegate._best_effort_delete("owned-runners", "owned-job", "owned-token")
         raise OSError("isolated-create-ack-unavailable")
@@ -176,8 +178,6 @@ async def test_concurrent_start_cannot_close_the_live_sdk_client(tmp_path, monke
 async def test_actual_sdk_secret_conflict_does_not_delete_existing_resources(
     tmp_path, monkeypatch
 ):
-    import click
-
     ApiException = pytest.importorskip("kubernetes.client.rest").ApiException
 
     c = _case(tmp_path, monkeypatch)
@@ -200,7 +200,7 @@ async def test_actual_sdk_secret_conflict_does_not_delete_existing_resources(
     monkeypatch.setattr(
         c.p.delegate, "start_host", KubernetesSandboxLauncher.start_host.__get__(c.p.delegate)
     )
-    with pytest.raises(click.ClickException):
+    with pytest.raises(RunnerControlError):
         await asyncio.to_thread(
             c.wrap().start_host,
             "owned-job",

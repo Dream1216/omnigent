@@ -59,7 +59,7 @@ def _launcher(tmp_path, monkeypatch, provider="kubernetes", launcher_type=None, 
         tls_server_name=None,
     )
     delegate._api_client = SimpleNamespace(configuration=configuration)
-    trace, recorded, stopping = [], [], Event()
+    trace, recorded, intents, stopping = [], [], [], Event()
     host = Host(
         host_id="c" * 32,
         name="owned-host",
@@ -100,6 +100,9 @@ def _launcher(tmp_path, monkeypatch, provider="kubernetes", launcher_type=None, 
         recorded.append(binding)
         trace.append("checkpoint")
 
+    async def checkpoint_creation(intent):
+        intents.append(intent)
+
     def wrap(callback=checkpoint):
         selected = bind_managed_preparation(
             deployment,
@@ -108,6 +111,7 @@ def _launcher(tmp_path, monkeypatch, provider="kubernetes", launcher_type=None, 
             owner="owned-user",
             checkpoint=callback,
             checkpoint_resources=checkpoint,
+            checkpoint_creation=checkpoint_creation,
             stopping=stopping,
             loop=asyncio.get_running_loop(),
         )
@@ -159,6 +163,7 @@ async def test_official_direct_provider_factory_is_checkpointed(provider):
         owner="owned-user",
         checkpoint=checkpoint,
         checkpoint_resources=checkpoint,
+        checkpoint_creation=checkpoint,
         stopping=Event(),
         loop=asyncio.get_running_loop(),
     ).default.launcher_factory()

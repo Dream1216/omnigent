@@ -27,6 +27,13 @@ class InteractiveRecoveryError(RuntimeError):
         super().__init__("interactive_controller_recovery_unavailable")
 
 
+def _checked_uid(value):
+    try:
+        return _uuid(value)
+    except (TypeError, ValueError, AttributeError):
+        raise InteractiveRecoveryError() from None
+
+
 @dataclass(frozen=True, slots=True)
 class ManagedPreparationBinding:
     """Actual pre-create resource reference, not evidence that a workload exists or stopped."""
@@ -80,6 +87,96 @@ class ManagedResourceBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedCreationIntent:
+    """Write-ahead identity and submission barriers for one direct SDK launch."""
+
+    nonce: str
+    host_token_sha256: str
+    secret_submitted: bool = False
+    secret_uid: str | None = None
+    workload_submitted: bool = False
+    input_template_sha256: str | None = None
+
+    def __post_init__(self):
+        if (
+            not isinstance(self.nonce, str)
+            or re.fullmatch(r"[0-9a-f]{32}", self.nonce) is None
+            or not isinstance(self.host_token_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.host_token_sha256) is None
+            or type(self.secret_submitted) is not bool
+            or type(self.workload_submitted) is not bool
+            or (self.secret_uid is not None and not self.secret_submitted)
+            or (
+                self.input_template_sha256 is not None
+                and (
+                    not isinstance(self.input_template_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", self.input_template_sha256) is None
+                )
+            )
+            or (
+                self.workload_submitted
+                and (
+                    not self.secret_submitted
+                    or self.secret_uid is None
+                    or self.input_template_sha256 is None
+                )
+            )
+            or (not self.workload_submitted and self.input_template_sha256 is not None)
+        ):
+            raise InteractiveRecoveryError()
+        if self.secret_uid is not None:
+            _checked_uid(self.secret_uid)
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedPodTermination:
+    uid: str
+    name: str
+    containers_sha256: str | None = None
+
+    def __post_init__(self):
+        _checked_uid(self.uid)
+        if (
+            not isinstance(self.name, str)
+            or len(self.name) > 253
+            or re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", self.name) is None
+            or (
+                self.containers_sha256 is not None
+                and (
+                    not isinstance(self.containers_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", self.containers_sha256) is None
+                )
+            )
+        ):
+            raise InteractiveRecoveryError()
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedTerminationReceipt:
+    """Monotonic UID observations, committed before releasing a Pod finalizer."""
+
+    pods: tuple[ManagedPodTermination, ...] = ()
+    secret_uid: str | None = None
+    secret_gone: bool = False
+    complete: bool = False
+
+    def __post_init__(self):
+        if (
+            type(self.pods) is not tuple
+            or len(self.pods) > 64
+            or any(not isinstance(pod, ManagedPodTermination) for pod in self.pods)
+            or tuple(sorted(self.pods, key=lambda pod: pod.uid)) != self.pods
+            or len({pod.uid for pod in self.pods}) != len(self.pods)
+            or type(self.secret_gone) is not bool
+            or type(self.complete) is not bool
+            or (self.secret_gone and self.secret_uid is None)
+        ):
+            raise InteractiveRecoveryError()
+        if self.secret_uid is not None:
+            _checked_uid(self.secret_uid)
+
+
+@dataclass(frozen=True, slots=True)
 class InteractiveRecoveryRecord:
     run_id: UUID
     fence_token: int
@@ -102,6 +199,8 @@ class InteractiveRecoveryRecord:
     stop_kind: str | None = None
     managed_preparation: ManagedPreparationBinding | None = None
     managed_resources: ManagedResourceBinding | None = None
+    managed_creation: ManagedCreationIntent | None = None
+    managed_termination: ManagedTerminationReceipt | None = None
 
     def __post_init__(self):
         if (
@@ -125,7 +224,7 @@ class InteractiveRecoveryRecord:
             or re.fullmatch(r"[0-9a-f]{64}", self.certificate_sha256) is None
             or type(self.process_stopped) is not bool
             or self.outcome not in {None, "succeeded", "failed", "cancelled", "orphaned"}
-            or self.stop_kind not in {None, "never_started"}
+            or self.stop_kind not in {None, "never_started", "managed_container"}
             or (
                 self.managed_preparation is not None
                 and (
@@ -142,6 +241,71 @@ class InteractiveRecoveryRecord:
                 and (
                     not isinstance(self.managed_resources, ManagedResourceBinding)
                     or self.managed_preparation is None
+                )
+            )
+            or (
+                self.managed_creation is not None
+                and (
+                    not isinstance(self.managed_creation, ManagedCreationIntent)
+                    or self.managed_preparation is None
+                    or (
+                        self.managed_resources is not None
+                        and (
+                            not self.managed_creation.workload_submitted
+                            or self.managed_resources.token_secret_uid
+                            != self.managed_creation.secret_uid
+                            or self.managed_resources.host_token_sha256
+                            != self.managed_creation.host_token_sha256
+                        )
+                    )
+                )
+            )
+            or (
+                self.managed_termination is not None
+                and (
+                    not isinstance(self.managed_termination, ManagedTerminationReceipt)
+                    or self.managed_creation is None
+                    or (
+                        self.managed_termination.secret_uid is not None
+                        and not self.managed_creation.secret_submitted
+                    )
+                    or (
+                        self.managed_termination.pods
+                        and not self.managed_creation.workload_submitted
+                    )
+                    or (
+                        self.managed_creation.secret_uid is not None
+                        and self.managed_termination.secret_uid
+                        not in (None, self.managed_creation.secret_uid)
+                    )
+                    or (
+                        self.managed_termination.complete
+                        and (
+                            (
+                                self.managed_creation.secret_submitted
+                                and not self.managed_termination.secret_gone
+                            )
+                            or (
+                                self.managed_creation.workload_submitted
+                                and (
+                                    self.managed_resources is None
+                                    or not self.managed_termination.pods
+                                    or any(
+                                        pod.containers_sha256 is None
+                                        for pod in self.managed_termination.pods
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+            or (
+                self.stop_kind == "managed_container"
+                and (
+                    not self.process_stopped
+                    or self.managed_termination is None
+                    or not self.managed_termination.complete
                 )
             )
             or (
@@ -242,6 +406,39 @@ def physical_recovery_proof_sha256(record: InteractiveCleanupRecord) -> str:
                 separators=(",", ":"),
             ).encode()
         ).hexdigest()
+    if record.stop_kind == "managed_container":
+        if (
+            not record.process_stopped
+            or record.managed_preparation is None
+            or record.managed_creation is None
+            or record.managed_termination is None
+            or not record.managed_termination.complete
+        ):
+            raise InteractiveRecoveryError()
+        return sha256(
+            json.dumps(
+                {
+                    "cleanup_kind": "managed_container",
+                    "run_id": str(record.run_id),
+                    "fence_token": record.fence_token,
+                    "connection_generation": record.connection_generation,
+                    "product_revision": record.product_revision,
+                    "image_digest": record.image_digest,
+                    "scope": asdict(record.scope),
+                    "runtime_user_key": record.runtime.runtime_user_key,
+                    "certificate_sha256": record.certificate_sha256,
+                    "preparation": asdict(record.managed_preparation),
+                    "creation": asdict(record.managed_creation),
+                    "resources": asdict(record.managed_resources)
+                    if record.managed_resources
+                    else None,
+                    "termination": asdict(record.managed_termination),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode()
+        ).hexdigest()
     if (
         not record.process_stopped
         or (
@@ -285,19 +482,24 @@ def _encode(record: InteractiveCleanupRecord) -> bytes:
         document = {"schema_version": 2, "record_type": "unstarted", "record": asdict(record)}
     else:
         value = asdict(record)
-        if record.managed_resources is not None:
-            document = {"schema_version": 4, "record_type": "interactive", "record": value}
-        elif record.managed_preparation is not None:
-            value.pop("managed_resources")
-            document = {"schema_version": 3, "record_type": "interactive", "record": value}
+        if record.managed_creation is not None:
+            document = {"schema_version": 5, "record_type": "interactive", "record": value}
         else:
-            value.pop("managed_resources")
-            value.pop("managed_preparation")
-            if record.stop_kind is not None:
-                document = {"schema_version": 2, "record_type": "interactive", "record": value}
+            value.pop("managed_creation")
+            value.pop("managed_termination")
+            if record.managed_resources is not None:
+                document = {"schema_version": 4, "record_type": "interactive", "record": value}
+            elif record.managed_preparation is not None:
+                value.pop("managed_resources")
+                document = {"schema_version": 3, "record_type": "interactive", "record": value}
             else:
-                value.pop("stop_kind")
-                document["record"] = value
+                value.pop("managed_resources")
+                value.pop("managed_preparation")
+                if record.stop_kind is not None:
+                    document = {"schema_version": 2, "record_type": "interactive", "record": value}
+                else:
+                    value.pop("stop_kind")
+                    document["record"] = value
     raw = json.dumps(
         document,
         sort_keys=True,
@@ -328,6 +530,30 @@ def _uuid(value):
 def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 5
+        ):
+            if (
+                set(document) != {"schema_version", "record_type", "record"}
+                or document["record_type"] != "interactive"
+            ):
+                raise ValueError
+            value = document["record"]
+            value["managed_creation"] = ManagedCreationIntent(**value["managed_creation"])
+            if value["managed_termination"] is not None:
+                term = value["managed_termination"]
+                term["pods"] = tuple(ManagedPodTermination(**pod) for pod in term["pods"])
+                value["managed_termination"] = ManagedTerminationReceipt(**term)
+            document["schema_version"] = 4 if value["managed_resources"] is not None else 3
+            if value["managed_resources"] is None:
+                value.pop("managed_resources")
+        elif isinstance(document, dict) and any(
+            name in document.get("record", {})
+            for name in ("managed_creation", "managed_termination")
+        ):
+            raise ValueError
         if (
             isinstance(document, dict)
             and type(document.get("schema_version")) is int
@@ -429,6 +655,68 @@ def _decode(raw: bytes) -> InteractiveCleanupRecord:
         raise InteractiveRecoveryError() from None
 
 
+def _check_managed_progress(previous, record):
+    old = previous.managed_creation if previous is not None else None
+    new = record.managed_creation
+    if old != new:
+        if (
+            previous is None
+            or new is None
+            or record.managed_preparation is None
+            or previous.phase != "preparing"
+            or record.phase != "preparing"
+            or previous.process_stopped
+            or record.process_stopped
+            or previous.official_runner_id is not None
+            or record.official_runner_id is not None
+        ):
+            raise InteractiveRecoveryError()
+        if old is None:
+            if new.secret_submitted or new.secret_uid is not None or new.workload_submitted:
+                raise InteractiveRecoveryError()
+        elif (
+            old.nonce != new.nonce
+            or old.host_token_sha256 != new.host_token_sha256
+            or (old.secret_submitted and not new.secret_submitted)
+            or (old.secret_uid is not None and old.secret_uid != new.secret_uid)
+            or (old.workload_submitted and old.workload_submitted != new.workload_submitted)
+            or (
+                old.input_template_sha256 is not None
+                and old.input_template_sha256 != new.input_template_sha256
+            )
+            or (
+                not old.secret_submitted and (new.secret_uid is not None or new.workload_submitted)
+            )
+            or (old.secret_uid is None and new.workload_submitted)
+        ):
+            raise InteractiveRecoveryError()
+    before = previous.managed_termination if previous is not None else None
+    after = record.managed_termination
+    if before == after:
+        return
+    if previous is None or after is None or new is None:
+        raise InteractiveRecoveryError()
+    if before is not None:
+        if (
+            (before.secret_uid is not None and before.secret_uid != after.secret_uid)
+            or (before.secret_gone and not after.secret_gone)
+            or (before.complete and before != after)
+        ):
+            raise InteractiveRecoveryError()
+        indexed = {pod.uid: pod for pod in after.pods}
+        for pod in before.pods:
+            found = indexed.get(pod.uid)
+            if (
+                found is None
+                or found.name != pod.name
+                or (
+                    pod.containers_sha256 is not None
+                    and found.containers_sha256 != pod.containers_sha256
+                )
+            ):
+                raise InteractiveRecoveryError()
+
+
 class InteractiveRecoveryJournal:
     """One locked, owner-only Controller volume, never mounted into a workload."""
 
@@ -520,14 +808,21 @@ class InteractiveRecoveryJournal:
             and previous.managed_preparation != record.managed_preparation
         ):
             raise InteractiveRecoveryError()
+        _check_managed_progress(previous, record)
         if record.managed_resources is not None and (
             previous is None
             or (
                 previous.managed_resources is None
                 and (
                     previous.managed_preparation is None
-                    or previous.phase != "preparing"
-                    or record.phase != "preparing"
+                    or not (
+                        previous.phase == record.phase == "preparing"
+                        or (
+                            previous.managed_creation is not None
+                            and previous.managed_creation.workload_submitted
+                            and previous.phase == record.phase == "draining"
+                        )
+                    )
                     or previous.official_runner_id is not None
                     or record.official_runner_id is not None
                     or previous.process_stopped

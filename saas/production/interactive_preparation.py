@@ -12,20 +12,31 @@ from pathlib import Path
 from threading import Event, Lock
 from typing import Any, cast
 from urllib.parse import urlsplit
+from uuid import uuid4
 
+from omnigent.host.identity import HOST_TOKEN_ENV_VAR
 from omnigent.onboarding.sandboxes.agent_sandbox import AgentSandboxLauncher
 from omnigent.onboarding.sandboxes.agent_sandbox_warm_pool import AgentSandboxWarmPoolLauncher
 from omnigent.onboarding.sandboxes.base import SandboxHostLauncher
-from omnigent.onboarding.sandboxes.kubernetes import KubernetesSandboxLauncher
+from omnigent.onboarding.sandboxes.kubernetes import KubernetesSandboxLauncher, _token_secret_name
 from omnigent.server.managed_hosts import ManagedSandboxDeployment
 from omnigent.stores.host_store import hash_host_launch_token
 from saas.production.interactive_controller import _unavailable
 from saas.production.interactive_recovery import (
     InteractiveRecoveryRecord,
+    ManagedCreationIntent,
     ManagedPreparationBinding,
     ManagedResourceBinding,
 )
-from saas.production.interactive_resources import read_managed_resources
+from saas.production.interactive_resources import (
+    CREATION_ANNOTATION,
+    INPUT_TEMPLATE_ANNOTATION,
+    _creation_metadata,
+    _secret_uid,
+    _template,
+    _template_sha256,
+    read_managed_resources,
+)
 
 _CHECKPOINT_TIMEOUT_SECONDS = 10
 
@@ -64,6 +75,7 @@ def _binding(launcher: KubernetesSandboxLauncher, resource: str, host_id: str):
         or server.password is not None
         or server.query
         or server.fragment
+        or getattr(configuration, "retries", None) not in (None, 0)
         or not isinstance(ca, str)
         or not 0 < Path(ca).stat().st_size <= 1024 * 1024
     ):
@@ -88,11 +100,22 @@ def _binding(launcher: KubernetesSandboxLauncher, resource: str, host_id: str):
 
 class _CheckpointedLauncher:
     def __init__(
-        self, delegate, *, host_store, owner, checkpoint, checkpoint_resources, stopping, loop
+        self,
+        delegate,
+        *,
+        host_store,
+        owner,
+        checkpoint,
+        checkpoint_resources,
+        checkpoint_creation,
+        stopping,
+        loop,
     ):
         self._delegate, self._host_store, self._owner = delegate, host_store, owner
         self._checkpoint, self._stopping, self._loop = checkpoint, stopping, loop
         self._checkpoint_resources = checkpoint_resources
+        self._checkpoint_creation = checkpoint_creation
+        self._intent = None
         self._start_lock = Lock()
         self._started = self._submitted = False
 
@@ -146,25 +169,51 @@ class _CheckpointedLauncher:
                 raise _unavailable()
 
             self._persist(self._checkpoint, binding)
+            self._persist_intent(ManagedCreationIntent(uuid4().hex, hash_host_launch_token(token)))
             if self._stopping.is_set():
                 raise _unavailable()
             create = self._delegate._create_workload
             cleanup = self._delegate._best_effort_delete
+            core = self._delegate._load_core
             custom = self._delegate._load_custom if binding.provider == "agent_sandbox" else None
 
             def observe_resources(namespace, manifest):
                 if namespace != binding.namespace:
                     raise _unavailable()
                 with self._start_lock:
-                    if self._submitted:
+                    intent = self._intent
+                    if (
+                        self._submitted
+                        or intent is None
+                        or intent.secret_uid is None
+                        or self._stopping.is_set()
+                    ):
                         raise _unavailable()
                     self._submitted = True
+                    if (
+                        manifest["kind"] != "Job"
+                        or manifest["apiVersion"] != "batch/v1"
+                        or manifest["metadata"]["name"] != sandbox_id
+                        or manifest["metadata"]["namespace"] != binding.namespace
+                    ):
+                        raise _unavailable()
+                    template = _template(manifest, replace(binding, provider="kubernetes"))
+                    self._stamp(manifest, intent.nonce)
+                    self._stamp(template, intent.nonce)
+                    digest = _template_sha256(template)
+                    template["metadata"]["annotations"][INPUT_TEMPLATE_ANNOTATION] = digest
+                    self._persist_intent(
+                        replace(intent, workload_submitted=True, input_template_sha256=digest)
+                    )
 
                 def retain_observed():
                     if _binding(self._delegate, sandbox_id, host_id) != binding:
                         raise _unavailable()
                     actual = read_managed_resources(
-                        self._delegate, binding, host_token_sha256=hash_host_launch_token(token)
+                        self._delegate,
+                        binding,
+                        host_token_sha256=hash_host_launch_token(token),
+                        creation=self._intent,
                     )
                     self._persist(self._checkpoint_resources, actual)
 
@@ -177,6 +226,7 @@ class _CheckpointedLauncher:
                 retain_observed()
 
             self._delegate._create_workload = observe_resources
+            self._delegate._load_core = lambda: _CreationCore(core(), self, binding)
             # Retain unknown effects for UID-bound recovery; a name is not cleanup authority.
             self._delegate._best_effort_delete = lambda *_: None
             if custom is not None:
@@ -186,10 +236,68 @@ class _CheckpointedLauncher:
             finally:
                 self._delegate._create_workload = create
                 self._delegate._best_effort_delete = cleanup
+                self._delegate._load_core = core
                 if custom is not None:
                     self._delegate._load_custom = custom
         finally:
             self._delegate._close_clients()
+
+    def _persist_intent(self, intent):
+        self._persist(self._checkpoint_creation, intent)
+        self._intent = intent
+
+    @staticmethod
+    def _stamp(document, nonce):
+        annotations = document["metadata"].setdefault("annotations", {})
+        if CREATION_ANNOTATION in annotations or INPUT_TEMPLATE_ANNOTATION in annotations:
+            raise _unavailable()
+        annotations[CREATION_ANNOTATION] = nonce
+
+
+class _CreationCore:
+    def __init__(self, delegate, owner, binding):
+        self._delegate, self._owner, self._binding = delegate, owner, binding
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def create_namespaced_secret(self, namespace, body, **kwargs):
+        owner, binding = self._owner, self._binding
+        with owner._start_lock:
+            intent = owner._intent
+            try:
+                if (
+                    intent is None
+                    or intent.secret_submitted
+                    or owner._stopping.is_set()
+                    or kwargs.get("async_req") is True
+                    or namespace != binding.namespace
+                    or body["metadata"]["namespace"] != namespace
+                    or body["metadata"]["name"] != _token_secret_name(binding.resource_name)
+                    or body["metadata"]["labels"].get("app.kubernetes.io/managed-by") != "omnigent"
+                    or body["metadata"]["labels"].get("omnigent.ai/role") != "sandbox-host"
+                    or body["kind"] != "Secret"
+                    or body["apiVersion"] != "v1"
+                    or body["type"] != "Opaque"
+                    or body.get("data")
+                    or set(body["stringData"]) != {HOST_TOKEN_ENV_VAR}
+                    or hash_host_launch_token(body["stringData"][HOST_TOKEN_ENV_VAR])
+                    != intent.host_token_sha256
+                ):
+                    raise _unavailable()
+                owner._stamp(body, intent.nonce)
+                owner._persist_intent(replace(intent, secret_submitted=True))
+                result = self._delegate.create_namespaced_secret(namespace, body, **kwargs)
+                raw = self._delegate.read_namespaced_secret(
+                    _token_secret_name(binding.resource_name), namespace, _request_timeout=10
+                )
+                secret = owner._delegate._api_client.sanitize_for_serialization(raw)
+                _creation_metadata(secret, intent)
+                uid = _secret_uid(secret, binding, intent.host_token_sha256)
+                owner._persist_intent(replace(intent, secret_submitted=True, secret_uid=uid))
+                return result
+            except Exception:  # noqa: BLE001 - SDK response bodies may contain credentials.
+                raise _unavailable() from None
 
 
 class _CreateOnlyCustom:
@@ -213,6 +321,7 @@ def bind_managed_preparation(
     owner: str,
     checkpoint: Callable[[ManagedPreparationBinding], Awaitable[None]],
     checkpoint_resources: Callable[[ManagedResourceBinding], Awaitable[None]],
+    checkpoint_creation: Callable[[ManagedCreationIntent], Awaitable[None]],
     stopping: Event,
     loop: asyncio.AbstractEventLoop,
 ) -> ManagedSandboxDeployment:
@@ -230,6 +339,7 @@ def bind_managed_preparation(
                 owner=owner,
                 checkpoint=checkpoint,
                 checkpoint_resources=checkpoint_resources,
+                checkpoint_creation=checkpoint_creation,
                 stopping=stopping,
                 loop=loop,
             ),
@@ -253,7 +363,10 @@ def inspect_managed_resources(
         if _binding(delegate, preparation.resource_name, preparation.host_id) != preparation:
             raise _unavailable()
         observed = read_managed_resources(
-            delegate, preparation, host_token_sha256=expected.host_token_sha256
+            delegate,
+            preparation,
+            host_token_sha256=expected.host_token_sha256,
+            creation=record.managed_creation,
         )
         if observed != expected:
             raise _unavailable()

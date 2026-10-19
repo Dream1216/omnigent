@@ -210,7 +210,14 @@ class OfficialInteractiveDriver:
         return authorized.runtime.physical_workspace_id, authorized.session_id
 
     async def prepare(
-        self, authorized, *, previous, on_launch, on_preparation=None, on_resources=None
+        self,
+        authorized,
+        *,
+        previous,
+        on_launch,
+        on_preparation=None,
+        on_resources=None,
+        on_creation=None,
     ):
         key = self._key(authorized)
         if key in self._handles or key in self._preparations:
@@ -223,6 +230,7 @@ class OfficialInteractiveDriver:
                 on_launch=on_launch,
                 on_preparation=on_preparation,
                 on_resources=on_resources,
+                on_creation=on_creation,
                 stopping=stopping,
             ),
             name="interactive-physical-preparation",
@@ -245,7 +253,15 @@ class OfficialInteractiveDriver:
         return handle
 
     async def _prepare(
-        self, authorized, *, previous, on_launch, on_preparation, on_resources, stopping
+        self,
+        authorized,
+        *,
+        previous,
+        on_launch,
+        on_preparation,
+        on_resources,
+        on_creation,
+        stopping,
     ):
         self.assert_production_ready()
         key = self._key(authorized)
@@ -260,6 +276,7 @@ class OfficialInteractiveDriver:
             if (
                 on_preparation is None
                 or on_resources is None
+                or on_creation is None
                 or not isinstance(state.sandbox_config, ManagedSandboxDeployment)
             ):
                 raise _unavailable()
@@ -270,6 +287,7 @@ class OfficialInteractiveDriver:
                 owner=authorized.runtime.runtime_user_key,
                 checkpoint=on_preparation,
                 checkpoint_resources=on_resources,
+                checkpoint_creation=on_creation,
                 stopping=stopping,
                 loop=asyncio.get_running_loop(),
             )

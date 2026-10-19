@@ -76,6 +76,7 @@ def _case(tmp_path, monkeypatch, provider="kubernetes"):
             job, shutdown_time="2026-10-19T00:00:00Z", workspace_volume=None
         )
     )
+    workload["metadata"] = job["metadata"]
     workload["metadata"]["uid"] = str(UUID(int=1))
     secret = build_token_secret_manifest(
         secret_name=secret_name, namespace="owned-runners", token=token
@@ -85,7 +86,7 @@ def _case(tmp_path, monkeypatch, provider="kubernetes"):
     secret["data"] = {HOST_TOKEN_ENV_VAR: base64.b64encode(token.encode()).decode()}
     template = workload["spec"]["template" if provider == "kubernetes" else "podTemplate"]
     p.delegate._api_client.sanitize_for_serialization = copy.deepcopy
-    reads, resources = [], []
+    reads, resources, intents = [], [], []
 
     def read_workload(*args, **kwargs):
         reads.append(("workload", args, kwargs))
@@ -106,12 +107,38 @@ def _case(tmp_path, monkeypatch, provider="kubernetes"):
         lambda: SimpleNamespace(get_namespaced_custom_object=read_workload),
         raising=False,
     )
+
+    def create_secret(namespace, body, **kwargs):
+        secret["metadata"]["annotations"] = copy.deepcopy(body["metadata"]["annotations"])
+        p.trace.append("sdk-secret")
+
     monkeypatch.setattr(
-        p.delegate, "_load_core", lambda: SimpleNamespace(read_namespaced_secret=read_secret)
+        p.delegate,
+        "_load_core",
+        lambda: SimpleNamespace(
+            read_namespaced_secret=read_secret, create_namespaced_secret=create_secret
+        ),
     )
-    monkeypatch.setattr(p.delegate, "_create_workload", lambda *_: p.trace.append("sdk-create"))
+
+    def create_workload(_namespace, manifest):
+        workload["metadata"]["annotations"] = copy.deepcopy(manifest["metadata"]["annotations"])
+        template["metadata"]["annotations"] = copy.deepcopy(
+            manifest["spec"]["template"]["metadata"]["annotations"]
+        )
+        p.trace.append("sdk-create")
+
+    monkeypatch.setattr(p.delegate, "_create_workload", create_workload)
+
+    def submit_secret():
+        p.delegate._load_core().create_namespaced_secret(
+            "owned-runners",
+            build_token_secret_manifest(
+                secret_name=secret_name, namespace="owned-runners", token=token
+            ),
+        )
 
     def start(*_, **__):
+        submit_secret()
         p.delegate._create_workload("owned-runners", job)
         p.trace.append("startup-continued")
         return "/workspace"
@@ -122,7 +149,10 @@ def _case(tmp_path, monkeypatch, provider="kubernetes"):
         resources.append(binding)
         p.trace.append("resources")
 
-    def wrap(callback=checkpoint_resources):
+    async def checkpoint_creation(intent):
+        intents.append(intent)
+
+    def wrap(callback=checkpoint_resources, *, creation_callback=checkpoint_creation):
         return bind_managed_preparation(
             p.deployment,
             provider=provider,
@@ -130,6 +160,7 @@ def _case(tmp_path, monkeypatch, provider="kubernetes"):
             owner="owned-user",
             checkpoint=p.checkpoint,
             checkpoint_resources=callback,
+            checkpoint_creation=creation_callback,
             stopping=p.stopping,
             loop=asyncio.get_running_loop(),
         ).default.launcher_factory()
@@ -148,6 +179,8 @@ async def test_created_uid_checkpoint_precedes_sdk_continuation(tmp_path, monkey
     assert c.p.trace == [
         "load-config",
         "checkpoint",
+        "sdk-secret",
+        "read-secret",
         "sdk-create",
         "load-config",
         "read-workload",
@@ -296,7 +329,11 @@ async def test_restore_inspection_is_exact_and_has_no_creation_or_deletion(
 ):
     c = _case(tmp_path, monkeypatch)
     await asyncio.to_thread(c.wrap().start_host, "owned-job", host_id="c" * 32, token=c.token)
-    record = SimpleNamespace(managed_preparation=c.p.recorded[0], managed_resources=c.resources[0])
+    record = SimpleNamespace(
+        managed_preparation=c.p.recorded[0],
+        managed_resources=c.resources[0],
+        managed_creation=c.intents[-1],
+    )
     if drift == "uid":
         c.workload["metadata"]["uid"] = str(UUID(int=3))
     elif drift == "secret_uid":
