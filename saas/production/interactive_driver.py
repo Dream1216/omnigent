@@ -196,6 +196,8 @@ class OfficialInteractiveDriver:
         self._handles: dict[tuple[int, str], _Handle] = {}
         self._launch_tasks: dict[tuple[int, str], set[asyncio.Task]] = {}
         self._preparations: dict[tuple[int, str], _Preparation] = {}
+        self._managed_recoveries: dict[object, asyncio.Task] = {}
+        self._recovery_closing = False
 
     def assert_production_ready(self) -> None:
         state = self._app.state
@@ -432,6 +434,30 @@ class OfficialInteractiveDriver:
                 await self.release(handle)
             if self._preparations.get(key) is entry:
                 del self._preparations[key]
+
+    async def recover_managed(self, record, checkpoint):
+        from saas.production.interactive_managed_recovery import recover_managed_resources
+
+        if self._recovery_closing:
+            raise _unavailable()
+        task = self._managed_recoveries.get(record.run_id)
+        if task is None:
+            task = asyncio.create_task(
+                recover_managed_resources(self._app.state.sandbox_config, record, checkpoint),
+                name="interactive-managed-resource-recovery",
+            )
+            task.add_done_callback(_observe_preparation)
+            self._managed_recoveries[record.run_id] = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done() and self._managed_recoveries.get(record.run_id) is task:
+                del self._managed_recoveries[record.run_id]
+
+    async def shutdown_managed(self):
+        self._recovery_closing = True
+        if self._managed_recoveries:
+            await asyncio.wait(tuple(self._managed_recoveries.values()), timeout=15)
 
     async def stop(self, record: InteractiveRecoveryRecord) -> bool:
         if record.host_id is None or record.official_runner_id is None:

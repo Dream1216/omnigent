@@ -21,6 +21,7 @@ from saas.production.interactive_recovery import (
 _REQUEST_TIMEOUT_SECONDS = 10
 CREATION_ANNOTATION = "saas.omnigent.ai/creation-nonce"
 INPUT_TEMPLATE_ANNOTATION = "saas.omnigent.ai/input-template-sha256"
+TERMINATION_FINALIZER = "saas.omnigent.ai/observe-termination"
 
 
 def _creation_metadata(document, creation, *, template=False):

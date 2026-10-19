@@ -30,6 +30,7 @@ def _assert_cluster_authority(profile):
             identity.status.user_info.username == f"system:serviceaccount:{namespace}:controller"
         )
         authorization = client.AuthorizationV1Api(api)
+        recovery_enabled = profile.get("scenario") == "create_ack_recovered"
         for group, resource, subresource, verb, target, expected in (
             ("batch", "jobs", None, "create", runners, True),
             ("agents.x-k8s.io", "sandboxes", None, "create", runners, True),
@@ -41,6 +42,10 @@ def _assert_cluster_authority(profile):
             ("", "secrets", None, "get", namespace, False),
             ("", "pods", "exec", "create", runners, False),
             ("batch", "jobs", None, "create", namespace, False),
+            ("batch", "jobs", None, "patch", runners, recovery_enabled),
+            ("", "pods", None, "patch", runners, recovery_enabled),
+            ("batch", "jobs", None, "patch", namespace, False),
+            ("", "pods", None, "patch", namespace, False),
         ):
             attributes = {"group": group, "resource": resource, "verb": verb, "namespace": target}
             if subresource:

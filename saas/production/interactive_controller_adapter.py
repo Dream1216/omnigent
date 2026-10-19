@@ -178,6 +178,9 @@ class ProductionInteractiveControllerAdapter:
         driver = OfficialInteractiveDriver(
             app=app, dependencies=official, contract_version=self._release.adapter_contract_version
         )
+        from saas.production.interactive_managed_lifecycle import protect_managed_deployment
+
+        protect_managed_deployment(app.state.sandbox_config, journal)
 
         async def authorize(lease):
             return await runtime.authorize_model(

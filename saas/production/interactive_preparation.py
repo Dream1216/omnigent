@@ -31,6 +31,7 @@ from saas.production.interactive_recovery import (
 from saas.production.interactive_resources import (
     CREATION_ANNOTATION,
     INPUT_TEMPLATE_ANNOTATION,
+    TERMINATION_FINALIZER,
     _creation_metadata,
     _secret_uid,
     _template,
@@ -42,6 +43,8 @@ _CHECKPOINT_TIMEOUT_SECONDS = 10
 
 
 def _direct_launcher(selected, provider: str) -> KubernetesSandboxLauncher:
+    from saas.production.interactive_managed_lifecycle import ControlledManagedLauncher
+
     expected = {
         "kubernetes": (KubernetesSandboxLauncher,),
         "agent_sandbox": (AgentSandboxLauncher, AgentSandboxWarmPoolLauncher),
@@ -49,6 +52,8 @@ def _direct_launcher(selected, provider: str) -> KubernetesSandboxLauncher:
     if provider not in expected or selected is None or not selected.managed_launch_supported:
         raise _unavailable()
     delegate = selected.launcher_factory()
+    if type(delegate) is ControlledManagedLauncher:
+        delegate = delegate.delegate
     if (
         type(delegate) not in expected[provider]
         or delegate.provider != provider
@@ -200,6 +205,13 @@ class _CheckpointedLauncher:
                     template = _template(manifest, replace(binding, provider="kubernetes"))
                     self._stamp(manifest, intent.nonce)
                     self._stamp(template, intent.nonce)
+                    for document in (
+                        (manifest, template) if binding.provider == "kubernetes" else (manifest,)
+                    ):
+                        finalizers = document["metadata"].setdefault("finalizers", [])
+                        if TERMINATION_FINALIZER in finalizers:
+                            raise _unavailable()
+                        finalizers.append(TERMINATION_FINALIZER)
                     digest = _template_sha256(template)
                     template["metadata"]["annotations"][INPUT_TEMPLATE_ANNOTATION] = digest
                     self._persist_intent(

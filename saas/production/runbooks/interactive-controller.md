@@ -107,10 +107,43 @@ preparation, direct resume/terminate and Agent Sandbox's name-conflict wake are
 unavailable until a UID-bound lifecycle can authorize them. SDK best-effort
 name-only deletion is suppressed for this instance only. A failed creation ACK
 can retain freshly verified workload/Secret facts, but still fails startup;
-missing observations remain pending, never stopped. The legacy global reaper
-and delayed unknown creations still require the separate reviewed termination
-path before production admission. Do not treat these local SDK barriers as
-complete resource termination or enable the feature on that basis.
+missing observations remain pending, never stopped. Do not treat these local SDK
+barriers as complete resource termination or enable the feature on that basis.
+
+## Unknown managed creation recovery
+
+Private v5 adds write-ahead creation intent; v6 additionally records controller
+quiescence. Old consumers reject these newer formats. Stop all old consumers
+before cutover and retain matching database/private-volume backups for rollback;
+byte-compatible older records do not make a mixed-version rollout safe. An old
+contract-only complete v5 without quiescence is not accepted as new stop authority.
+
+For an orphaned direct managed creation with no official Runner ID, recovery
+requires the original mTLS Run/fence release check and no active shared-Host
+peer. It validates nonce, actual workload/Secret UID, token digest, namespace,
+configuration and template before UID/resourceVersion-preconditioned mutations.
+The parent and actual Pods retain the controller's own termination finalizer
+until their facts are durably acknowledged. Agent Sandbox templates cannot carry
+that finalizer: the actual Pod is protected by UID before suspension instead.
+Missing or unprotected deleting Pods stay pending; no finalizer is added after
+deletion begins.
+
+The controller must observe suspended-parent quiescence and the kubelet's current
+terminated state for every declared container, including container IDs and
+timestamps. NodeLost, unknown states, lastState, a terminal phase, 404, or accepted
+DELETE alone do not prove stop. Parent deletion increments generation once; the
+deleting parent's receipt must match exactly the preceding quiesced generation,
+not arbitrary drift or a resumed parent. Only after recorded Pods, parent and
+Secret are gone can the existing durable physical confirmation clear the barrier.
+Only this controller's own finalizer is removed, never other controllers' markers.
+
+This recovery also requires reviewed `patch` rights on Jobs and Pods in the
+dedicated execution namespace, alongside the existing Sandbox patch and Secret
+get rights. Never grant them in the Server namespace or to a workload SA. Missing
+rights leave recovery unavailable; this runbook does not grant production RBAC.
+Global legacy name-only start/terminate/resume/suspend are fenced; keepalive is
+UID-bound and cannot wake a recorded stop. Safe resume, normal/warm lifecycle
+retirement, cross-Pod recovery and production admission remain separate gates.
 
 ## Database admission during a leased Run
 

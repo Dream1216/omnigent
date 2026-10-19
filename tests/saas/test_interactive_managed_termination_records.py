@@ -106,6 +106,7 @@ async def test_pod_receipts_cannot_forget_a_uid_or_change_a_terminal_digest(cont
     ):
         with pytest.raises(InteractiveRecoveryError):
             c.journal.put(replace(active.record, managed_termination=invalid))
+    receipt = replace(receipt, quiescence_sha256="e" * 64)
     c.executor._put(active, managed_termination=replace(receipt, complete=True))
     with pytest.raises(InteractiveRecoveryError):
         physical_recovery_proof_sha256(active.record)
@@ -149,3 +150,43 @@ async def test_v5_cannot_be_smuggled_into_an_older_private_format(controller_cas
 def test_invalid_creation_intent_is_unavailable(changes):
     with pytest.raises(InteractiveRecoveryError):
         _intent(**changes)
+
+
+@pytest.mark.asyncio
+async def test_quiescence_fact_uses_v6_and_cannot_be_downgraded_or_replaced(controller_case):
+    c = controller_case
+    active = await _record(c)
+    for intent in (
+        _intent(),
+        _intent(secret_submitted=True),
+        _intent(secret_submitted=True, secret_uid=str(UUID(int=2))),
+        _intent(
+            secret_submitted=True,
+            secret_uid=str(UUID(int=2)),
+            workload_submitted=True,
+            input_template_sha256="a" * 64,
+        ),
+    ):
+        c.executor._put(active, managed_creation=intent)
+    c.executor._put(active, managed_resources=_resources())
+    c.executor._put(active, phase="draining", outcome="orphaned")
+    receipt = ManagedTerminationReceipt(secret_uid=str(UUID(int=2)), quiescence_sha256="e" * 64)
+    c.executor._put(active, managed_termination=receipt)
+    path = c.journal.root / f"{c.lease.run_id}.json"
+    original = path.read_bytes()
+    assert json.loads(original)["schema_version"] == 6
+    for invalid in (None, "f" * 64):
+        with pytest.raises(InteractiveRecoveryError):
+            c.journal.put(
+                replace(
+                    active.record, managed_termination=replace(receipt, quiescence_sha256=invalid)
+                )
+            )
+    try:
+        doc = json.loads(original)
+        doc["schema_version"] = 5
+        path.write_text(json.dumps(doc))
+        with pytest.raises(InteractiveRecoveryError):
+            c.journal.read(c.lease.run_id)
+    finally:
+        path.write_bytes(original)

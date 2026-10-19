@@ -159,6 +159,7 @@ class ManagedTerminationReceipt:
     secret_uid: str | None = None
     secret_gone: bool = False
     complete: bool = False
+    quiescence_sha256: str | None = None
 
     def __post_init__(self):
         if (
@@ -170,6 +171,13 @@ class ManagedTerminationReceipt:
             or type(self.secret_gone) is not bool
             or type(self.complete) is not bool
             or (self.secret_gone and self.secret_uid is None)
+            or (
+                self.quiescence_sha256 is not None
+                and (
+                    not isinstance(self.quiescence_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", self.quiescence_sha256) is None
+                )
+            )
         ):
             raise InteractiveRecoveryError()
         if self.secret_uid is not None:
@@ -289,7 +297,7 @@ class InteractiveRecoveryRecord:
                                 self.managed_creation.workload_submitted
                                 and (
                                     self.managed_resources is None
-                                    or not self.managed_termination.pods
+                                    or self.managed_termination.quiescence_sha256 is None
                                     or any(
                                         pod.containers_sha256 is None
                                         for pod in self.managed_termination.pods
@@ -484,6 +492,11 @@ def _encode(record: InteractiveCleanupRecord) -> bytes:
         value = asdict(record)
         if record.managed_creation is not None:
             document = {"schema_version": 5, "record_type": "interactive", "record": value}
+            if record.managed_termination is not None:
+                if record.managed_termination.quiescence_sha256 is not None:
+                    document["schema_version"] = 6
+                else:
+                    value["managed_termination"].pop("quiescence_sha256")
         else:
             value.pop("managed_creation")
             value.pop("managed_termination")
@@ -530,6 +543,25 @@ def _uuid(value):
 def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 6
+        ):
+            if (
+                not isinstance(document.get("record"), dict)
+                or not isinstance(document["record"].get("managed_termination"), dict)
+                or document["record"]["managed_termination"].get("quiescence_sha256") is None
+            ):
+                raise ValueError
+            document["schema_version"] = 5
+        elif (
+            isinstance(document, dict)
+            and isinstance(document.get("record"), dict)
+            and isinstance(document["record"].get("managed_termination"), dict)
+            and "quiescence_sha256" in document["record"]["managed_termination"]
+        ):
+            raise ValueError
         if (
             isinstance(document, dict)
             and type(document.get("schema_version")) is int
@@ -699,6 +731,10 @@ def _check_managed_progress(previous, record):
     if before is not None:
         if (
             (before.secret_uid is not None and before.secret_uid != after.secret_uid)
+            or (
+                before.quiescence_sha256 is not None
+                and before.quiescence_sha256 != after.quiescence_sha256
+            )
             or (before.secret_gone and not after.secret_gone)
             or (before.complete and before != after)
         ):

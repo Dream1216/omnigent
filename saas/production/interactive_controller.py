@@ -66,6 +66,10 @@ class InteractivePhysicalDriver(Protocol):
 
     async def stop(self, record: InteractiveRecoveryRecord) -> bool: ...
 
+    async def recover_managed(self, record, checkpoint) -> InteractiveRecoveryRecord: ...
+
+    async def shutdown_managed(self) -> None: ...
+
     async def quiesce_preparation(self, authorized: AuthorizedInteractiveInput) -> None: ...
 
     async def release(self, handle: object) -> None: ...
@@ -145,6 +149,7 @@ class ProductionInteractiveExecutor:
         self._recovering = asyncio.Lock()
         self._confirmed_recoveries: set[UUID] = set()
         self._gc_offset = 0
+        self._closing = False
         self._lifecycle = asyncio.Lock()
 
     def assert_production_ready(self) -> None:
@@ -680,6 +685,100 @@ class ProductionInteractiveExecutor:
             del self._active[record.run_id]
             return True
 
+    def _managed_peers(self, record):
+        host = record.managed_preparation.host_id
+        return [
+            row
+            for row in self._journal.records()
+            if row.run_id != record.run_id
+            and (
+                row.host_id == host
+                or (
+                    row.managed_preparation is not None and row.managed_preparation.host_id == host
+                )
+                or (
+                    record.managed_resources is not None
+                    and row.managed_resources is not None
+                    and record.managed_resources.workload_uid == row.managed_resources.workload_uid
+                )
+            )
+        ]
+
+    async def _recover_unknown_managed(self, record):
+        if self._verify_released is None or self._closing:
+            return False
+        try:
+            await self._verify_released(record)
+            for peer in self._managed_peers(record):
+                if peer.run_id in self._active or peer.phase != "terminal":
+                    return False
+                await self._verify_recovery(peer)
+                await self._verify_released(peer)
+        except RunnerControlError as error:
+            if error.code == "interactive_controller_recovery_pending":
+                return False
+            raise
+
+        async def checkpoint(**changes):
+            async with self._lifecycle:
+                current = self._journal.read(record.run_id)
+                if (
+                    self._closing
+                    or record.run_id in self._active
+                    or current.phase != "draining"
+                    or current.outcome != "orphaned"
+                    or current.process_stopped
+                    or current.official_runner_id is not None
+                    or current.managed_preparation != record.managed_preparation
+                    or current.managed_creation != record.managed_creation
+                    or current.connection_generation != self._generation
+                    or current.product_revision != self._revision
+                    or current.image_digest != self._image
+                    or certificate_sha256(current.grant) != current.certificate_sha256
+                    or any(
+                        row.run_id in self._active or row.phase != "terminal"
+                        for row in self._managed_peers(current)
+                    )
+                    or set(changes) - {"managed_resources", "managed_termination"}
+                    or any(
+                        getattr(current, key) != getattr(record, key)
+                        for key in (
+                            "run_id",
+                            "fence_token",
+                            "scope",
+                            "runtime",
+                            "grant",
+                            "certificate_sha256",
+                        )
+                    )
+                ):
+                    raise _unavailable()
+                updated = replace(current, **changes)
+                if updated != current:
+                    self._journal.put(updated)
+                return updated
+
+        try:
+            await self._driver.recover_managed(record, checkpoint)
+        except RunnerControlError as error:
+            if error.code == "interactive_controller_unavailable":
+                return False
+            raise
+        current = await checkpoint()
+        async with self._lifecycle:
+            if (
+                self._closing
+                or self._journal.read(record.run_id) != current
+                or record.run_id in self._active
+            ):
+                return False
+            if current.managed_termination is None or not current.managed_termination.complete:
+                return False
+            self._journal.put(
+                replace(current, process_stopped=True, stop_kind="managed_container")
+            )
+            return True
+
     async def reconcile_physical_gc(self, *, limit: int) -> int:
         async with self._recovering:
             completed = 0
@@ -733,6 +832,16 @@ class ProductionInteractiveExecutor:
                 if not await self._retire_orphaned(record):
                     continue
                 await self._verify_recovery(record)
+                if (
+                    record.phase == "draining"
+                    and record.outcome == "orphaned"
+                    and not record.process_stopped
+                    and record.official_runner_id is None
+                    and record.managed_creation is not None
+                ):
+                    if not await self._recover_unknown_managed(record):
+                        continue
+                    record = self._journal.read(record.run_id)
                 security_stop = (
                     record.phase == "terminal"
                     and not record.process_stopped
@@ -855,6 +964,8 @@ class ProductionInteractiveExecutor:
             return completed
 
     async def shutdown(self) -> None:
+        self._closing = True
+        await self._driver.shutdown_managed()
         for active in tuple(self._active.values()):
             with contextlib.suppress(Exception):
                 await self.cancel(active.lease)

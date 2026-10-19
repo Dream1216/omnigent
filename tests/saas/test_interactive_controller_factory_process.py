@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 import traceback
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -348,6 +348,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
         "controller_crash_recovery",
         "orphaned_stop_recovery",
         "create_ack_rejected",
+        "create_ack_recovered",
     }
     if scenario == "tools_cross_run":
         command = test_model_deployments._command
@@ -628,7 +629,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 ).json()
                 assert len(after_calls["requests"]) - len(before_calls["requests"]) == (
                     0
-                    if scenario == "create_ack_rejected"
+                    if scenario in {"create_ack_rejected", "create_ack_recovered"}
                     else 4
                     if scenario in {"tools_cross_run", "controller_crash_recovery"}
                     else 2
@@ -1205,7 +1206,8 @@ def _serve_controller(
                 KubernetesSandboxLauncher, "_wait_for_pod_running", observe_created
             )
         rejected_create, issued_without_launch = [], []
-        if scenario == "create_ack_rejected":
+        terminal_pod_facts = {}
+        if scenario in {"create_ack_rejected", "create_ack_recovered"}:
             assert cluster is not None
             from omnigent.onboarding.sandboxes.agent_sandbox import AgentSandboxLauncher
 
@@ -1219,6 +1221,8 @@ def _serve_controller(
 
             def reject_create_ack(launcher, namespace, manifest):
                 create_workload(launcher, namespace, manifest)
+                if scenario == "create_ack_recovered":
+                    wait_running(launcher, namespace, manifest["metadata"]["name"])
                 rejected_create.append(True)
                 raise OSError("isolated-create-ack-rejected")
 
@@ -1229,6 +1233,48 @@ def _serve_controller(
 
             monkeypatch.setattr(selected_launcher, "_create_workload", reject_create_ack)
             monkeypatch.setattr(ModelRunCredentialService, "issue", capture_issued)
+            if scenario == "create_ack_recovered":
+                from saas.production import interactive_managed_recovery as recovery_module
+
+                original_digest = recovery_module._terminal_digest
+
+                def observe_terminal_pod(pod):
+                    digest = original_digest(pod)
+                    if digest is not None:
+                        terminal_pod_facts[pod["metadata"]["uid"]] = {
+                            "metadata": {
+                                key: pod["metadata"][key]
+                                for key in (
+                                    "uid",
+                                    "name",
+                                    "namespace",
+                                    "deletionTimestamp",
+                                    "ownerReferences",
+                                )
+                            },
+                            "spec": {
+                                key: [{"name": row["name"]} for row in pod["spec"].get(key, [])]
+                                for key in ("containers", "initContainers", "ephemeralContainers")
+                            },
+                            "status": {
+                                key: pod.get("status", {}).get(key)
+                                for key in (
+                                    "phase",
+                                    "reason",
+                                    "containerStatuses",
+                                    "initContainerStatuses",
+                                    "ephemeralContainerStatuses",
+                                )
+                                if key in pod.get("status", {})
+                            },
+                            "containers_sha256": digest,
+                        }
+                        (exchange / "terminal-pod-facts.json").write_text(
+                            json.dumps(terminal_pod_facts)
+                        )
+                    return digest
+
+                monkeypatch.setattr(recovery_module, "_terminal_digest", observe_terminal_pod)
         request_control = adapter._client._request
 
         async def observe_control_failure(action, values):
@@ -1488,7 +1534,7 @@ def _serve_controller(
 
             expected_runs = 1
 
-            if scenario == "create_ack_rejected":
+            if scenario in {"create_ack_rejected", "create_ack_recovered"}:
 
                 def failed_create_released():
                     assert not adapter._task.done(), "controller stopped after failed creation"
@@ -1502,6 +1548,157 @@ def _serve_controller(
                 _wait(failed_create_released, "failed managed creation logical release")
                 with factory() as db:
                     run = db.scalars(sa.select(RunRecord)).one()
+                if scenario == "create_ack_recovered":
+                    pending_gc = [None]
+
+                    def actual_recovered():
+                        assert not adapter._task.done()
+                        if pending_gc[0] is None:
+                            pending_gc[0] = asyncio.run_coroutine_threadsafe(
+                                adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                            )
+                        if not pending_gc[0].done():
+                            return False
+                        pending_gc[0].result()
+                        pending_gc[0] = None
+                        current = adapter._journal.read(run.id)
+                        with factory() as db:
+                            confirmed = (
+                                db.get(RunDispatchRecord, run.id).physical_recovery_fence
+                                == run.fence_token
+                            )
+                        return (
+                            current.phase == "terminal" and current.process_stopped and confirmed
+                        )
+
+                    try:
+                        _wait(
+                            actual_recovered,
+                            "managed container stop and durable recovery confirmation",
+                        )
+                    except Exception:
+                        with suppress(Exception):
+                            current = adapter._journal.read(run.id)
+                            active = adapter._executor._active.get(run.id)
+                            (exchange / "managed-recovery-pending.json").write_text(
+                                json.dumps(
+                                    {
+                                        "phase": current.phase,
+                                        "process_stopped": current.process_stopped,
+                                        "outcome": current.outcome,
+                                        "resources": asdict(current.managed_resources)
+                                        if current.managed_resources
+                                        else None,
+                                        "receipt": asdict(current.managed_termination)
+                                        if current.managed_termination
+                                        else None,
+                                        "active": {
+                                            "executing": active.executing,
+                                            "finished": active.finished.is_set(),
+                                            "preparation_done": active.preparation is None
+                                            or active.preparation.done(),
+                                            "dispatch_done": active.dispatching is None
+                                            or active.dispatching.done(),
+                                        }
+                                        if active
+                                        else None,
+                                    }
+                                )
+                            )
+                        raise
+                    record = adapter._journal.read(run.id)
+                    receipt = record.managed_termination
+                    assert record.stop_kind == "managed_container" and record.outcome == "orphaned"
+                    assert receipt is not None and receipt.complete and receipt.quiescence_sha256
+                    assert (
+                        receipt.secret_gone and len(receipt.pods) == len(terminal_pod_facts) == 1
+                    )
+                    assert (
+                        receipt.pods[0].containers_sha256
+                        == terminal_pod_facts[receipt.pods[0].uid]["containers_sha256"]
+                    )
+                    adapter._executor.assert_claimable()
+                    assert rejected_create == [True] and not resource_checkpoints
+                    assert len(issued_without_launch) == 1
+                    denied = httpx.post(
+                        "http://127.0.0.1:8090/v1/chat/completions",
+                        trust_env=False,
+                        headers={"Authorization": "Bearer " + issued_without_launch[0].value},
+                        json=_document(conversation.model_override, limit=32),
+                    )
+                    assert denied.status_code == 403 and [item["status"] for item in observed] == [
+                        403
+                    ]
+                    with factory() as db:
+                        for model, expected in (
+                            (TaskRecord, 1),
+                            (UsageEventRecord, 0),
+                            (BillingMeteringReceiptRecord, 0),
+                        ):
+                            assert (
+                                db.scalar(sa.select(sa.func.count()).select_from(model))
+                                == expected
+                            )
+                        assert (
+                            db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases
+                            == 0
+                        )
+                        assert (
+                            db.scalar(
+                                sa.select(sa.func.count())
+                                .select_from(ModelProviderBudgetReservationRecord)
+                                .where(
+                                    ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+                                )
+                            )
+                            == 0
+                        )
+                    (exchange / "terminal-pod-facts.json").write_text(
+                        json.dumps(terminal_pod_facts)
+                    )
+                    (exchange / "result.json").write_text(
+                        json.dumps(
+                            {
+                                "passed": True,
+                                "production_factory": True,
+                                "controller_adapter": True,
+                                "actual_litellm": True,
+                                "production_pki": False,
+                                "scenario": scenario,
+                                "official_store_backend": host_store._engine.dialect.name,
+                                "managed_host": True,
+                                "sandbox_provider": cluster["provider"],
+                                "physical_gc_interval_seconds": (
+                                    adapter._config.physical_gc_interval_seconds
+                                ),
+                                "creation_checkpoint_before_sdk": len(creation_checkpoints) == 1,
+                                "write_ahead_secret_and_workload_acknowledged": (
+                                    secret_submission_checkpoints
+                                    == workload_submission_checkpoints
+                                    == [record.run_id]
+                                ),
+                                "managed_preparation_binding": asdict(record.managed_preparation),
+                                "managed_resource_binding": asdict(record.managed_resources),
+                                "managed_termination_receipt": asdict(receipt),
+                                "resource_binding_revalidated": True,
+                                "sdk_wait_not_reached": True,
+                                "actual_create_followed_by_injected_ack_error": True,
+                                "actual_network_loss_simulated": False,
+                                "actual_managed_resource_termination_proven": True,
+                                "physical_recovery_fence_confirmed": True,
+                                "claim_barrier_released_after_stop": True,
+                                "task_count": 1,
+                                "supplier_calls": 0,
+                                "usage_facts": 0,
+                                "settled_tokens": 0,
+                                "gateway_request_statuses": [403],
+                                "test_model_token_ttl_seconds": 28800,
+                                "host_stop_acknowledged": False,
+                                "manual_run_heartbeat": False,
+                            }
+                        )
+                    )
+                    return
                 record = adapter._journal.read(run.id)
                 assert record.phase == "draining" and record.outcome == "orphaned"
                 assert record.managed_preparation and record.managed_resources

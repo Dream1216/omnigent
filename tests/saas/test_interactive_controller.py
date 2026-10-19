@@ -106,6 +106,12 @@ async def controller_case(interactive_http, tmp_path):
     class Physical:
         channel = None
 
+        async def recover_managed(self, record, checkpoint):
+            return record
+
+        async def shutdown_managed(self):
+            pass
+
         def assert_production_ready(self):
             pass
 
