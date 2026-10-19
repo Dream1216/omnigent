@@ -337,6 +337,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
         "cancel_before_admission",
         "cancel_unknown_stream",
         "security_revoke_stream",
+        "security_revoke_idle",
         "model_auth_before_prepare",
         "public_stop",
         "public_archive",
@@ -360,7 +361,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
     def funded():
         result = original()
         _fund_synthetic_gateway_calls(result[2], result[3])
-        if scenario == "security_revoke_stream":
+        if scenario in {"security_revoke_stream", "security_revoke_idle"}:
             case.revocation_source = result[0], result[3]
         return result
 
@@ -2160,6 +2161,73 @@ def _serve_controller(
                 assert "OK" in str(delegate.list_items(conversation.id, limit=100))
             record = adapter._journal.read(run.id)
             assert record.phase == "terminal" and record.outcome == "succeeded"
+            if scenario == "security_revoke_idle":
+                from saas.control_plane.model_revocation_execution import (
+                    ModelRevocationRunCanceller,
+                )
+                from tests.saas.test_model_revocation_execution_postgresql import _staff
+
+                assert not record.process_stopped
+                source_service, staff_actor = case.revocation_source
+                with _staff(case, source_service) as (staff, _):
+                    published = staff.list(staff_actor)[0]
+                    cutoff = staff.disable(
+                        staff_actor,
+                        publication_id=published.id,
+                        expected_generation=published.generation,
+                        idempotency_key="physical-idle-cutoff-001",
+                    )
+                    for _ in range(2):
+                        assert (
+                            asyncio.run_coroutine_threadsafe(
+                                adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                            ).result(20)
+                            == 0
+                        )
+                    assert not adapter._journal.read(run.id).process_stopped
+                    receipt = staff.security_revocations.request(
+                        staff_actor,
+                        disablement_id=cutoff["disablement_id"],
+                        expected_generation=published.generation,
+                        idempotency_key="physical-idle-revoke-001",
+                    )
+                    assert not receipt["execution_complete"]
+                assert ModelRevocationRunCanceller(workers["executor"]).cancel_pending() == ()
+
+                def idle_recovered():
+                    assert not adapter._task.done(), "owned controller stopped during idle cleanup"
+                    with factory() as db:
+                        return (
+                            db.get(RunDispatchRecord, run.id).physical_recovery_fence
+                            == run.fence_token
+                        )
+
+                _wait(
+                    idle_recovered,
+                    "background security cleanup of completed idle Runner",
+                    timeout=40,
+                )
+                record = adapter._journal.read(run.id)
+                assert record.process_stopped and record.outcome == "succeeded"
+                with httpx.Client(
+                    base_url=ORIGIN,
+                    trust_env=False,
+                    verify=ssl.create_default_context(cafile=str(certificate)),
+                    cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                    timeout=60,
+                ) as client:
+                    blocked = client.post(
+                        f"/v1/sessions/{conversation.id}/events",
+                        json=_message("d" * 32, "Do not restart the security-revoked model"),
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                    )
+                    assert blocked.status_code == 400, blocked.text
+                    assert "interactive_model_publication_unavailable" in blocked.text
+                with factory() as db:
+                    assert db.get(RunRecord, run.id).status == "succeeded"
+                    assert db.scalar(sa.select(sa.func.count()).select_from(RunRecord)) == 1
+                    assert db.scalar(sa.select(sa.func.count()).select_from(TaskRecord)) == 1
+                    assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 2
             if cluster is not None:
                 with OmnigentStoreAdapter("0.2.0").bind(runtime):
                     managed = delegate.get_conversation(conversation.id)
@@ -2188,7 +2256,7 @@ def _serve_controller(
                 assert asyncio.run_coroutine_threadsafe(
                     adapter._executor._driver.stop(record), app_loop
                 ).result(20)
-            if scenario in {"public_stop", "public_archive"}:
+            if scenario in {"public_stop", "public_archive", "security_revoke_idle"}:
                 asyncio.run_coroutine_threadsafe(
                     adapter._executor.reconcile_physical_gc(limit=10), app_loop
                 ).result(20)
@@ -2240,6 +2308,11 @@ def _serve_controller(
                         "public_stop_active_and_idle": scenario
                         in {"public_stop", "public_archive"},
                         "public_archive_and_undo": scenario == "public_archive",
+                        "ordinary_cutoff_keeps_idle_runner": scenario == "security_revoke_idle",
+                        "security_revocation_stops_idle_runner": scenario
+                        == "security_revoke_idle",
+                        "completed_result_preserved_after_revocation": scenario
+                        == "security_revoke_idle",
                         "known_usage_first_metered_after_terminal": scenario
                         == "late_customer_metering",
                         "late_usage_original_price_and_machine_preserved": scenario
@@ -2261,7 +2334,7 @@ def _serve_controller(
                         else None,
                         "host_stop_acknowledged": True,
                         "durable_stop_receipts": expected_runs
-                        if scenario in {"public_stop", "public_archive"}
+                        if scenario in {"public_stop", "public_archive", "security_revoke_idle"}
                         else None,
                         "manual_run_heartbeat": False,
                     }

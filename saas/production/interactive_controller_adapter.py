@@ -249,6 +249,13 @@ class ProductionInteractiveControllerAdapter:
                 else "physical_stop",
             )
 
+        async def inspect_revocation(record):
+            return await self._client.inspect_interactive_recovery(
+                run_id=record.run_id,
+                fence_token=record.fence_token,
+                capability_token=record.grant.capability_token,
+            )
+
         executor = ProductionInteractiveExecutor(
             authorize_model=authorize,
             grant_for_run=grant,
@@ -262,6 +269,7 @@ class ProductionInteractiveControllerAdapter:
             assert_authority=assert_authority,
             verify_recovery=verify_recovery,
             confirm_recovery=confirm_recovery,
+            inspect_revocation=inspect_revocation,
         )
         self._executor = executor
 

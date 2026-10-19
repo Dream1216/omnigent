@@ -9,6 +9,7 @@ import threading
 from dataclasses import fields, replace
 from datetime import timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -879,6 +880,179 @@ async def test_successful_idle_runner_without_stop_remains_reusable_and_unconfir
     assert not c.journal.read(c.lease.run_id).process_stopped
     assert await c.executor.reconcile_physical_gc(limit=32) == 0
     assert not c.confirmed and not c.stops
+
+
+@pytest.mark.asyncio
+async def test_security_revoked_idle_runner_requires_real_stop_and_preserves_success(
+    controller_case,
+):
+    c = controller_case
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await c.executor.prepare_finalization(c.lease, result="succeeded")
+    await c.executor.finalize(c.lease, result="succeeded")
+    inspected = []
+
+    async def inspect(record):
+        inspected.append(record.run_id)
+        return True
+
+    c.executor._inspect_revocation = inspect
+    c.controls.stop_ack = False
+    assert await c.executor.reconcile_physical_gc(limit=1) == 0
+    assert not c.confirmed and not c.journal.read(c.lease.run_id).process_stopped
+    assert inspected == [c.lease.run_id]
+    c.controls.stop_ack = True
+    assert await c.executor.reconcile_physical_gc(limit=1) == 1
+    record = c.journal.read(c.lease.run_id)
+    assert record.process_stopped and record.outcome == "succeeded"
+    assert c.confirmed == [c.lease.run_id] and len(c.stops) == 2
+    assert await c.executor.reconcile_physical_gc(limit=1) == 0
+    assert len(c.inputs) == len(c.gateway_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_ordinary_idle_inspection_does_not_stop_or_confirm(controller_case):
+    c = controller_case
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await c.executor.prepare_finalization(c.lease, result="succeeded")
+    await c.executor.finalize(c.lease, result="succeeded")
+    inspected = []
+
+    async def inspect(record):
+        inspected.append(record.run_id)
+        return False
+
+    c.executor._inspect_revocation = inspect
+    assert await c.executor.reconcile_physical_gc(limit=1) == 0
+    assert inspected == [c.lease.run_id]
+    assert not c.stops and not c.confirmed
+    assert not c.journal.read(c.lease.run_id).process_stopped
+
+
+@pytest.mark.asyncio
+async def test_idle_security_gc_rechecks_reuse_and_confirms_shared_stop_only_once(
+    controller_case,
+):
+    c = controller_case
+    control = ProductionRunnerMachineAuthority(
+        SchedulingControlPlane(c.f.factory),
+        ExecutionControlPlane(c.f.factory),
+        product_revision="c" * 40,
+        image_digest="sha256:" + "a" * 64,
+    )
+    machine = {
+        "runner_id": c.connection.runner_id,
+        "connection_generation": c.connection.connection_generation,
+        "connection_token": c.connection.connection_token,
+    }
+
+    async def finish(lease):
+        assert await c.executor.prepare_finalization(lease, result="succeeded") == "succeeded"
+        control.transition_run(
+            **machine,
+            run_id=lease.run_id,
+            lease_token=lease.lease_token,
+            fence_token=lease.fence_token,
+            capability_token=lease.capability_token,
+            target_status="succeeded",
+        )
+        await c.executor.finalize(lease, result="succeeded")
+        control.release_run(**machine, run_id=lease.run_id, fence_token=lease.fence_token)
+
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await finish(c.lease)
+    entered, resume = asyncio.Event(), asyncio.Event()
+
+    async def inspect(_record):
+        entered.set()
+        await resume.wait()
+        return True
+
+    c.executor._inspect_revocation = inspect
+    gc = asyncio.create_task(c.executor.reconcile_physical_gc(limit=32))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        second_id = _admit(c.f, "b" * 32, text="A distinct input reuses the warm Runner")
+        claimed = control.claim_run(**machine)
+        assert claimed is not None and claimed.run_id == second_id
+        second = RunnerControlClientLease(
+            **{
+                field.name: getattr(claimed, field.name)
+                for field in fields(RunnerControlClientLease)
+            }
+        )
+        for target in ("starting", "running"):
+            control.transition_run(
+                **machine,
+                run_id=second.run_id,
+                lease_token=second.lease_token,
+                fence_token=second.fence_token,
+                capability_token=second.capability_token,
+                target_status=target,
+            )
+        assert await c.executor.execute(second, cancellation=asyncio.Event()) == "succeeded"
+        assert (
+            c.journal.read(second.run_id).official_runner_id
+            == c.journal.read(c.lease.run_id).official_runner_id
+        )
+    finally:
+        resume.set()
+    assert await asyncio.wait_for(gc, 2) == 0
+    assert not c.stops and not c.confirmed
+    await finish(second)
+    assert await c.executor.reconcile_physical_gc(limit=32) == 2
+    assert len(c.stops) == 1 and set(c.confirmed) == {c.lease.run_id, second.run_id}
+    assert all(row.outcome == "succeeded" and row.process_stopped for row in c.journal.records())
+    assert len(c.inputs) == len(c.gateway_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_idle_security_inspection_failure_remains_unconfirmed(controller_case):
+    c = controller_case
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await c.executor.prepare_finalization(c.lease, result="succeeded")
+    await c.executor.finalize(c.lease, result="succeeded")
+
+    async def unavailable(_record):
+        raise RunnerControlError("isolated_inspection_unavailable", "Unavailable")
+
+    c.executor._inspect_revocation = unavailable
+    with pytest.raises(RunnerControlError):
+        await c.executor.reconcile_physical_gc(limit=1)
+    assert not c.stops and not c.confirmed
+    assert not c.journal.read(c.lease.run_id).process_stopped
+
+
+@pytest.mark.asyncio
+async def test_old_idle_stop_keeps_a_distinct_active_runner_model_channel(
+    controller_case, monkeypatch
+):
+    c = controller_case
+    await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    await c.executor.prepare_finalization(c.lease, result="succeeded")
+    await c.executor.finalize(c.lease, result="succeeded")
+    old = c.journal.read(c.lease.run_id)
+    active_id = uuid4()
+    # Model a different active physical identity; it is not a dispatched Run proof.
+    current = SimpleNamespace(record=replace(old, official_runner_id="replacement-active"))
+    forgotten = []
+
+    async def inspect(_record):
+        return True
+
+    async def forget(session_id):
+        forgotten.append(session_id)
+
+    monkeypatch.setattr(c.channels, "forget", forget)
+    c.executor._inspect_revocation = inspect
+    c.executor._active[active_id] = current
+    try:
+        assert await c.executor.reconcile_physical_gc(limit=1) == 1
+        assert c.executor._active[active_id] is current
+        assert not forgotten
+        assert c.stops == [old.official_runner_id]
+    finally:
+        del c.executor._active[active_id]
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -1030,7 +1031,8 @@ class SchedulingControlPlane:
             _aware(capability.expires_at),
         )
 
-    def confirm_interactive_recovery(
+    @contextmanager
+    def _interactive_recovery_binding(
         self,
         *,
         run_id: UUID,
@@ -1039,25 +1041,12 @@ class SchedulingControlPlane:
         connection_token: str,
         fence_token: int,
         capability_token: str,
-        proof_sha256: str,
-        certificate_fingerprint_sha256: str,
         expected_product_revision: str,
         product_image_digest: str,
-        cleanup_kind: str = "physical_stop",
-        now: datetime | None = None,
-    ) -> bool:
-        """Record historical physical cleanup, never execution or model authority."""
-        confirmed_at = now or _utcnow()
-        _validate_time(confirmed_at)
+    ):
         if (
-            not isinstance(cleanup_kind, str)
-            or cleanup_kind not in {"physical_stop", "never_started"}
-            or type(fence_token) is not int
+            type(fence_token) is not int
             or fence_token < 1
-            or any(
-                not isinstance(value, str) or len(value) != 64 or set(value) - _HASH_ALPHABET
-                for value in (proof_sha256, certificate_fingerprint_sha256)
-            )
             or not isinstance(expected_product_revision, str)
             or len(expected_product_revision) != 40
             or set(expected_product_revision) - _HASH_ALPHABET
@@ -1135,6 +1124,75 @@ class SchedulingControlPlane:
                 raise SchedulingError(
                     "interactive_recovery_binding_invalid", "Recovery is unavailable"
                 )
+            yield db, run, dispatch
+
+    def inspect_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        fence_token: int,
+        capability_token: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+    ) -> bool:
+        """Inspect security intent under the original released dispatch's cleanup authority."""
+        from saas.control_plane.model_revocations import executor_run_revocation
+
+        with self._interactive_recovery_binding(
+            run_id=run_id,
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            expected_product_revision=expected_product_revision,
+            product_image_digest=product_image_digest,
+        ) as (db, run, _):
+            return executor_run_revocation(db, run.id) is not None
+
+    def confirm_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+        cleanup_kind: str = "physical_stop",
+        now: datetime | None = None,
+    ) -> bool:
+        """Record historical physical cleanup, never execution or model authority."""
+        confirmed_at = now or _utcnow()
+        _validate_time(confirmed_at)
+        if (
+            not isinstance(cleanup_kind, str)
+            or cleanup_kind not in {"physical_stop", "never_started"}
+            or any(
+                not isinstance(value, str) or len(value) != 64 or set(value) - _HASH_ALPHABET
+                for value in (proof_sha256, certificate_fingerprint_sha256)
+            )
+        ):
+            raise SchedulingError(
+                "interactive_recovery_binding_invalid", "Recovery is unavailable"
+            )
+        with self._interactive_recovery_binding(
+            run_id=run_id,
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            expected_product_revision=expected_product_revision,
+            product_image_digest=product_image_digest,
+        ) as (db, run, dispatch):
             if dispatch.physical_recovery_fence is not None:
                 if dispatch.physical_recovery_fence != fence_token:
                     raise SchedulingError(

@@ -201,6 +201,16 @@ physically stopped. Unstarted and unknown-launch cases do not acquire a syntheti
 Runner identifier merely to make this receipt complete. This is not a Staff live
 progress API or proof that every revoked idle/terminal race has been closed.
 
+Controllers also inspect completed, unstopped Runner facts through the existing
+mTLS machine control boundary. The read-only inspection requires the original
+released dispatch, machine capability, connection generation and execution
+binding; it cannot write a cleanup receipt or grant inference. A retained
+security intent stops an exact idle physical identity, preserving the successful
+Run and known usage. Ordinary cutoff leaves it reusable. GC rechecks active
+reuse under the lifecycle lock, rotates bounded candidates to avoid starvation,
+and confirms historical facts only after an exact stop acknowledgement. Lost
+inspection or stop replies remain pending, not a claimed completion.
+
 Intent admission and managed model terminal transitions share a tenant/model/
 protocol transaction lock under READ COMMITTED. A terminal result committed
 first remains terminal; an intent committed first retains `cancelling` before

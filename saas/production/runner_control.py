@@ -234,6 +234,17 @@ class RunnerMachineAuthority(Protocol):
         fence_token: int,
     ) -> bool: ...
 
+    def inspect_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+    ) -> bool: ...
+
     def confirm_interactive_recovery(
         self,
         *,
@@ -259,6 +270,19 @@ class RunnerMachineAuthority(Protocol):
 
 
 class _SchedulingAuthority(Protocol):
+    def inspect_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+    ) -> bool: ...
+
     def confirm_interactive_recovery(
         self,
         *,
@@ -524,6 +548,31 @@ class ProductionRunnerMachineAuthority:
             requeue=False,
         )
 
+    def inspect_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+    ) -> bool:
+        if self._product_revision is None or self._image_digest is None:
+            raise RunnerControlError(
+                "runner_control_interactive_recovery_unavailable", "Recovery is unavailable"
+            )
+        return self._scheduling.inspect_interactive_recovery(
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            run_id=run_id,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            expected_product_revision=self._product_revision,
+            product_image_digest=self._image_digest,
+        )
+
     def confirm_interactive_recovery(
         self,
         *,
@@ -697,6 +746,8 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
         _exact(document, fields)
     elif action == "release_run":
         _exact(document, common | {"fence_token", "run_id"})
+    elif action == "inspect_interactive_recovery":
+        _exact(document, common | {"fence_token", "run_id", "capability_token"})
     elif action == "confirm_interactive_recovery":
         fields = common | {"fence_token", "run_id", "capability_token", "proof_sha256"}
         if "cleanup_kind" in document:
@@ -852,6 +903,16 @@ def _dispatch(
     if action == "confirm_interactive_recovery":
         replayed = authority.confirm_interactive_recovery(**kwargs)  # type: ignore[arg-type]
         return {"replayed": replayed, "version": _PROTOCOL_VERSION}
+    if action == "inspect_interactive_recovery":
+        revoked = authority.inspect_interactive_recovery(
+            runner_id=runner_id,
+            connection_generation=cast(int, values["connection_generation"]),
+            connection_token=cast(str, values["connection_token"]),
+            run_id=cast(UUID, values["run_id"]),
+            fence_token=cast(int, values["fence_token"]),
+            capability_token=cast(str, values["capability_token"]),
+        )
+        return {"security_revoked": revoked, "version": _PROTOCOL_VERSION}
     raise AssertionError("unreachable Runner control action")
 
 
@@ -1175,6 +1236,30 @@ class MutualTlsRunnerControlClient:
                 "runner_control_response_invalid", "Runner control response is invalid"
             )
         return cast(str, response["status"])
+
+    async def inspect_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+    ) -> bool:
+        response = await self._request(
+            "inspect_interactive_recovery",
+            {
+                "run_id": str(run_id),
+                "fence_token": fence_token,
+                "capability_token": capability_token,
+            },
+        )
+        if (
+            set(response) != {"security_revoked", "version"}
+            or type(response["security_revoked"]) is not bool
+        ):
+            raise RunnerControlError(
+                "runner_control_response_invalid", "Runner control response is invalid"
+            )
+        return response["security_revoked"]
 
     async def confirm_interactive_recovery(
         self,

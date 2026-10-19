@@ -26,6 +26,8 @@ from saas.production.runner_control import (
 )
 from tests.saas.test_interactive_execution_http import interactive_http as interactive_http
 from tests.saas.test_interactive_runner_lease import _admit, _claim, _controller, _register
+from tests.saas.test_model_disablement_runtime import _disable
+from tests.saas.test_model_revocation_runtime import _revoke
 from tests.saas.test_production_runner_control import (
     _CertificateAuthorizer,
     _certificates,
@@ -63,6 +65,54 @@ def _confirmation(connection, lease, later):
         "product_image_digest": "sha256:" + "a" * 64,
         "now": later,
     }
+
+
+def _inspection(connection, lease):
+    values = _confirmation(connection, lease, None)
+    for key in ("now", "proof_sha256", "certificate_fingerprint_sha256"):
+        values.pop(key)
+    return values
+
+
+def test_recovery_inspection_reads_security_intent_without_confirming_or_reopening(recovery_case):
+    f, scheduling, connection, lease, _, _ = recovery_case
+    values = _inspection(connection, lease)
+    assert scheduling.inspect_interactive_recovery(**values) is False
+    cutoff = _disable(f)
+    assert scheduling.inspect_interactive_recovery(**values) is False
+    _revoke(f, cutoff)
+    with f.factory() as db:
+        count = db.scalar(sa.select(sa.func.count()).select_from(RunEventRecord))
+        outbox = db.scalar(sa.select(sa.func.count()).select_from(ControlPlaneOutboxEvent))
+    assert scheduling.inspect_interactive_recovery(**values) is True
+    assert scheduling.inspect_interactive_recovery(**values) is True
+    with f.factory() as db:
+        assert db.get(RunRecord, lease.run_id).status == "orphaned"
+        assert db.get(RunDispatchRecord, lease.run_id).physical_recovery_fence is None
+        assert db.get(CapabilityTokenRecord, lease.capability_id).revoked_at is not None
+        assert db.scalar(sa.select(sa.func.count()).select_from(RunEventRecord)) == count
+        assert db.scalar(sa.select(sa.func.count()).select_from(ControlPlaneOutboxEvent)) == outbox
+
+
+@pytest.mark.parametrize(
+    "changed",
+    ("fence_token", "connection_generation", "connection_token", "capability_token", "run_id"),
+)
+def test_recovery_inspection_rejects_unbound_historical_machine(recovery_case, changed):
+    _, scheduling, connection, lease, _, _ = recovery_case
+    values = _inspection(connection, lease)
+    if changed == "run_id":
+        from uuid import uuid4
+
+        values[changed] = uuid4()
+    else:
+        values[changed] = (
+            values[changed] + 1
+            if changed in {"fence_token", "connection_generation"}
+            else "invalid"
+        )
+    with pytest.raises(SchedulingError):
+        scheduling.inspect_interactive_recovery(**values)
 
 
 def test_exact_recovery_receipt_unblocks_only_new_input_and_replays_once(recovery_case):
@@ -258,6 +308,24 @@ async def test_mtls_recovery_derives_its_certificate_and_never_accepts_a_client_
         **({"cleanup_kind": cleanup_kind} if cleanup_kind == "never_started" else {}),
     }
     try:
+        inspection = {
+            "run_id": lease.run_id,
+            "fence_token": lease.fence_token,
+            "capability_token": lease.capability_token,
+        }
+        assert await client.inspect_interactive_recovery(**inspection) is False
+        cutoff = _disable(f)
+        assert await client.inspect_interactive_recovery(**inspection) is False
+        _revoke(f, cutoff)
+        assert await client.inspect_interactive_recovery(**inspection) is True
+        with f.factory() as db:
+            assert db.get(RunDispatchRecord, lease.run_id).physical_recovery_fence is None
+        with pytest.raises(RunnerControlError) as forged:
+            await client._request(
+                "inspect_interactive_recovery",
+                {**inspection, "run_id": str(lease.run_id), "security_revoked": True},
+            )
+        assert forged.value.code == "runner_control_request_invalid"
         with pytest.raises(RunnerControlError) as denied:
             await client._request(
                 "confirm_interactive_recovery",

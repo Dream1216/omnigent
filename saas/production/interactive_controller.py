@@ -111,6 +111,7 @@ class ProductionInteractiveExecutor:
         assert_authority: Callable[[], None],
         verify_recovery: Callable[[InteractiveCleanupRecord], Awaitable[None]],
         confirm_recovery: Callable[[InteractiveCleanupRecord], Awaitable[None]],
+        inspect_revocation: Callable[[InteractiveRecoveryRecord], Awaitable[bool]] | None = None,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         meter_factory: Callable[[ManagedMeteringGrant], ProviderUsageMeter] | None = None,
     ):
@@ -124,6 +125,7 @@ class ProductionInteractiveExecutor:
         )
         self._assert_authority, self._verify_recovery = assert_authority, verify_recovery
         self._confirm_recovery = confirm_recovery
+        self._inspect_revocation = inspect_revocation
         self._client_factory = client_factory
         self._meter_factory = meter_factory or (
             lambda grant: ProviderUsageMeter(
@@ -133,6 +135,7 @@ class ProductionInteractiveExecutor:
         self._active: dict[UUID, _Active] = {}
         self._recovering = asyncio.Lock()
         self._confirmed_recoveries: set[UUID] = set()
+        self._gc_offset = 0
         self._lifecycle = asyncio.Lock()
 
     def assert_production_ready(self) -> None:
@@ -583,6 +586,11 @@ class ProductionInteractiveExecutor:
                 row
                 for row in self._journal.records()
                 if row.phase != "terminal"
+                or (
+                    self._inspect_revocation is not None
+                    and not row.process_stopped
+                    and row.official_runner_id is not None
+                )
                 or any(row.grant.spool_directory.glob("*.pending.json"))
                 or (
                     row.run_id not in self._confirmed_recoveries
@@ -598,11 +606,28 @@ class ProductionInteractiveExecutor:
                     )
                 )
             ]
+            if candidates:
+                offset = self._gc_offset % len(candidates)
+                candidates = candidates[offset:] + candidates[:offset]
+                self._gc_offset = offset + max(0, limit - completed)
             for candidate in candidates[: max(0, limit - completed)]:
                 record = self._journal.read(candidate.run_id)
                 if record.run_id in self._active:
                     continue
                 await self._verify_recovery(record)
+                security_stop = (
+                    record.phase == "terminal"
+                    and not record.process_stopped
+                    and self._inspect_revocation is not None
+                    and await self._inspect_revocation(record)
+                )
+                if (
+                    record.phase == "terminal"
+                    and not record.process_stopped
+                    and not security_stop
+                    and not any(record.grant.spool_directory.glob("*.pending.json"))
+                ):
+                    continue
                 confirmation_required = False
                 async with self._lifecycle:
                     if (
@@ -617,25 +642,54 @@ class ProductionInteractiveExecutor:
                         or certificate_sha256(record.grant) != record.certificate_sha256
                     ):
                         raise _unavailable()
-                    if record.phase != "terminal" or (
-                        (
-                            record.outcome == "orphaned"
-                            or (
-                                record.process_stopped
-                                and (
-                                    record.official_runner_id is not None
-                                    or record.stop_kind == "never_started"
+                    if (
+                        security_stop
+                        or record.phase != "terminal"
+                        or (
+                            (
+                                record.outcome == "orphaned"
+                                or (
+                                    record.process_stopped
+                                    and (
+                                        record.official_runner_id is not None
+                                        or record.stop_kind == "never_started"
+                                    )
                                 )
                             )
+                            and record.run_id not in self._confirmed_recoveries
                         )
-                        and record.run_id not in self._confirmed_recoveries
                     ):
                         never_started = (
                             record.phase == "prepared" and record.official_runner_id is None
                         )
+                        peers = [
+                            row
+                            for row in self._journal.records()
+                            if record.official_runner_id is not None
+                            and row.run_id != record.run_id
+                            and (
+                                row.host_id,
+                                row.official_runner_id,
+                                row.host_owner,
+                                row.host_account_generation,
+                                row.scope.session_id,
+                            )
+                            == (
+                                record.host_id,
+                                record.official_runner_id,
+                                record.host_owner,
+                                record.host_account_generation,
+                                record.scope.session_id,
+                            )
+                        ]
+                        if any(
+                            row.run_id in self._active or row.phase != "terminal" for row in peers
+                        ):
+                            continue
                         stopped = (
                             record.process_stopped
                             or never_started
+                            or any(row.process_stopped for row in peers)
                             or await self._driver.stop(record)
                         )
                         if not stopped:
@@ -647,6 +701,11 @@ class ProductionInteractiveExecutor:
                                 stop_kind="never_started" if never_started else record.stop_kind,
                             )
                             self._journal.put(record)
+                        if security_stop and not any(
+                            row.record.scope.session_id == record.scope.session_id
+                            for row in self._active.values()
+                        ):
+                            await self._channels.forget(record.scope.session_id)
                         confirmation_required = True
                 if confirmation_required:
                     await self._confirm_recovery(record)

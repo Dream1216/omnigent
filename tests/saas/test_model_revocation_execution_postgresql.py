@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane import model_revocations
 from saas.control_plane.execution import ExecutionControlPlane
-from saas.control_plane.execution_models import RunRecord
+from saas.control_plane.execution_models import RunEventRecord, RunRecord
 from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 from saas.control_plane.model_publications import ModelPublicationService
 from saas.control_plane.model_revocation_execution import ModelRevocationRunCanceller
@@ -24,8 +24,8 @@ from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
     PlatformSecurityError,
 )
-from saas.control_plane.scheduling import SchedulingControlPlane
-from saas.control_plane.scheduling_models import CapabilityTokenRecord
+from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingError
+from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
 from saas.production import platform_model_gateway as gateway_module
 from saas.production.model_run_inference import LiteLLMRunInference
 from saas.production.platform_model_gateway import PlatformModelGateway
@@ -103,6 +103,72 @@ def _terminal(workers, binding):
         target_status="succeeded",
         trace_id="isolated-pg-terminal-race",
     )
+
+
+def test_real_executor_inspects_terminal_security_intent_without_stop_or_execution_authority(
+    interactive_postgresql, publication_source
+):
+    f = interactive_postgresql.base
+    with (
+        _run_binding(interactive_postgresql, None) as binding,
+        _worker_logins(f) as workers,
+        _staff(f, publication_source["source"]) as (staff, staff_engine),
+    ):
+        scheduling = SchedulingControlPlane(workers["executor"])
+        values = {
+            **binding.machine,
+            "run_id": binding.lease.run_id,
+            "fence_token": binding.lease.fence_token,
+            "capability_token": binding.lease.capability_token,
+            "expected_product_revision": "c" * 40,
+            "product_image_digest": "sha256:" + "a" * 64,
+        }
+        with pytest.raises(SchedulingError, match="pending"):
+            scheduling.inspect_interactive_recovery(**values)
+        assert _terminal(workers, binding).status == "succeeded"
+        scheduling.release_dispatch(
+            **binding.machine,
+            run_id=binding.lease.run_id,
+            fence_token=binding.lease.fence_token,
+            requeue=False,
+        )
+        assert scheduling.inspect_interactive_recovery(**values) is False
+        actor = publication_source["actor"]
+        publication = staff.list(actor)[0]
+        cutoff = staff.disable(
+            actor,
+            publication_id=publication.id,
+            expected_generation=publication.generation,
+            idempotency_key="inspect-idle-cutoff-001",
+        )
+        assert scheduling.inspect_interactive_recovery(**values) is False
+        staff.security_revocations.request(
+            actor,
+            disablement_id=cutoff["disablement_id"],
+            expected_generation=publication.generation,
+            idempotency_key="inspect-idle-revoke-001",
+        )
+        assert scheduling.inspect_interactive_recovery(**values) is True
+        assert scheduling.inspect_interactive_recovery(**values) is True
+        with pytest.raises(sa.exc.DBAPIError):
+            SchedulingControlPlane(f.app_factory).inspect_interactive_recovery(**values)
+        with pytest.raises(SchedulingError):
+            scheduling.inspect_interactive_recovery(
+                **{**values, "connection_generation": values["connection_generation"] + 1}
+            )
+        with staff_engine.connect() as db, pytest.raises(sa.exc.DBAPIError):
+            db.execute(sa.select(RunRecord.id))
+        with f.factory() as db:
+            assert db.get(RunRecord, binding.lease.run_id).status == "succeeded"
+            assert db.get(RunDispatchRecord, binding.lease.run_id).physical_recovery_fence is None
+            assert (
+                db.get(CapabilityTokenRecord, binding.lease.capability_id).revoked_at is not None
+            )
+            assert not db.scalar(
+                sa.select(sa.func.count())
+                .select_from(RunEventRecord)
+                .where(RunEventRecord.event_type == "run.interactive_physical_recovered")
+            )
 
 
 @pytest.mark.parametrize("first", ("staff", "terminal"))
