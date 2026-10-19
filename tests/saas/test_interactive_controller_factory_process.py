@@ -336,6 +336,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
         "tools_cross_run",
         "cancel_before_admission",
         "cancel_unknown_stream",
+        "security_revoke_stream",
         "public_stop",
         "public_archive",
         "late_customer_metering",
@@ -358,6 +359,8 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
     def funded():
         result = original()
         _fund_synthetic_gateway_calls(result[2], result[3])
+        if scenario == "security_revoke_stream":
+            case.revocation_source = result[0], result[3]
         return result
 
     monkeypatch.setattr(test_tenant_model_catalog_postgresql, "_fixture", funded)
@@ -635,6 +638,9 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                         "partial-stream",
                         "text",
                     ]
+                    assert after_calls["requests"][0]["stream_started"]
+                if scenario == "security_revoke_stream":
+                    assert [r["mode"] for r in after_calls["requests"]] == ["partial-stream"]
                     assert after_calls["requests"][0]["stream_started"]
                 if scenario == "controller_crash_recovery":
                     assert [r["mode"] for r in after_calls["requests"]] == [
@@ -941,10 +947,12 @@ def _serve_controller(
         "cancel_unknown_stream",
         "public_stop",
         "public_archive",
+        "security_revoke_stream",
     }
     initial_text = {
         "tools_cross_run": "P0_MANAGED_TOOL: write one unique marker",
         "cancel_unknown_stream": "P0_CANCEL_STREAM: cancel after the stream starts",
+        "security_revoke_stream": "P0_CANCEL_STREAM: security revoke after the stream starts",
         "controller_crash_recovery": "P0_MANAGED_TOOL P0_CRASH_RECOVERY: write one unique marker",
     }.get(scenario, "Build the requested page")
     control = MutualTlsRunnerControlServer(
@@ -1129,7 +1137,10 @@ def _serve_controller(
                     assert await asyncio.to_thread(admission_released.wait, 40)
                 response = await call_next(request)
                 row["status"] = response.status_code
-                if scenario == "cancel_unknown_stream" and len(observed) == 1:
+                if (
+                    scenario in {"cancel_unknown_stream", "security_revoke_stream"}
+                    and len(observed) == 1
+                ):
                     assert response.status_code == 200
                     request_waiting.set()
                 if (
@@ -1358,6 +1369,127 @@ def _serve_controller(
                         s == "released" for s in dispatches
                     )
 
+            if scenario == "security_revoke_stream":
+                _wait(request_waiting.is_set, "actual Runner partial model response")
+                with factory() as db:
+                    original_run = db.scalars(sa.select(RunRecord)).one()
+                    assert original_run.status == "running"
+                from saas.control_plane.model_revocation_execution import (
+                    ModelRevocationRunCanceller,
+                )
+                from tests.saas.test_model_revocation_execution_postgresql import _staff
+
+                source_service, staff_actor = case.revocation_source
+                with _staff(case, source_service) as (staff, staff_engine):
+                    with staff_engine.connect() as db:
+                        assert db.scalar(
+                            sa.text(
+                                "SELECT has_function_privilege(current_user, "
+                                "'pg_catalog.pg_advisory_xact_lock(bigint)','EXECUTE') "
+                                "AND NOT has_function_privilege('saas_runner_agent', "
+                                "'pg_catalog.pg_advisory_xact_lock(bigint)','EXECUTE') "
+                                "AND NOT has_function_privilege(current_user, "
+                                "'pg_catalog.pg_advisory_lock(bigint)','EXECUTE')"
+                            )
+                        )
+                    published = staff.list(staff_actor)[0]
+                    cutoff = staff.disable(
+                        staff_actor,
+                        publication_id=published.id,
+                        expected_generation=published.generation,
+                        idempotency_key="physical-security-cutoff-001",
+                    )
+                    receipt = staff.security_revocations.request(
+                        staff_actor,
+                        disablement_id=cutoff["disablement_id"],
+                        expected_generation=published.generation,
+                        idempotency_key="physical-security-revoke-001",
+                    )
+                    assert receipt["revocation_requested"] and not receipt["execution_complete"]
+                    canceller = ModelRevocationRunCanceller(workers["executor"])
+                    changes = canceller.cancel_pending()
+                    assert len(changes) == 1 and changes[0].run_id == original_run.id
+                    assert changes[0].status == "cancelling"
+                    assert canceller.cancel_pending() == ()
+                    _wait(released, "security-revoked Run terminal release", timeout=150)
+                    record = adapter._journal.read(original_run.id)
+                    assert record.phase == "terminal" and record.outcome == "cancelled"
+                    assert record.process_stopped
+                    assert len(list(record.grant.spool_directory.glob("*.pending.json"))) == 1
+                    found = staff.security_revocations.find(
+                        staff_actor, idempotency_key="physical-security-revoke-001"
+                    )
+                    assert found == receipt and not found["execution_complete"]
+                denied = httpx.post(
+                    "http://127.0.0.1:8090/v1/chat/completions",
+                    trust_env=False,
+                    headers={"Authorization": "Bearer " + private_bearers[0]},
+                    json=_document(conversation.model_override, limit=32),
+                )
+                assert denied.status_code == 403
+                with httpx.Client(
+                    base_url=ORIGIN,
+                    trust_env=False,
+                    verify=ssl.create_default_context(cafile=str(certificate)),
+                    cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                    timeout=60,
+                ) as client:
+                    blocked = client.post(
+                        f"/v1/sessions/{conversation.id}/events",
+                        json=_message("d" * 32, "Do not restart the revoked model"),
+                        headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                    )
+                    assert blocked.status_code == 400, blocked.text
+                    assert "interactive_model_publication_unavailable" in blocked.text
+                with factory() as db:
+                    assert db.get(RunRecord, original_run.id).status == "cancelled"
+                    assert (
+                        db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
+                    )
+                    for model, count in (
+                        (RunRecord, 1),
+                        (TaskRecord, 1),
+                        (ModelRunTokenRecord, 1),
+                        (UsageEventRecord, 0),
+                        (BillingMeteringReceiptRecord, 0),
+                    ):
+                        assert db.scalar(sa.select(sa.func.count()).select_from(model)) == count
+                    hold = db.scalars(
+                        sa.select(ModelProviderBudgetReservationRecord).where(
+                            ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+                        )
+                    ).one()
+                    assert hold.status == "uncertain" and hold.run_id == original_run.id
+                    assert hold.admitted_tokens > 0 and hold.admitted_microusd > 0
+                    assert hold.settled_tokens == hold.settled_microusd == 0
+                    assert hold.released_tokens == hold.released_microusd == 0
+                assert [r["status"] for r in observed] == [200, 403]
+                adapter.assert_production_ready()
+                (exchange / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "passed": True,
+                            "production_factory": True,
+                            "controller_adapter": True,
+                            "physical_host": True,
+                            "actual_litellm": True,
+                            "production_pki": False,
+                            "scenario": scenario,
+                            "official_store_backend": host_store._engine.dialect.name,
+                            "host_stop_acknowledged": True,
+                            "staff_intent_executor_cancel": True,
+                            "revocation_id": str(receipt["revocation_id"]),
+                            "admission_receipt_not_live_progress": True,
+                            "revoked_model_new_input_rejected": True,
+                            "unknown_usage_hold_and_reference_retained": True,
+                            "task_count": 1,
+                            "supplier_calls": 1,
+                            "usage_facts": 0,
+                            "manual_run_heartbeat": False,
+                        }
+                    )
+                )
+                return
             if cancelling:
                 _wait(request_waiting.is_set, "actual Runner model request cancellation point")
                 with factory() as db:

@@ -52,7 +52,7 @@ BEGIN
     END IF;
     EXECUTE 'SELECT version_num FROM public.saas_alembic_version'
     INTO STRICT schema_head;
-    IF schema_head <> 'lm2m00000001' THEN
+    IF schema_head <> 'lm2n00000001' THEN
         RAISE EXCEPTION
             'Runner cluster admission rejected: P0S10 authority is unavailable';
     END IF;
@@ -211,6 +211,7 @@ $$;
 --   saas_privacy_executor/saas_privacy_dispatcher: privacy lifecycle/execution;
 --   saas_registration/saas_onboarding: registration and onboarding event chains;
 --   saas_billing: BillingControlPlane.
+--   saas_platform_app: model command idempotency and publication cutoffs.
 GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) TO
     saas_app,
     saas_governance,
@@ -218,6 +219,7 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) TO
     saas_dispatcher,
     saas_executor,
     saas_platform,
+    saas_platform_app,
     saas_platform_governance,
     saas_platform_support,
     saas_privacy_executor,

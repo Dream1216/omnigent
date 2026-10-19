@@ -257,7 +257,14 @@ class ProductionRunnerAgent:
             with suppress(asyncio.CancelledError):
                 await execution
             return "orphaned"
-        return "cancelled" if result in {"cancelled", "succeeded", "failed"} else "orphaned"
+        return "cancelled" if result in _TERMINAL_RESULTS else "orphaned"
+
+    async def _prepare_terminal_result(self, lease: RunnerControlClientLease, result: str) -> str:
+        try:
+            prepared = await self._executor.prepare_finalization(lease, result=result)
+        except Exception:  # noqa: BLE001 - executor errors are content-sensitive.
+            return "orphaned"
+        return prepared if prepared in _TERMINAL_RESULTS | {"orphaned"} else "orphaned"
 
     async def _execute_lease(
         self,
@@ -349,23 +356,15 @@ class ProductionRunnerAgent:
             # Run and Worktree heartbeats deliberately remain live while helper
             # shutdown and checkpointing finish.  A failed checkpoint may only
             # downgrade the result, never preserve succeeded.
-            try:
-                prepared_result = await self._executor.prepare_finalization(
-                    lease,
-                    result=result,
-                )
-            except Exception:  # noqa: BLE001 - executor errors are content-sensitive.
-                prepared_result = "orphaned"
-            if prepared_result not in _TERMINAL_RESULTS | {"orphaned"}:
-                prepared_result = "orphaned"
-            result = prepared_result
+            result = await self._prepare_terminal_result(lease, result)
 
             if heartbeat.done():
                 durable_status = await heartbeat
                 if durable_status == "cancelling":
+                    if not durable_cancellation:
+                        result = await self._cancel_execution(lease, execution, cancellation)
+                        result = await self._prepare_terminal_result(lease, result)
                     durable_cancellation = True
-                    if result != "orphaned":
-                        result = "cancelled"
                 else:
                     raise RunnerControlError(
                         "runner_control_durable_status_invalid",
@@ -382,7 +381,23 @@ class ProductionRunnerAgent:
             if result == "cancelled" and not durable_cancellation:
                 await self._client.transition_run(lease, target_status="cancelling")
             terminalizing.set()
-            await self._client.transition_run(lease, target_status=result)
+            try:
+                await self._client.transition_run(lease, target_status=result)
+            except RunnerControlError as error:
+                # Only a known rolled-back rejection permits a different terminal command.
+                if error.code != "run_transition_invalid" or result not in {
+                    "succeeded",
+                    "failed",
+                    "timed_out",
+                }:
+                    raise
+                state = await self._client.heartbeat_run(lease)
+                if state.get("status") != "cancelling":
+                    raise
+                result = await self._cancel_execution(lease, execution, cancellation)
+                result = await self._prepare_terminal_result(lease, result)
+                await self._executor.prepare_terminal_transition(lease)
+                await self._client.transition_run(lease, target_status=result)
             heartbeat_stop.set()
             durable_status = await heartbeat
             if durable_status not in {"stopped", "cancelling", "terminal"}:
