@@ -145,6 +145,24 @@ Global legacy name-only start/terminate/resume/suspend are fenced; keepalive is
 UID-bound and cannot wake a recorded stop. Safe resume, normal/warm lifecycle
 retirement, cross-Pod recovery and production admission remain separate gates.
 
+## Warm managed resource admission
+
+A reused managed Host/Runner is not a new resource creation. Before binding the
+next Run's model channel, the driver reads the recorded workload and token Secret,
+rechecks nonce, actual UIDs, template and configuration, and resolves that token
+against the current Host row. A detached/deleted Host, revoked or expired token,
+wrong owner/account generation, replaced resource or pending retirement prevents
+admission. The original Run must also pass the existing terminal/released mTLS
+check. The private record is checked again after the reads and before binding.
+
+Private v7 stores only a direct origin Run UUID for reuse, not copied creation
+intent or invented SDK effects. The reference is immutable and cannot point to
+itself or coexist with owned resource facts. Pending references count as peers
+even before a replacement Runner has a Host ID, so GC cannot clear their barrier.
+Retain the referenced origin and credentials with all dependent records; old
+consumers reject v7, and the all-consumer cutover gate still applies. This read-only
+admission does not complete dormant resume or normal/warm resource retirement.
+
 ## Database admission during a leased Run
 
 Fleet bootstrap and the default direct Runner admission still require the

@@ -106,6 +106,9 @@ async def controller_case(interactive_http, tmp_path):
     class Physical:
         channel = None
 
+        async def revalidate_managed(self, authorized, origins, *, previous=None):
+            return None
+
         async def recover_managed(self, record, checkpoint):
             return record
 

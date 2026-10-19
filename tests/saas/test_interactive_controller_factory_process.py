@@ -1293,6 +1293,80 @@ def _serve_controller(
             official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
             auth_provider=app.state.saas_http_integration.auth_provider,
         )
+        managed_reuse_reads = []
+        if cluster is not None:
+
+            def record_reuse_failure(stage, error):
+                # Only code locations/classes: never exception text, local values or SDK bodies.
+                failures, seen = [], set()
+                while error is not None and id(error) not in seen:
+                    seen.add(id(error))
+                    failures.append(
+                        {
+                            "type": type(error).__name__,
+                            "frames": [
+                                {
+                                    "file": Path(frame.filename).name,
+                                    "function": frame.name,
+                                    "line": frame.lineno,
+                                }
+                                for frame in traceback.extract_tb(error.__traceback__)
+                            ],
+                        }
+                    )
+                    error = error.__cause__ or error.__context__
+                (exchange / "managed-reuse-failure.json").write_text(
+                    json.dumps({"stage": stage, "failures": failures})
+                )
+
+            revalidate_managed = adapter._executor._driver.revalidate_managed
+
+            async def observe_managed_reuse(authorized, origins, *, previous=None):
+                try:
+                    origin = await revalidate_managed(authorized, origins, previous=previous)
+                except Exception as error:
+                    record_reuse_failure("resource_revalidation", error)
+                    raise
+                if origin is not None:
+                    (current,) = [
+                        value
+                        for value in adapter._executor._active.values()
+                        if value.authorized is authorized
+                    ]
+                    assert current.record.phase == "prepared" and not current.bound
+                    assert current.preparation is None
+                    managed_reuse_reads.append(
+                        {
+                            "run_id": str(current.record.run_id),
+                            "origin_run_id": str(origin.run_id),
+                            "workload_uid": origin.managed_resources.workload_uid,
+                            "before_model_binding": True,
+                        }
+                    )
+                return origin
+
+            adapter._executor._driver.revalidate_managed = observe_managed_reuse
+            verify_origin, verify_origin_release = (
+                adapter._executor._verify_recovery,
+                adapter._executor._verify_released,
+            )
+
+            async def observe_origin(record):
+                try:
+                    return await verify_origin(record)
+                except Exception as error:
+                    record_reuse_failure("historical_owner", error)
+                    raise
+
+            async def observe_origin_release(record):
+                try:
+                    return await verify_origin_release(record)
+                except Exception as error:
+                    record_reuse_failure("terminal_release", error)
+                    raise
+
+            adapter._executor._verify_recovery = observe_origin
+            adapter._executor._verify_released = observe_origin_release
         stop_permitted, unknown_stop_observed = threading.Event(), threading.Event()
         if scenario == "orphaned_stop_recovery":
             physical = adapter._executor._driver
@@ -2963,6 +3037,11 @@ def _serve_controller(
                         )
             adapter.assert_production_ready()
             gc_interval = adapter._config.physical_gc_interval_seconds
+            owned_creation_run_ids = {
+                row.run_id
+                for row in adapter._journal.records()
+                if row.run_id in {run.id for run in runs} and row.managed_creation is not None
+            }
             (exchange / "result.json").write_text(
                 json.dumps(
                     {
@@ -2990,14 +3069,21 @@ def _serve_controller(
                         if resource_checkpoints
                         else None,
                         "write_ahead_secret_and_workload_acknowledged": (
-                            secret_submission_checkpoints
-                            == workload_submission_checkpoints
-                            == [record.run_id]
+                            secret_submission_checkpoints == workload_submission_checkpoints
+                            and len(secret_submission_checkpoints) == len(owned_creation_run_ids)
+                            and set(secret_submission_checkpoints) == owned_creation_run_ids
                         )
                         if cluster is not None
                         else None,
                         "resource_binding_revalidated": cluster is not None
-                        and scenario == "single",
+                        and (scenario == "single" or bool(managed_reuse_reads)),
+                        "managed_reuse_checkpoints": managed_reuse_reads,
+                        "managed_origin_links": {
+                            str(run.id): str(row.managed_origin_run_id)
+                            for run in runs
+                            if (row := adapter._journal.read(run.id)).managed_origin_run_id
+                            is not None
+                        },
                         "test_model_token_ttl_seconds": 90
                         if scenario == "tools_cross_run"
                         else 28800,

@@ -107,6 +107,7 @@ def read_managed_resources(
     *,
     host_token_sha256: str,
     creation: ManagedCreationIntent | None = None,
+    validate_host_token=None,
 ) -> ManagedResourceBinding:
     """Read one exact workload and Secret; missing/foreign objects are unavailable, not stopped."""
     try:
@@ -138,6 +139,10 @@ def read_managed_resources(
             )
         )
         secret_uid = _secret_uid(secret, preparation, host_token_sha256)
+        if validate_host_token is not None and not validate_host_token(
+            base64.b64decode(secret["data"][HOST_TOKEN_ENV_VAR], validate=True).decode()
+        ):
+            raise _unavailable()
         if creation is not None:
             if (
                 not creation.workload_submitted

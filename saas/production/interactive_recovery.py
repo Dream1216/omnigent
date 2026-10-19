@@ -209,6 +209,7 @@ class InteractiveRecoveryRecord:
     managed_resources: ManagedResourceBinding | None = None
     managed_creation: ManagedCreationIntent | None = None
     managed_termination: ManagedTerminationReceipt | None = None
+    managed_origin_run_id: UUID | None = None
 
     def __post_init__(self):
         if (
@@ -233,6 +234,23 @@ class InteractiveRecoveryRecord:
             or type(self.process_stopped) is not bool
             or self.outcome not in {None, "succeeded", "failed", "cancelled", "orphaned"}
             or self.stop_kind not in {None, "never_started", "managed_container"}
+            or (
+                self.managed_origin_run_id is not None
+                and (
+                    not isinstance(self.managed_origin_run_id, UUID)
+                    or not self.managed_origin_run_id.int
+                    or self.managed_origin_run_id == self.run_id
+                    or any(
+                        value is not None
+                        for value in (
+                            self.managed_preparation,
+                            self.managed_resources,
+                            self.managed_creation,
+                            self.managed_termination,
+                        )
+                    )
+                )
+            )
             or (
                 self.managed_preparation is not None
                 and (
@@ -490,7 +508,10 @@ def _encode(record: InteractiveCleanupRecord) -> bytes:
         document = {"schema_version": 2, "record_type": "unstarted", "record": asdict(record)}
     else:
         value = asdict(record)
-        if record.managed_creation is not None:
+        if record.managed_origin_run_id is not None:
+            document = {"schema_version": 7, "record_type": "interactive", "record": value}
+        elif record.managed_creation is not None:
+            value.pop("managed_origin_run_id")
             document = {"schema_version": 5, "record_type": "interactive", "record": value}
             if record.managed_termination is not None:
                 if record.managed_termination.quiescence_sha256 is not None:
@@ -498,6 +519,7 @@ def _encode(record: InteractiveCleanupRecord) -> bytes:
                 else:
                     value["managed_termination"].pop("quiescence_sha256")
         else:
+            value.pop("managed_origin_run_id")
             value.pop("managed_creation")
             value.pop("managed_termination")
             if record.managed_resources is not None:
@@ -543,6 +565,41 @@ def _uuid(value):
 def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 7
+        ):
+            if (
+                set(document) != {"schema_version", "record_type", "record"}
+                or document["record_type"] != "interactive"
+            ):
+                raise ValueError
+            value = document["record"]
+            origin = _uuid(value.pop("managed_origin_run_id"))
+            for name in (
+                "managed_preparation",
+                "managed_resources",
+                "managed_creation",
+                "managed_termination",
+            ):
+                if value.pop(name, False) is not None:
+                    raise ValueError
+            if value.get("stop_kind") is None:
+                value.pop("stop_kind", None)
+                legacy = {"schema_version": 1, "record": value}
+            else:
+                legacy = {"schema_version": 2, "record_type": "interactive", "record": value}
+            decoded = _decode(json.dumps(legacy).encode())
+            if not isinstance(decoded, InteractiveRecoveryRecord):
+                raise ValueError
+            return replace(decoded, managed_origin_run_id=origin)
+        if (
+            isinstance(document, dict)
+            and isinstance(document.get("record"), dict)
+            and "managed_origin_run_id" in document["record"]
+        ):
+            raise ValueError
         if (
             isinstance(document, dict)
             and type(document.get("schema_version")) is int
@@ -832,6 +889,24 @@ class InteractiveRecoveryJournal:
             previous = self._read(record.run_id)
         except FileNotFoundError:
             previous = None
+        if (
+            previous is None
+            and record.managed_origin_run_id is not None
+            and record.phase != "prepared"
+        ):
+            raise InteractiveRecoveryError()
+        if (
+            isinstance(previous, InteractiveRecoveryRecord)
+            and previous.managed_origin_run_id != record.managed_origin_run_id
+        ):
+            if (
+                previous.managed_origin_run_id is not None
+                or previous.phase != "prepared"
+                or record.phase != "prepared"
+                or previous.process_stopped
+                or record.process_stopped
+            ):
+                raise InteractiveRecoveryError()
         if isinstance(previous, UnstartedInteractiveRecoveryRecord) or (
             previous is not None
             and previous.stop_kind is not None

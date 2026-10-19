@@ -211,6 +211,97 @@ class OfficialInteractiveDriver:
     def _key(self, authorized):
         return authorized.runtime.physical_workspace_id, authorized.session_id
 
+    async def revalidate_managed(self, authorized, origins, *, previous=None):
+        from saas.production.interactive_preparation import _binding, _direct_launcher
+        from saas.production.interactive_resources import read_managed_resources
+
+        with self._adapter.bind(authorized.runtime):
+            conversation = await asyncio.to_thread(
+                self._official.conversation_store.get_conversation, authorized.session_id
+            )
+        if conversation is None:
+            raise _unavailable()
+        if conversation.host_id is None:
+            if previous is not None:
+                raise _unavailable()
+            return None
+        candidates = [
+            row
+            for row in origins
+            if row.managed_preparation.host_id == conversation.host_id
+            and row.managed_preparation.provider == authorized.launch["sandbox_provider"]
+            and row.managed_termination is None
+        ]
+        if len(candidates) != 1:
+            raise _unavailable()
+        origin = candidates[0]
+        if previous is not None:
+            with self._adapter.bind(authorized.runtime):
+                peer = self._app.state.host_registry.get(previous.host_id)
+            if (
+                peer is None
+                or conversation.runner_id != previous.official_runner_id
+                or (peer.owner, peer.account_generation)
+                != (previous.host_owner, previous.host_account_generation)
+            ):
+                raise _unavailable()
+        deployment = self._app.state.sandbox_config
+
+        def verify():
+            preparation, resource = origin.managed_preparation, origin.managed_resources
+            delegate = _direct_launcher(
+                deployment.for_provider(preparation.provider), preparation.provider
+            )
+            try:
+                if (
+                    _binding(delegate, preparation.resource_name, preparation.host_id)
+                    != preparation
+                ):
+                    raise _unavailable()
+
+                def host_token(token):
+                    host = self._official.host_store.resolve_launch_token(
+                        preparation.host_id, token
+                    )
+                    return (
+                        host is not None
+                        and (
+                            host.host_id,
+                            host.user_id,
+                            host.account_generation,
+                            host.sandbox_provider,
+                            host.sandbox_id,
+                            host.deleted_at,
+                        )
+                        == (
+                            preparation.host_id,
+                            origin.host_owner,
+                            origin.host_account_generation,
+                            preparation.provider,
+                            preparation.resource_name,
+                            None,
+                        )
+                        and host.terminating_sandbox_id != preparation.resource_name
+                    )
+
+                with self._adapter.bind(origin.runtime):
+                    if (
+                        read_managed_resources(
+                            delegate,
+                            preparation,
+                            host_token_sha256=resource.host_token_sha256,
+                            creation=origin.managed_creation,
+                            validate_host_token=host_token,
+                        )
+                        != resource
+                    ):
+                        raise _unavailable()
+            finally:
+                delegate._close_clients()
+
+        await asyncio.to_thread(verify)
+        return origin
+
     async def prepare(
         self,
         authorized,

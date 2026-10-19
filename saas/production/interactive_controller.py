@@ -49,6 +49,10 @@ from saas.runner_adapter.metering import (
 class InteractivePhysicalDriver(Protocol):
     def assert_production_ready(self) -> None: ...
 
+    async def revalidate_managed(
+        self, authorized, origins, *, previous=None
+    ) -> InteractiveRecoveryRecord | None: ...
+
     async def prepare(
         self,
         authorized: AuthorizedInteractiveInput,
@@ -287,9 +291,22 @@ class ProductionInteractiveExecutor:
                 raise
             active.executing = True
         authorized, scope = active.authorized, active.record.scope
+        managed_origin: InteractiveRecoveryRecord | None = None
+        preflight_complete = False
 
         async def launch(frame: HostLaunchRunnerFrame, connection) -> HostLaunchRunnerFrame:
             if active.bound or cancellation.is_set():
+                raise _unavailable()
+            if managed_origin is not None and (
+                managed_origin.managed_preparation is None
+                or self._journal.read(managed_origin.run_id) != managed_origin
+                or (connection.host_id, connection.owner, connection.account_generation)
+                != (
+                    managed_origin.managed_preparation.host_id,
+                    managed_origin.host_owner,
+                    managed_origin.host_account_generation,
+                )
+            ):
                 raise _unavailable()
             preparation = active.record.managed_preparation
             if preparation is not None and (
@@ -353,10 +370,61 @@ class ProductionInteractiveExecutor:
             self._put(active, managed_creation=intent)
 
         try:
+            if authorized.launch["host_type"] == "managed":
+                origins = tuple(
+                    row
+                    for row in self._journal.records()
+                    if replace(row.scope, actor_id=scope.actor_id) == scope
+                    and row.managed_origin_run_id is None
+                    and row.managed_preparation is not None
+                    and row.managed_creation is not None
+                    and row.managed_resources is not None
+                    and row.host_id == row.managed_preparation.host_id
+                    and row.host_owner is not None
+                    and row.official_runner_id is not None
+                )
+                if previous is not None:
+                    origins = tuple(
+                        row
+                        for row in origins
+                        if row.managed_preparation is not None
+                        and row.managed_preparation.host_id == previous.host_id
+                        and (
+                            previous.managed_origin_run_id is None
+                            or row.run_id == previous.managed_origin_run_id
+                        )
+                    )
+                    if len(origins) != 1 or origins[0].managed_termination is not None:
+                        raise _unavailable()
+                managed_origin = await self._driver.revalidate_managed(
+                    authorized, origins, previous=previous
+                )
+                if managed_origin is not None:
+                    if managed_origin not in origins or self._verify_released is None:
+                        raise _unavailable()
+                    await self._verify_recovery(managed_origin)
+                    await self._verify_released(managed_origin)
+                elif previous is not None:
+                    raise _unavailable()
             async with self._lifecycle:
                 if cancellation.is_set():
                     await self.cancel(lease)
                     return "cancelled" if active.stopped else "orphaned"
+                if (
+                    self._closing
+                    or self._active.get(lease.run_id) is not active
+                    or active.record.process_stopped
+                    or active.record.phase != "prepared"
+                ):
+                    raise _unavailable()
+                if managed_origin is not None:
+                    if (
+                        self._journal.read(managed_origin.run_id) != managed_origin
+                        or managed_origin.managed_termination is not None
+                    ):
+                        raise _unavailable()
+                    self._put(active, managed_origin_run_id=managed_origin.run_id)
+                preflight_complete = True
                 if previous is not None:
                     assert previous.channel_value is not None
                     self._put(
@@ -441,7 +509,14 @@ class ProductionInteractiveExecutor:
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - do not expose transport or credential diagnostics.
-            self._put(active, phase="draining", outcome="failed")
+            if not preflight_complete and cancellation.is_set():
+                await self.cancel(lease)
+                return "cancelled" if active.stopped else "orphaned"
+            self._put(
+                active,
+                phase="draining" if preflight_complete else active.record.phase,
+                outcome="failed",
+            )
             raise _unavailable() from None
         finally:
             active.executing = False
@@ -686,13 +761,24 @@ class ProductionInteractiveExecutor:
             return True
 
     def _managed_peers(self, record):
-        host = record.managed_preparation.host_id
+        origin = (
+            self._journal.read(record.managed_origin_run_id)
+            if record.managed_origin_run_id is not None
+            else record
+        )
+        if not isinstance(origin, InteractiveRecoveryRecord):
+            raise _unavailable()
+        if origin.managed_preparation is None:
+            return []
+        host = origin.managed_preparation.host_id
         return [
             row
             for row in self._journal.records()
             if row.run_id != record.run_id
             and (
-                row.host_id == host
+                row.run_id == origin.run_id
+                or row.managed_origin_run_id == origin.run_id
+                or row.host_id == host
                 or (
                     row.managed_preparation is not None and row.managed_preparation.host_id == host
                 )
@@ -909,6 +995,9 @@ class ProductionInteractiveExecutor:
                                 record.scope.session_id,
                             )
                         ]
+                        peers.extend(
+                            row for row in self._managed_peers(record) if row not in peers
+                        )
                         if any(
                             row.run_id in self._active or row.phase != "terminal" for row in peers
                         ):
