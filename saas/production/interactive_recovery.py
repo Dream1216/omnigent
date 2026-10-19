@@ -8,7 +8,7 @@ import os
 import re
 import stat
 from contextlib import suppress
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -47,6 +47,7 @@ class InteractiveRecoveryRecord:
     process_stopped: bool = False
     outcome: str | None = None
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    stop_kind: str | None = None
 
     def __post_init__(self):
         if (
@@ -70,6 +71,23 @@ class InteractiveRecoveryRecord:
             or re.fullmatch(r"[0-9a-f]{64}", self.certificate_sha256) is None
             or type(self.process_stopped) is not bool
             or self.outcome not in {None, "succeeded", "failed", "cancelled", "orphaned"}
+            or self.stop_kind not in {None, "never_started"}
+            or (
+                self.stop_kind == "never_started"
+                and (
+                    not self.process_stopped
+                    or any(
+                        value is not None
+                        for value in (
+                            self.official_runner_id,
+                            self.host_id,
+                            self.host_owner,
+                            self.host_account_generation,
+                            self.channel_value,
+                        )
+                    )
+                )
+            )
             or not isinstance(self.updated_at, datetime)
             or self.updated_at.utcoffset() is None
             or (
@@ -92,10 +110,73 @@ class InteractiveRecoveryRecord:
             raise InteractiveRecoveryError()
 
 
-def physical_recovery_proof_sha256(record: InteractiveRecoveryRecord) -> str:
+@dataclass(frozen=True, slots=True)
+class UnstartedInteractiveRecoveryRecord:
+    """A private fact captured before physical preparation, not execution authority."""
+
+    run_id: UUID
+    runner_id: UUID
+    fence_token: int
+    connection_generation: int
+    product_revision: str
+    image_digest: str
+    capability_token: str = field(repr=False)
+    certificate_sha256: str
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self):
+        if (
+            any(not isinstance(v, UUID) or not v.int for v in (self.run_id, self.runner_id))
+            or type(self.fence_token) is not int
+            or self.fence_token < 1
+            or type(self.connection_generation) is not int
+            or self.connection_generation < 1
+            or not isinstance(self.product_revision, str)
+            or re.fullmatch(r"[0-9a-f]{40}", self.product_revision) is None
+            or not isinstance(self.image_digest, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", self.image_digest) is None
+            or not isinstance(self.capability_token, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{43}", self.capability_token) is None
+            or not isinstance(self.certificate_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.certificate_sha256) is None
+            or not isinstance(self.updated_at, datetime)
+            or self.updated_at.utcoffset() is None
+        ):
+            raise InteractiveRecoveryError()
+
+    @property
+    def process_stopped(self) -> bool:
+        return True
+
+
+InteractiveCleanupRecord = InteractiveRecoveryRecord | UnstartedInteractiveRecoveryRecord
+
+
+def physical_recovery_proof_sha256(record: InteractiveCleanupRecord) -> str:
+    if isinstance(record, UnstartedInteractiveRecoveryRecord):
+        return sha256(
+            json.dumps(
+                {
+                    "cleanup_kind": "never_started",
+                    "run_id": str(record.run_id),
+                    "runner_id": str(record.runner_id),
+                    "fence_token": record.fence_token,
+                    "connection_generation": record.connection_generation,
+                    "product_revision": record.product_revision,
+                    "image_digest": record.image_digest,
+                    "certificate_sha256": record.certificate_sha256,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
     if (
         not record.process_stopped
-        or (record.official_runner_id is None and record.phase != "prepared")
+        or (
+            record.official_runner_id is None
+            and record.phase != "prepared"
+            and record.stop_kind != "never_started"
+        )
         or (
             record.official_runner_id is not None and (not record.host_id or not record.host_owner)
         )
@@ -126,9 +207,18 @@ def certificate_sha256(grant: ManagedMeteringGrant) -> str:
     return sha256(grant.client_certificate_path.read_bytes()).hexdigest()
 
 
-def _encode(record: InteractiveRecoveryRecord) -> bytes:
+def _encode(record: InteractiveCleanupRecord) -> bytes:
+    document: dict[str, object] = {"schema_version": 1, "record": asdict(record)}
+    if isinstance(record, UnstartedInteractiveRecoveryRecord):
+        document = {"schema_version": 2, "record_type": "unstarted", "record": asdict(record)}
+    elif record.stop_kind is not None:
+        document = {"schema_version": 2, "record_type": "interactive", "record": asdict(record)}
+    else:
+        value = asdict(record)
+        value.pop("stop_kind")
+        document["record"] = value
     raw = json.dumps(
-        {"schema_version": 1, "record": asdict(record)},
+        document,
         sort_keys=True,
         separators=(",", ":"),
         default=str,
@@ -154,9 +244,25 @@ def _uuid(value):
     return identifier
 
 
-def _decode(raw: bytes) -> InteractiveRecoveryRecord:
+def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 2
+        ):
+            if set(document) != {"schema_version", "record_type", "record"}:
+                raise ValueError
+            if document["record_type"] == "unstarted":
+                value = document["record"]
+                for name in ("run_id", "runner_id"):
+                    value[name] = _uuid(value[name])
+                value["updated_at"] = datetime.fromisoformat(value["updated_at"])
+                return UnstartedInteractiveRecoveryRecord(**value)
+            if document["record_type"] != "interactive":
+                raise ValueError
+            document = {"schema_version": 1, "record": document["record"]}
         if (
             not isinstance(document, dict)
             or set(document) != {"schema_version", "record"}
@@ -286,9 +392,15 @@ class InteractiveRecoveryJournal:
     def put(self, record: InteractiveRecoveryRecord) -> None:
         self._check()
         try:
-            previous = self.read(record.run_id)
+            previous = self._read(record.run_id)
         except FileNotFoundError:
             previous = None
+        if isinstance(previous, UnstartedInteractiveRecoveryRecord) or (
+            previous is not None
+            and previous.stop_kind is not None
+            and record.stop_kind != previous.stop_kind
+        ):
+            raise InteractiveRecoveryError()
         if previous is not None and any(
             getattr(previous, name) != getattr(record, name)
             for name in (
@@ -304,6 +416,24 @@ class InteractiveRecoveryJournal:
             )
         ):
             raise InteractiveRecoveryError()
+        self._write(record)
+
+    def retain_unstarted(self, record: UnstartedInteractiveRecoveryRecord) -> bool:
+        self._check()
+        try:
+            previous = self._read(record.run_id)
+        except FileNotFoundError:
+            previous = None
+        if isinstance(previous, InteractiveRecoveryRecord):
+            return False
+        if previous is not None:
+            if replace(previous, updated_at=record.updated_at) != record:
+                raise InteractiveRecoveryError()
+            return False
+        self._write(record)
+        return True
+
+    def _write(self, record: InteractiveCleanupRecord) -> None:
         raw = _encode(record)
         name, temporary = f"{record.run_id}.json", f".{uuid4()}.temporary"
         descriptor = os.open(
@@ -323,7 +453,7 @@ class InteractiveRecoveryJournal:
             with suppress(FileNotFoundError):
                 os.unlink(temporary, dir_fd=self._directory)
 
-    def read(self, run_id: UUID) -> InteractiveRecoveryRecord:
+    def _read(self, run_id: UUID) -> InteractiveCleanupRecord:
         self._check()
         descriptor = os.open(f"{run_id}.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self._directory)
         try:
@@ -350,13 +480,31 @@ class InteractiveRecoveryJournal:
         finally:
             os.close(descriptor)
 
-    def records(self) -> list[InteractiveRecoveryRecord]:
+    def read(self, run_id: UUID) -> InteractiveRecoveryRecord:
+        record = self._read(run_id)
+        if not isinstance(record, InteractiveRecoveryRecord):
+            raise InteractiveRecoveryError()
+        return record
+
+    def read_unstarted(self, run_id: UUID) -> UnstartedInteractiveRecoveryRecord:
+        record = self._read(run_id)
+        if not isinstance(record, UnstartedInteractiveRecoveryRecord):
+            raise InteractiveRecoveryError()
+        return record
+
+    def _records(self) -> list[InteractiveCleanupRecord]:
         self._check()
         return [
-            self.read(_uuid(name[:-5]))
+            self._read(_uuid(name[:-5]))
             for name in sorted(os.listdir(self._directory))
             if not name.startswith(".") and name.endswith(".json")
         ]
+
+    def records(self) -> list[InteractiveRecoveryRecord]:
+        return [r for r in self._records() if isinstance(r, InteractiveRecoveryRecord)]
+
+    def unstarted_records(self) -> list[UnstartedInteractiveRecoveryRecord]:
+        return [r for r in self._records() if isinstance(r, UnstartedInteractiveRecoveryRecord)]
 
     def close(self) -> None:
         if getattr(self, "_lock", -1) >= 0:

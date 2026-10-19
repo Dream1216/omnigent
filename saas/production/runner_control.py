@@ -245,6 +245,7 @@ class RunnerMachineAuthority(Protocol):
         capability_token: str,
         proof_sha256: str,
         certificate_fingerprint_sha256: str,
+        cleanup_kind: str = "physical_stop",
     ) -> bool: ...
 
     def mint_preview_tunnel(
@@ -271,6 +272,7 @@ class _SchedulingAuthority(Protocol):
         certificate_fingerprint_sha256: str,
         expected_product_revision: str,
         product_image_digest: str,
+        cleanup_kind: str = "physical_stop",
         now: datetime | None = None,
     ) -> bool: ...
 
@@ -533,6 +535,7 @@ class ProductionRunnerMachineAuthority:
         capability_token: str,
         proof_sha256: str,
         certificate_fingerprint_sha256: str,
+        cleanup_kind: str = "physical_stop",
     ) -> bool:
         if self._product_revision is None or self._image_digest is None:
             raise RunnerControlError(
@@ -549,6 +552,7 @@ class ProductionRunnerMachineAuthority:
             certificate_fingerprint_sha256=certificate_fingerprint_sha256,
             expected_product_revision=self._product_revision,
             product_image_digest=self._image_digest,
+            cleanup_kind=cleanup_kind,
         )
 
     def mint_preview_tunnel(
@@ -694,7 +698,10 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
     elif action == "release_run":
         _exact(document, common | {"fence_token", "run_id"})
     elif action == "confirm_interactive_recovery":
-        _exact(document, common | {"fence_token", "run_id", "capability_token", "proof_sha256"})
+        fields = common | {"fence_token", "run_id", "capability_token", "proof_sha256"}
+        if "cleanup_kind" in document:
+            fields.add("cleanup_kind")
+        _exact(document, fields)
     else:
         raise ValueError("action is invalid")
     values: dict[str, object] = {
@@ -719,6 +726,11 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
         if not isinstance(proof, str) or re.fullmatch(r"[0-9a-f]{64}", proof) is None:
             raise ValueError("proof digest is invalid")
         values["proof_sha256"] = proof
+    if "cleanup_kind" in document:
+        kind = document["cleanup_kind"]
+        if not isinstance(kind, str) or kind not in {"physical_stop", "never_started"}:
+            raise ValueError("cleanup kind is invalid")
+        values["cleanup_kind"] = kind
     return cast(str, action), values
 
 
@@ -1171,15 +1183,24 @@ class MutualTlsRunnerControlClient:
         fence_token: int,
         capability_token: str,
         proof_sha256: str,
+        cleanup_kind: str = "physical_stop",
     ) -> bool:
+        if not isinstance(cleanup_kind, str) or cleanup_kind not in {
+            "physical_stop",
+            "never_started",
+        }:
+            raise RunnerControlError("runner_control_request_invalid", "Cleanup kind is invalid")
+        fields = {
+            "run_id": str(run_id),
+            "fence_token": fence_token,
+            "capability_token": capability_token,
+            "proof_sha256": proof_sha256,
+        }
+        if cleanup_kind != "physical_stop":
+            fields["cleanup_kind"] = cleanup_kind
         response = await self._request(
             "confirm_interactive_recovery",
-            {
-                "run_id": str(run_id),
-                "fence_token": fence_token,
-                "capability_token": capability_token,
-                "proof_sha256": proof_sha256,
-            },
+            fields,
         )
         if set(response) != {"replayed", "version"} or type(response["replayed"]) is not bool:
             raise RunnerControlError(

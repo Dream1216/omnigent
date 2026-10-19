@@ -212,9 +212,11 @@ def test_recovery_acknowledgement_rejects_stale_or_unbound_authority(recovery_ca
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_kind", ("physical_stop", "never_started"))
 async def test_mtls_recovery_derives_its_certificate_and_never_accepts_a_client_fingerprint(
     recovery_case,
     tmp_path,
+    cleanup_kind,
 ):
     f, scheduling, connection, lease, _, _ = recovery_case
     certificates = _certificates(tmp_path, runner_id=connection.runner_id)
@@ -253,6 +255,7 @@ async def test_mtls_recovery_derives_its_certificate_and_never_accepts_a_client_
         "fence_token": lease.fence_token,
         "capability_token": lease.capability_token,
         "proof_sha256": "b" * 64,
+        **({"cleanup_kind": cleanup_kind} if cleanup_kind == "never_started" else {}),
     }
     try:
         with pytest.raises(RunnerControlError) as denied:
@@ -264,6 +267,12 @@ async def test_mtls_recovery_derives_its_certificate_and_never_accepts_a_client_
                 },
             )
         assert denied.value.code == "runner_control_request_invalid"
+        for invalid_kind in (True, None, "unknown"):
+            with pytest.raises(RunnerControlError) as invalid:
+                await client._request(
+                    "confirm_interactive_recovery", {**fields, "cleanup_kind": invalid_kind}
+                )
+            assert invalid.value.code == "runner_control_request_invalid"
         with pytest.raises(RunnerControlError) as lost_ack:
             await client.confirm_interactive_recovery(**{**fields, "run_id": lease.run_id})
         assert lost_ack.value.code == "isolated_receipt_ack_error"
@@ -282,3 +291,4 @@ async def test_mtls_recovery_derives_its_certificate_and_never_accepts_a_client_
             )
         ).one()
         assert event.payload["certificate_fingerprint_sha256"] == fingerprint
+        assert event.payload["cleanup_kind"] == cleanup_kind

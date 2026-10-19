@@ -337,6 +337,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
         "cancel_before_admission",
         "cancel_unknown_stream",
         "security_revoke_stream",
+        "model_auth_before_prepare",
         "public_stop",
         "public_archive",
         "late_customer_metering",
@@ -1057,6 +1058,21 @@ def _serve_controller(
             official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
             auth_provider=app.state.saas_http_integration.auth_provider,
         )
+        preparation_calls, rejected_auth = [], []
+        if scenario == "model_auth_before_prepare":
+            original_issue = ModelRunCredentialService.issue
+            original_prepare = adapter._executor._driver.prepare
+
+            def missing_model_auth(_service, authorized, lease):
+                rejected_auth.append(lease.run_id)
+                raise RunnerControlError("isolated_model_auth_unavailable", "Unavailable")
+
+            async def observe_preparation(authorized, **values):
+                preparation_calls.append(authorized.run_id)
+                return await original_prepare(authorized, **values)
+
+            monkeypatch.setattr(ModelRunCredentialService, "issue", missing_model_auth)
+            monkeypatch.setattr(adapter._executor._driver, "prepare", observe_preparation)
         stop_handler = app.state.production_interactive_conversation_store.session_stop_handler
 
         async def observe_stop_failure(*args):
@@ -1368,6 +1384,165 @@ def _serve_controller(
                     return len(dispatches) == expected_runs and all(
                         s == "released" for s in dispatches
                     )
+
+            if scenario == "model_auth_before_prepare":
+
+                def failed_before_prepare():
+                    assert not adapter._task.done(), (
+                        "owned controller stopped after auth rejection"
+                    )
+                    with factory() as db:
+                        first = db.scalars(sa.select(RunRecord)).one()
+                        return (
+                            first.status == "failed"
+                            and db.get(RunDispatchRecord, first.id).status == "released"
+                        )
+
+                _wait(failed_before_prepare, "auth-rejected Run released without preparation")
+                with factory() as db:
+                    first = db.scalars(sa.select(RunRecord)).one()
+                    first_id = first.id
+                    assert (
+                        db.scalar(sa.select(sa.func.count()).select_from(ModelRunTokenRecord)) == 0
+                    )
+                    assert db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord)) == 0
+                assert rejected_auth == [first_id] and not preparation_calls and not observed
+                assert not adapter._journal.records()
+                fact = adapter._journal.read_unstarted(first_id)
+                with OmnigentStoreAdapter("0.2.0").bind(runtime):
+                    assert delegate.get_conversation(conversation.id).runner_id is None
+                asyncio.run_coroutine_threadsafe(
+                    adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                ).result(20)
+                with factory() as db:
+                    assert (
+                        db.get(RunDispatchRecord, first_id).physical_recovery_fence
+                        == first.fence_token
+                    )
+                    event = db.scalars(
+                        sa.select(RunEventRecord).where(
+                            RunEventRecord.run_id == first_id,
+                            RunEventRecord.event_type == "run.interactive_physical_recovered",
+                        )
+                    ).one()
+                    assert event.payload["cleanup_kind"] == "never_started"
+                    assert event.payload["proof_sha256"] == physical_recovery_proof_sha256(fact)
+                monkeypatch.setattr(ModelRunCredentialService, "issue", original_issue)
+                with httpx.Client(
+                    base_url=ORIGIN,
+                    trust_env=False,
+                    verify=ssl.create_default_context(cafile=str(certificate)),
+                    cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                    timeout=60,
+                ) as client:
+                    headers = {"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token}
+                    endpoint = f"/v1/sessions/{conversation.id}/events"
+                    replayed = client.post(
+                        endpoint, json=_message(text=initial_text), headers=headers
+                    )
+                    assert replayed.status_code in {200, 202}, replayed.text
+                    with factory() as db:
+                        assert db.scalar(sa.select(sa.func.count()).select_from(RunRecord)) == 1
+                    assert not preparation_calls and rejected_auth == [first_id]
+                    fresh = client.post(
+                        endpoint,
+                        json=_message("b" * 32, "A new input after model authentication recovers"),
+                        headers=headers,
+                    )
+                    assert fresh.status_code in {200, 202}, fresh.text
+                    assert (
+                        _queued_worker(workers["dispatcher"], workers["executor"])
+                        .dispatch_once()
+                        .published
+                        >= 1
+                    )
+
+                    def fresh_finished():
+                        assert not adapter._task.done(), "owned controller failed on new input"
+                        with factory() as db:
+                            rows = db.scalars(sa.select(RunRecord)).all()
+                            return len(rows) == 2 and all(
+                                r.status == ("failed" if r.id == first_id else "succeeded")
+                                and db.get(RunDispatchRecord, r.id).status == "released"
+                                for r in rows
+                            )
+
+                    _wait(
+                        fresh_finished,
+                        "independent fresh input after authentication recovers",
+                        timeout=150,
+                    )
+                    with factory() as db:
+                        second = db.scalars(
+                            sa.select(RunRecord).where(RunRecord.id != first_id)
+                        ).one()
+                        assert (
+                            db.scalar(sa.select(sa.func.count()).select_from(UsageEventRecord))
+                            == 2
+                        )
+                        budget = db.scalars(
+                            sa.select(ModelProviderBudgetReservationRecord).where(
+                                ModelProviderBudgetReservationRecord.run_id == second.id,
+                                ModelProviderBudgetReservationRecord.purpose == "tenant_run",
+                            )
+                        ).one()
+                        assert budget.status == "settled" and budget.settled_tokens == 22
+                    assert preparation_calls == [second.id] and len(observed) == 1
+                    stopped = client.post(
+                        endpoint, json={"type": "stop_session", "data": {}}, headers=headers
+                    )
+                    assert stopped.status_code == 202, stopped.text
+                assert adapter._journal.read(second.id).process_stopped
+                asyncio.run_coroutine_threadsafe(
+                    adapter._executor.reconcile_physical_gc(limit=10), app_loop
+                ).result(20)
+                with factory() as db:
+                    assert (
+                        db.get(RunDispatchRecord, second.id).physical_recovery_fence
+                        == second.fence_token
+                    )
+                    event = db.scalars(
+                        sa.select(RunEventRecord).where(
+                            RunEventRecord.run_id == second.id,
+                            RunEventRecord.event_type == "run.interactive_physical_recovered",
+                        )
+                    ).one()
+                    assert event.payload["cleanup_kind"] == "physical_stop"
+                adapter.assert_production_ready()
+                gc_interval = adapter._config.physical_gc_interval_seconds
+                (exchange / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "passed": True,
+                            "production_factory": True,
+                            "controller_adapter": True,
+                            "physical_host": True,
+                            "actual_litellm": True,
+                            "production_pki": False,
+                            "scenario": scenario,
+                            "official_store_backend": host_store._engine.dialect.name,
+                            "managed_host": cluster is not None,
+                            "sandbox_provider": cluster["provider"]
+                            if cluster is not None
+                            else None,
+                            "physical_gc_interval_seconds": gc_interval,
+                            "test_model_token_ttl_seconds": 28800,
+                            "manual_run_heartbeat": False,
+                            "host_stop_acknowledged": True,
+                            "durable_stop_receipts": 1,
+                            "unstarted_cleanup_receipts": 1,
+                            "model_auth_failure_recovered": True,
+                            "failed_input_replay_did_not_restart": True,
+                            "physical_preparation_calls": 1,
+                            "failed_run_model_tokens": 0,
+                            "task_count": 2,
+                            "supplier_calls": 1,
+                            "usage_facts": 2,
+                            "settled_tokens": 22,
+                        }
+                    )
+                )
+                return
 
             if scenario == "security_revoke_stream":
                 _wait(request_waiting.is_set, "actual Runner partial model response")

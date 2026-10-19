@@ -8,6 +8,8 @@ import hmac
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -24,8 +26,10 @@ from saas.production.interactive_model_channel import (
     prepare_host_model_channel,
 )
 from saas.production.interactive_recovery import (
+    InteractiveCleanupRecord,
     InteractiveRecoveryJournal,
     InteractiveRecoveryRecord,
+    UnstartedInteractiveRecoveryRecord,
     certificate_sha256,
 )
 from saas.production.interactive_runtime import AuthorizedInteractiveInput
@@ -99,18 +103,20 @@ class ProductionInteractiveExecutor:
         ],
         driver: InteractivePhysicalDriver,
         journal: InteractiveRecoveryJournal,
+        recovery_certificate_path: Path,
         channels: SessionModelChannels,
         connection_generation: int,
         product_revision: str,
         image_digest: str,
         assert_authority: Callable[[], None],
-        verify_recovery: Callable[[InteractiveRecoveryRecord], Awaitable[None]],
-        confirm_recovery: Callable[[InteractiveRecoveryRecord], Awaitable[None]],
+        verify_recovery: Callable[[InteractiveCleanupRecord], Awaitable[None]],
+        confirm_recovery: Callable[[InteractiveCleanupRecord], Awaitable[None]],
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         meter_factory: Callable[[ManagedMeteringGrant], ProviderUsageMeter] | None = None,
     ):
         self._authorize, self._grant = authorize_model, grant_for_run
         self._driver, self._journal, self._channels = driver, journal, channels
+        self._recovery_certificate_path = recovery_certificate_path
         self._generation, self._revision, self._image = (
             connection_generation,
             product_revision,
@@ -259,7 +265,11 @@ class ProductionInteractiveExecutor:
         self, lease: RunnerControlClientLease, *, cancellation: asyncio.Event
     ) -> str:
         async with self._lifecycle:
-            active, previous = await self._prepare_active(lease, cancellation=cancellation)
+            try:
+                active, previous = await self._prepare_active(lease, cancellation=cancellation)
+            except (Exception, asyncio.CancelledError):
+                self._retain_unstarted(lease)
+                raise
         authorized, scope = active.authorized, active.record.scope
 
         async def launch(frame: HostLaunchRunnerFrame, connection) -> HostLaunchRunnerFrame:
@@ -285,6 +295,7 @@ class ProductionInteractiveExecutor:
         try:
             async with self._lifecycle:
                 if cancellation.is_set():
+                    await self.cancel(lease)
                     return "cancelled" if active.stopped else "orphaned"
                 if previous is not None:
                     assert previous.channel_value is not None
@@ -365,6 +376,34 @@ class ProductionInteractiveExecutor:
         except Exception:  # noqa: BLE001 - do not expose transport or credential diagnostics.
             self._put(active, phase="draining", outcome="failed")
             raise _unavailable() from None
+
+    def _retain_unstarted(self, lease: RunnerControlClientLease) -> None:
+        if lease.run_id in self._active:
+            return
+        envelope = lease.execution_envelope
+        if (
+            envelope is None
+            or envelope.execution_kind != "omnigent.interactive.v1"
+            or envelope.run_id != lease.run_id
+            or envelope.fence_token != lease.fence_token
+            or envelope.product_revision != self._revision
+            or envelope.image_digest != self._image
+        ):
+            raise _unavailable()
+        self._journal.retain_unstarted(
+            UnstartedInteractiveRecoveryRecord(
+                run_id=lease.run_id,
+                runner_id=envelope.runner_id,
+                fence_token=lease.fence_token,
+                connection_generation=self._generation,
+                product_revision=self._revision,
+                image_digest=self._image,
+                capability_token=lease.capability_token,
+                certificate_sha256=sha256(
+                    self._recovery_certificate_path.read_bytes()
+                ).hexdigest(),
+            )
+        )
 
     async def _seal(self, active: _Active, *, timeout: float = 10) -> bool:
         if active.bound:
@@ -465,17 +504,22 @@ class ProductionInteractiveExecutor:
             await self._driver.quiesce_preparation(active.authorized)
             # Fence new inference before stopping; finalization drains existing requests.
             await self._seal(active, timeout=0)
+            never_started = (
+                active.record.phase == "prepared"
+                and active.preparation is None
+                and active.record.official_runner_id is None
+            )
             active.stopped = (
                 active.record.process_stopped
-                or (
-                    active.record.phase == "prepared"
-                    and active.preparation is None
-                    and active.record.official_runner_id is None
-                )
+                or never_started
                 or await self._driver.stop(active.record)
             )
             if active.stopped:
-                self._put(active, process_stopped=True)
+                self._put(
+                    active,
+                    process_stopped=True,
+                    stop_kind="never_started" if never_started else active.record.stop_kind,
+                )
             if active.dispatching is not None and not active.dispatching.done():
                 active.dispatching.cancel()
                 await asyncio.gather(active.dispatching, return_exceptions=True)
@@ -518,6 +562,23 @@ class ProductionInteractiveExecutor:
     async def reconcile_physical_gc(self, *, limit: int) -> int:
         async with self._recovering:
             completed = 0
+            for unstarted in self._journal.unstarted_records():
+                if completed >= limit:
+                    return completed
+                if unstarted.run_id in self._confirmed_recoveries:
+                    continue
+                if (
+                    unstarted.connection_generation != self._generation
+                    or unstarted.product_revision != self._revision
+                    or unstarted.image_digest != self._image
+                    or unstarted.certificate_sha256
+                    != sha256(self._recovery_certificate_path.read_bytes()).hexdigest()
+                ):
+                    raise _unavailable()
+                await self._verify_recovery(unstarted)
+                await self._confirm_recovery(unstarted)
+                self._confirmed_recoveries.add(unstarted.run_id)
+                completed += 1
             candidates = [
                 row
                 for row in self._journal.records()
@@ -527,11 +588,17 @@ class ProductionInteractiveExecutor:
                     row.run_id not in self._confirmed_recoveries
                     and (
                         row.outcome == "orphaned"
-                        or (row.process_stopped and row.official_runner_id is not None)
+                        or (
+                            row.process_stopped
+                            and (
+                                row.official_runner_id is not None
+                                or row.stop_kind == "never_started"
+                            )
+                        )
                     )
                 )
             ]
-            for candidate in candidates[:limit]:
+            for candidate in candidates[: max(0, limit - completed)]:
                 record = self._journal.read(candidate.run_id)
                 if record.run_id in self._active:
                     continue
@@ -553,19 +620,32 @@ class ProductionInteractiveExecutor:
                     if record.phase != "terminal" or (
                         (
                             record.outcome == "orphaned"
-                            or (record.process_stopped and record.official_runner_id is not None)
+                            or (
+                                record.process_stopped
+                                and (
+                                    record.official_runner_id is not None
+                                    or record.stop_kind == "never_started"
+                                )
+                            )
                         )
                         and record.run_id not in self._confirmed_recoveries
                     ):
+                        never_started = (
+                            record.phase == "prepared" and record.official_runner_id is None
+                        )
                         stopped = (
                             record.process_stopped
-                            or (record.phase == "prepared" and record.official_runner_id is None)
+                            or never_started
                             or await self._driver.stop(record)
                         )
                         if not stopped:
                             continue
-                        if not record.process_stopped:
-                            record = replace(record, process_stopped=True)
+                        if not record.process_stopped or never_started:
+                            record = replace(
+                                record,
+                                process_stopped=True,
+                                stop_kind="never_started" if never_started else record.stop_kind,
+                            )
                             self._journal.put(record)
                         confirmation_required = True
                 if confirmation_required:
@@ -584,6 +664,11 @@ class ProductionInteractiveExecutor:
                         )
                         self._journal.put(record)
                         self._confirmed_recoveries.add(record.run_id)
+                if record.stop_kind == "never_started" and not any(
+                    record.grant.spool_directory.glob("*.pending.json")
+                ):
+                    completed += 1
+                    continue
                 meter = self._meter_factory(record.grant)
                 try:
                     await asyncio.to_thread(meter.flush, 0)

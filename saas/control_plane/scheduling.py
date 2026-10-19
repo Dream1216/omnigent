@@ -1043,13 +1043,16 @@ class SchedulingControlPlane:
         certificate_fingerprint_sha256: str,
         expected_product_revision: str,
         product_image_digest: str,
+        cleanup_kind: str = "physical_stop",
         now: datetime | None = None,
     ) -> bool:
         """Record historical physical cleanup, never execution or model authority."""
         confirmed_at = now or _utcnow()
         _validate_time(confirmed_at)
         if (
-            type(fence_token) is not int
+            not isinstance(cleanup_kind, str)
+            or cleanup_kind not in {"physical_stop", "never_started"}
+            or type(fence_token) is not int
             or fence_token < 1
             or any(
                 not isinstance(value, str) or len(value) != 64 or set(value) - _HASH_ALPHABET
@@ -1149,6 +1152,7 @@ class SchedulingControlPlane:
                     "runner_connection_generation": connection_generation,
                     "dispatch_generation": dispatch.dispatch_generation,
                     "proof_sha256": proof_sha256,
+                    "cleanup_kind": cleanup_kind,
                     "certificate_fingerprint_sha256": certificate_fingerprint_sha256,
                     "product_revision": expected_product_revision,
                     "image_digest": product_image_digest,

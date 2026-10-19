@@ -522,6 +522,7 @@ def _physical_execution(f, physical, tmp_path, *, full_agent):
         grant_for_run=grant,
         driver=driver,
         journal=journal,
+        recovery_certificate_path=certificates["runner-0"].certificate,
         channels=channels,
         connection_generation=p.connection.connection_generation,
         product_revision="c" * 40,

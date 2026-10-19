@@ -29,6 +29,7 @@ from saas.production.interactive_model_channel import (
 )
 from saas.production.interactive_recovery import (
     InteractiveRecoveryJournal,
+    UnstartedInteractiveRecoveryRecord,
     physical_recovery_proof_sha256,
 )
 from saas.production.runner_agent import (
@@ -209,6 +210,11 @@ class ProductionInteractiveControllerAdapter:
             )
 
         async def verify_recovery(record):
+            if isinstance(record, UnstartedInteractiveRecoveryRecord):
+                if record.runner_id != cfg.runner_id:
+                    raise _unavailable()
+                await self._client.heartbeat_runner()
+                return
             if (
                 record.grant.metering_base_url != url
                 or record.grant.expected_host != parsed.hostname
@@ -233,8 +239,14 @@ class ProductionInteractiveControllerAdapter:
             await self._client.confirm_interactive_recovery(
                 run_id=record.run_id,
                 fence_token=record.fence_token,
-                capability_token=record.grant.capability_token,
+                capability_token=record.capability_token
+                if isinstance(record, UnstartedInteractiveRecoveryRecord)
+                else record.grant.capability_token,
                 proof_sha256=physical_recovery_proof_sha256(record),
+                cleanup_kind="never_started"
+                if isinstance(record, UnstartedInteractiveRecoveryRecord)
+                or record.stop_kind == "never_started"
+                else "physical_stop",
             )
 
         executor = ProductionInteractiveExecutor(
@@ -242,6 +254,7 @@ class ProductionInteractiveControllerAdapter:
             grant_for_run=grant,
             driver=driver,
             journal=journal,
+            recovery_certificate_path=metering.certificate,
             channels=channels,
             connection_generation=cfg.connection_generation,
             product_revision=cfg.product_revision,

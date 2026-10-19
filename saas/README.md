@@ -215,6 +215,19 @@ binding, immutable receipts, and the original Run outcome. Its downgrade restore
 orphan-only admission without deleting retained receipts; Runner cluster admission
 requires the exact packaged schema head before execution resumes.
 
+Failure before physical preparation retains a machine/capability/fence-bound
+`never_started` fact in the existing owner-only recovery Journal, without
+fabricating a Runtime or physical Runner. Only the historical mTLS cleanup
+command can confirm it after terminal release; it cannot reauthorize a model.
+Unknown preparation remains pending. Lost acknowledgements retry the original
+proof, including after reopening the same private volume, never the user input.
+The shared Run event records `cleanup_kind` separately from a physical stop.
+
+Ordinary v1 private records remain readable. No-launch records and explicit
+no-launch markers use private format v2, which old Controllers must not consume.
+The cutover must drain all old consumers; rollback must restore the matching
+private-volume and database snapshots as part of the existing maintenance plan.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

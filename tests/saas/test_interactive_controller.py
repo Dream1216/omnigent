@@ -7,15 +7,18 @@ import copy
 import json
 import threading
 from dataclasses import fields, replace
+from datetime import timedelta
 from types import SimpleNamespace
 
 import httpx
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI
 
 from omnigent.host.frames import HostLaunchRunnerFrame
 from omnigent.runner.identity import token_bound_runner_id
 from saas.control_plane.execution import ExecutionControlPlane
+from saas.control_plane.execution_models import RunEventRecord, RunRecord
 from saas.control_plane.interactive_run_route import interactive_session_identity
 from saas.control_plane.scheduling import SchedulingControlPlane
 from saas.production.interactive_controller import ProductionInteractiveExecutor
@@ -182,6 +185,7 @@ async def controller_case(interactive_http, tmp_path):
         grant_for_run=grant,
         driver=physical,
         journal=journal,
+        recovery_certificate_path=certificate.certificate,
         channels=channels,
         connection_generation=connection.connection_generation,
         product_revision="c" * 40,
@@ -200,6 +204,138 @@ async def controller_case(interactive_http, tmp_path):
         await executor._seal(active)
         active.meter.close(timeout_seconds=0)
     journal.close()
+
+
+def _release_never_started(c, terminal):
+    control = ExecutionControlPlane(c.f.factory)
+    at = c.lease.expires_at - timedelta(seconds=1)
+    for status in (*(("cancelling",) if terminal == "cancelled" else ()), terminal):
+        control.transition_run(
+            run_id=c.lease.run_id,
+            lease_token=c.lease.lease_token,
+            fence_token=c.lease.fence_token,
+            target_status=status,
+            trace_id="isolated-never-started",
+            now=at,
+        )
+    SchedulingControlPlane(c.f.factory).release_dispatch(
+        run_id=c.lease.run_id,
+        runner_id=c.connection.runner_id,
+        connection_generation=c.connection.connection_generation,
+        connection_token=c.connection.connection_token,
+        fence_token=c.lease.fence_token,
+        requeue=False,
+        now=at,
+    )
+
+
+def _confirm_never_started(c, *, lost_ack=False):
+    proofs = []
+
+    async def verify(record):
+        assert record.run_id == c.lease.run_id and record.process_stopped
+        assert getattr(record, "official_runner_id", None) is None
+
+    async def confirm(record):
+        proof = physical_recovery_proof_sha256(record)
+        proofs.append(proof)
+        SchedulingControlPlane(c.f.factory).confirm_interactive_recovery(
+            runner_id=c.connection.runner_id,
+            connection_generation=c.connection.connection_generation,
+            connection_token=c.connection.connection_token,
+            run_id=c.lease.run_id,
+            fence_token=c.lease.fence_token,
+            capability_token=c.lease.capability_token,
+            proof_sha256=proof,
+            certificate_fingerprint_sha256="a" * 64,
+            expected_product_revision="c" * 40,
+            product_image_digest="sha256:" + "a" * 64,
+            cleanup_kind="never_started",
+        )
+        if lost_ack and len(proofs) == 1:
+            raise RunnerControlError("isolated_receipt_ack_lost", "Unavailable")
+
+    c.executor._verify_recovery, c.executor._confirm_recovery = verify, confirm
+    return proofs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lost_ack", [False, True])
+async def test_initial_model_auth_failure_retains_never_started_proof_without_replay(
+    controller_case, lost_ack
+):
+    c = controller_case
+
+    async def rejected(_lease):
+        raise RunnerControlError("isolated_model_auth_unavailable", "Unavailable")
+
+    c.executor._authorize = rejected
+    proofs = _confirm_never_started(c, lost_ack=lost_ack)
+    with pytest.raises(RunnerControlError):
+        await c.executor.execute(c.lease, cancellation=asyncio.Event())
+    assert not c.prepared.is_set() and not c.inputs and not c.gateway_calls and not c.stops
+    assert await c.executor.prepare_finalization(c.lease, result="failed") == "failed"
+    await c.executor.finalize(c.lease, result="failed")
+    _release_never_started(c, "failed")
+    if lost_ack:
+        with pytest.raises(RunnerControlError, match="Unavailable"):
+            await c.executor.reconcile_physical_gc(limit=32)
+    restored_journal = None
+    executor = c.executor
+    if lost_ack:
+        c.journal.close()
+        restored_journal = InteractiveRecoveryJournal(c.journal.root)
+        executor = ProductionInteractiveExecutor(
+            authorize_model=c.executor._authorize,
+            grant_for_run=c.executor._grant,
+            driver=c.physical,
+            journal=restored_journal,
+            recovery_certificate_path=c.certificate.certificate,
+            channels=SessionModelChannels(public_origin=ORIGIN),
+            connection_generation=c.connection.connection_generation,
+            product_revision="c" * 40,
+            image_digest="sha256:" + "a" * 64,
+            assert_authority=lambda: None,
+            verify_recovery=c.executor._verify_recovery,
+            confirm_recovery=c.executor._confirm_recovery,
+            meter_factory=c.executor._meter_factory,
+        )
+    try:
+        assert await executor.reconcile_physical_gc(limit=32) == 1
+        assert len(proofs) == (2 if lost_ack else 1) and len(set(proofs)) == 1
+        assert await executor.reconcile_physical_gc(limit=32) == 0
+    finally:
+        if restored_journal is not None:
+            restored_journal.close()
+    assert not c.prepared.is_set() and not c.inputs and not c.gateway_calls and not c.stops
+    with c.f.factory() as db:
+        assert db.get(RunRecord, c.lease.run_id).status == "failed"
+        events = db.scalars(
+            sa.select(RunEventRecord).where(
+                RunEventRecord.run_id == c.lease.run_id,
+                RunEventRecord.event_type == "run.interactive_physical_recovered",
+            )
+        ).all()
+        assert len(events) == 1 and events[0].payload["proof_sha256"] == proofs[0]
+        assert events[0].payload["cleanup_kind"] == "never_started"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_before_any_preparation_retains_never_started_terminal_receipt(
+    controller_case,
+):
+    c = controller_case
+    proofs = _confirm_never_started(c)
+    cancellation = asyncio.Event()
+    cancellation.set()
+    assert await c.executor.execute(c.lease, cancellation=cancellation) == "cancelled"
+    assert await c.executor.prepare_finalization(c.lease, result="cancelled") == "cancelled"
+    await c.executor.finalize(c.lease, result="cancelled")
+    _release_never_started(c, "cancelled")
+    assert await c.executor.reconcile_physical_gc(limit=32) == 1
+    assert len(proofs) == 1 and not c.prepared.is_set()
+    assert not c.inputs and not c.gateway_calls and not c.stops
+    assert await c.executor.reconcile_physical_gc(limit=32) == 0
 
 
 @pytest.mark.asyncio
@@ -692,6 +828,7 @@ async def test_restart_reconciles_original_usage_and_never_dispatches_old_input(
         grant_for_run=c.executor._grant,
         driver=c.physical,
         journal=restored_journal,
+        recovery_certificate_path=c.certificate.certificate,
         channels=SessionModelChannels(public_origin=ORIGIN),
         connection_generation=c.connection.connection_generation,
         product_revision="c" * 40,
