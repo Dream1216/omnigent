@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# Delegated installers can invoke gh with the retained harness HOME.
+# Disable build-time telemetry before gh allocates a random device identity.
+export GH_TELEMETRY=false
+
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 DEVIN_VERSION="3000.11.3"
 DEVIN_SHA256_AMD64="83b3b113c01bf2a3e9e100db08d77e6b086806a7754f091e20831bdfe215157e"
