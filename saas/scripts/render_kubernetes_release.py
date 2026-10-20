@@ -35,7 +35,9 @@ from saas.production.postgresql_migration import (
     _runtime_saas_head,
 )
 from saas.production.service_bindings import (
+    EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
+    OPTIONAL_SERVICE_ROLE_PROFILES,
     ProductionServiceRoleBinding,
     render_production_service_role_bindings,
 )
@@ -63,6 +65,28 @@ _TEMPLATE_ARTIFACT_REGION = "replace-with-artifact-region"
 _TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000015"
 _MIGRATION_COMMAND = ["python", "-m", "saas.scripts.run_postgresql_migration"]
 _MIGRATION_ARGS = ["--product-revision", "$(OMNIGENT_SAAS_SOURCE_SHA)"]
+_RELEASE_SERVICE_ROLES = {
+    **EXPECTED_PRODUCTION_SERVICE_ROLES,
+    **{
+        service: role
+        for _prefix, _filename, roles in OPTIONAL_SERVICE_ROLE_PROFILES
+        for service, role in roles.items()
+    },
+}
+_PROFILE_STAGE_TARGETS = {
+    ("kubernetes.migration.yaml", "omnigent-saas-postgresql-migration"): (
+        "stage-authority-files",
+    ),
+    ("kubernetes.production.yaml", "omnigent-saas-server"): ("stage-server-secrets",),
+    ("kubernetes.production.yaml", "omnigent-saas-worker"): (
+        "stage-worker-secrets",
+        "stage-runner-control-secrets",
+    ),
+    ("kubernetes.production.yaml", "omnigent-saas-preview-edge"): ("stage-preview-secrets",),
+    ("kubernetes.production.yaml", "omnigent-saas-preview-owner"): (
+        "stage-preview-owner-secrets",
+    ),
+}
 _TEMPLATE_SERVICE_LOGINS: Final = {
     service: "replace_runtime_login" if service == "runtime" else f"replace_{service}_login"
     for service in EXPECTED_PRODUCTION_SERVICE_ROLES
@@ -910,13 +934,22 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
     login_rows = _mapping(
         document.get("service_logins"),
         name="service_logins",
-        fields=set(EXPECTED_PRODUCTION_SERVICE_ROLES),
     )
+    if set(login_rows) not in (
+        set(EXPECTED_PRODUCTION_SERVICE_ROLES),
+        set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+        set(_RELEASE_SERVICE_ROLES),
+    ):
+        raise ReleaseRenderError(
+            "service_logins must contain a complete core or full release profile"
+        )
+    if "model_projection" in login_rows and control_plane_schema_revision != "lm2r00000001":
+        raise ReleaseRenderError("model projection profile requires the R schema lm2r00000001")
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
-        for service in EXPECTED_PRODUCTION_SERVICE_ROLES
+        for service in sorted(login_rows)
     }
-    base_roles = set(EXPECTED_PRODUCTION_SERVICE_ROLES.values())
+    base_roles = set(_RELEASE_SERVICE_ROLES.values())
     if (
         len(set(service_logins.values())) != len(service_logins)
         or any(_ROLE_NAME.fullmatch(login) is None for login in service_logins.values())
@@ -1172,6 +1205,59 @@ def _template_service_bindings_text() -> str:
     )
 
 
+def _role_profile_texts(spec: KubernetesReleaseSpec) -> dict[str, str]:
+    return {
+        filename: render_production_service_role_bindings(
+            tuple(
+                ProductionServiceRoleBinding(service, spec.service_logins[service], role)
+                for service, role in roles.items()
+            )
+        )
+        for _prefix, filename, roles in OPTIONAL_SERVICE_ROLE_PROFILES
+        if set(roles) <= set(spec.service_logins)
+    }
+
+
+def _release_role_graph_sha256(spec: KubernetesReleaseSpec) -> str:
+    raw = render_production_service_role_bindings(
+        tuple(
+            ProductionServiceRoleBinding(service, login, _RELEASE_SERVICE_ROLES[service])
+            for service, login in spec.service_logins.items()
+        )
+    )
+    return hashlib.sha256(raw.encode("ascii")).hexdigest()
+
+
+def _role_profile_environment(spec: KubernetesReleaseSpec, directory: str) -> dict[str, str]:
+    texts = _role_profile_texts(spec)
+    result = {}
+    for prefix, filename, _roles in OPTIONAL_SERVICE_ROLE_PROFILES:
+        if filename in texts:
+            result[prefix + "_FILE"] = f"{directory}/{filename}"
+            result[prefix + "_SHA256"] = hashlib.sha256(
+                texts[filename].encode("ascii")
+            ).hexdigest()
+    if texts:
+        result["OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_SHA256"] = hashlib.sha256(
+            _service_bindings_text(spec).encode("ascii")
+        ).hexdigest()
+    return result
+
+
+def _stage_role_profiles(script: str, spec: KubernetesReleaseSpec, directory: str) -> str:
+    core = (
+        "install -m 0400 /source/bindings/service-role-bindings.json "
+        f"{directory}/service-role-bindings.json"
+    )
+    if script.count(core) != 1:
+        raise ReleaseRenderError("service-role profile staging requires one exact core install")
+    lines = [
+        f"install -m 0400 /source/bindings/{filename} {directory}/{filename}"
+        for filename in _role_profile_texts(spec)
+    ]
+    return script if not lines else script.replace(core, "\n".join((core, *lines)))
+
+
 def _migration_args(spec: KubernetesReleaseSpec) -> list[str]:
     if spec.control_plane_schema_revision == _expected_head("saas"):
         return list(_MIGRATION_ARGS)
@@ -1374,6 +1460,32 @@ def _render_release_documents(
             expected=template_bindings_text,
             name="service-role bindings",
         )
+        profiles = _role_profile_texts(spec)
+        if any(filename in bindings_data for filename in profiles):
+            raise ReleaseRenderError("service-role profile source must not already be populated")
+        bindings_data.update(profiles)
+    for data, directory in ((migration_data, "/authority"), (production_data, "/runtime")):
+        facts = _role_profile_environment(spec, directory)
+        if set(facts) & set(data):
+            raise ReleaseRenderError(
+                "service-role profile environment source is already populated"
+            )
+        data.update(facts)
+    if _role_profile_texts(spec):
+        for (manifest, resource_name), init_names in _PROFILE_STAGE_TARGETS.items():
+            document = documents[manifest]
+            kind = "Job" if manifest == "kubernetes.migration.yaml" else "Deployment"
+            resource = _resource(document, kind=kind, name=resource_name)
+            pod = _nested_mapping(resource, "spec", "template", "spec")
+            directory = "/authority" if kind == "Job" else "/runtime"
+            for init_name in init_names:
+                init = _named_row(
+                    pod.get("initContainers"), name=init_name, row_type="init container"
+                )
+                args = init.get("args")
+                if not isinstance(args, list) or len(args) != 1 or not isinstance(args[0], str):
+                    raise ReleaseRenderError("service-role profile init arguments are invalid")
+                args[0] = _stage_role_profiles(args[0], spec, directory)
 
     server = _resource(production, kind="Deployment", name="omnigent-saas-server")
     server_annotations = _nested_mapping(server, "spec", "template", "metadata", "annotations")
@@ -1759,7 +1871,7 @@ def _render_release_documents(
     suffixes = {
         "release": spec.release_incarnation[:12],
         "credential": spec.artifact.credential_revision.removeprefix("sha256:")[:12],
-        "bindings": hashlib.sha256(bindings_text.encode("ascii")).hexdigest()[:12],
+        "bindings": _release_role_graph_sha256(spec)[:12],
         "owner": hashlib.sha256(spec.preview.owner_incarnation.encode("ascii")).hexdigest()[:12],
     }
     resource_token_projections = (
@@ -2013,12 +2125,19 @@ def _scalar_changes(
     name: str,
     path: tuple[str | int, ...] = (),
 ) -> list[tuple[tuple[str | int, ...], Any, Any]]:
-    if name == "kubernetes.migration.yaml" and path and path[-1] == "args":
+    if (
+        name == "kubernetes.migration.yaml"
+        and len(path) >= 3
+        and path[-3] == "containers"
+        and path[-1] == "args"
+    ):
         return [] if source == rendered else [(path, source, rendered)]
     if isinstance(source, dict):
-        if not isinstance(rendered, dict) or set(rendered) - set(source):
+        if not isinstance(rendered, dict):
             raise ReleaseRenderError(f"{name}: renderer changed mapping structure")
-        changes: list[tuple[tuple[str | int, ...], Any, Any]] = []
+        changes: list[tuple[tuple[str | int, ...], Any, Any]] = [
+            ((*path, key), _MISSING, rendered[key]) for key in sorted(set(rendered) - set(source))
+        ]
         for key, value in source.items():
             if key not in rendered:
                 changes.append(((*path, key), value, _MISSING))
@@ -2068,6 +2187,21 @@ def _authorized_release_change(
     resource_name = metadata.get("name")
     if not isinstance(resource_name, str):
         return False
+
+    if (
+        relative_path[:4] == ("spec", "template", "spec", "initContainers")
+        and len(relative_path) == 7
+        and relative_path[-2:] == ("args", 0)
+        and isinstance(before, str)
+    ):
+        container = _value_at_path(source_item, relative_path[:-2])
+        expected_names = _PROFILE_STAGE_TARGETS.get((manifest_name, resource_name), ())
+        directory = "/authority" if manifest_name == "kubernetes.migration.yaml" else "/runtime"
+        return (
+            isinstance(container, dict)
+            and container.get("name") in expected_names
+            and after == _stage_role_profiles(before, spec, directory)
+        )
 
     if (
         manifest_name == "kubernetes.migration.yaml"
@@ -2170,6 +2304,20 @@ def _authorized_release_change(
 
     if len(relative_path) == 2 and relative_path[0] == "data":
         field = relative_path[1]
+        if before is _MISSING and kind == "ConfigMap":
+            additions = {}
+            if resource_name == "omnigent-saas-service-role-bindings-replace-bindings12":
+                if manifest_name in {"kubernetes.migration.yaml", "kubernetes.production.yaml"}:
+                    additions = _role_profile_texts(spec)
+            elif (manifest_name, resource_name) in {
+                ("kubernetes.migration.yaml", "omnigent-saas-migration-release-replace-release12"),
+                ("kubernetes.production.yaml", "omnigent-saas-release-replace-release12"),
+            }:
+                additions = _role_profile_environment(
+                    spec,
+                    "/authority" if manifest_name == "kubernetes.migration.yaml" else "/runtime",
+                )
+            return field in additions and after == additions[field]
         receipt_value = _ZERO_DIGEST if spec.mode == "stage" else spec.artifact.receipt_revision
         data_pairs = {
             (
@@ -2877,8 +3025,20 @@ def _audit_projection(
         config = _resource(
             documents[manifest_name], kind="ConfigMap", data_key="service-role-bindings.json"
         )
-        if _nested_mapping(config, "data").get("service-role-bindings.json") != binding_text:
+        if _nested_mapping(config, "data") != {
+            "service-role-bindings.json": binding_text,
+            **_role_profile_texts(spec),
+        }:
             raise ReleaseRenderError("service-role bindings diverged across manifests")
+        release = _resource(
+            documents[manifest_name], kind="ConfigMap", data_key="OMNIGENT_SAAS_PRODUCT_REVISION"
+        )
+        directory = "/authority" if manifest_name == "kubernetes.migration.yaml" else "/runtime"
+        if any(
+            _nested_mapping(release, "data").get(key) != value
+            for key, value in _role_profile_environment(spec, directory).items()
+        ):
+            raise ReleaseRenderError("service-role profile environment diverged across manifests")
 
     source_replicas = {
         "omnigent-saas-server": 2,
@@ -3389,6 +3549,8 @@ def render_kubernetes_release(
         "status": "pass",
         "upstream_revision": spec.upstream_revision,
     }
+    if _role_profile_texts(spec):
+        evidence["service_role_graph_sha256"] = _release_role_graph_sha256(spec)
     evidence_bytes = _canonical_json(evidence)
 
     _prepare_output_directory(source_dir, output_dir)

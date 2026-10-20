@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import replace
@@ -155,12 +156,128 @@ def _produce_runner_schema() -> None:
     print(json.dumps({"saas_head": _R, "source_revision": revision}))
 
 
+def _receipt_from_document(document):
+    return migration.PostgreSqlMigrationReceipt(
+        schema_version=document["schema_version"],
+        status=document["status"],
+        product_revision=document["product_revision"],
+        official_head=document["official_head"],
+        saas_head=document["saas_head"],
+        database_identity_sha256=document["database_identity_sha256"],
+        runtime_rls_table_count=document["runtime_rls_table_count"],
+        authorities=tuple((row["kind"], row["login"]) for row in document["authorities"]),
+        phases=tuple(document["phases"]),
+        catalog_sha256=document["catalog_sha256"],
+        service_role_bindings_sha256=document["service_role_bindings_sha256"],
+        service_role_graph_sha256=document["service_role_graph_sha256"],
+        completed_at=document["completed_at"],
+        verify_only=document["verify_only"],
+    )
+
+
+def _rendered_role_handoff(plan, tmp_path, monkeypatch, capsys):
+    from omnigent import _build_info
+    from saas.production import service_bindings
+    from saas.scripts import render_kubernetes_release as renderer
+    from saas.scripts import run_postgresql_migration as cli
+    from tests.saas.test_render_kubernetes_release import (
+        _canonical_json,
+        _copy_sources,
+        _document,
+        _resource,
+        _spec_document,
+    )
+
+    document = _spec_document()
+    assert document["product_revision"] == document["source_revision"] == plan.product_revision
+    document["control_plane_schema_revision"] = _R
+    document["service_logins"] = {
+        row.service: row.login for row in plan.service_role_graph.bindings
+    }
+    spec = tmp_path / "release.json"
+    spec.write_bytes(_canonical_json(document))
+    spec.chmod(0o600)
+    output = tmp_path / "rendered"
+    renderer.render_kubernetes_release(spec, _copy_sources(tmp_path), output)
+    manifest = _document(output / "kubernetes.migration.yaml")
+    config = _resource(manifest, kind="ConfigMap", data_key="service-role-bindings.json")
+    release = _resource(manifest, kind="ConfigMap", data_key="OMNIGENT_SAAS_PRODUCT_REVISION")
+    job = _resource(manifest, kind="Job", name="omnigent-saas-postgresql-migration")
+    pod = job["spec"]["template"]["spec"]
+    init = next(row for row in pod["initContainers"] if row["name"] == "stage-authority-files")
+    source, staged = tmp_path / "source-files", tmp_path / "staged-files"
+    source.mkdir(mode=0o700)
+    staged.mkdir(mode=0o700)
+    for filename, raw in config["data"].items():
+        assert Path(filename).name == filename
+        path = source / filename
+        path.write_text(raw)
+        path.chmod(0o444)
+    installed = set()
+    for line in init["args"][0].splitlines():
+        if "/source/bindings/" not in line:
+            continue
+        command = shlex.split(line)
+        assert command[:3] == ["install", "-m", "0400"] and len(command) == 5
+        filename = Path(command[3]).name
+        assert command[3] == "/source/bindings/" + filename
+        assert command[4] == "/authority/" + filename and filename in config["data"]
+        subprocess.run([*command[:3], str(source / filename), str(staged / filename)], check=True)
+        installed.add(filename)
+    assert installed == set(config["data"])
+    environment = dict(release["data"])
+    for name in tuple(environment):
+        if name.endswith("_ROLE_BINDINGS_FILE"):
+            environment[name] = str(staged / Path(environment[name]).name)
+    environment["OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE"] = str(
+        staged / "service-role-bindings.json"
+    )
+    graph = service_bindings.load_production_service_role_graph(environment)
+    assert len(graph.bindings) == 19 and graph.sha256 == plan.service_role_graph.sha256
+    plan = replace(
+        plan,
+        service_role_bindings=service_bindings.load_production_service_role_bindings(environment),
+        platform_model_service_role_bindings=service_bindings.load_platform_model_service_role_bindings(
+            environment
+        ),
+        platform_admin_service_role_bindings=service_bindings.load_platform_admin_service_role_bindings(
+            environment
+        ),
+        model_projection_service_role_bindings=service_bindings.load_model_projection_service_role_bindings(
+            environment
+        ),
+    )
+    for field, name in cli._URL_ENVIRONMENTS.items():
+        kind = field.removesuffix("_url")
+        authority = next(row for row in plan.authorities() if row.kind == kind)
+        path = staged / (kind + "-url")
+        path.write_text(authority.url.render_as_string(hide_password=False))
+        path.chmod(0o400)
+        environment[name] = str(path)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    # Synthetic source identity, not signed/compiled image admission.
+    monkeypatch.setattr(_build_info, "COMMIT_SHA", plan.product_revision)
+    migrate = next(row for row in pod["containers"] if row["name"] == "migrate")
+    arguments = [
+        plan.product_revision if value == "$(OMNIGENT_SAAS_SOURCE_SHA)" else value
+        for value in migrate["args"]
+    ]
+    assert "--verify-only" in arguments and arguments[-1] == _R
+    monkeypatch.setattr(sys, "argv", ["run_postgresql_migration", *arguments])
+    capsys.readouterr()
+    assert cli.main() == 0
+    receipt = _receipt_from_document(json.loads(capsys.readouterr().out))
+    return plan, receipt
+
+
 def test_p0_source_reissues_its_own_receipt_and_verifies_r_through_narrow_logins(
-    production_replay, tmp_path
+    production_replay, tmp_path, monkeypatch, capsys
 ):
     root, revision = _producer_source()
     assert migration._expected_head("saas") == _P0
-    plan = production_replay
+    plan = replace(production_replay, product_revision="1" * 40)
+    monkeypatch.setattr(migration, "_installed_product_revision", lambda: plan.product_revision)
     initial = migration.run_production_postgresql_migration(plan)
     assert initial.saas_head == _P0
     known = {row.service: row for row in plan.service_role_graph.bindings}
@@ -232,23 +349,7 @@ def test_p0_source_reissues_its_own_receipt_and_verifies_r_through_narrow_logins
         timeout=300,
     )
     assert produced.returncode == 0, produced.stderr[-2000:]
-    receipt_document = json.loads(produced.stdout)
-    producer_receipt = migration.PostgreSqlMigrationReceipt(
-        schema_version=receipt_document["schema_version"],
-        status=receipt_document["status"],
-        product_revision=receipt_document["product_revision"],
-        official_head=receipt_document["official_head"],
-        saas_head=receipt_document["saas_head"],
-        database_identity_sha256=receipt_document["database_identity_sha256"],
-        runtime_rls_table_count=receipt_document["runtime_rls_table_count"],
-        authorities=tuple((row["kind"], row["login"]) for row in receipt_document["authorities"]),
-        phases=tuple(receipt_document["phases"]),
-        catalog_sha256=receipt_document["catalog_sha256"],
-        service_role_bindings_sha256=receipt_document["service_role_bindings_sha256"],
-        service_role_graph_sha256=receipt_document["service_role_graph_sha256"],
-        completed_at=receipt_document["completed_at"],
-        verify_only=receipt_document["verify_only"],
-    )
+    producer_receipt = _receipt_from_document(json.loads(produced.stdout))
     assert producer_receipt.saas_head == _R
     assert producer_receipt.product_revision == revision != plan.product_revision
     foreign = tmp_path / "foreign"
@@ -263,9 +364,7 @@ def test_p0_source_reissues_its_own_receipt_and_verifies_r_through_narrow_logins
             engine.dispose()
     with pytest.raises(migration.PostgreSqlMigrationError):
         migration.run_production_postgresql_migration(plan, verify_only=True)
-    refreshed = migration.run_production_postgresql_migration(
-        replace(plan, verification_saas_head=_R), verify_only=True
-    )
+    plan, refreshed = _rendered_role_handoff(plan, tmp_path, monkeypatch, capsys)
     assert refreshed.product_revision == plan.product_revision and refreshed.verify_only is True
     assert refreshed.catalog_sha256 == producer_receipt.catalog_sha256
     assert refreshed.saas_head == _R

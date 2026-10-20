@@ -53,6 +53,23 @@ EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
 EXPECTED_MODEL_PROJECTION_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
     {"model_projection": "saas_model_projection"}
 )
+OPTIONAL_SERVICE_ROLE_PROFILES: tuple[tuple[str, str, Mapping[str, str]], ...] = (
+    (
+        "OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS",
+        "platform-model-service-role-bindings.json",
+        EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
+    ),
+    (
+        "OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS",
+        "platform-admin-service-role-bindings.json",
+        EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
+    ),
+    (
+        "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS",
+        "model-projection-service-role-bindings.json",
+        EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+    ),
+)
 
 
 class ProductionServiceRoleBindingsError(ValueError):
@@ -196,6 +213,23 @@ def load_production_service_role_bindings(
     )
 
 
+def load_production_service_role_graph(
+    source: Mapping[str, str],
+    *,
+    production: ProductionServiceRoleBindings | None = None,
+) -> ProductionServiceRoleGraph:
+    """Verify every declared release profile before composing its exact role graph."""
+
+    core = load_production_service_role_bindings(source) if production is None else production
+    optional = tuple(
+        _load_service_role_bindings(source, name=prefix + "_FILE", expected_roles=roles)
+        if prefix + "_FILE" in source or prefix + "_SHA256" in source
+        else None
+        for prefix, _filename, roles in OPTIONAL_SERVICE_ROLE_PROFILES
+    )
+    return compose_production_service_role_graph(core, optional[0], optional[1], optional[2])
+
+
 def load_platform_model_service_role_bindings(
     source: Mapping[str, str],
 ) -> ProductionServiceRoleBindings:
@@ -304,9 +338,13 @@ def _load_service_role_bindings(
     canonical = render_production_service_role_bindings(bindings)
     if raw != canonical:
         raise ProductionServiceRoleBindingsError(f"{name} must contain canonical JSON")
+    digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+    expected_digest = source.get(name.removesuffix("_FILE") + "_SHA256")
+    if expected_digest is not None and expected_digest != digest:
+        raise ProductionServiceRoleBindingsError(f"{name} does not match its declared SHA-256")
     return ProductionServiceRoleBindings(
         path=path,
-        sha256=hashlib.sha256(canonical.encode("ascii")).hexdigest(),
+        sha256=digest,
         bindings=bindings,
     )
 
@@ -316,6 +354,7 @@ __all__ = [
     "EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES",
     "EXPECTED_PLATFORM_MODEL_SERVICE_ROLES",
     "EXPECTED_PRODUCTION_SERVICE_ROLES",
+    "OPTIONAL_SERVICE_ROLE_PROFILES",
     "ProductionServiceRoleBinding",
     "ProductionServiceRoleBindings",
     "ProductionServiceRoleBindingsError",
@@ -325,5 +364,6 @@ __all__ = [
     "load_platform_admin_service_role_bindings",
     "load_platform_model_service_role_bindings",
     "load_production_service_role_bindings",
+    "load_production_service_role_graph",
     "render_production_service_role_bindings",
 ]

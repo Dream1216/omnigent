@@ -89,7 +89,11 @@ def production_replay(
     url = sa.make_url(configured)
     assert url.host in ("127.0.0.1", "localhost") and url.username == "postgres"
     bindings = tuple(
-        ProductionServiceRoleBinding(service=service, login=f"replay_{service}", base_role=role)
+        ProductionServiceRoleBinding(
+            service=service,
+            login=f"replay_{'preview_manager' if service == 'preview_owner' else service}",
+            base_role=role,
+        )
         for service, role in sorted(EXPECTED_PRODUCTION_SERVICE_ROLES.items())
     )
     document = render_production_service_role_bindings(bindings)
@@ -125,7 +129,7 @@ def production_replay(
         if service in platform_graph
         else ProductionServiceRoleBinding(
             service=service,
-            login=f"replay_platform_admin_{service}",
+            login=f"replay_platform_staff_{service}",
             base_role=role,
         )
         for service, role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
