@@ -138,60 +138,74 @@ async def _connect_host(
     return comm
 
 
+@pytest.mark.parametrize("admission_delay", [0.0, 2.25], ids=["immediate", "slow-store"])
 async def test_launch_runner_writes_host_id_and_runner_id(
     binding_app: tuple[FastAPI, HostRegistry, HostStore, SqlAlchemyConversationStore],
+    monkeypatch: pytest.MonkeyPatch,
+    admission_delay: float,
 ) -> None:
-    """
-    Verify that POST /hosts/{id}/runners writes both runner_id and
-    host_id to the session row.
-
-    If either is missing after the call, the binding flow in the
-    launch endpoint is incomplete and reconnect reconciliation
-    won't be able to find the session on host reconnect.
-    """
+    """Runner launch persists both binding IDs, including after slow store work."""
     app, registry, _hs, conv_store = binding_app
+    if admission_delay:
+        original_authorizer = registry.launch_authorizer
+        assert original_authorizer is not None
+
+        def delayed_authorizer(*args, **kwargs):
+            time.sleep(admission_delay)
+            return original_authorizer(*args, **kwargs)
+
+        monkeypatch.setattr(registry, "launch_authorizer", delayed_authorizer)
+
     comm = await _connect_host(app, registry)
     conv = conv_store.create_conversation(agent_id=None)
 
     async def _respond_launched() -> None:
-        """Respond to the launch frame from the host."""
-        for _ in range(20):
-            output = await comm.receive_output(timeout=2.0)
-            if output["type"] != "websocket.send":
-                continue
-            frame = decode_host_frame(output["text"])
-            if isinstance(frame, HostLaunchRunnerFrame):
-                await comm.send_input(
-                    {
-                        "type": "websocket.receive",
-                        "text": encode_host_frame(
-                            HostLaunchRunnerResultFrame(
-                                request_id=frame.request_id,
-                                status="launched",
-                                runner_id="runner_token_test",
-                            )
-                        ),
-                    }
-                )
-                return
+        # Store work precedes the launch frame. Bound the whole exchange without
+        # cancelling the simulated Host during a legitimate store delay.
+        async with asyncio.timeout(10.0):
+            for _ in range(20):
+                output = await comm.receive_output(timeout=10.0)
+                if output["type"] != "websocket.send":
+                    continue
+                frame = decode_host_frame(output["text"])
+                if isinstance(frame, HostLaunchRunnerFrame):
+                    await comm.send_input(
+                        {
+                            "type": "websocket.receive",
+                            "text": encode_host_frame(
+                                HostLaunchRunnerResultFrame(
+                                    request_id=frame.request_id,
+                                    status="launched",
+                                    runner_id="runner_token_test",
+                                )
+                            ),
+                        }
+                    )
+                    return
+            raise AssertionError("Host never received the runner launch frame")
 
     responder = asyncio.create_task(_respond_launched())
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                f"/v1/hosts/{_HOST_ID}/runners",
+                json={"session_id": conv.id, "workspace": "/tmp"},
+            )
+        assert resp.status_code == 200, resp.text
+        await responder
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(
-            f"/v1/hosts/{_HOST_ID}/runners",
-            json={"session_id": conv.id, "workspace": "/tmp"},
+        updated = conv_store.get_conversation(conv.id)
+        assert updated is not None
+        assert updated.runner_id is not None, "runner_id should be written to session row"
+        assert updated.runner_id.startswith("runner_token_"), (
+            "runner_id should be a token-bound id"
         )
-
-    await responder
-    assert resp.status_code == 200
-
-    updated = conv_store.get_conversation(conv.id)
-    assert updated is not None
-    # Both runner_id and host_id should be set.
-    assert updated.runner_id is not None, "runner_id should be written to session row"
-    assert updated.runner_id.startswith("runner_token_"), "runner_id should be a token-bound id"
-    assert updated.host_id == _HOST_ID, "host_id should be written to session row"
+        assert updated.host_id == _HOST_ID, "host_id should be written to session row"
+    finally:
+        responder.cancel()
+        await asyncio.gather(responder, return_exceptions=True)
+        await comm.send_input({"type": "websocket.disconnect", "code": 1000})
+        await comm.wait(timeout=5.0)
 
 
 async def test_sandbox_fork_cannot_launch_on_ordinary_host(

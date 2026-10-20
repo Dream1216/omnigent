@@ -4,6 +4,17 @@ This directory owns the commercial SaaS control plane and the permanent
 compatibility layer around the official Omnigent runtime. The official runtime
 must not import this package; dependencies only flow from `saas` to `omnigent`.
 
+### iOS release toolchain
+
+For SaaS iOS releases, install **Ruby 3.1+ and Bundler 2.6.2** before
+following [the iOS release guide](../web/ios/RELEASE.md). Install the fastlane
+version pinned in `web/ios/Gemfile.lock`:
+
+```sh
+cd web/ios
+bundle install
+```
+
 ### Managed Sandbox tenant identity
 
 The production server composes both reviewed Kubernetes launchers through
