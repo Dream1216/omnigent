@@ -9117,12 +9117,12 @@ describe("NewChatLandingScreen custom-agent sandbox gating", () => {
     );
   }
 
-  it("presents an enabled sandbox provider as available with its default model", async () => {
+  it("presents an enabled sandbox provider as a new sandbox with its default model", async () => {
     renderLanding({ managed_sandboxes_enabled: true });
 
     await waitFor(() =>
       expect(screen.getByTestId("new-chat-landing-host-chip")).toHaveAccessibleName(
-        /Sandbox, Available/,
+        "Host: New Sandbox",
       ),
     );
     expect(screen.getByTestId("new-chat-landing-agent-model-value")).toHaveTextContent("Default");

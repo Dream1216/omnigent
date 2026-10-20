@@ -17,7 +17,7 @@ POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 # fixtures, or the selected assertions are pinned by the trusted main policy.
 POSTGRESQL_N1_TRUSTED_INPUTS=(
   "pyproject.toml|1816fff38d553c2f7cd3d3ebc2aa81bbd9e9c63ada435e59a26a6f79a52619f2,8ad5d95ea42d9a03325c71aaf131f30e4c3c2856eca474d6aae922e5a6779792"
-  "uv.lock|43d84d7081e7316812acef7e3991971b8601c5e5f58cbbf7b7d659ad39b366ea,74f42b8eeeb0141cbbba162d72f148c2dabf48d82a313984845d96d1cdc4cb5a"
+  "uv.lock|43d84d7081e7316812acef7e3991971b8601c5e5f58cbbf7b7d659ad39b366ea,15e32e7c71a9916c3ae3f8e186bdf9a5bd5a88f27ac36862e1589953aa12fef0"
   "tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   "tests/_model_pools.py|d25fda757b12bffbaa6a42e468f625f715cc3ee37df7f9b5af4b8d70af781362"
   "tests/_token_usage.py|25dbfbc0caea11edd4be3bb3eb530e2a784e9c98e6e2f652beeddae7b7071fa8"

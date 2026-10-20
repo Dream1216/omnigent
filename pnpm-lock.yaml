@@ -177,12 +177,13 @@ overrides:
   qs: 6.16.0
   query-string: 9.5.0
   '@hono/node-server': 1.19.15
-  hono: 4.13.5
+  hono: 4.13.7
   linkify-it: 5.0.2
   shiki: 4.2.0
   react: ^18.2.0
   react-dom: ^18.2.0
-  dompurify: 3.4.14
+  dompurify: 3.4.16
+  katex@>=0.16.0 <0.18.2: 0.18.10
   katex@0.18.11: 0.18.10
   mermaid: 11.16.1
   tar: 7.5.21
@@ -190,9 +191,10 @@ overrides:
   undici@>=7.0.0 <8.0.0: 7.29.1
   undici@>=8.0.0 <9.0.0: 8.10.2
   proxy-addr: 2.0.8
-  brace-expansion@>=1.0.0 <2.0.0: 1.1.20
-  brace-expansion@>=2.0.0 <3.0.0: 2.1.6
+  brace-expansion@>=1.0.0 <2.0.0: 1.1.21
+  brace-expansion@>=2.0.0 <3.0.0: 2.1.7
   brace-expansion@>=5.0.0 <6.0.0: 5.0.12
+  postcss-selector-parser@>=6.0.0 <7.0.0: 7.1.6
   source-map-js: 1.2.2
   prosemirror-view: 1.42.3
   http-cache-semantics: 4.3.0
@@ -234,7 +236,7 @@ overrides:
   '@tiptap/pm': 3.31.4
   '@tiptap/react': 3.31.4
   '@tiptap/starter-kit': 3.31.4
-  express-rate-limit>ip-address: 10.3.1
+  express-rate-limit>ip-address: 10.7.1
   sharp: 0.35.5
   '@modelcontextprotocol/sdk': 1.32.0
 
@@ -468,8 +470,8 @@ importers:
         specifier: ^5.6.0
         version: 5.6.0
       katex:
-        specifier: ^0.16.47
-        version: 0.16.47
+        specifier: 0.18.10
+        version: 0.18.10
       lucide-react:
         specifier: ^1.12.0
         version: 1.25.0(react@18.3.1)
@@ -1705,7 +1707,7 @@ packages:
     resolution: {integrity: sha512-Za2ai6TLdKjUvnur+eenO6nuYYipVAEhyCAdaV8IRvmU9kK8crOZUSYvIXn72E4f8fJqyAbpcJuTsYYmZp9Deg==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: 4.13.5
+      hono: 4.13.7
 
   '@iconify/types@2.0.0':
     resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
@@ -5371,11 +5373,11 @@ packages:
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
 
-  brace-expansion@1.1.20:
-    resolution: {integrity: sha512-5/qk29RyvatwgzNMrvGjkIhKYzpJ0OUnPK+9TU+zS/CMJqzmb+UD0irWu42JfpUvO636fxd8IstgiydZRM/76A==}
+  brace-expansion@1.1.21:
+    resolution: {integrity: sha512-9zeA+KLZNNzglF2TPKRQEDyx6Yby7daAkuy8MiPzpXPsYDWi/DRM8jmwUDxokQjYqBpv5DgPiwD4h4ZZSy1Ujw==}
 
-  brace-expansion@2.1.6:
-    resolution: {integrity: sha512-pi/WFpBvCBmB/NsURt7hW5sDvuOqvJaDMDai7CrlT9xoehzWRzo/dhQRKqOhpPvlnicVaTzHCbzGnnTgpvMTFw==}
+  brace-expansion@2.1.7:
+    resolution: {integrity: sha512-uZbew1NqdmPDTMJ8ah1y+b+9QEJrfkXFk3RcTQw3X0jW/xRUvFKsg1CfQdSYGdTbXZWExtU3J3ccxtnfw1Fi0g==}
 
   brace-expansion@5.0.12:
     resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
@@ -5584,10 +5586,6 @@ packages:
   commander@7.2.0:
     resolution: {integrity: sha512-QrWXB+ZQSVPmIWIhtEO9H+gwHaMGYiF5ChvoJ+K9ZGHG/sVsa6yiesAD1GC/x46sET00Xlwo1u49RVVVzvcSkw==}
     engines: {node: '>= 10'}
-
-  commander@8.3.0:
-    resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
-    engines: {node: '>= 12'}
 
   commander@9.5.0:
     resolution: {integrity: sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ==}
@@ -5959,8 +5957,8 @@ packages:
   dom-accessibility-api@0.6.3:
     resolution: {integrity: sha512-7ZgogeTnjuHbo+ct10G9Ffp0mif17idi0IyWNVA/wcwcm7NPOD/WEHVP3n7n3MhXqxoIYm8d6MuZohYWIZ4T3w==}
 
-  dompurify@3.4.14:
-    resolution: {integrity: sha512-dVoH9z+MY+C9IilgGCk3YfFqjLi3fChm2OiKJMzh6axrJ5qwxqWaZamgmHrpv22CN/KdbZJuGEGgfQoL00LTdg==}
+  dompurify@3.4.16:
+    resolution: {integrity: sha512-sqo+pNp3qRhCIpbgRi1y8Tgk27Bo2Ry7w0dC1NBeNTdZChWjz9Xb/KOoZbRP/R6pQZ80Qw8YhXw13hWWBbMRnQ==}
 
   dotenv-expand@11.0.7:
     resolution: {integrity: sha512-zIHwmZPRshsCdpMDyVsqGmgyP0yT8GAgXUnkdAoJisxvf33k7yO6OuoKmcTGuXPWSsm8Oh88nZicRLA9Y0rUeA==}
@@ -6544,8 +6542,8 @@ packages:
   hoist-non-react-statics@3.3.2:
     resolution: {integrity: sha512-/gGivxi8JPKWNm/W0jSmzcMPpfpPLc3dY/6GxhX2hQ9iGj3aDfklV4ET7NjKpSinLpJ5vafa9iiGIEZg10SfBw==}
 
-  hono@4.13.5:
-    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
+  hono@4.13.7:
+    resolution: {integrity: sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@4.1.0:
@@ -6653,8 +6651,8 @@ packages:
     resolution: {integrity: sha512-7m1vEcPCxXYI8HqnL8CKI6siDyD+eIWSwgB3DZA+ZTogxk9I4CDnj4wilt9x/+/QbHI4YG5YZNmC6458/e9Ktg==}
     deprecated: The Intersection Observer polyfill is no longer needed and can safely be removed. Intersection Observer has been Baseline since 2019.
 
-  ip-address@10.3.1:
-    resolution: {integrity: sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==}
+  ip-address@10.7.1:
+    resolution: {integrity: sha512-4OUAqU9Z1i3vCnS05hzGiFnEMDpQ+62pAD/MVQOp83fYyNC8GleCqaS0QikQBmcWCrKFiUs/B8ztRRiYOAXuCA==}
     engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
@@ -6858,10 +6856,6 @@ packages:
 
   jws@4.0.1:
     resolution: {integrity: sha512-EKI/M/yqPncGUUh44xz0PxSidXFr/+r0pA70+gIYhjv+et7yxM+s29Y+VGDkovRofQem0fs7Uvf4+YmAdyRduA==}
-
-  katex@0.16.47:
-    resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
-    hasBin: true
 
   katex@0.18.10:
     resolution: {integrity: sha512-/B6p9eY9DX7aHBfpkHdpirDTZ5QH9xTwL9y837PWuzuv41O5jFdqNQwVQEQsimY0/iVNkwBY4+4hMfhQ7d4Dbw==}
@@ -7886,8 +7880,8 @@ packages:
     resolution: {integrity: sha512-OBatVyC/N7SCW/FaDHrSd+vn0o5cS855TOmYi4OkdWUMSJCET/xip//ch8xGUvtr3i44X9LVyWwQlRMTN3pwSA==}
     engines: {node: '>=10'}
 
-  postcss-selector-parser@6.0.10:
-    resolution: {integrity: sha512-IQ7TZdoaqbT+LCpShg46jnZVlhWD2w6iQYAcYXfHARZ7X1t/UGhhceQDs5X0cGqKvYlHNOuv7Oa1xmb0oQuA3w==}
+  postcss-selector-parser@7.1.6:
+    resolution: {integrity: sha512-7qASPzhKF2l2KLboRZux8CCTRMdGiV08vWmyKzPz22qZ7ZjQBOeY7rNzNoCLSUiftJ7HUq0GERHmxw/t0dCdMw==}
     engines: {node: '>=4'}
 
   postcss@8.5.29:
@@ -10708,9 +10702,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@hono/node-server@1.19.15(hono@4.13.5)':
+  '@hono/node-server@1.19.15(hono@4.13.7)':
     dependencies:
-      hono: 4.13.5
+      hono: 4.13.7
 
   '@iconify/types@2.0.0': {}
 
@@ -11207,7 +11201,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.0(supports-color@10.2.2)':
     dependencies:
-      '@hono/node-server': 1.19.15(hono@4.13.5)
+      '@hono/node-server': 1.19.15(hono@4.13.7)
       ajv: 8.20.0
       ajv-formats: 3.0.1
       content-type: 1.0.5
@@ -11217,7 +11211,7 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1(supports-color@10.2.2)
       express-rate-limit: 8.6.0(express@5.2.1(supports-color@10.2.2))(supports-color@10.2.2)
-      hono: 4.13.5
+      hono: 4.13.7
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -13359,7 +13353,7 @@ snapshots:
 
   '@streamdown/math@1.0.2(react@18.3.1)(supports-color@10.2.2)':
     dependencies:
-      katex: 0.16.47
+      katex: 0.18.10
       react: 18.3.1
       rehype-katex: 7.0.1
       remark-math: 6.0.0(supports-color@10.2.2)
@@ -13438,7 +13432,7 @@ snapshots:
 
   '@tailwindcss/typography@0.5.20(tailwindcss@4.3.1)':
     dependencies:
-      postcss-selector-parser: 6.0.10
+      postcss-selector-parser: 7.1.6
       tailwindcss: 4.3.1
 
   '@tailwindcss/vite@4.3.1(vite@8.1.0(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
@@ -14581,12 +14575,12 @@ snapshots:
 
   bowser@2.14.1: {}
 
-  brace-expansion@1.1.20:
+  brace-expansion@1.1.21:
     dependencies:
       balanced-match: 1.0.2
       concat-map: 0.0.1
 
-  brace-expansion@2.1.6:
+  brace-expansion@2.1.7:
     dependencies:
       balanced-match: 1.0.2
 
@@ -14794,8 +14788,6 @@ snapshots:
   commander@5.1.0: {}
 
   commander@7.2.0: {}
-
-  commander@8.3.0: {}
 
   commander@9.5.0:
     optional: true
@@ -15164,7 +15156,7 @@ snapshots:
 
   dom-accessibility-api@0.6.3: {}
 
-  dompurify@3.4.14:
+  dompurify@3.4.16:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -15483,7 +15475,7 @@ snapshots:
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
       express: 5.2.1(supports-color@10.2.2)
-      ip-address: 10.3.1
+      ip-address: 10.7.1
     transitivePeerDependencies:
       - supports-color
 
@@ -15983,7 +15975,7 @@ snapshots:
     dependencies:
       react-is: 16.13.1
 
-  hono@4.13.5: {}
+  hono@4.13.7: {}
 
   hosted-git-info@4.1.0:
     dependencies:
@@ -16100,7 +16092,7 @@ snapshots:
 
   intersection-observer@0.12.2: {}
 
-  ip-address@10.3.1: {}
+  ip-address@10.7.1: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -16300,10 +16292,6 @@ snapshots:
     dependencies:
       jwa: 2.0.1
       safe-buffer: 5.2.1
-
-  katex@0.16.47:
-    dependencies:
-      commander: 8.3.0
 
   katex@0.18.10:
     dependencies:
@@ -16753,9 +16741,9 @@ snapshots:
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.14
       dayjs: 1.11.21
-      dompurify: 3.4.14
+      dompurify: 3.4.16
       es-toolkit: 1.49.0
-      katex: 0.16.47
+      katex: 0.18.10
       khroma: 2.1.0
       marked: 16.4.2
       roughjs: 4.6.6
@@ -16878,7 +16866,7 @@ snapshots:
     dependencies:
       '@types/katex': 0.16.8
       devlop: 1.1.0
-      katex: 0.16.47
+      katex: 0.18.10
       micromark-factory-space: 2.0.1
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
@@ -17116,15 +17104,15 @@ snapshots:
 
   minimatch@3.1.5:
     dependencies:
-      brace-expansion: 1.1.20
+      brace-expansion: 1.1.21
 
   minimatch@5.1.9:
     dependencies:
-      brace-expansion: 2.1.6
+      brace-expansion: 2.1.7
 
   minimatch@9.0.9:
     dependencies:
-      brace-expansion: 2.1.6
+      brace-expansion: 2.1.7
 
   minimist@1.2.8: {}
 
@@ -17150,7 +17138,7 @@ snapshots:
 
   monaco-editor@0.55.1:
     dependencies:
-      dompurify: 3.4.14
+      dompurify: 3.4.16
       marked: 14.0.0
 
   motion-dom@12.42.2:
@@ -17617,7 +17605,7 @@ snapshots:
     dependencies:
       '@babel/runtime': 7.29.10
 
-  postcss-selector-parser@6.0.10:
+  postcss-selector-parser@7.1.6:
     dependencies:
       cssesc: 3.0.0
       util-deprecate: 1.0.2
@@ -18299,7 +18287,7 @@ snapshots:
       '@types/katex': 0.16.8
       hast-util-from-html-isomorphic: 2.0.0
       hast-util-to-text: 4.0.2
-      katex: 0.16.47
+      katex: 0.18.10
       unist-util-visit-parents: 6.0.2
       vfile: 6.0.3
 
