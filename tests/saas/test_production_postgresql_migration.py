@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
@@ -32,7 +33,11 @@ def test_runner_schema_binding_matches_migrations_and_cluster_bootstrap() -> Non
         Path(__file__).resolve().parents[2]
         / "saas/control_plane/postgresql_runner_agent_cluster.sql"
     ).read_text()
-    assert f"IF schema_head <> '{CONTROL_PLANE_SCHEMA_REVISION}' THEN" in source
+    guard = re.search(r"IF schema_head NOT IN \(([^)]+)\) THEN", source)
+    assert guard is not None
+    accepted = re.findall(r"'([^']+)'", guard.group(1))
+    assert accepted == ["p0s000000015", "lm2r00000001", "lm2s00000001"]
+    assert CONTROL_PLANE_SCHEMA_REVISION in accepted
 
 
 def _bindings() -> ProductionServiceRoleBindings:
