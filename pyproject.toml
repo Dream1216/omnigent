@@ -96,7 +96,7 @@ dependencies = [
     # baseline install — every CUJ command in the README depends on at
     # least one of them, so making them optional just forces every user
     # to remember `--extra all`. Issue #406.
-    "claude-agent-sdk>=0.1.62",
+    "claude-agent-sdk>=0.2.121",
     "openai-agents>=0.0.17",
     # 2.15 fixes the 2026 JWK/JWKS and HMAC verification advisories,
     # including CVE-2026-102268 (critical).
@@ -148,6 +148,7 @@ cockroachdb = [
 # `all` carries dependencies moved out of the default install that internal
 # CI / dev workflows still exercise.
 all = [
+    "aiohttp>=3.14.4,<4",
     "databricks-sdk>=0.56.0,<1",
     "opentelemetry-sdk>=1.20,<2",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20,<2",
