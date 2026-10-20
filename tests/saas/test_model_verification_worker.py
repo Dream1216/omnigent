@@ -246,6 +246,35 @@ def test_storage_drift_rejects_before_any_budget_key_or_inference(wrong_binding)
         )
 
 
+@pytest.mark.parametrize("change", ("unknown_id", "changed_stored_configuration"))
+def test_binding_requires_the_same_retained_budget_without_foreign_keys(change):
+    publisher, envelope, budget, factory, _service, _actor, operation, calls = _worker_fixture()
+    claim = publisher._claim(operation.id, operation.credential_version_id, envelope["event_id"])
+    assert claim is not None and claim.send
+    reservation = budget.reserve_platform_test(
+        verification_id=claim.operation_id,
+        actor_principal_id=claim.actor_id,
+        configuration_sha256=claim.draft.configuration_sha256,
+        operation_key="binding-without-foreign-keys",
+        requested_microusd=claim.plan.requested_microusd,
+        requested_tokens=claim.plan.requested_tokens,
+        expected_policy_version=claim.plan.funding_policy_version,
+        ttl=timedelta(minutes=2),
+    )
+    if change == "unknown_id":
+        reservation = replace(reservation, id=uuid4())
+    else:
+        with factory.begin() as db:
+            db.get(
+                ModelProviderBudgetReservationRecord, reservation.id
+            ).test_configuration_sha256 = "b" * 64
+    with pytest.raises(ValueError, match="model_verification_budget_binding_invalid"):
+        publisher._bind_budget(claim, reservation)
+    with factory() as db:
+        assert db.get(ModelVerificationBudgetBindingRecord, claim.operation_id) is None
+    assert calls == []
+
+
 def test_staff_revocation_during_storage_read_rejects_before_budget_or_inference():
     from saas.control_plane.platform_models import PlatformRoleAssignmentRecord
 

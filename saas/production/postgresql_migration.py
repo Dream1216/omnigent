@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "6e7784894d1c5b11ea8e0afc22654920035bd1dd73d810cafb93369a30423e87",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "737b23fafb52a9399226e077adae985d5de08cac7244bcea7394e662659acbc8",
     # Source-derived bounded model credential storage.
     (
         16,
@@ -538,6 +549,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "f6fe967523a03b0349b97001337af93441ca4f372ef08a0acfc98af876301467",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "f5cd0a5e622231e382a4ce43868423075b7e3e5867e8496d24b7feafc1110fef",
     # Source-derived bounded model credential storage.
     (
         16,
@@ -860,6 +882,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "506df36f17d146865892e7c310d3cab672f069c152e61135c7288a114c39d8b2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "3b87d64ff6b7f98de1bca90e641fdb133c3c2f7f88a25f5f58fa0f1023514047",
     # Source-derived bounded model credential storage.
     (
         16,
@@ -1152,6 +1185,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "12c24226963abb8f623ba962394942795916d7f0f0f5ac68a220781d9d7e10c1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "c5ef54f18a62c8b95071d7ffe2f4f77e34bf9ee3ec8e7d7c2ae549d990483921",
     # Source-derived bounded model credential storage.
     (
         16,
@@ -1439,6 +1483,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "cca9cde049e15197076dbef037be4014f72419f19316bb5d3847819b1fabb3be",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "d4d17fde98260c7cdfa2fcca7c2e0bebec1745d8ebd74756337cf90982af0406",
     # Source-derived bounded model credential storage.
     (
         16,
@@ -1701,6 +1756,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "808acc34cc9dd0d756471081e93e4be9bd99a22d364017f8aee1e3dea14a4a56",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "11622d73f286dc8ce4065edf9079154478a68fb2ddd75287cede0e0c28d80986",
     # Source-derived bounded model credential storage.
     (
         16,
@@ -1970,6 +2036,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "0b1b72c17d7829b11b7003a321b1c915006015928e50dc9b005329cfa9c627d1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "b9372795b22ec9c1699c6d554423862793609a648bba3cb9fc8040cedc546e05",
     # Source-derived bounded model credential storage.
     (
         16,
@@ -2204,6 +2281,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "5f6e0789bee9fa0f989a5e6407939bba34175e7593ef740630d9e82735d12c30",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "ac8807760fc42b0f965b7a33e0f494f6d050e474c3bd90b260c7ebb3e178dcf8",
     # Source-derived bounded model credential storage.
     (
         16,

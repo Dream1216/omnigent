@@ -42,10 +42,24 @@ def _fixture():
 
 
 def test_gateway_audit_source_pin_matches_the_versioned_migration_body():
-    migration = import_module(
+    predecessor = import_module(
         "saas.control_plane.migrations.versions.lm2c00000001_gateway_evidence_audit"
     )
-    assert sha256(migration._FUNCTION_BODY.encode()).hexdigest() == GATEWAY_AUDIT_SOURCE_SHA256
+    migration = import_module(
+        "saas.control_plane.migrations.versions.lm2q00000001_bounded_model_documents"
+    )
+    prefix = "CREATE OR REPLACE FUNCTION public.saas_audit_model_gateway_evidence_v1("
+    bodies = []
+    for statements in (migration._OLD_FUNCTIONS, migration._NEW_FUNCTIONS):
+        matches = [sql for sql in statements if sql.startswith(prefix)]
+        assert len(matches) == 1
+        bodies.append(matches[0].split(" AS $function$", 1)[1].removesuffix("$function$"))
+    assert bodies[0] == predecessor._FUNCTION_BODY
+    assert sha256(bodies[0].encode()).hexdigest() == (
+        "29e4dcdc4732fb13cada9977c9813657df950f84edeb08ad7aaecdd9c3d40ff3"
+    )
+    assert bodies[0] != bodies[1]
+    assert sha256(bodies[1].encode()).hexdigest() == GATEWAY_AUDIT_SOURCE_SHA256
 
 
 @pytest.mark.parametrize("replayed", (False, True))

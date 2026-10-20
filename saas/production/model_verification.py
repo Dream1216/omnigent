@@ -480,6 +480,21 @@ class ModelVerificationPublisher:
             raise ValueError("model_verification_budget_binding_invalid")
         with self._session("persist_real_test_budget_binding") as db:
             self._live(db, claim)
+            stored = db.execute(
+                sa.select(
+                    ModelProviderBudgetReservationRecord.purpose,
+                    ModelProviderBudgetReservationRecord.test_operation_id,
+                    ModelProviderBudgetReservationRecord.test_configuration_sha256,
+                    ModelProviderBudgetReservationRecord.test_policy_version,
+                ).where(ModelProviderBudgetReservationRecord.id == reservation.id)
+            ).one_or_none()
+            if stored is None or tuple(stored) != (
+                "platform_test",
+                claim.operation_id,
+                claim.draft.configuration_sha256,
+                claim.plan.funding_policy_version,
+            ):
+                raise ValueError("model_verification_budget_binding_invalid")
             db.add(
                 ModelVerificationBudgetBindingRecord(
                     operation_id=claim.operation_id,

@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from saas.control_plane.db_models import SaasBase, _hex64, _values
+from saas.control_plane.model_document_storage import ModelDocumentStorage, model_document_format
 
 PLATFORM_STAFF_STATUSES = ("active", "suspended", "deleted")
 PLATFORM_ASSIGNMENT_STATUSES = ("active", "revoked", "expired")
@@ -511,9 +512,7 @@ class ModelTestFundingPolicyRecord(SaasBase):
     max_test_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     max_test_tokens: Mapped[int] = mapped_column(nullable=False)
     daily_test_attempt_limit: Mapped[int] = mapped_column(nullable=False)
-    actor_principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
-    )
+    actor_principal_id: Mapped[UUID] = mapped_column(nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
@@ -605,13 +604,7 @@ class ModelProviderBudgetReservationRecord(SaasBase):
         sa.String(16), nullable=False, default="tenant_run", server_default="tenant_run"
     )
     test_operation_id: Mapped[UUID | None] = mapped_column()
-    test_actor_principal_id: Mapped[UUID | None] = mapped_column(
-        sa.ForeignKey(
-            "saas_platform_staff_principals.id",
-            ondelete="RESTRICT",
-            name="fk_model_budget_test_actor",
-        )
-    )
+    test_actor_principal_id: Mapped[UUID | None] = mapped_column()
     test_policy_version: Mapped[int | None] = mapped_column()
     test_configuration_sha256: Mapped[str | None] = mapped_column(sa.String(64))
     operation_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
@@ -636,15 +629,6 @@ class ModelProviderBudgetReservationRecord(SaasBase):
     version: Mapped[int] = mapped_column(nullable=False, default=1)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ("provider_id", "test_policy_version"),
-            (
-                "saas_model_test_funding_policies.provider_id",
-                "saas_model_test_funding_policies.version",
-            ),
-            name="fk_model_budget_test_policy",
-            ondelete="RESTRICT",
-        ),
         sa.UniqueConstraint("test_operation_id", name="uq_model_budget_test_operation"),
         sa.UniqueConstraint(
             "test_operation_id",
@@ -761,20 +745,11 @@ class ModelGatewayEvidenceRecord(SaasBase):
     reservation_id: Mapped[UUID] = mapped_column(nullable=False)
     phase: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     budget_version: Mapped[int] = mapped_column(nullable=False)
-    canonical_evidence: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    canonical_evidence: Mapped[str] = mapped_column(ModelDocumentStorage(), nullable=False)
     evidence_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ("tenant_id", "reservation_id"),
-            (
-                "saas_model_provider_budget_reservations.tenant_id",
-                "saas_model_provider_budget_reservations.id",
-            ),
-            ondelete="RESTRICT",
-            name="fk_model_gateway_evidence_budget",
-        ),
         sa.UniqueConstraint("reservation_id", "phase", name="uq_model_gateway_evidence_phase"),
         sa.UniqueConstraint(
             "reservation_id", "budget_version", name="uq_model_gateway_evidence_version"
@@ -786,9 +761,10 @@ class ModelGatewayEvidenceRecord(SaasBase):
         sa.CheckConstraint("budget_version > 0", name="ck_model_gateway_evidence_version"),
         sa.CheckConstraint(_hex64("evidence_sha256"), name="ck_model_gateway_evidence_hash"),
         sa.CheckConstraint(
-            "length(canonical_evidence) BETWEEN 1 AND 16384",
+            "length(canonical_evidence) BETWEEN 8 AND 16383",
             name="ck_model_gateway_evidence_bound",
         ),
+        *model_document_format("ck_model_gateway_evidence_format", "canonical_evidence"),
         sa.Index("ix_model_gateway_evidence_scope", "tenant_id", "reservation_id", "created_at"),
     )
 

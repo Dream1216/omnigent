@@ -13,12 +13,14 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from psycopg import Binary
 from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane.billing_models import UsageEventRecord
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
 from saas.control_plane.execution_models import RunRecord
 from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
+from saas.control_plane.model_document_storage import encode_model_document
 from saas.control_plane.model_gateway_audit import ModelGatewayAuditPublisher
 from saas.control_plane.model_usage import ModelTokenUsage
 from saas.control_plane.platform_governed_models import PlatformAuditEventRecord
@@ -226,12 +228,12 @@ def test_database_rejects_cross_run_frozen_price_token_and_contract_tampering(
         def reject_corruption(name, value):
             def corrupt(_connection, _cursor, statement, parameters, _context, _executemany):
                 if statement.startswith("INSERT INTO saas_model_gateway_evidence"):
-                    document = json.loads(parameters["canonical_evidence"])
+                    document = json.loads(_context.compiled_parameters[0]["canonical_evidence"])
                     document["request"]["run_binding"][name] = value
                     raw = json.dumps(document, sort_keys=True, separators=(",", ":"))
                     parameters = {
                         **parameters,
-                        "canonical_evidence": raw,
+                        "canonical_evidence": Binary(encode_model_document(raw)),
                         "evidence_sha256": sha256(raw.encode()).hexdigest(),
                     }
                 return statement, parameters
@@ -276,13 +278,13 @@ def test_database_rejects_cross_run_frozen_price_token_and_contract_tampering(
             _connection, _cursor, statement, parameters, _context, _executemany
         ):
             if statement.startswith("INSERT INTO saas_model_gateway_evidence"):
-                document = json.loads(parameters["canonical_evidence"])
+                document = json.loads(_context.compiled_parameters[0]["canonical_evidence"])
                 document["contract"] = "platform-model-gateway-evidence-v1"
                 document["session_id"] = document.pop("run_id")
                 raw = json.dumps(document, sort_keys=True, separators=(",", ":"))
                 parameters = {
                     **parameters,
-                    "canonical_evidence": raw,
+                    "canonical_evidence": Binary(encode_model_document(raw)),
                     "evidence_sha256": sha256(raw.encode()).hexdigest(),
                 }
             return statement, parameters

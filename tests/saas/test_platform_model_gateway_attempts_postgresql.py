@@ -12,11 +12,13 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from psycopg import Binary
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane.db_models import ControlPlaneOutboxEvent, Tenant
 from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
+from saas.control_plane.model_document_storage import encode_model_document
 from saas.control_plane.model_usage import ModelTokenUsage
 from saas.control_plane.platform_models import (
     ModelProviderConfigurationRecord,
@@ -93,7 +95,8 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
             if (
                 statement.startswith("INSERT INTO saas_model_gateway_evidence")
                 and parameters["phase"] in {"settled", "released"}
-                and json.loads(parameters["canonical_evidence"])["usage"] is not None
+                and json.loads(_context.compiled_parameters[0]["canonical_evidence"])["usage"]
+                is not None
             ):
                 retained = connection.execute(
                     sa.text(
@@ -137,12 +140,12 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
                 statement.startswith("INSERT INTO saas_model_gateway_evidence")
                 and parameters["phase"] == "request"
             ):
-                value = json.loads(parameters["canonical_evidence"])
+                value = json.loads(_context.compiled_parameters[0]["canonical_evidence"])
                 value["request"]["wire_api"] = None
                 canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
                 parameters = {
                     **parameters,
-                    "canonical_evidence": canonical,
+                    "canonical_evidence": Binary(encode_model_document(canonical)),
                     "evidence_sha256": sha256(canonical.encode()).hexdigest(),
                 }
             return statement, parameters

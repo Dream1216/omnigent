@@ -18,7 +18,7 @@ from saas.control_plane.model_gateway_evidence import (
 from saas.control_plane.outbox import OutboxPublisher, OutboxPublishError
 
 GATEWAY_AUDIT_SIGNATURE = "public.saas_audit_model_gateway_evidence_v1(uuid,jsonb)"
-GATEWAY_AUDIT_SOURCE_SHA256 = "29e4dcdc4732fb13cada9977c9813657df950f84edeb08ad7aaecdd9c3d40ff3"
+GATEWAY_AUDIT_SOURCE_SHA256 = "320f3ba6c139b43d55e43585b2f5aef999e315662641716bf80d881232f789bd"
 _KEYS = {"event_type", "tenant_id", "reservation_id", "evidence_id", "evidence_sha256"}
 
 

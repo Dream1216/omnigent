@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from saas.control_plane.db_models import SaasBase, _hex64
+from saas.control_plane.model_document_storage import ModelDocumentStorage, model_document_format
 from saas.control_plane.model_secret_storage import ModelCiphertextStorage
 
 
@@ -21,9 +22,7 @@ class ModelConnectionRecord(SaasBase):
     base_url: Mapped[str] = mapped_column(sa.String(512), nullable=False)
     version: Mapped[int] = mapped_column(nullable=False)
     credential_generation: Mapped[int] = mapped_column(nullable=False)
-    updated_by_principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
-    )
+    updated_by_principal_id: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
@@ -47,15 +46,11 @@ class ModelCredentialVersionRecord(SaasBase):
     __tablename__ = "saas_model_credential_versions"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    connection_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_connections.id", ondelete="RESTRICT"), nullable=False
-    )
+    connection_id: Mapped[UUID] = mapped_column(nullable=False)
     generation: Mapped[int] = mapped_column(nullable=False)
     credential_name: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
     api_key_ciphertext: Mapped[str] = mapped_column(ModelCiphertextStorage(), nullable=False)
-    created_by_principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
-    )
+    created_by_principal_id: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -81,9 +76,7 @@ class ModelProjectionOperationRecord(SaasBase):
     credential_version_id: Mapped[UUID] = mapped_column(nullable=False)
     deployment_version_id: Mapped[UUID | None] = mapped_column()
     action: Mapped[str] = mapped_column(sa.String(32), nullable=False)
-    actor_principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
-    )
+    actor_principal_id: Mapped[UUID] = mapped_column(nullable=False)
     idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
@@ -93,21 +86,6 @@ class ModelProjectionOperationRecord(SaasBase):
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ["connection_id", "credential_version_id"],
-            ["saas_model_credential_versions.connection_id", "saas_model_credential_versions.id"],
-            ondelete="RESTRICT",
-        ),
-        sa.ForeignKeyConstraint(
-            ["connection_id", "credential_version_id", "deployment_version_id"],
-            [
-                "saas_model_deployment_versions.connection_id",
-                "saas_model_deployment_versions.credential_version_id",
-                "saas_model_deployment_versions.id",
-            ],
-            name="fk_model_projection_deployment_scope",
-            ondelete="RESTRICT",
-        ),
         sa.UniqueConstraint(
             "actor_principal_id", "idempotency_key", name="uq_model_projection_idempotency"
         ),
@@ -142,16 +120,13 @@ class ModelProjectionTransitionRecord(SaasBase):
     __tablename__ = "saas_model_projection_transitions"
 
     operation_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_projection_operations.id", ondelete="RESTRICT"),
         primary_key=True,
     )
     version: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_control_plane_outbox.id", ondelete="RESTRICT"),
         nullable=False,
     )
     actor_principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"),
         nullable=False,
     )
     previous_status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
@@ -186,18 +161,11 @@ class ModelDeploymentVersionRecord(SaasBase):
     wire_api: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     max_output_tokens: Mapped[int] = mapped_column(nullable=False)
     configuration_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    canonical_configuration: Mapped[str] = mapped_column(sa.Text(), nullable=False)
-    created_by_principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
-    )
+    canonical_configuration: Mapped[str] = mapped_column(ModelDocumentStorage(), nullable=False)
+    created_by_principal_id: Mapped[UUID] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ["connection_id", "credential_version_id"],
-            ["saas_model_credential_versions.connection_id", "saas_model_credential_versions.id"],
-            ondelete="RESTRICT",
-        ),
         sa.UniqueConstraint(
             "public_model_id", "generation", name="uq_model_deployment_generation"
         ),
@@ -226,9 +194,10 @@ class ModelDeploymentVersionRecord(SaasBase):
         ),
         sa.CheckConstraint(_hex64("configuration_sha256"), name="ck_model_deployment_hash"),
         sa.CheckConstraint(
-            "length(canonical_configuration) BETWEEN 1 AND 16384",
+            "length(canonical_configuration) BETWEEN 8 AND 16383",
             name="ck_model_deployment_configuration",
         ),
+        *model_document_format("ck_model_deployment_document_format", "canonical_configuration"),
     )
 
 
@@ -237,12 +206,10 @@ class ModelVerificationCommandRecord(SaasBase):
 
     __tablename__ = "saas_model_verification_commands"
 
-    operation_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_projection_operations.id", ondelete="RESTRICT"), primary_key=True
-    )
+    operation_id: Mapped[UUID] = mapped_column(primary_key=True)
     provider_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     configuration_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    canonical_price: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    canonical_price: Mapped[str] = mapped_column(ModelDocumentStorage(8192), nullable=False)
     price_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     pricing_revision: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     funding_policy_version: Mapped[int] = mapped_column(nullable=False)
@@ -252,15 +219,6 @@ class ModelVerificationCommandRecord(SaasBase):
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ("provider_id", "funding_policy_version"),
-            (
-                "saas_model_test_funding_policies.provider_id",
-                "saas_model_test_funding_policies.version",
-            ),
-            name="fk_model_verification_funding",
-            ondelete="RESTRICT",
-        ),
         sa.UniqueConstraint(
             "operation_id",
             "configuration_sha256",
@@ -278,10 +236,11 @@ class ModelVerificationCommandRecord(SaasBase):
         sa.CheckConstraint(
             "requested_microusd > 0 AND requested_tokens BETWEEN 1 AND 1056 "
             "AND output_token_limit BETWEEN 1 AND 32 "
-            "AND length(canonical_price) BETWEEN 1 AND 8192 "
+            "AND length(canonical_price) BETWEEN 8 AND 8199 "
             "AND length(pricing_revision) BETWEEN 1 AND 32",
             name="ck_model_verification_command_bounds",
         ),
+        *model_document_format("ck_model_verification_price_format", "canonical_price"),
     )
 
 
@@ -297,32 +256,6 @@ class ModelVerificationBudgetBindingRecord(SaasBase):
     admitted_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ("operation_id", "configuration_sha256", "funding_policy_version"),
-            (
-                "saas_model_verification_commands.operation_id",
-                "saas_model_verification_commands.configuration_sha256",
-                "saas_model_verification_commands.funding_policy_version",
-            ),
-            name="fk_model_verification_binding_command",
-            ondelete="RESTRICT",
-        ),
-        sa.ForeignKeyConstraint(
-            (
-                "operation_id",
-                "budget_reservation_id",
-                "configuration_sha256",
-                "funding_policy_version",
-            ),
-            (
-                "saas_model_provider_budget_reservations.test_operation_id",
-                "saas_model_provider_budget_reservations.id",
-                "saas_model_provider_budget_reservations.test_configuration_sha256",
-                "saas_model_provider_budget_reservations.test_policy_version",
-            ),
-            name="fk_model_verification_binding_budget",
-            ondelete="RESTRICT",
-        ),
         sa.UniqueConstraint(
             "operation_id", "budget_reservation_id", name="uq_model_verification_budget_binding"
         ),
@@ -335,7 +268,6 @@ class ModelVerificationReceiptRecord(SaasBase):
     __tablename__ = "saas_model_verification_receipts"
 
     operation_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_verification_commands.operation_id", ondelete="RESTRICT"),
         primary_key=True,
     )
     budget_reservation_id: Mapped[UUID | None] = mapped_column()
@@ -343,24 +275,15 @@ class ModelVerificationReceiptRecord(SaasBase):
     actual_microusd: Mapped[int | None] = mapped_column(sa.BigInteger)
     request_attempts: Mapped[int] = mapped_column(nullable=False)
     error_code: Mapped[str | None] = mapped_column(sa.String(128))
-    canonical_evidence: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    canonical_evidence: Mapped[str] = mapped_column(ModelDocumentStorage(8192), nullable=False)
     evidence_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ("operation_id", "budget_reservation_id"),
-            (
-                "saas_model_verification_budget_bindings.operation_id",
-                "saas_model_verification_budget_bindings.budget_reservation_id",
-            ),
-            name="fk_model_verification_receipt_budget",
-            ondelete="RESTRICT",
-        ),
         sa.CheckConstraint(
             "request_attempts IN (0, 1) "
             "AND (actual_microusd IS NULL OR actual_microusd >= 0) "
-            "AND length(canonical_evidence) BETWEEN 1 AND 8192",
+            "AND length(canonical_evidence) BETWEEN 8 AND 8199",
             name="ck_model_verification_receipt_bounds",
         ),
         sa.CheckConstraint(
@@ -372,6 +295,7 @@ class ModelVerificationReceiptRecord(SaasBase):
             name="ck_model_verification_receipt_outcome",
         ),
         sa.CheckConstraint(_hex64("evidence_sha256"), name="ck_model_verification_receipt_hash"),
+        *model_document_format("ck_model_verification_evidence_format", "canonical_evidence"),
     )
 
 
@@ -381,20 +305,14 @@ class ModelPublicationCommandRecord(SaasBase):
     __tablename__ = "saas_model_publication_commands"
 
     operation_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_projection_operations.id", ondelete="RESTRICT"),
         primary_key=True,
     )
-    tenant_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_tenants.id", ondelete="RESTRICT"), nullable=False
-    )
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     verification_operation_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_verification_receipts.operation_id", ondelete="RESTRICT"),
         nullable=False,
     )
     expected_generation: Mapped[int] = mapped_column(nullable=False)
-    staff_session_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_auth_sessions.id", ondelete="RESTRICT"), nullable=False
-    )
+    staff_session_id: Mapped[UUID] = mapped_column(nullable=False)
     staff_security_version: Mapped[int] = mapped_column(nullable=False)
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
@@ -419,31 +337,20 @@ class ModelPublicationVersionRecord(SaasBase):
     id: Mapped[UUID] = mapped_column(primary_key=True)
     operation_id: Mapped[UUID] = mapped_column(nullable=False, unique=True)
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
-    deployment_version_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_deployment_versions.id", ondelete="RESTRICT"), nullable=False
-    )
+    deployment_version_id: Mapped[UUID] = mapped_column(nullable=False)
     public_model_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     wire_api: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     generation: Mapped[int] = mapped_column(nullable=False)
     configuration_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     price_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     inventory_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    canonical_snapshot: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    canonical_snapshot: Mapped[str] = mapped_column(ModelDocumentStorage(), nullable=False)
     snapshot_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    canonical_readiness: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    canonical_readiness: Mapped[str] = mapped_column(ModelDocumentStorage(), nullable=False)
     readiness_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ["operation_id", "tenant_id"],
-            [
-                "saas_model_publication_commands.operation_id",
-                "saas_model_publication_commands.tenant_id",
-            ],
-            ondelete="RESTRICT",
-            name="fk_model_publication_version_scope",
-        ),
         sa.UniqueConstraint(
             "tenant_id",
             "public_model_id",
@@ -470,10 +377,12 @@ class ModelPublicationVersionRecord(SaasBase):
             name="ck_model_publication_hashes",
         ),
         sa.CheckConstraint(
-            "length(canonical_snapshot) BETWEEN 1 AND 16384 "
-            "AND length(canonical_readiness) BETWEEN 1 AND 16384",
+            "length(canonical_snapshot) BETWEEN 8 AND 16383 "
+            "AND length(canonical_readiness) BETWEEN 8 AND 16383",
             name="ck_model_publication_documents",
         ),
+        *model_document_format("ck_model_publication_snapshot_format", "canonical_snapshot"),
+        *model_document_format("ck_model_publication_readiness_format", "canonical_readiness"),
     )
 
 
@@ -487,27 +396,14 @@ class ModelPublicationDisablementRecord(SaasBase):
     public_model_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     wire_api: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     through_generation: Mapped[int] = mapped_column(nullable=False)
-    principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
-    )
-    staff_session_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_auth_sessions.id", ondelete="RESTRICT"), nullable=False
-    )
+    principal_id: Mapped[UUID] = mapped_column(nullable=False)
+    staff_session_id: Mapped[UUID] = mapped_column(nullable=False)
     staff_security_version: Mapped[int] = mapped_column(nullable=False)
     idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ["tenant_id", "public_model_id", "wire_api", "through_generation"],
-            [
-                "saas_model_publication_versions." + name
-                for name in ("tenant_id", "public_model_id", "wire_api", "generation")
-            ],
-            ondelete="RESTRICT",
-            name="fk_model_disablement_publication",
-        ),
         sa.UniqueConstraint("principal_id", "idempotency_key", name="uq_model_disablement_key"),
         sa.UniqueConstraint(
             "tenant_id",
@@ -534,19 +430,14 @@ class ModelPublicationRevocationRecord(SaasBase):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     disablement_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_model_publication_disablements.id", ondelete="RESTRICT"),
         nullable=False,
     )
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     public_model_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     wire_api: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     through_generation: Mapped[int] = mapped_column(nullable=False)
-    principal_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
-    )
-    staff_session_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_platform_auth_sessions.id", ondelete="RESTRICT"), nullable=False
-    )
+    principal_id: Mapped[UUID] = mapped_column(nullable=False)
+    staff_session_id: Mapped[UUID] = mapped_column(nullable=False)
     staff_security_version: Mapped[int] = mapped_column(nullable=False)
     idempotency_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
@@ -576,28 +467,16 @@ class ModelRunTokenRecord(SaasBase):
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     space_id: Mapped[UUID] = mapped_column(nullable=False)
     project_id: Mapped[UUID] = mapped_column(nullable=False)
-    actor_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
-    )
+    actor_id: Mapped[UUID] = mapped_column(nullable=False)
     run_id: Mapped[UUID] = mapped_column(nullable=False)
-    capability_id: Mapped[UUID] = mapped_column(
-        sa.ForeignKey("saas_capability_tokens.id", ondelete="RESTRICT"), nullable=False
-    )
+    capability_id: Mapped[UUID] = mapped_column(nullable=False)
     fence_token: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     generation: Mapped[int] = mapped_column(nullable=False)
-    parent_id: Mapped[UUID | None] = mapped_column(
-        sa.ForeignKey("saas_model_run_tokens.id", ondelete="RESTRICT"), unique=True
-    )
+    parent_id: Mapped[UUID | None] = mapped_column(unique=True)
     issued_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.ForeignKeyConstraint(
-            ["run_id", "tenant_id", "space_id", "project_id"],
-            ["saas_runs.id", "saas_runs.tenant_id", "saas_runs.space_id", "saas_runs.project_id"],
-            name="fk_model_run_token_scope",
-            ondelete="RESTRICT",
-        ),
         sa.CheckConstraint(_hex64("token_hash"), name="ck_model_run_token_hash"),
         sa.CheckConstraint(
             "fence_token > 0 AND generation BETWEEN 0 AND 256",

@@ -394,7 +394,7 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
                     admitted_at=sa.func.now(),
                 )
             )
-        assert getattr(wrong_binding.value.orig, "sqlstate", None) == "23503"
+        assert getattr(wrong_binding.value.orig, "sqlstate", None) == "42501"
         with pytest.raises(RuntimeError, match="retained evidence"):
             with owner.begin() as connection:
                 config.attributes["connection"] = connection
