@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
@@ -30,6 +31,13 @@ from tests.saas.test_production_migration_replay import production_replay as pro
 
 @pytest.fixture
 def standalone_replay(production_replay, tmp_path):
+    existing = production_replay.model_projection_service_role_bindings
+    if existing is not None:
+        assert {row.service: row.base_role for row in existing.bindings} == (
+            EXPECTED_MODEL_PROJECTION_SERVICE_ROLES
+        )
+        assert len(production_replay.service_role_graph.bindings) == 19
+        return production_replay
     known = production_replay.service_role_graph.by_service
     rows = tuple(
         known[service]
@@ -63,6 +71,29 @@ def standalone_replay(production_replay, tmp_path):
     plan = replace(production_replay, model_projection_service_role_bindings=profile)
     assert len(plan.service_role_graph.bindings) == 19
     return plan
+
+
+def test_complete_replay_plan_reuses_immutable_projection_manifest(tmp_path):
+    rows = tuple(
+        ProductionServiceRoleBinding(
+            service=service, login="replay_model_projection", base_role=role
+        )
+        for service, role in sorted(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES.items())
+    )
+    document = render_production_service_role_bindings(rows)
+    path = tmp_path / "model-projection-bindings.json"
+    path.write_text(document)
+    path.chmod(0o400)
+    profile = ProductionServiceRoleBindings(
+        path, hashlib.sha256(document.encode()).hexdigest(), rows
+    )
+    plan = SimpleNamespace(
+        model_projection_service_role_bindings=profile,
+        service_role_graph=SimpleNamespace(bindings=tuple(range(19))),
+    )
+    assert standalone_replay.__wrapped__(plan, tmp_path) is plan
+    assert path.read_text() == document
+    assert path.stat().st_mode & 0o777 == 0o400
 
 
 def test_standalone_model_schema_replays_and_matches_the_pinned_r_catalog(
