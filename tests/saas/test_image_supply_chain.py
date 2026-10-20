@@ -241,6 +241,7 @@ def _candidate_contract_repo(tmp_path: Path) -> Path:
         ".github/workflows/saas-n1-compat-image.yml",
         "saas/actions/build-oci-candidate/action.yml",
         "saas/control_plane/schema_revision.py",
+        "deploy/litellm/Dockerfile",
     ):
         target = repo / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1381,8 +1382,11 @@ def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -
 
     violations = validate_candidate_build_contract(repo)
 
-    assert "candidate workflow must invoke four repeated composite builds" in violations
-    assert "candidate workflow build coordinates must cover server and host twice" in violations
+    assert "candidate workflow must invoke six repeated composite builds" in violations
+    assert (
+        "candidate workflow build coordinates must cover application and LiteLLM twice"
+        in violations
+    )
 
 
 @pytest.mark.parametrize(
@@ -1456,7 +1460,7 @@ def test_candidate_contract_rejects_unprotected_or_unsigned_release(tmp_path: Pa
     violations = validate_candidate_build_contract(repo)
 
     assert "protected signed release workflow contract is incomplete" in violations
-    assert "protected release must sign the wheel and both OCI images" in violations
+    assert "protected release must sign the wheel and all three OCI images" in violations
 
 
 def test_candidate_contract_rejects_missing_published_runtime_revision_check(
@@ -1924,6 +1928,10 @@ def _write_oci(
                 "ai.omnigent.saas.n1.contract-version": "contract-v1",
             }
         )
+    elif label_profile == "litellm":
+        from saas.scripts.litellm_oci_promotion import runtime_labels
+
+        labels = runtime_labels(_repo(), revision)
     elif label_profile != "executable":
         raise ValueError(f"unsupported test label profile: {label_profile}")
     if missing_label is not None:
@@ -2108,7 +2116,7 @@ def test_oci_rebuild_comparison_ignores_attestation_time_but_not_image_drift(
     )
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize("label_profile", ["executable", "n1", "litellm"])
 def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     tmp_path: Path, label_profile: str
 ) -> None:
@@ -2128,6 +2136,7 @@ def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     [
         ("executable", "ai.omnigent.saas.adapter-contract-version"),
         ("n1", "ai.omnigent.saas.n1.contract-version"),
+        ("litellm", "io.omnigent.litellm.upstream.digest"),
     ],
 )
 def test_oci_rebuild_rejects_a_missing_profile_label(
@@ -2147,7 +2156,7 @@ def test_oci_rebuild_rejects_a_missing_profile_label(
         compare_archives(first, second, label_profile=label_profile)
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize("label_profile", ["executable", "n1", "litellm"])
 def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profile: str) -> None:
     first = tmp_path / f"first-extra-{label_profile}.tar"
     second = tmp_path / f"second-extra-{label_profile}.tar"
@@ -2165,7 +2174,12 @@ def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profil
 
 @pytest.mark.parametrize(
     ("archive_profile", "selected_profile"),
-    [("executable", "n1"), ("n1", "executable")],
+    [
+        ("executable", "n1"),
+        ("n1", "executable"),
+        ("executable", "litellm"),
+        ("litellm", "executable"),
+    ],
 )
 def test_oci_rebuild_rejects_cross_profile_label_contracts(
     tmp_path: Path, archive_profile: str, selected_profile: str

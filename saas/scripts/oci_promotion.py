@@ -82,20 +82,34 @@ def archive_index_digest(archive_path: Path) -> str:
         return digest
 
 
-def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+def validate_scans(
+    root: Path,
+    images: dict[str, Any],
+    *,
+    now: datetime,
+    expected_images: tuple[str, ...] = IMAGES,
+) -> dict[str, Any]:
     summary_path = root / "grype/candidate-scan-summary.json"
+    require(expected_images in (IMAGES, ("litellm",)), "unsupported image scan scope")
     summary = read_json(summary_path)
     require(
         summary.get("scanner") == f"grype {GRYPE_VERSION}" and summary.get("exceptions") == [],
         "candidate scan policy differs",
     )
     rows = summary.get("images", [])
-    require(isinstance(rows, list) and len(rows) == 4, "four raw scans are required")
+    required_scans = len(expected_images) * len(PLATFORMS)
+    require(set(images) == set(expected_images), "candidate image scope differs")
+    require(
+        isinstance(rows, list) and len(rows) == required_scans,
+        "four raw scans are required"
+        if expected_images == IMAGES
+        else "two runtime raw scans are required",
+    )
     seen: set[tuple[str, str]] = set()
     reports: dict[str, str] = {}
     for row in rows:
         name, platform = row.get("image"), row.get("platform")
-        require(name in IMAGES and platform in PLATFORMS, "unexpected scan coordinate")
+        require(name in expected_images and platform in PLATFORMS, "unexpected scan coordinate")
         require((name, platform) not in seen, "duplicate scan coordinate")
         seen.add((name, platform))
         relative = f"grype/{name}-{platform.split('/')[-1]}-grype.json"
@@ -218,11 +232,21 @@ def verify_candidate(
 
 
 def verify_artifact_metadata(
-    metadata: dict[str, Any], *, artifact_id: int, zip_sha256: str, revision: str, run_id: int
+    metadata: dict[str, Any],
+    *,
+    artifact_id: int,
+    zip_sha256: str,
+    revision: str,
+    run_id: int,
+    artifact_prefix: str = "saas-oci-promotion-",
 ) -> None:
     require(
+        artifact_prefix in ("saas-oci-promotion-", "litellm-oci-promotion-"),
+        "unsupported OCI artifact prefix",
+    )
+    require(
         metadata.get("id") == artifact_id
-        and metadata.get("name") == f"saas-oci-promotion-{revision}"
+        and metadata.get("name") == f"{artifact_prefix}{revision}"
         and metadata.get("expired") is False
         and metadata.get("digest") == f"sha256:{zip_sha256}"
         and metadata.get("workflow_run", {}).get("id") == run_id
@@ -268,10 +292,12 @@ def extract_layout(archive: Path, root: Path) -> None:
         bundle.extractall(root, filter="data")
 
 
-def verify_readback(archive: Path, expected: dict[str, Any]) -> None:
+def verify_readback(
+    archive: Path, expected: dict[str, Any], *, label_profile: str = "executable"
+) -> None:
     require(archive_index_digest(archive) == expected["index_digest"], "registry index differs")
     require(
-        inspect_oci_archive(archive, label_profile="executable") == expected["facts"],
+        inspect_oci_archive(archive, label_profile=label_profile) == expected["facts"],
         "registry executable or attestation facts differ from accepted candidate",
     )
 

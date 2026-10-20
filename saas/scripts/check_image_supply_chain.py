@@ -597,8 +597,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if any(workflow.count(export) != 1 for export in material_exports):
         violations.append("candidate workflow must export each resolved build material once")
 
-    if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 4:
-        violations.append("candidate workflow must invoke four repeated composite builds")
+    if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 6:
+        violations.append("candidate workflow must invoke six repeated composite builds")
     if workflow.count("--label-profile executable") != 1:
         violations.append("candidate workflow must select the executable label profile")
     coordinates = {
@@ -606,6 +606,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         ("server", "runtime", "2"),
         ("host", "host", "1"),
         ("host", "host", "2"),
+        ("litellm", "runtime", "1"),
+        ("litellm", "runtime", "2"),
     }
     for artifact, target, attempt in coordinates:
         invocation = (
@@ -617,7 +619,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         )
         if workflow.count(invocation) != 1:
             violations.append(
-                "candidate workflow build coordinates must cover server and host twice"
+                "candidate workflow build coordinates must cover application and LiteLLM twice"
             )
             break
 
@@ -641,10 +643,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     }
     if any(fragment not in workflow for fragment in protected_release_fragments):
         violations.append("protected signed release workflow contract is incomplete")
-    if workflow.count(f"uses: {_ATTEST_ACTION}") != 3:
-        violations.append("protected release must sign the wheel and both OCI images")
-    if workflow.count("push-to-registry: true") != 2 or workflow.count("crane push ") != 2:
-        violations.append("protected release must publish exactly two signed OCI images")
+    if workflow.count(f"uses: {_ATTEST_ACTION}") != 4:
+        violations.append("protected release must sign the wheel and all three OCI images")
+    if workflow.count("push-to-registry: true") != 3 or workflow.count("crane push ") != 3:
+        violations.append("protected release must publish exactly three signed OCI images")
     publication = workflow.partition("  publish-signed:")[2].partition(
         "  verify-published-source:"
     )[0]
@@ -717,11 +719,14 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             "outputs: type=oci,dest=${{ runner.temp }}/"
             "${{ inputs.artifact }}-${{ inputs.attempt }}.tar,rewrite-timestamp=true"
         ),
-        "server:runtime|host:host",
+        "server:runtime|host:host|litellm:runtime",
         "1|2)",
     }
     if any(fragment not in action for fragment in required_action_fragments):
         violations.append("candidate composite build action weakens the approved build contract")
+    from saas.scripts.litellm_oci_promotion import validate_runtime_release_contract
+
+    violations.extend(validate_runtime_release_contract(repo, workflow, action))
     if action.count(f"uses: {_BUILD_PUSH_ACTION}") != 1:
         violations.append("candidate composite build action must use the pinned builder once")
     candidate_cache_contract = [
