@@ -527,14 +527,47 @@ class OfficialInteractiveDriver:
                 del self._preparations[key]
 
     async def recover_managed(self, record, checkpoint):
-        from saas.production.interactive_managed_recovery import recover_managed_resources
+        return await self._recover_resources(record, checkpoint, retiring=False)
+
+    async def inspect_managed_retirement(self, record, *, cutoff, now, force=False):
+        from saas.production.interactive_managed_retirement import read_retirement_host
+
+        return await asyncio.to_thread(
+            read_retirement_host, self, record, cutoff=cutoff, now=now, force=force
+        )
+
+    async def detach_managed_retirement(self, record, host):
+        from saas.production.interactive_managed_retirement import detach_retirement_host
+
+        return await asyncio.to_thread(detach_retirement_host, self, record, host)
+
+    async def retire_managed(self, record, checkpoint):
+        return await self._recover_resources(record, checkpoint, retiring=True)
+
+    async def finish_managed_retirement(self, record):
+        from saas.production.interactive_managed_retirement import finish_retirement_host
+
+        return await asyncio.to_thread(finish_retirement_host, self, record)
+
+    async def _recover_resources(self, record, checkpoint, *, retiring):
+        from saas.production.interactive_managed_recovery import (
+            recover_managed_resources,
+            retire_managed_resources,
+        )
 
         if self._recovery_closing:
             raise _unavailable()
         task = self._managed_recoveries.get(record.run_id)
         if task is None:
+
+            async def recover():
+                with self._adapter.bind(record.runtime):
+                    return await (
+                        retire_managed_resources if retiring else recover_managed_resources
+                    )(self._app.state.sandbox_config, record, checkpoint)
+
             task = asyncio.create_task(
-                recover_managed_resources(self._app.state.sandbox_config, record, checkpoint),
+                recover(),
                 name="interactive-managed-resource-recovery",
             )
             task.add_done_callback(_observe_preparation)

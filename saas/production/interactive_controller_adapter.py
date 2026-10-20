@@ -281,6 +281,12 @@ class ProductionInteractiveControllerAdapter:
         )
         self._executor = executor
 
+        from saas.production.interactive_managed_retirement import ControllerManagedSandboxReaper
+
+        app.state.managed_sandbox_reaper_factory = lambda **kwargs: ControllerManagedSandboxReaper(
+            executor=executor, driver=driver, **kwargs
+        )
+
         app.state.production_interactive_conversation_store.runtime_readiness_check = (
             self.assert_production_ready
         )

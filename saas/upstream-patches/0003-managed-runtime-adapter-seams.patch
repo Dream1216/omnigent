@@ -1,10 +1,10 @@
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 9b3cde274..5ec813552 100644
+index 9b3cde274..63215a7a7 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
 @@ -21 +21 @@ from typing import cast
 -from sqlalchemy import Engine, or_, select, tuple_, update
-+from sqlalchemy import Engine, and_, or_, select, tuple_, update
++from sqlalchemy import Engine, and_, or_, select, true, tuple_, update
 @@ -309,3 +309,4 @@ class HostStore:
 -        :param managed_token: Raw launch token for a managed host. When set,
 -            registration atomically revalidates the current credential instead
@@ -30,6 +30,12 @@ index 9b3cde274..5ec813552 100644
 +                                    SqlHost.terminating_sandbox_id.is_(None),
 +                                ),
 +                            ),
+@@ -854 +867 @@ class HostStore:
+-    def get_host(self, host_id: str) -> Host | None:
++    def get_host(self, host_id: str, *, include_deleted: bool = False) -> Host | None:
+@@ -867 +880 @@ class HostStore:
+-                    SqlHost.deleted_at.is_(None),
++                    SqlHost.deleted_at.is_(None) if not include_deleted else true(),
 @@ -1077 +1090 @@ class HostStore:
 -            if row.token_expires_at < now_epoch():
 +            if row.token_expires_at <= now_epoch():
@@ -48,3 +54,11 @@ index 9b3cde274..5ec813552 100644
 +                    or json.loads(meta.inference_snapshot) != expected_external_inference_snapshot
 +                )
 +            ):
+@@ -1197,0 +1221 @@ class HostStore:
++        expected_token_hash: str | None = None,
+@@ -1208,0 +1233 @@ class HostStore:
++        :param expected_token_hash: Optional credential-generation fence for a trusted owner.
+@@ -1223,0 +1249,3 @@ class HostStore:
++                        SqlHost.token_hash == expected_token_hash
++                        if expected_token_hash is not None
++                        else true(),

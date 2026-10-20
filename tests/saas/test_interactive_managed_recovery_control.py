@@ -165,13 +165,13 @@ async def test_keepalive_is_uid_bound_and_cannot_race_a_recorded_stop(tmp_path, 
 
 @pytest.mark.asyncio
 async def test_cancelled_observer_retains_one_cleanup_task_without_replaying(
-    tmp_path, monkeypatch
+    controller_case, monkeypatch
 ):
     from saas.production import interactive_managed_recovery as module
 
     started, release = asyncio.Event(), asyncio.Event()
     calls = []
-    record = SimpleNamespace(run_id=uuid4())
+    record = SimpleNamespace(run_id=uuid4(), runtime=controller_case.context)
 
     async def recover(*args):
         calls.append(args)
@@ -180,17 +180,24 @@ async def test_cancelled_observer_retains_one_cleanup_task_without_replaying(
         return record
 
     monkeypatch.setattr(module, "recover_managed_resources", recover)
-    driver = object.__new__(OfficialInteractiveDriver)
-    driver._recovery_closing, driver._managed_recoveries = False, {}
-    driver._app = SimpleNamespace(state=SimpleNamespace(sandbox_config=object()))
+    driver = OfficialInteractiveDriver(
+        app=SimpleNamespace(state=SimpleNamespace(sandbox_config=object())),
+        dependencies=object(),
+        contract_version="0.2.0",
+    )
     first = asyncio.create_task(driver.recover_managed(record, object()))
-    await started.wait()
-    first.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await first
-    assert len(driver._managed_recoveries) == 1
-    second = asyncio.create_task(driver.recover_managed(record, object()))
-    await asyncio.sleep(0)
-    release.set()
-    assert await second is record and len(calls) == 1
-    assert not driver._managed_recoveries
+    second = None
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert len(driver._managed_recoveries) == 1
+        second = asyncio.create_task(driver.recover_managed(record, object()))
+        await asyncio.sleep(0)
+        release.set()
+        assert await second is record and len(calls) == 1
+        assert not driver._managed_recoveries
+    finally:
+        release.set()
+        await asyncio.gather(first, *(() if second is None else (second,)), return_exceptions=True)

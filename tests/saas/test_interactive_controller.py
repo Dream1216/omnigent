@@ -112,6 +112,9 @@ async def controller_case(interactive_http, tmp_path):
         async def recover_managed(self, record, checkpoint):
             return record
 
+        async def inspect_managed_retirement(self, record, **kwargs):
+            return None
+
         async def shutdown_managed(self):
             pass
 

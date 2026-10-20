@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import Engine, and_, or_, select, tuple_, update
+from sqlalchemy import Engine, and_, or_, select, true, tuple_, update
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -864,7 +864,7 @@ class HostStore:
             rows = session.execute(stmt).scalars().all()
             return [(row.workspace_id, _row_to_host(row)) for row in rows]
 
-    def get_host(self, host_id: str) -> Host | None:
+    def get_host(self, host_id: str, *, include_deleted: bool = False) -> Host | None:
         """
         Fetch a single host by ID.
 
@@ -877,7 +877,7 @@ class HostStore:
                 select(SqlHost).where(
                     SqlHost.workspace_id == current_workspace_id(),
                     SqlHost.host_id == host_id,
-                    SqlHost.deleted_at.is_(None),
+                    SqlHost.deleted_at.is_(None) if not include_deleted else true(),
                 )
             ).scalar_one_or_none()
             if row is None:
@@ -1218,6 +1218,7 @@ class HostStore:
         *,
         sandbox_id: str,
         expected_updated_at: int,
+        expected_token_hash: str | None = None,
     ) -> bool:
         """Atomically detach one stale generation before provider termination.
 
@@ -1229,6 +1230,7 @@ class HostStore:
         :param host_id: Durable managed host identifier.
         :param sandbox_id: Provider id of the stale active generation.
         :param expected_updated_at: Heartbeat timestamp observed by the sweep.
+        :param expected_token_hash: Optional credential-generation fence for a trusted owner.
         :returns: ``True`` when that exact stale generation was detached.
         """
         with self._session("detach_stale_managed_sandbox") as session:
@@ -1244,6 +1246,9 @@ class HostStore:
                         SqlHost.sandbox_provider.is_not(None),
                         SqlHost.deleted_at.is_(None),
                         SqlHost.terminating_sandbox_id.is_(None),
+                        SqlHost.token_hash == expected_token_hash
+                        if expected_token_hash is not None
+                        else true(),
                     )
                     .values(
                         token_hash=None,

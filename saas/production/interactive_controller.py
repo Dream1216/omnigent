@@ -32,8 +32,10 @@ from saas.production.interactive_recovery import (
     ManagedCreationIntent,
     ManagedPreparationBinding,
     ManagedResourceBinding,
+    ManagedTerminationReceipt,
     UnstartedInteractiveRecoveryRecord,
     certificate_sha256,
+    managed_retirement_proof_sha256,
 )
 from saas.production.interactive_runtime import AuthorizedInteractiveInput
 from saas.production.model_run_credentials import IssuedModelRunCredential
@@ -71,6 +73,14 @@ class InteractivePhysicalDriver(Protocol):
     async def stop(self, record: InteractiveRecoveryRecord) -> bool: ...
 
     async def recover_managed(self, record, checkpoint) -> InteractiveRecoveryRecord: ...
+
+    async def inspect_managed_retirement(self, record, *, cutoff, now, force=False): ...
+
+    async def detach_managed_retirement(self, record, host) -> bool: ...
+
+    async def retire_managed(self, record, checkpoint) -> InteractiveRecoveryRecord: ...
+
+    async def finish_managed_retirement(self, record) -> bool: ...
 
     async def shutdown_managed(self) -> None: ...
 
@@ -150,6 +160,8 @@ class ProductionInteractiveExecutor:
             )
         )
         self._active: dict[UUID, _Active] = {}
+        self._retirements: dict[UUID, asyncio.Task[bool]] = {}
+        self._completed_retirements: set[UUID] = set()
         self._recovering = asyncio.Lock()
         self._confirmed_recoveries: set[UUID] = set()
         self._gc_offset = 0
@@ -721,7 +733,10 @@ class ProductionInteractiveExecutor:
             if (
                 self._verify_released is None
                 or active.record != record
-                or record.phase != "draining"
+                or not (
+                    record.phase == "draining"
+                    or (record.phase == "terminal" and record.process_stopped)
+                )
                 or record.outcome != "orphaned"
                 or not active.finished.is_set()
                 or active.executing
@@ -789,6 +804,188 @@ class ProductionInteractiveExecutor:
                 )
             )
         ]
+
+    async def retire_managed_origin(
+        self, run_id: UUID, *, cutoff: int, now: int, force: bool = False
+    ) -> bool:
+        async with self._lifecycle:
+            if self._closing or run_id in self._completed_retirements:
+                return False
+            operation = self._retirements.get(run_id)
+            if operation is None:
+                operation = asyncio.create_task(
+                    self._retire_managed_origin(run_id, cutoff=cutoff, now=now, force=force),
+                    name="interactive-managed-retirement",
+                )
+                self._retirements[run_id] = operation
+
+                def finished(task):
+                    if self._retirements.get(run_id) is task:
+                        del self._retirements[run_id]
+                    if not task.cancelled():
+                        task.exception()
+
+                operation.add_done_callback(finished)
+        try:
+            return await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - redact database and provider diagnostics.
+            raise _unavailable() from None
+
+    async def _retire_managed_origin(self, run_id, *, cutoff, now, force):
+        async with self._recovering:
+            return await self._retire_managed_origin_locked(
+                run_id, cutoff=cutoff, now=now, force=force
+            )
+
+    async def _retire_managed_origin_locked(self, run_id, *, cutoff, now, force):
+        if self._verify_released is None:
+            return False
+        origin = self._journal.read(run_id)
+        if (
+            origin.managed_origin_run_id is not None
+            or origin.managed_preparation is None
+            or origin.managed_creation is None
+            or origin.managed_resources is None
+        ):
+            return False
+        creation = origin.managed_creation
+        peers = tuple(self._managed_peers(origin))
+
+        def parked(row):
+            active = self._active.get(row.run_id)
+            return active is None or (
+                active.record == row
+                and not active.executing
+                and active.finished.is_set()
+                and (row.phase == "draining" or (row.phase == "terminal" and row.process_stopped))
+                and row.outcome == "orphaned"
+            )
+
+        if not all(parked(row) for row in (origin, *peers)):
+            return False
+        if any(
+            row.managed_origin_run_id not in (None, origin.run_id)
+            or (
+                row.managed_preparation is not None
+                and row.managed_resources != origin.managed_resources
+            )
+            or (not row.process_stopped and row.managed_origin_run_id != origin.run_id)
+            for row in peers
+        ):
+            return False
+        host = await self._driver.inspect_managed_retirement(
+            origin,
+            cutoff=cutoff,
+            now=now,
+            force=force or any(row.outcome == "orphaned" for row in (origin, *peers)),
+        )
+        if host is None:
+            return False
+        for row in (origin, *peers):
+            await self._verify_recovery(row)
+            await self._verify_released(row)
+
+        expected = origin
+
+        def unchanged():
+            return (
+                not self._closing
+                and self._journal.read(run_id) == expected
+                and tuple(self._managed_peers(expected)) == peers
+                and all(parked(row) for row in (expected, *peers))
+            )
+
+        async with self._lifecycle:
+            if not unchanged():
+                return False
+            for row in (expected, *peers):
+                active = self._active.get(row.run_id)
+                if active is not None:
+                    await self._seal(active, timeout=0)
+                    await self._driver.quiesce_preparation(active.authorized)
+            if not unchanged():
+                return False
+            # Hold admission through the credential-generation CAS. A stale
+            # heartbeat loser must not leave an irreversible private stop intent.
+            if not await self._driver.detach_managed_retirement(expected, host):
+                return False
+            if expected.managed_termination is None or expected.phase != "terminal":
+                expected = replace(
+                    expected,
+                    phase=expected.phase if expected.phase == "terminal" else "draining",
+                    outcome=expected.outcome if expected.phase == "terminal" else "orphaned",
+                    managed_termination=expected.managed_termination
+                    or ManagedTerminationReceipt(secret_uid=creation.secret_uid),
+                )
+                self._journal.put(expected)
+                if run_id in self._active:
+                    self._active[run_id].record = expected
+
+        async def checkpoint(**changes):
+            nonlocal expected
+            async with self._lifecycle:
+                if not unchanged() or set(changes) - {"managed_resources", "managed_termination"}:
+                    raise _unavailable()
+                updated = replace(expected, **changes)
+                if updated != expected:
+                    self._journal.put(updated)
+                    expected = updated
+                    if run_id in self._active:
+                        self._active[run_id].record = expected
+                return expected
+
+        if expected.managed_termination is None or not expected.managed_termination.complete:
+            await self._driver.retire_managed(expected, checkpoint)
+        async with self._lifecycle:
+            if (
+                not unchanged()
+                or expected.managed_termination is None
+                or not expected.managed_termination.complete
+            ):
+                return False
+            if not expected.process_stopped or expected.phase != "terminal":
+                expected = replace(
+                    expected,
+                    process_stopped=True,
+                    phase="terminal",
+                    outcome=expected.outcome or "orphaned",
+                    stop_kind=expected.stop_kind
+                    if expected.process_stopped
+                    else "managed_container",
+                )
+                self._journal.put(expected)
+                if run_id in self._active:
+                    self._active[run_id].record = expected
+                    self._active[run_id].stopped = True
+            digest = managed_retirement_proof_sha256(expected)
+            stopped = []
+            for peer in peers:
+                if not peer.process_stopped:
+                    peer = replace(
+                        peer,
+                        phase="terminal",
+                        outcome=peer.outcome or "orphaned",
+                        process_stopped=True,
+                        stop_kind="managed_origin",
+                        managed_origin_stop_sha256=digest,
+                    )
+                    self._journal.put(peer)
+                    if peer.run_id in self._active:
+                        self._active[peer.run_id].record = peer
+                        self._active[peer.run_id].stopped = True
+                stopped.append(peer)
+        for row in (expected, *stopped):
+            if self._closing:
+                return False
+            if row.run_id not in self._confirmed_recoveries:
+                await self._confirm_recovery(row)
+                self._confirmed_recoveries.add(row.run_id)
+        if self._closing or not await self._driver.finish_managed_retirement(expected):
+            return False
+        self._completed_retirements.add(run_id)
+        return True
 
     async def _recover_unknown_managed(self, record):
         if self._verify_released is None or self._closing:
@@ -866,8 +1063,36 @@ class ProductionInteractiveExecutor:
             return True
 
     async def reconcile_physical_gc(self, *, limit: int) -> int:
+        retirement_completed = 0
+        origins = set()
+        for row in self._journal.records():
+            if row.run_id in self._completed_retirements:
+                continue
+            if row.managed_termination is not None and row.managed_resources is not None:
+                origins.add(row.run_id)
+                continue
+            if row.process_stopped or not (
+                row.outcome == "orphaned"
+                or (row.phase != "terminal" and row.run_id not in self._active)
+            ):
+                continue
+            if row.managed_origin_run_id is not None:
+                origins.add(row.managed_origin_run_id)
+            elif row.official_runner_id is not None and row.managed_resources is not None:
+                origins.add(row.run_id)
+        for run_id in sorted(origins, key=str)[:limit]:
+            try:
+                retirement_completed += await self.retire_managed_origin(
+                    run_id,
+                    cutoff=0,
+                    now=int(datetime.now(timezone.utc).timestamp()),
+                    force=True,
+                )
+            except RunnerControlError as error:
+                if error.code != "interactive_controller_unavailable":
+                    raise
         async with self._recovering:
-            completed = 0
+            completed = retirement_completed
             for unstarted in self._journal.unstarted_records():
                 if completed >= limit:
                     return completed
@@ -889,6 +1114,11 @@ class ProductionInteractiveExecutor:
                 row
                 for row in self._journal.records()
                 if row.phase != "terminal"
+                or (
+                    row.run_id in self._active
+                    and row.process_stopped
+                    and row.outcome == "orphaned"
+                )
                 or (
                     self._inspect_revocation is not None
                     and not row.process_stopped
@@ -1054,6 +1284,8 @@ class ProductionInteractiveExecutor:
 
     async def shutdown(self) -> None:
         self._closing = True
+        if self._retirements:
+            await asyncio.wait(tuple(self._retirements.values()), timeout=15)
         await self._driver.shutdown_managed()
         for active in tuple(self._active.values()):
             with contextlib.suppress(Exception):

@@ -343,7 +343,7 @@ index 91e05f0..3d8988d 100644
 +                ) from exc
 +            raise
 diff --git a/omnigent/server/app.py b/omnigent/server/app.py
-index affa37df3..5578b6288 100644
+index affa37df3..fbd28f6f2 100644
 --- a/omnigent/server/app.py
 +++ b/omnigent/server/app.py
 @@ -15,0 +16 @@ from functools import partial
@@ -358,12 +358,18 @@ index affa37df3..5578b6288 100644
 +        rewritten = rewritten.replace(
 +            "<title>Omnigent</title>", f"<title>{escape_html(app_name)}</title>", 1
 +        )
-@@ -3622,0 +3629,2 @@ def create_app(
+@@ -1769 +1775,4 @@ def create_app(
+-                managed_sandbox_reaper = ManagedSandboxReaper(
++                reaper_factory = getattr(
++                    app_inst.state, "managed_sandbox_reaper_factory", ManagedSandboxReaper
++                )
++                managed_sandbox_reaper = reaper_factory(
+@@ -3622,0 +3632,2 @@ def create_app(
 +                        owns_input = getattr(conversation_store, "owns_session_input", None)
 +                        managed_input = bool(owns_input and owns_input(conv))
-@@ -3626,0 +3635 @@ def create_app(
+@@ -3626,0 +3638 @@ def create_app(
 +                            suppress_recovery_turn=managed_input,
-@@ -3629,3 +3638,4 @@ def create_app(
+@@ -3629,3 +3641,4 @@ def create_app(
 -                        await restore_active_children(
 -                            conv, routed.client, conversation_store, runner_session_initializer
 -                        )
@@ -371,7 +377,7 @@ index affa37df3..5578b6288 100644
 +                            await restore_active_children(
 +                                conv, routed.client, conversation_store, runner_session_initializer
 +                            )
-@@ -4090 +4100,6 @@ def create_app(
+@@ -4090 +4103,6 @@ def create_app(
 -                _SPAStaticFiles(directory=web_ui_dist, html=True, base_path=resolved_base_path),
 +                _SPAStaticFiles(
 +                    directory=web_ui_dist,
@@ -379,12 +385,12 @@ index affa37df3..5578b6288 100644
 +                    base_path=resolved_base_path,
 +                    app_name=branding_snapshot.app_name,
 +                ),
-@@ -4139 +4154,3 @@ class _SPAStaticFiles(StaticFiles):
+@@ -4139 +4157,3 @@ class _SPAStaticFiles(StaticFiles):
 -    def __init__(self, *args: Any, base_path: str = "", **kwargs: Any) -> None:
 +    def __init__(
 +        self, *args: Any, base_path: str = "", app_name: str | None = None, **kwargs: Any
 +    ) -> None:
-@@ -4145 +4162,3 @@ class _SPAStaticFiles(StaticFiles):
+@@ -4145 +4165,3 @@ class _SPAStaticFiles(StaticFiles):
 -            html = _rewrite_web_ui_index(index_file.read_text(encoding="utf-8"), base_path)
 +            html = _rewrite_web_ui_index(
 +                index_file.read_text(encoding="utf-8"), base_path, app_name

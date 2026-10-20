@@ -33,19 +33,19 @@ from tests.saas.test_interactive_orphaned_retirement import _trusted_recovery
 from tests.saas.test_interactive_runner_lease import _admit
 
 
-async def _warm(c):
+async def _warm(c, *, provider="kubernetes"):
     authorize, prepare = c.executor._authorize, c.physical.prepare
 
     async def managed(lease):
         authorized, issued = await authorize(lease)
         return replace(
             authorized,
-            launch={**authorized.launch, "host_type": "managed", "sandbox_provider": "kubernetes"},
+            launch={**authorized.launch, "host_type": "managed", "sandbox_provider": provider},
         ), issued
 
     async def creating(actual, *, previous, on_launch, on_preparation, on_resources, on_creation):
         if previous is None:
-            await on_preparation(_reference(host_id=actual.launch["host_id"]))
+            await on_preparation(_reference(host_id=actual.launch["host_id"], provider=provider))
             for intent in (
                 _intent(),
                 _intent(secret_submitted=True),

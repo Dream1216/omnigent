@@ -163,6 +163,39 @@ Retain the referenced origin and credentials with all dependent records; old
 consumers reject v7, and the all-consumer cutover gate still applies. This read-only
 admission does not complete dormant resume or normal/warm resource retirement.
 
+## Controller-owned resource retirement
+
+The SaaS Controller installs the original lifespan's optional reaper factory.
+Its reaper retains the configured offline age, but enumerates only private,
+canonical managed origins and reads each Host under that origin's RuntimeContext.
+It does not gain context-free cross-workspace SQL or name-only deletion rights.
+Standalone deployments retain the original default reaper.
+
+Preparation or active peers block retirement. Released, finished orphaned peers
+may be sealed and quiesced without first waiting for old channel usage to drain.
+Historical machine/fence ownership and dispatch release are verified before
+mutation. Actual resource UIDs, nonce, template and cluster configuration are
+read before initial detachment. Under the admission lock, a Host snapshot and
+credential-hash CAS detach only that generation; a heartbeat or credential loser
+writes no private stop intent. The intent is durable before any provider write.
+
+Resource deletion uses the same UID/RV, quiescence and kubelet terminal-fact
+engine as unknown creation recovery. Only its complete receipt can confirm
+physical fences and clear the corresponding Host pending slot. A cancelled
+waiter cannot duplicate cleanup. Already confirmed Runner proof bytes remain
+unchanged when resource facts are appended. Fixed Hosts never enter this path.
+
+Private v8 adds an immutable complete-origin stop digest to a referenced peer,
+including one whose Runner launch ACK was unknown. It binds that peer's own
+Run/fence and retains its own metering grant; it never copies creation authority
+or replays the input. Pending channel drainage and usage delivery retain the
+original grant after physical stop. All old consumers must stop before v8 is
+written, and rollback must restore matching private-volume and database state.
+
+These paths still require real Kubernetes/Agent Sandbox and PostgreSQL acceptance.
+Dormant resume, cross-generation handoff, cross-Pod recovery and full production
+admission remain separate unfinished gates.
+
 ## Database admission during a leased Run
 
 Fleet bootstrap and the default direct Runner admission still require the

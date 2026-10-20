@@ -1772,7 +1772,10 @@ def create_app(
                     "the reaper will not run"
                 )
             else:
-                managed_sandbox_reaper = ManagedSandboxReaper(
+                reaper_factory = getattr(
+                    app_inst.state, "managed_sandbox_reaper_factory", ManagedSandboxReaper
+                )
+                managed_sandbox_reaper = reaper_factory(
                     host_store=host_store,
                     sandbox_config=sandbox_config,
                 )

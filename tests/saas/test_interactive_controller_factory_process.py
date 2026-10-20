@@ -952,6 +952,9 @@ def _serve_controller(
     ready_material=None,
     cluster=None,
 ):
+    retire_managed = cluster is not None and cluster.get("managed_retirement") is True
+    if retire_managed:
+        assert cluster is not None and scenario in {"single", "tools_cross_run"}
     cancelling = scenario in {
         "cancel_before_admission",
         "cancel_unknown_stream",
@@ -1233,48 +1236,48 @@ def _serve_controller(
 
             monkeypatch.setattr(selected_launcher, "_create_workload", reject_create_ack)
             monkeypatch.setattr(ModelRunCredentialService, "issue", capture_issued)
-            if scenario == "create_ack_recovered":
-                from saas.production import interactive_managed_recovery as recovery_module
+        if scenario == "create_ack_recovered" or retire_managed:
+            from saas.production import interactive_managed_recovery as recovery_module
 
-                original_digest = recovery_module._terminal_digest
+            original_digest = recovery_module._terminal_digest
 
-                def observe_terminal_pod(pod):
-                    digest = original_digest(pod)
-                    if digest is not None:
-                        terminal_pod_facts[pod["metadata"]["uid"]] = {
-                            "metadata": {
-                                key: pod["metadata"][key]
-                                for key in (
-                                    "uid",
-                                    "name",
-                                    "namespace",
-                                    "deletionTimestamp",
-                                    "ownerReferences",
-                                )
-                            },
-                            "spec": {
-                                key: [{"name": row["name"]} for row in pod["spec"].get(key, [])]
-                                for key in ("containers", "initContainers", "ephemeralContainers")
-                            },
-                            "status": {
-                                key: pod.get("status", {}).get(key)
-                                for key in (
-                                    "phase",
-                                    "reason",
-                                    "containerStatuses",
-                                    "initContainerStatuses",
-                                    "ephemeralContainerStatuses",
-                                )
-                                if key in pod.get("status", {})
-                            },
-                            "containers_sha256": digest,
-                        }
-                        (exchange / "terminal-pod-facts.json").write_text(
-                            json.dumps(terminal_pod_facts)
-                        )
-                    return digest
+            def observe_terminal_pod(pod):
+                digest = original_digest(pod)
+                if digest is not None:
+                    terminal_pod_facts[pod["metadata"]["uid"]] = {
+                        "metadata": {
+                            key: pod["metadata"][key]
+                            for key in (
+                                "uid",
+                                "name",
+                                "namespace",
+                                "deletionTimestamp",
+                                "ownerReferences",
+                            )
+                        },
+                        "spec": {
+                            key: [{"name": row["name"]} for row in pod["spec"].get(key, [])]
+                            for key in ("containers", "initContainers", "ephemeralContainers")
+                        },
+                        "status": {
+                            key: pod.get("status", {}).get(key)
+                            for key in (
+                                "phase",
+                                "reason",
+                                "containerStatuses",
+                                "initContainerStatuses",
+                                "ephemeralContainerStatuses",
+                            )
+                            if key in pod.get("status", {})
+                        },
+                        "containers_sha256": digest,
+                    }
+                    (exchange / "terminal-pod-facts.json").write_text(
+                        json.dumps(terminal_pod_facts)
+                    )
+                return digest
 
-                monkeypatch.setattr(recovery_module, "_terminal_digest", observe_terminal_pod)
+            monkeypatch.setattr(recovery_module, "_terminal_digest", observe_terminal_pod)
         request_control = adapter._client._request
 
         async def observe_control_failure(action, values):
@@ -1296,7 +1299,7 @@ def _serve_controller(
         managed_reuse_reads = []
         if cluster is not None:
 
-            def record_reuse_failure(stage, error):
+            def record_reuse_failure(stage, error, *, name="managed-reuse-failure.json"):
                 # Only code locations/classes: never exception text, local values or SDK bodies.
                 failures, seen = [], set()
                 while error is not None and id(error) not in seen:
@@ -1315,9 +1318,7 @@ def _serve_controller(
                         }
                     )
                     error = error.__cause__ or error.__context__
-                (exchange / "managed-reuse-failure.json").write_text(
-                    json.dumps({"stage": stage, "failures": failures})
-                )
+                (exchange / name).write_text(json.dumps({"stage": stage, "failures": failures}))
 
             revalidate_managed = adapter._executor._driver.revalidate_managed
 
@@ -1367,6 +1368,19 @@ def _serve_controller(
 
             adapter._executor._verify_recovery = observe_origin
             adapter._executor._verify_released = observe_origin_release
+            if retire_managed:
+                retire_origin = adapter._executor._retire_managed_origin_locked
+
+                async def observe_retirement(*args, **kwargs):
+                    try:
+                        return await retire_origin(*args, **kwargs)
+                    except Exception as error:
+                        record_reuse_failure(
+                            "managed_retirement", error, name="managed-retirement-failure.json"
+                        )
+                        raise
+
+                adapter._executor._retire_managed_origin_locked = observe_retirement
         stop_permitted, unknown_stop_observed = threading.Event(), threading.Event()
         if scenario == "orphaned_stop_recovery":
             physical = adapter._executor._driver
@@ -2995,7 +3009,69 @@ def _serve_controller(
                         inspect_managed_resources(app.state.sandbox_config, record)
                         == record.managed_resources
                     )
-            if scenario in {"public_stop", "public_archive"}:
+            retirement_evidence = None
+            if retire_managed:
+                from saas.production.interactive_managed_retirement import (
+                    ControllerManagedSandboxReaper,
+                )
+
+                reaper = app.state.managed_sandbox_reaper
+                assert isinstance(reaper, ControllerManagedSandboxReaper)
+                assert reaper._sandbox_config.reaper.terminate_after_offline_days == 7
+                (origin,) = [
+                    row for row in adapter._journal.records() if row.managed_creation is not None
+                ]
+                assert not origin.process_stopped
+                future = int(time.time()) + 8 * 86400
+
+                def retired():
+                    asyncio.run_coroutine_threadsafe(
+                        reaper.sweep_once(now=future), app_loop
+                    ).result(45)
+                    source = adapter._journal.read(origin.run_id)
+                    if (
+                        source.managed_termination is None
+                        or not source.managed_termination.complete
+                    ):
+                        return False
+                    with OmnigentStoreAdapter("0.2.0").bind(runtime):
+                        host = host_store.get_host(origin.managed_preparation.host_id)
+                        return host.sandbox_id is host.terminating_sandbox_id is None
+
+                _wait(retired, "Controller-owned resource retirement", timeout=150)
+                origin = adapter._journal.read(origin.run_id)
+                for completed_run in runs:
+                    stopped = adapter._journal.read(completed_run.id)
+                    assert stopped.process_stopped and stopped.phase == "terminal"
+                    with factory() as db:
+                        assert (
+                            db.get(RunDispatchRecord, completed_run.id).physical_recovery_fence
+                            == completed_run.fence_token
+                        )
+                        (recovered,) = db.scalars(
+                            sa.select(RunEventRecord).where(
+                                RunEventRecord.run_id == completed_run.id,
+                                RunEventRecord.event_type == "run.interactive_physical_recovered",
+                            )
+                        ).all()
+                        assert recovered.payload["proof_sha256"] == physical_recovery_proof_sha256(
+                            stopped
+                        )
+                assert terminal_pod_facts
+                retirement_evidence = {
+                    "controller_owned_reaper": True,
+                    "controlled_offline_age_seconds": 8 * 86400,
+                    "configured_offline_days": 7,
+                    "origin_run_id": str(origin.run_id),
+                    "termination_receipt": asdict(origin.managed_termination),
+                    "peer_stop_kinds": {
+                        str(row.id): adapter._journal.read(row.id).stop_kind for row in runs
+                    },
+                    "all_original_fences_confirmed": True,
+                    "host_pending_cleared_after_receipt": True,
+                }
+                record = adapter._journal.read(run.id)
+            elif scenario in {"public_stop", "public_archive"}:
                 with httpx.Client(
                     base_url=ORIGIN,
                     trust_env=False,
@@ -3123,7 +3199,8 @@ def _serve_controller(
                         }
                         if scenario == "cancel_unknown_stream"
                         else None,
-                        "host_stop_acknowledged": True,
+                        "host_stop_acknowledged": not retire_managed,
+                        "managed_retirement": retirement_evidence,
                         "durable_stop_receipts": expected_runs
                         if scenario in {"public_stop", "public_archive", "security_revoke_idle"}
                         else None,

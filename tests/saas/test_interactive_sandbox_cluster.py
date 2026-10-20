@@ -30,7 +30,10 @@ def _assert_cluster_authority(profile):
             identity.status.user_info.username == f"system:serviceaccount:{namespace}:controller"
         )
         authorization = client.AuthorizationV1Api(api)
-        recovery_enabled = profile.get("scenario") == "create_ack_recovered"
+        recovery_enabled = (
+            profile.get("scenario") == "create_ack_recovered"
+            or profile.get("managed_retirement") is True
+        )
         for group, resource, subresource, verb, target, expected in (
             ("batch", "jobs", None, "create", runners, True),
             ("agents.x-k8s.io", "sandboxes", None, "create", runners, True),

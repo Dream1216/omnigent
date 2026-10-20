@@ -490,14 +490,29 @@ class _Recovery:
 
 
 async def recover_managed_resources(deployment, record, checkpoint):
+    if record.official_runner_id is not None:
+        raise _unavailable()
+    return await _recover_resources(deployment, record, checkpoint)
+
+
+async def retire_managed_resources(deployment, record, checkpoint):
+    if (
+        record.managed_resources is None
+        or record.managed_origin_run_id is not None
+        or not (
+            record.phase == "terminal"
+            or (record.phase == "draining" and record.outcome == "orphaned")
+        )
+    ):
+        raise _unavailable()
+    return await _recover_resources(deployment, record, checkpoint)
+
+
+async def _recover_resources(deployment, record, checkpoint):
     from saas.production.interactive_preparation import _binding, _direct_launcher
 
     preparation = record.managed_preparation
-    if (
-        preparation is None
-        or record.managed_creation is None
-        or record.official_runner_id is not None
-    ):
+    if preparation is None or record.managed_creation is None:
         raise _unavailable()
     delegate = _direct_launcher(
         deployment.for_provider(preparation.provider), preparation.provider
