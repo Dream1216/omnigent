@@ -50,7 +50,9 @@ def read_retirement_host(driver, record, *, cutoff, now, force, retaining=False)
             if retained and host.sandbox_id is host.terminating_sandbox_id is None:
                 return None
             return (
-                host if suspension_due(driver._app.state.sandbox_config, record, now=now) else None
+                host
+                if suspension_due(driver._app.state.sandbox_config, record, now=now, force=force)
+                else None
             )
         if (
             record.managed_suspension is not None
@@ -112,11 +114,17 @@ def detach_retirement_host(driver, record, expected):
         name = record.managed_preparation.resource_name
         if current.deleted_at is not None or current.terminating_sandbox_id == name:
             return True
-        return driver._official.host_store.detach_stale_managed_sandbox(
+        detached = driver._official.host_store.detach_stale_managed_sandbox(
             current.host_id,
             sandbox_id=name,
             expected_updated_at=current.updated_at,
             expected_token_hash=record.managed_creation.host_token_sha256,
+        )
+        return detached or driver._official.host_store.detach_stale_managed_sandbox(
+            current.host_id,
+            sandbox_id=name,
+            expected_updated_at=current.updated_at,
+            expected_revoked_host=current,
         )
 
 

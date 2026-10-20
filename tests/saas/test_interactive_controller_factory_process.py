@@ -368,6 +368,9 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
     monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", ORIGIN)
     scenario = getattr(case, "scenario", "single")
     dormant_managed = cluster is not None and cluster.get("managed_dormant") is True
+    failed_resume = cluster is not None and cluster.get("managed_failed_resume") is True
+    if failed_resume:
+        assert dormant_managed
     assert scenario in {
         "single",
         "tools_cross_run",
@@ -447,7 +450,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                         0,
                         0,
                     )
-                    quota.limit_units = 3
+                    quota.limit_units = 2 if failed_resume else 3
             if cluster is not None:
                 monkeypatch.setenv(
                     "OMNIGENT_HOST_WORKSPACE_ID", str(runtime.physical_workspace_id)
@@ -687,6 +690,8 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 assert len(after_calls["requests"]) - len(before_calls["requests"]) == (
                     0
                     if scenario in {"create_ack_rejected", "create_ack_recovered"}
+                    else 4
+                    if dormant_managed and cluster.get("managed_failed_resume") is True
                     else 5
                     if dormant_managed
                     else 4
@@ -1015,6 +1020,9 @@ def _serve_controller(
     retire_managed = cluster is not None and cluster.get("managed_retirement") is True
     generation_managed = cluster is not None and cluster.get("managed_generation") is True
     dormant_managed = cluster is not None and cluster.get("managed_dormant") is True
+    failed_resume = cluster is not None and cluster.get("managed_failed_resume") is True
+    if failed_resume:
+        assert dormant_managed
     if dormant_managed:
         assert generation_managed and cluster["provider"] == "agent_sandbox"
     if generation_managed:
@@ -1151,6 +1159,8 @@ def _serve_controller(
         adapter_contract_version="0.2.0",
     )
     creation_checkpoints, resource_checkpoints = [], []
+    failed_resume_attempts = []
+    failed_resume_faults = []
     pod_binding_checkpoints = []
     secret_submission_checkpoints, workload_submission_checkpoints = [], []
     adapter = None
@@ -1314,7 +1324,29 @@ def _serve_controller(
                 assert row.managed_creation.secret_uid == row.managed_resources.token_secret_uid
                 assert path.stat().st_mode & 0o777 == 0o600
                 resource_checkpoints.append(row.managed_resources)
-                return wait_running(launcher, namespace, sandbox_id)
+                result = wait_running(launcher, namespace, sandbox_id)
+                if failed_resume and row.managed_resume and not failed_resume_attempts:
+                    assert row.managed_creation.pod_uid is None
+                    raw = launcher._load_core().read_namespaced_pod(
+                        sandbox_id, namespace, _request_timeout=10
+                    )
+                    actual = launcher._api_client.sanitize_for_serialization(raw)
+                    assert actual["status"]["phase"] == "Running"
+                    assert (
+                        actual["metadata"]["ownerReferences"][0]["uid"]
+                        == row.managed_resources.workload_uid
+                    )
+                    failed_resume_faults.append(
+                        {
+                            "run_id": str(row.run_id),
+                            "observed_pod_uid": actual["metadata"]["uid"],
+                            "bound_at_fault": False,
+                            "runner_at_fault": False,
+                        }
+                    )
+                    failed_resume_attempts.append(str(row.run_id))
+                    raise OSError("isolated-resume-before-pod-binding")
+                return result
 
             monkeypatch.setattr(
                 KubernetesSandboxLauncher, "_wait_for_pod_running", observe_created
@@ -2248,11 +2280,16 @@ def _serve_controller(
                         f"code={getattr(error, 'code', None)}"
                     )
                 with factory() as db:
-                    statuses = db.scalars(sa.select(RunRecord.status)).all()
+                    records = db.scalars(sa.select(RunRecord)).all()
+                    statuses = [row.status for row in records]
                     forbidden = {"failed", "orphaned"}
                     if not cancelling:
                         forbidden.add("cancelled")
-                    assert all(s not in forbidden for s in statuses), statuses
+                    assert all(
+                        row.status not in forbidden
+                        or (str(row.id) in failed_resume_attempts and row.status == "orphaned")
+                        for row in records
+                    ), statuses
                     dispatches = db.scalars(sa.select(RunDispatchRecord.status)).all()
                     return len(dispatches) == expected_runs and all(
                         s == "released" for s in dispatches
@@ -3171,9 +3208,38 @@ def _serve_controller(
                         }
                     )
 
-                def retire_generation(current, completed):
+                def deny_retired_credentials(previous, bearer):
+                    from saas.production.interactive_model_channel import channel_url
+
+                    with httpx.Client(
+                        trust_env=False,
+                        verify=ssl.create_default_context(cafile=str(certificate)),
+                        timeout=20,
+                    ) as client:
+                        denied = client.post(
+                            channel_url(ORIGIN, previous.scope.session_id) + "/responses",
+                            headers={"Authorization": "Bearer " + previous.channel_value},
+                            json={},
+                        )
+                    assert denied.status_code == 403
+                    assert (
+                        denied.json()["error"]["code"] == "interactive_model_channel_unavailable"
+                    )
+                    denied = httpx.post(
+                        "http://127.0.0.1:8090/v1/chat/completions",
+                        trust_env=False,
+                        headers={"Authorization": "Bearer " + bearer},
+                        json=_document(conversation.model_override, limit=32),
+                    )
+                    assert denied.status_code == 403
+                    assert (
+                        denied.json()["error"]["code"]
+                        == "platform_model_run_authority_unavailable"
+                    )
+
+                def retire_generation(current, completed, *, already_stopped=False):
                     origin = adapter._journal.read(current.managed_origin_run_id or current.run_id)
-                    assert not origin.process_stopped
+                    assert already_stopped or not origin.process_stopped
                     offline_age = 1800 if dormant_managed else 8 * 86400
                     future = int(time.time()) + offline_age
 
@@ -3216,7 +3282,8 @@ def _serve_controller(
                             ] == physical_recovery_proof_sha256(stopped)
                     assert terminal_pod_facts
                     evidence = {
-                        "controller_owned_reaper": True,
+                        "controller_owned_reaper": not already_stopped,
+                        "controller_owned_gc": already_stopped,
                         "controlled_offline_age_seconds": offline_age,
                         "configured_offline_days": 7,
                         "origin_run_id": str(origin.run_id),
@@ -3245,9 +3312,9 @@ def _serve_controller(
                                 "creation_pod_uid": origin.managed_creation.pod_uid,
                                 "creation_pod_name": origin.managed_creation.pod_name,
                                 "official_runner_id": origin.official_runner_id,
-                                "channel_sha256": sha256(
-                                    origin.channel_value.encode()
-                                ).hexdigest(),
+                                "channel_sha256": sha256(origin.channel_value.encode()).hexdigest()
+                                if origin.channel_value is not None
+                                else None,
                                 "stop_sha256": (
                                     managed_suspension_proof_sha256
                                     if dormant_managed
@@ -3267,12 +3334,15 @@ def _serve_controller(
                     read_persistent_marker(record)
                 retirement_evidence, origin = retire_generation(record, runs)
                 if generation_managed:
+                    credential_origin = origin
                     for generation_index in range(1, 3 if dormant_managed else 2):
                         first_origin, first_channel = origin, origin.channel_value
                         prior_ids = {row.id for row in runs}
                         first_runner, first_bearer = origin.official_runner_id, private_bearers[-1]
                         expected_runs = generation_index + 1
                         expected_calls = 3 + generation_index if dormant_managed else 2
+                        if failed_resume:
+                            expected_calls -= 1
                         with httpx.Client(
                             base_url=ORIGIN,
                             trust_env=False,
@@ -3303,9 +3373,16 @@ def _serve_controller(
                         _wait(released, "fresh generation after complete retirement", timeout=180)
                         with factory() as db:
                             runs = db.scalars(sa.select(RunRecord)).all()
-                            assert len(runs) == expected_runs and {row.status for row in runs} == {
-                                "succeeded"
-                            }
+                            assert len(runs) == expected_runs
+                            assert all(
+                                row.status
+                                == (
+                                    "orphaned"
+                                    if str(row.id) in failed_resume_attempts
+                                    else "succeeded"
+                                )
+                                for row in runs
+                            )
                             run = next(row for row in runs if row.id not in prior_ids)
                             assert (
                                 db.get(
@@ -3339,6 +3416,90 @@ def _serve_controller(
                                 for row in settled
                             )
                         record = adapter._journal.read(run.id)
+                        if str(run.id) in failed_resume_attempts:
+                            assert record.managed_resume and record.official_runner_id is None
+                            assert record.channel_value is None
+                            with factory() as db:
+                                assert (
+                                    db.scalar(
+                                        sa.select(sa.func.count())
+                                        .select_from(UsageEventRecord)
+                                        .where(UsageEventRecord.run_id == run.id)
+                                    )
+                                    == 0
+                                )
+                                assert (
+                                    db.scalar(
+                                        sa.select(sa.func.count())
+                                        .select_from(ModelProviderBudgetReservationRecord)
+                                        .where(
+                                            ModelProviderBudgetReservationRecord.run_id == run.id
+                                        )
+                                    )
+                                    == 0
+                                )
+
+                            def failed_recovered(completed_run=run):
+                                current = adapter._journal.read(completed_run.id)
+                                with factory() as db:
+                                    fence = db.get(
+                                        RunDispatchRecord, completed_run.id
+                                    ).physical_recovery_fence
+                                return (
+                                    current.process_stopped
+                                    and current.managed_suspension is not None
+                                    and current.managed_suspension.complete
+                                    and fence == completed_run.fence_token
+                                )
+
+                            try:
+                                _wait(
+                                    failed_recovered,
+                                    "failed resume retained by product GC",
+                                    timeout=150,
+                                )
+                            finally:
+                                snapshot = adapter._journal.read(run.id)
+                                with OmnigentStoreAdapter("0.2.0").bind(runtime):
+                                    current_host = host_store.get_host(
+                                        snapshot.managed_preparation.host_id
+                                    )
+                                receipt = snapshot.managed_suspension
+                                (exchange / "failed-resume-recovery.json").write_text(
+                                    json.dumps(
+                                        {
+                                            "run_id": str(run.id),
+                                            "phase": snapshot.phase,
+                                            "outcome": snapshot.outcome,
+                                            "process_stopped": snapshot.process_stopped,
+                                            "pod_uid": snapshot.managed_creation.pod_uid,
+                                            "suspension_complete": receipt.complete
+                                            if receipt
+                                            else False,
+                                            "stopped_pods": len(receipt.termination.pods)
+                                            if receipt
+                                            else 0,
+                                            "host_active_source": current_host is not None
+                                            and current_host.sandbox_id
+                                            == snapshot.managed_preparation.resource_name,
+                                            "host_pending_source": current_host is not None
+                                            and current_host.terminating_sandbox_id
+                                            == snapshot.managed_preparation.resource_name,
+                                        }
+                                    )
+                                )
+                            record = adapter._journal.read(run.id)
+                            assert (
+                                record.outcome == "orphaned"
+                                and record.stop_kind == "managed_suspend"
+                            )
+                            assert record.managed_creation.pod_uid is not None
+                            deny_retired_credentials(credential_origin, first_bearer)
+                            retirement_evidence, origin = retire_generation(
+                                record, runs, already_stopped=True
+                            )
+                            calls = expected_calls
+                            continue
                         assert record.managed_predecessor_run_id == first_origin.run_id
                         assert record.managed_predecessor_stop_sha256 == (
                             managed_suspension_proof_sha256
@@ -3366,34 +3527,7 @@ def _serve_controller(
                         assert (
                             len(creation_checkpoints) == len(resource_checkpoints) == expected_runs
                         )
-                        with httpx.Client(
-                            trust_env=False,
-                            verify=ssl.create_default_context(cafile=str(certificate)),
-                            timeout=20,
-                        ) as client:
-                            from saas.production.interactive_model_channel import channel_url
-
-                            denied = client.post(
-                                channel_url(ORIGIN, record.scope.session_id) + "/responses",
-                                headers={"Authorization": "Bearer " + first_channel},
-                                json={},
-                            )
-                        assert (
-                            denied.status_code == 403
-                            and denied.json()["error"]["code"]
-                            == "interactive_model_channel_unavailable"
-                        )
-                        denied = httpx.post(
-                            "http://127.0.0.1:8090/v1/chat/completions",
-                            trust_env=False,
-                            headers={"Authorization": "Bearer " + first_bearer},
-                            json=_document(conversation.model_override, limit=32),
-                        )
-                        assert (
-                            denied.status_code == 403
-                            and denied.json()["error"]["code"]
-                            == "platform_model_run_authority_unavailable"
-                        )
+                        deny_retired_credentials(credential_origin, first_bearer)
                         if dormant_managed:
                             assert [row["status"] for row in observed].count(200) == expected_calls
                             assert [row["status"] for row in observed].count(
@@ -3411,6 +3545,7 @@ def _serve_controller(
                         # Simulate re-opening the retired-origin scan without operator cleanup.
                         adapter._executor._completed_retirements.clear()
                         retirement_evidence, origin = retire_generation(record, runs)
+                        credential_origin = origin
                         calls = expected_calls
                     if dormant_managed:
                         with httpx.Client(
@@ -3546,7 +3681,8 @@ def _serve_controller(
                         "managed_generation_checkpoints": managed_generation_reads,
                         "pod_binding_checkpoints": pod_binding_checkpoints,
                         "created_pod_bound_before_runner_launch": (
-                            len(pod_binding_checkpoints) == len(owned_creation_run_ids)
+                            len(pod_binding_checkpoints)
+                            == len(owned_creation_run_ids) - len(failed_resume_attempts)
                             if cluster is not None and cluster["provider"] == "agent_sandbox"
                             else None
                         ),
@@ -3556,6 +3692,8 @@ def _serve_controller(
                         "dormant_resume_verified": dormant_managed,
                         "dormant_workspace_reads": dormant_workspace_reads,
                         "dormant_fourth_run_quota_rejected": dormant_quota_rejected,
+                        "failed_resume_attempts": failed_resume_attempts,
+                        "failed_resume_faults": failed_resume_faults,
                         "managed_final_retirement": final_retirement,
                         "old_channel_and_mrt_rejected": generation_managed,
                         "managed_origin_links": {

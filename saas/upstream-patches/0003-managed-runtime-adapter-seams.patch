@@ -1,5 +1,5 @@
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 9b3cde274..6010f3764 100644
+index 9b3cde274..49aaa1153 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
 @@ -21 +21 @@ from typing import cast
@@ -67,11 +67,25 @@ index 9b3cde274..6010f3764 100644
 +                    or json.loads(meta.inference_snapshot) != expected_external_inference_snapshot
 +                )
 +            ):
-@@ -1197,0 +1231 @@ class HostStore:
+@@ -1197,0 +1231,2 @@ class HostStore:
 +        expected_token_hash: str | None = None,
-@@ -1208,0 +1243 @@ class HostStore:
++        expected_revoked_host: Host | None = None,
+@@ -1208,0 +1244,2 @@ class HostStore:
 +        :param expected_token_hash: Optional credential-generation fence for a trusted owner.
-@@ -1223,0 +1259,3 @@ class HostStore:
++        :param expected_revoked_host: Optional locked snapshot of an already revoked host.
+@@ -1211 +1248,10 @@ class HostStore:
+-        with self._session("detach_stale_managed_sandbox") as session:
++        with self._lifecycle_session("detach_stale_managed_sandbox") as session:
++            if expected_revoked_host is not None:
++                row = session.get(SqlHost, (current_workspace_id(), host_id), with_for_update=True)
++                if (
++                    row is None
++                    or row.token_hash is not None
++                    or row.token_expires_at is not None
++                    or _row_to_host(row) != expected_revoked_host
++                ):
++                    return False
+@@ -1223,0 +1270,3 @@ class HostStore:
 +                        SqlHost.token_hash == expected_token_hash
 +                        if expected_token_hash is not None
 +                        else true(),

@@ -143,7 +143,7 @@ def read_suspended_resources(launcher, record, *, new_creation=None):
     return parent
 
 
-def suspension_due(deployment, record, *, now):
+def suspension_due(deployment, record, *, now, force=False):
     from saas.production.interactive_managed_recovery import _Recovery
     from saas.production.interactive_preparation import _binding, _direct_launcher
     from saas.production.interactive_recovery import (
@@ -192,6 +192,6 @@ def suspension_due(deployment, record, *, now):
         deadline = datetime.fromisoformat(parent["spec"]["shutdownTime"].replace("Z", "+00:00"))
         if deadline.utcoffset() is None:
             raise _unavailable()
-        return deadline <= datetime.fromtimestamp(now, timezone.utc)
+        return force or deadline <= datetime.fromtimestamp(now, timezone.utc)
     finally:
         launcher._close_clients()

@@ -78,6 +78,8 @@ class InteractivePhysicalDriver(Protocol):
 
     async def recover_managed(self, record, checkpoint) -> InteractiveRecoveryRecord: ...
 
+    async def observe_managed_resume_pod(self, record): ...
+
     async def inspect_managed_retirement(
         self, record, *, cutoff, now, force=False, retaining=False
     ): ...
@@ -1148,12 +1150,27 @@ class ProductionInteractiveExecutor:
         if self._verify_released is None or self._closing:
             return False
         if record.managed_resume:
-            if (
-                record.managed_resources is None
-                or record.managed_creation is None
-                or record.managed_creation.pod_uid is None
-            ):
+            if record.managed_resources is None or record.managed_creation is None:
                 return False
+            if record.managed_creation.pod_uid is None:
+                try:
+                    for row in (record, *self._managed_ancestors(record)):
+                        await self._verify_recovery(row)
+                        await self._verify_released(row)
+                    creation = await self._driver.observe_managed_resume_pod(record)
+                except RunnerControlError as error:
+                    if error.code == "interactive_controller_unavailable":
+                        return False
+                    raise
+                async with self._lifecycle:
+                    if (
+                        self._closing
+                        or record.run_id in self._active
+                        or self._journal.read(record.run_id) != record
+                    ):
+                        return False
+                    record = replace(record, managed_creation=creation)
+                    self._journal.put(record)
             return await self._retire_managed_origin_locked(
                 record.run_id,
                 cutoff=0,

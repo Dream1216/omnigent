@@ -1229,6 +1229,7 @@ class HostStore:
         sandbox_id: str,
         expected_updated_at: int,
         expected_token_hash: str | None = None,
+        expected_revoked_host: Host | None = None,
     ) -> bool:
         """Atomically detach one stale generation before provider termination.
 
@@ -1241,9 +1242,19 @@ class HostStore:
         :param sandbox_id: Provider id of the stale active generation.
         :param expected_updated_at: Heartbeat timestamp observed by the sweep.
         :param expected_token_hash: Optional credential-generation fence for a trusted owner.
+        :param expected_revoked_host: Optional locked snapshot of an already revoked host.
         :returns: ``True`` when that exact stale generation was detached.
         """
-        with self._session("detach_stale_managed_sandbox") as session:
+        with self._lifecycle_session("detach_stale_managed_sandbox") as session:
+            if expected_revoked_host is not None:
+                row = session.get(SqlHost, (current_workspace_id(), host_id), with_for_update=True)
+                if (
+                    row is None
+                    or row.token_hash is not None
+                    or row.token_expires_at is not None
+                    or _row_to_host(row) != expected_revoked_host
+                ):
+                    return False
             result = cast(
                 CursorResult[tuple[object]],
                 session.execute(

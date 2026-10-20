@@ -886,6 +886,17 @@ def _check_predecessor(record, origin):
                 )
             )
         )
+        or (
+            record.managed_resume
+            and record.managed_suspension is not None
+            and record.managed_suspension.volume_templates_sha256 is not None
+            and (
+                origin.managed_suspension is None
+                or record.managed_suspension.volume_templates_sha256
+                != origin.managed_suspension.volume_templates_sha256
+                or record.managed_suspension.volumes != origin.managed_suspension.volumes
+            )
+        )
         or record.managed_predecessor_stop_sha256
         != (
             managed_suspension_proof_sha256(origin)
@@ -1312,8 +1323,18 @@ def _check_managed_progress(previous, record):
             previous is None
             or new is None
             or record.managed_preparation is None
-            or previous.phase != "preparing"
-            or record.phase != "preparing"
+            or (
+                (previous.phase != "preparing" or record.phase != "preparing")
+                and not (
+                    previous.phase == record.phase == "draining"
+                    and previous.outcome == record.outcome == "orphaned"
+                    and previous.managed_resume
+                    and old is not None
+                    and old.pod_uid is None
+                    and new.pod_uid is not None
+                    and replace(old, pod_uid=new.pod_uid, pod_name=new.pod_name) == new
+                )
+            )
             or previous.process_stopped
             or record.process_stopped
             or previous.official_runner_id is not None

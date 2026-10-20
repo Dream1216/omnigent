@@ -10,6 +10,7 @@ from saas.production.interactive_recovery import ManagedPodTermination
 from saas.production.interactive_resources import (
     TERMINATION_FINALIZER,
     _creation_metadata,
+    _secret_uid,
     _template,
     read_managed_resources,
 )
@@ -50,6 +51,39 @@ def read_running_pod(launcher, preparation, creation, resources):
         return _read_running_pod(launcher, preparation, creation, resources)
     except Exception:  # noqa: BLE001 - SDK response bodies and credentials stay private.
         raise _unavailable() from None
+
+
+def observe_failed_resume_pod(launcher, record):
+    from saas.production.interactive_managed_recovery import _Recovery
+    from saas.production.interactive_preparation import _binding
+
+    preparation, creation = record.managed_preparation, record.managed_creation
+    if _binding(launcher, preparation.resource_name, preparation.host_id) != preparation:
+        raise _unavailable()
+    recovery = _Recovery(launcher, record, None, None)
+    parent = recovery.parent()
+    if parent is None or parent["metadata"].get("deletionTimestamp"):
+        raise _unavailable()
+    secret = recovery.api(recovery.secret_path)
+    if (
+        secret is None
+        or _secret_uid(secret, preparation, creation.host_token_sha256)
+        != record.managed_resources.token_secret_uid
+    ):
+        raise _unavailable()
+    _creation_metadata(secret, creation)
+    pods = recovery.pods()
+    if len(pods) != 1:
+        raise _unavailable()
+    (pod,) = pods.values()
+    identity = owned_pod(pod, preparation, creation, record.managed_resources)
+    if (
+        identity.name != preparation.resource_name
+        or pod["metadata"].get("deletionTimestamp")
+        or pod.get("status", {}).get("phase") != "Running"
+    ):
+        raise _unavailable()
+    return replace(creation, pod_uid=identity.uid, pod_name=identity.name)
 
 
 def _read_running_pod(launcher, preparation, creation, resources):

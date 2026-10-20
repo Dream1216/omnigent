@@ -56,6 +56,14 @@ semantics. Downstream generation tests cover heartbeat, active-generation,
 tombstone and pending-cleanup refusal. This is not a name-only resume or a
 source-budget increase, and it does not add another patch slot.
 
+The Host-store detachment seam also accepts an exact already-revoked snapshot
+under the existing lifecycle row lock. Both credential columns must be empty;
+a changed owner, account generation, heartbeat or same-second re-arm is rejected.
+Ordinary callers retain the original token-hash predicate. The downstream
+managed-suspension tests cover the locked predicate and revoked startup failure;
+live provider acceptance is still required before release. This stays within
+the existing file, line and nine-patch ceilings.
+
 The 2026-09-13 external Host registration correction is carried by patch 0005.
 The token resolver and atomic registration both reject `expires_at <= now`.
 Registration accepts either a provider plus live sandbox id (including a

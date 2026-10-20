@@ -350,6 +350,69 @@ async def test_controller_revokes_the_old_host_and_admits_only_the_retained_pare
 
 
 @pytest.mark.asyncio
+async def test_revoked_host_detachment_requires_exact_snapshot_and_rejects_same_second_rearm(
+    controller_case, db_uri, tmp_path, monkeypatch
+):
+    from omnigent.stores import host_store as host_module
+    from saas.production.interactive_managed_generation import RetiredGenerationHostStore
+
+    c = controller_case
+    case = await _controller_suspended(c, db_uri, tmp_path, monkeypatch)
+    store = case.store
+    name = case.source.managed_preparation.resource_name
+    with case.driver._adapter.bind(c.context):
+        armed = RetiredGenerationHostStore(store, case.retired_host).replace_managed_host_sandbox(
+            host_id=case.host.host_id,
+            user_id=c.context.runtime_user_key,
+            token="snapshot-original-token",
+            provider="agent_sandbox",
+            sandbox_id=name,
+            token_expires_at=2_000_000_000,
+        )
+        assert armed is not None
+        store.revoke_launch_token(armed.host_id)
+        expected = store.get_host(armed.host_id)
+        for drift in (
+            {"name": "foreign-name"},
+            {"user_id": "foreign-owner"},
+            {"account_generation": "foreign-generation"},
+            {"updated_at": expected.updated_at + 1},
+        ):
+            assert not store.detach_stale_managed_sandbox(
+                armed.host_id,
+                sandbox_id=name,
+                expected_updated_at=expected.updated_at,
+                expected_revoked_host=replace(expected, **drift),
+            )
+            assert store.get_host(armed.host_id) == expected
+        monkeypatch.setattr(host_module, "now_epoch", lambda: expected.updated_at)
+        rearmed = store.rearm_managed_host(
+            armed.host_id,
+            sandbox_id=name,
+            expected_updated_at=expected.updated_at,
+            token="snapshot-new-token",
+            token_expires_at=2_000_000_000,
+        )
+        assert rearmed == expected
+        assert not store.detach_stale_managed_sandbox(
+            armed.host_id,
+            sandbox_id=name,
+            expected_updated_at=expected.updated_at,
+            expected_revoked_host=expected,
+        )
+        assert store.resolve_launch_token(armed.host_id, "snapshot-new-token") is not None
+        store.revoke_launch_token(armed.host_id)
+        assert store.detach_stale_managed_sandbox(
+            armed.host_id,
+            sandbox_id=name,
+            expected_updated_at=expected.updated_at,
+            expected_revoked_host=store.get_host(armed.host_id),
+        )
+        detached = store.get_host(armed.host_id)
+        assert detached.sandbox_id is None and detached.terminating_sandbox_id == name
+
+
+@pytest.mark.asyncio
 async def test_seven_day_reaper_can_finish_a_previously_suspended_generation(
     controller_case, db_uri, tmp_path, monkeypatch
 ):
@@ -483,8 +546,9 @@ async def test_resume_patch_uses_uid_rv_and_never_replaces_pvc_templates(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_before_binding", [False, True])
 async def test_two_resumes_keep_parent_and_claims_but_have_independent_run_authority(
-    controller_case, db_uri, tmp_path, monkeypatch
+    controller_case, db_uri, tmp_path, monkeypatch, failure_before_binding
 ):
     import base64
     from dataclasses import fields
@@ -556,6 +620,7 @@ async def test_two_resumes_keep_parent_and_claims_but_have_independent_run_autho
     c.executor._authorize = managed
     c.executor._verify_released, c.executor._confirm_recovery = released, confirm
     c.physical.revalidate_managed = case.driver.revalidate_managed
+    c.physical.observe_managed_resume_pod = case.driver.observe_managed_resume_pod
 
     async def wake(
         actual, *, previous, on_launch, on_preparation, on_resources, on_creation, generation
@@ -616,6 +681,7 @@ async def test_two_resumes_keep_parent_and_claims_but_have_independent_run_autho
         pod["metadata"].pop("deletionTimestamp", None)
         pod["metadata"].update(
             uid=str(UUID(int=10 * index + 3)),
+            name=preparation.resource_name,
             resourceVersion="woken-pod-rv",
             finalizers=["saas.omnigent.ai/observe-termination"],
             annotations=copy.deepcopy(annotations),
@@ -636,6 +702,8 @@ async def test_two_resumes_keep_parent_and_claims_but_have_independent_run_autho
                 digest,
             )
         )
+        if failure_before_binding and index == 1:
+            raise RunnerControlError("isolated_resume_before_pod_binding", "Unavailable")
         await on_creation(
             replace(intent, pod_uid=pod["metadata"]["uid"], pod_name=pod["metadata"]["name"])
         )
@@ -648,7 +716,7 @@ async def test_two_resumes_keep_parent_and_claims_but_have_independent_run_autho
     c.physical.prepare = wake
     claims = copy.deepcopy(scripted.claims)
     parent_uid = scripted.state.parent["metadata"]["uid"]
-    for index in (1, 2):
+    for index in (1, 2, 3) if failure_before_binding else (1, 2):
         run_id = _admit(c.f, str(index + 6) * 32, text="Distinct resumed input " + str(index))
         claimed = control.claim_run(**machine)
         assert claimed.run_id == run_id
@@ -667,6 +735,114 @@ async def test_two_resumes_keep_parent_and_claims_but_have_independent_run_autho
                 capability_token=lease.capability_token,
                 target_status=status,
             )
+        if failure_before_binding and index == 1:
+            with pytest.raises(RunnerControlError):
+                await c.executor.execute(lease, cancellation=asyncio.Event())
+            assert await c.executor.prepare_finalization(lease, result="failed") == "orphaned"
+            control.transition_run(
+                **machine,
+                run_id=run_id,
+                lease_token=lease.lease_token,
+                fence_token=lease.fence_token,
+                capability_token=lease.capability_token,
+                target_status="orphaned",
+            )
+            await c.executor.finalize(lease, result="orphaned")
+            control.release_run(**machine, run_id=run_id, fence_token=lease.fence_token)
+            failed = c.journal.read(run_id)
+            assert failed.managed_resume and failed.managed_creation.pod_uid is None
+            assert failed.official_runner_id is None and not c.inputs and not c.gateway_calls
+            assert failed.managed_resources.workload_uid == parent_uid
+            with case.driver._adapter.bind(c.context):
+                case.store.revoke_launch_token(failed.managed_preparation.host_id)
+            from saas.production.interactive_pod_binding import observe_failed_resume_pod
+            from saas.production.interactive_resources import CREATION_ANNOTATION
+
+            for target, mutation in (
+                (
+                    scripted.state.parent,
+                    lambda value: value["metadata"].update(uid=str(UUID(int=99))),
+                ),
+                (
+                    scripted.state.secret,
+                    lambda value: value["metadata"].update(uid=str(UUID(int=99))),
+                ),
+                (
+                    scripted.pod,
+                    lambda value: value["metadata"].update(
+                        deletionTimestamp="2026-10-20T00:00:00Z"
+                    ),
+                ),
+                (
+                    scripted.pod,
+                    lambda value: value["metadata"]["annotations"].update(
+                        {CREATION_ANNOTATION: "f" * 32}
+                    ),
+                ),
+                (
+                    scripted.pod,
+                    lambda value: value["metadata"]["ownerReferences"][0].update(
+                        uid=str(UUID(int=99))
+                    ),
+                ),
+            ):
+                saved = copy.deepcopy(target)
+                effects = len(scripted.state.effects)
+                try:
+                    mutation(target)
+                    with pytest.raises(RunnerControlError):
+                        observe_failed_resume_pod(scripted.p.delegate, failed)
+                    assert all(
+                        method == "GET" for method, _, _ in scripted.state.effects[effects:]
+                    )
+                    assert c.journal.read(run_id) == failed
+                finally:
+                    target.clear()
+                    target.update(saved)
+            observed = observe_failed_resume_pod(scripted.p.delegate, failed)
+            assert observed.pod_uid == str(UUID(int=13))
+            for changes in (
+                {"nonce": "f" * 32},
+                {"host_token_sha256": "f" * 64},
+                {"secret_uid": str(UUID(int=99))},
+            ):
+                with pytest.raises(InteractiveRecoveryError):
+                    c.journal.put(replace(failed, managed_creation=replace(observed, **changes)))
+                assert c.journal.read(run_id) == failed
+            from saas.production.interactive_recovery import _check_predecessor
+
+            for changed in (
+                {"volume_templates_sha256": "f" * 64},
+                {"volumes": (ManagedVolumeBinding("owned-home", str(UUID(int=99))),)},
+            ):
+                capture = ManagedSuspensionReceipt(
+                    ManagedTerminationReceipt(secret_uid=observed.secret_uid),
+                    volume_templates_sha256=roots[-1].managed_suspension.volume_templates_sha256,
+                    volumes=roots[-1].managed_suspension.volumes,
+                )
+                with pytest.raises(InteractiveRecoveryError):
+                    _check_predecessor(
+                        replace(
+                            failed,
+                            managed_creation=observed,
+                            managed_suspension=replace(capture, **changed),
+                        ),
+                        roots[-1],
+                    )
+            await c.executor.reconcile_physical_gc(limit=10)
+            assert c.journal.read(run_id).managed_creation.pod_uid == observed.pod_uid
+            scripted.terminal()
+            for _ in range(8):
+                await c.executor.reconcile_physical_gc(limit=10)
+                stopped = c.journal.read(run_id)
+                if stopped.process_stopped:
+                    break
+            assert stopped.process_stopped and stopped.managed_suspension.complete
+            assert stopped.outcome == "orphaned" and stopped.stop_kind == "managed_suspend"
+            assert scripted.claims == claims
+            assert scripted.state.parent["metadata"]["uid"] == parent_uid
+            roots.append(stopped)
+            continue
         assert await c.executor.execute(lease, cancellation=asyncio.Event()) == "succeeded"
         assert await c.executor.prepare_finalization(lease, result="succeeded") == "succeeded"
         control.transition_run(

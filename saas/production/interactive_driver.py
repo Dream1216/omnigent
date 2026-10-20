@@ -435,7 +435,10 @@ class OfficialInteractiveDriver:
                 conversation.host_id is None or generation is not None
             ):
                 tracker = state.managed_launches
-                if tracker.get(authorized.session_id) is not None:
+                tracked = tracker.get(authorized.session_id)
+                if tracked is not None and (
+                    generation is None or not tracked.settled.is_set() or tracked.error is None
+                ):
                     raise _unavailable()
                 tracker.begin(authorized.session_id)
                 await official._run_managed_launch(
@@ -564,6 +567,38 @@ class OfficialInteractiveDriver:
 
     async def recover_managed(self, record, checkpoint):
         return await self._recover_resources(record, checkpoint, retiring=False)
+
+    async def observe_managed_resume_pod(self, record):
+        from saas.production.interactive_pod_binding import observe_failed_resume_pod
+        from saas.production.interactive_preparation import _direct_launcher
+
+        if (
+            not record.managed_resume
+            or record.managed_preparation is None
+            or record.managed_preparation.provider != "agent_sandbox"
+            or record.managed_creation is None
+            or record.managed_creation.pod_uid is not None
+            or record.managed_resources is None
+            or record.official_runner_id is not None
+            or record.phase != "draining"
+            or record.outcome != "orphaned"
+            or record.process_stopped
+        ):
+            raise _unavailable()
+
+        def observe():
+            with self._adapter.bind(record.runtime):
+                delegate = _direct_launcher(
+                    self._app.state.sandbox_config.for_provider("agent_sandbox"), "agent_sandbox"
+                )
+                try:
+                    return observe_failed_resume_pod(delegate, record)
+                except Exception:  # noqa: BLE001 - provider diagnostics may contain credentials.
+                    raise _unavailable() from None
+                finally:
+                    delegate._close_clients()
+
+        return await asyncio.to_thread(observe)
 
     async def inspect_managed_retirement(
         self, record, *, cutoff, now, force=False, retaining=False

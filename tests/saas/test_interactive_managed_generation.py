@@ -170,8 +170,9 @@ async def test_new_generation_uses_a_locked_retired_snapshot_not_an_unconditiona
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tracked_launch", [None, "failed", "in_flight", "settled_success"])
 async def test_official_preparation_relaunches_the_same_identity_through_the_scoped_store(
-    controller_case, db_uri, tmp_path, monkeypatch
+    controller_case, db_uri, tmp_path, monkeypatch, tracked_launch
 ):
     from saas.production import interactive_driver as module
 
@@ -180,6 +181,14 @@ async def test_official_preparation_relaunches_the_same_identity_through_the_sco
     admission = ManagedGenerationAdmission(g.origin, g.host)
     app = FastAPI()
     app.state.managed_launches = ManagedLaunchTracker()
+    tracker = app.state.managed_launches
+    if tracked_launch is not None:
+        tracker.begin(g.authorized.session_id)
+        if tracked_launch == "failed":
+            tracker.fail(g.authorized.session_id, "isolated previous launch failure")
+        elif tracked_launch == "settled_success":
+            tracker.get(g.authorized.session_id).settled.set()
+    previous_entry = tracker.get(g.authorized.session_id)
     app.state.host_registry = app.state.runner_router = app.state.tunnel_registry = object()
     app.state.sandbox_config = g.p.deployment
     g.r.driver._app = app
@@ -194,7 +203,8 @@ async def test_official_preparation_relaunches_the_same_identity_through_the_sco
     async def checkpoint(_):
         pass
 
-    with pytest.raises(ProvisionReached):
+    blocked = tracked_launch in {"in_flight", "settled_success"}
+    with pytest.raises(RunnerControlError if blocked else ProvisionReached):
         await g.r.driver.prepare(
             g.authorized,
             previous=None,
@@ -204,7 +214,14 @@ async def test_official_preparation_relaunches_the_same_identity_through_the_sco
             on_resources=checkpoint,
             on_creation=checkpoint,
         )
+    if blocked:
+        assert launch.await_count == 0
+        assert tracker.get(g.authorized.session_id) is previous_entry
+        return
     assert launch.await_count == 1
+    assert tracker.get(g.authorized.session_id) is not previous_entry
+    assert not tracker.get(g.authorized.session_id).settled.is_set()
+    assert tracker.get(g.authorized.session_id).error is None
     args = launch.call_args.kwargs
     assert args["relaunch_host"] == g.host
     assert isinstance(args["host_store"], RetiredGenerationHostStore)
