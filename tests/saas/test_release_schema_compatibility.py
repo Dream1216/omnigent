@@ -14,6 +14,7 @@ from tests.saas.test_production_postgresql_migration import _REVISION, _bindings
 
 _P0 = "p0s000000015"
 _R = "lm2r00000001"
+_S = "lm2s00000001"
 _OFFICIAL = "mm1a2b3c4d5e"
 
 
@@ -65,7 +66,10 @@ def _receipt(tmp_path, monkeypatch, *, installed, requested, verify_only=True):
     return config
 
 
-@pytest.mark.parametrize("installed,requested", [(_P0, _P0), (_P0, _R), (_R, _R)])
+@pytest.mark.parametrize(
+    "installed,requested",
+    [(_P0, _P0), (_P0, _R), (_R, _R), (_P0, _S), (_R, _S), (_S, _S)],
+)
 def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
     tmp_path, monkeypatch, installed, requested
 ):
@@ -77,7 +81,14 @@ def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
 
 @pytest.mark.parametrize(
     "installed,requested",
-    [(_R, _P0), (_P0, "lm2q00000001"), (_P0, "future"), ("future", "future")],
+    [
+        (_R, _P0),
+        (_S, _P0),
+        (_S, _R),
+        (_P0, "lm2q00000001"),
+        (_P0, "future"),
+        ("future", "future"),
+    ],
 )
 def test_receipt_rejects_unsupported_or_future_schema_pairs(
     tmp_path, monkeypatch, installed, requested
@@ -87,14 +98,18 @@ def test_receipt_rejects_unsupported_or_future_schema_pairs(
         migration._load_runtime_receipt(config)
 
 
-def test_cross_schema_receipt_requires_read_only_verification(tmp_path, monkeypatch):
-    config = _receipt(tmp_path, monkeypatch, installed=_P0, requested=_R, verify_only=False)
+@pytest.mark.parametrize("requested", [_R, _S])
+def test_cross_schema_receipt_requires_read_only_verification(tmp_path, monkeypatch, requested):
+    config = _receipt(tmp_path, monkeypatch, installed=_P0, requested=requested, verify_only=False)
     with pytest.raises(migration.PostgreSqlMigrationError):
         migration._load_runtime_receipt(config)
 
 
-def test_cross_schema_receipt_cannot_borrow_the_schema_producer_sha(tmp_path, monkeypatch):
-    config = _receipt(tmp_path, monkeypatch, installed=_P0, requested=_R)
+@pytest.mark.parametrize("requested", [_R, _S])
+def test_cross_schema_receipt_cannot_borrow_the_schema_producer_sha(
+    tmp_path, monkeypatch, requested
+):
+    config = _receipt(tmp_path, monkeypatch, installed=_P0, requested=requested)
     monkeypatch.setattr(migration, "_installed_product_revision", lambda: "f" * 40)
     with pytest.raises(migration.PostgreSqlMigrationError) as error:
         migration._load_runtime_receipt(config)

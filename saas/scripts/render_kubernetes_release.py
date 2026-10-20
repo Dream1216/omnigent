@@ -943,8 +943,11 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         raise ReleaseRenderError(
             "service_logins must contain a complete core or full release profile"
         )
-    if "model_projection" in login_rows and control_plane_schema_revision != "lm2r00000001":
-        raise ReleaseRenderError("model projection profile requires the R schema lm2r00000001")
+    if "model_projection" in login_rows and control_plane_schema_revision not in {
+        "lm2r00000001",
+        "lm2s00000001",
+    }:
+        raise ReleaseRenderError("model projection profile requires the R or S schema")
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
         for service in sorted(login_rows)

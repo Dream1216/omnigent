@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source replay: retained price references without new foreign keys.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "bc09b9d52eeeab220fcc8a783cb66a1b9ea52c675ffb355deed3fe9148f634bb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "e38f5e3a4e92d089a4e4d2dd243b858a3b0a12900c2c13ef92492178fadb948a",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -560,6 +571,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "4f0d8bd7370bf80a5d761a7bfb82614ab94fc917eafd5dfd1610c75f69aa93ad",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "a8748fd25525d1536bd7b017f30c9468dab5b643d5239969553c037aae51548f",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -904,6 +925,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "cd54976f8773fb4c1be9bb5468ed8cba753ead55158a12a60635613df3ac2e45",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "2f2ba2c0ccb607376179e00283f92a4078a0bd514d387b5f13c30289723e63a0",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -1218,6 +1249,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "c3cbadb8cf13b7f1fafd693389d04ce23000d3db0022f355d323da012bea6981",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "9e79307c2477ae4f20f61da0d60ccca9e88cc680f7a2c791bab7b1a9d6fb2c9d",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -1527,6 +1568,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "f1ae92fcdfc0ce71b82c51280f419bb5abf0ed1a3e3299dd4c48ce7466ec07be",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "a76a398a1ad0d20973b9696b80a6ff5296205022ddf390fe90e09de85edf1973",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -1811,6 +1862,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "99c1a6928fcdfc2d793b071a5a86624fe5844e656494e4085fb4f7b4cb0d2c2b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "60b68219f113b380a41a116f82db5409405edd7dd2046431ab9dbc9ddf8cefb7",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -2102,6 +2163,16 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "9e476886506c5eec3bf1aaa7f06346bb80d343269e06da20afe7201745ebf89f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "ddc5bc635bc75094b7f966516a7ba473d3f8095b9d661f7c06f35235b2e705dc",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -2358,6 +2429,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "2a230567a8b1526cd234ea4c37f313873a9af84a1513478d1fe5ddecd7cc718a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "6fd202388ec8a427d4fa2cc288310fc62919b1a3403c964c5b661f13de3c4616",
     # Source-derived bounded model pages and admitted test-day index.
     (
         16,
@@ -3950,8 +4031,9 @@ def _expected_head(kind: Literal["official", "saas"]) -> str:
 
 def _runtime_saas_head(requested: object) -> str:
     supported = {
-        "p0s000000015": ("p0s000000015", "lm2r00000001"),
-        "lm2r00000001": ("lm2r00000001",),
+        "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001"),
+        "lm2r00000001": ("lm2r00000001", "lm2s00000001"),
+        "lm2s00000001": ("lm2s00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")

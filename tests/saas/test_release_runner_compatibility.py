@@ -26,6 +26,7 @@ from tests.saas.test_production_runner_database_fleet import _context, _fleet, _
 
 _P0 = "p0s000000015"
 _R = "lm2r00000001"
+_S = "lm2s00000001"
 
 
 def test_p0_runner_contract_retains_its_original_bytes() -> None:
@@ -34,10 +35,11 @@ def test_p0_runner_contract_retains_its_original_bytes() -> None:
     )
 
 
-def test_r_runner_contract_pins_the_complete_new_function_set_and_digest() -> None:
+@pytest.mark.parametrize("head", [_R, _S])
+def test_r_runner_contract_pins_the_complete_new_function_set_and_digest(head) -> None:
     p0, old_functions, old_hashes = _runner_agent_schema_contract(_P0)
-    r, new_functions, new_hashes = _runner_agent_schema_contract(_R)
-    assert (p0, r) == (_P0, _R)
+    r, new_functions, new_hashes = _runner_agent_schema_contract(head)
+    assert (p0, r) == (_P0, head)
     assert set(new_functions) - set(old_functions) == {
         ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb")
     }
@@ -49,7 +51,7 @@ def test_r_runner_contract_pins_the_complete_new_function_set_and_digest() -> No
         (16, 18), "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67"
     )
     assert runner_agent_database_authority_contract_sha256(
-        control_plane_schema_revision=_R
+        control_plane_schema_revision=head
     ) != runner_agent_database_authority_contract_sha256(control_plane_schema_revision=_P0)
 
 
@@ -92,7 +94,7 @@ def test_fleet_projection_must_equal_the_explicit_release_schema() -> None:
         )
 
 
-@pytest.mark.parametrize("revision", [_P0, _R])
+@pytest.mark.parametrize("revision", [_P0, _R, _S])
 def test_fleet_release_facts_keep_official_and_control_plane_heads_distinct(revision) -> None:
     context = _context()
     source = {
