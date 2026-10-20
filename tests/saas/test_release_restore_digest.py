@@ -12,6 +12,7 @@ from saas.production import postgresql_restore as restore
 
 _P0 = "p0s000000015"
 _R = "lm2r00000001"
+_S = "lm2s00000001"
 _R_TABLES = {
     "saas_model_connections",
     "saas_model_credential_versions",
@@ -59,16 +60,17 @@ def _populate(connection, head):
         )
 
 
-def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope():
+@pytest.mark.parametrize("head", [_R, _S])
+def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope(head):
     old = restore._digest_tables_for_schema(_P0)
-    new = restore._digest_tables_for_schema(_R)
+    new = restore._digest_tables_for_schema(head)
     assert old == restore._SELECTED_HASH_TABLES
     assert new[: len(old)] == old
     assert set(new) - set(old) == _R_TABLES
     assert len(new) == len(set(new)) == len(old) + 15
 
 
-@pytest.mark.parametrize("head", [_P0, _R])
+@pytest.mark.parametrize("head", [_P0, _R, _S])
 def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_connection, head):
     _populate(digest_connection, head)
     digest, counts = restore._digest_on_connection(digest_connection)
@@ -86,8 +88,11 @@ def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_c
     assert set(counts) == set(canonical)
 
 
-def test_r_evidence_change_changes_the_digest_even_if_legacy_rows_do_not_change(digest_connection):
-    _populate(digest_connection, _R)
+@pytest.mark.parametrize("head", [_R, _S])
+def test_r_evidence_change_changes_the_digest_even_if_legacy_rows_do_not_change(
+    digest_connection, head
+):
+    _populate(digest_connection, head)
     before, counts = restore._digest_on_connection(digest_connection)
     digest_connection.exec_driver_sql(
         "UPDATE public.saas_model_gateway_evidence SET value='changed'"
@@ -111,8 +116,9 @@ def test_unknown_or_ambiguous_schema_is_rejected_before_other_table_reads(
         restore._digest_on_connection(digest_connection)
 
 
-def test_fixture_limit_is_not_a_silent_truncation(digest_connection):
-    _populate(digest_connection, _R)
+@pytest.mark.parametrize("head", [_R, _S])
+def test_fixture_limit_is_not_a_silent_truncation(digest_connection, head):
+    _populate(digest_connection, head)
     digest_connection.execute(
         sa.text("INSERT INTO public.users VALUES (:id, :value)"),
         [
@@ -124,8 +130,9 @@ def test_fixture_limit_is_not_a_silent_truncation(digest_connection):
         restore._digest_on_connection(digest_connection)
 
 
-def test_missing_r_table_is_not_treated_as_an_empty_restored_table(digest_connection):
-    _populate(digest_connection, _R)
+@pytest.mark.parametrize("head", [_R, _S])
+def test_missing_r_table_is_not_treated_as_an_empty_restored_table(digest_connection, head):
+    _populate(digest_connection, head)
     digest_connection.exec_driver_sql("DROP TABLE public.saas_model_gateway_evidence")
     with pytest.raises(restore.PostgreSqlRestoreContractError, match="missing hash table"):
         restore._digest_on_connection(digest_connection)

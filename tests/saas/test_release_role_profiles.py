@@ -70,7 +70,15 @@ def _render(tmp_path, **kwargs):
 
 @pytest.mark.parametrize(
     "count,head",
-    [(15, "p0s000000015"), (18, "p0s000000015"), (18, "lm2r00000001"), (19, "lm2r00000001")],
+    [
+        (15, "p0s000000015"),
+        (18, "p0s000000015"),
+        (18, "lm2r00000001"),
+        (19, "lm2r00000001"),
+        (15, "lm2s00000001"),
+        (18, "lm2s00000001"),
+        (19, "lm2s00000001"),
+    ],
 )
 @pytest.mark.parametrize("mode", ["stage", "final"])
 def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
