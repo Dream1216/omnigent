@@ -60,7 +60,7 @@ def execution_control_plane() -> Iterator[
         engine.dispose()
 
 
-def _execution_fixture(engine: sa.Engine):
+def _execution_fixture(engine: sa.Engine, *, create_schema: bool = True):
 
     def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
@@ -69,7 +69,8 @@ def _execution_fixture(engine: sa.Engine):
 
     if engine.dialect.name == "sqlite":
         sa.event.listen(engine, "connect", _enable_foreign_keys)
-    SaasBase.metadata.create_all(engine)
+    if create_schema:
+        SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     scope = ExecutionScope(uuid4(), uuid4(), uuid4(), uuid4())
     with factory.begin() as db:
