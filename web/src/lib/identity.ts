@@ -772,6 +772,12 @@ export async function logoutBrowserSession(endpoint: string): Promise<BrowserLog
     return { ok: false, error, status: response.status };
   }
 
+  clearBrowserSessionIdentity();
+  return { ok: true };
+}
+
+/** Forget local authentication after the server has revoked the session. */
+export function clearBrowserSessionIdentity(): void {
   currentUserId = null;
   currentIsAdmin = false;
   identityResolved = false;
@@ -785,7 +791,65 @@ export async function logoutBrowserSession(endpoint: string): Promise<BrowserLog
       // Restricted storage contexts still get the server-side revocation.
     }
   }
-  return { ok: true };
+}
+
+export type SaasPasswordVersionResult =
+  { ok: true; version: number | null } | { ok: false; error: string };
+
+/** Read the signed-in account's optimistic password version without credential material. */
+export async function getSaasPasswordVersion(): Promise<SaasPasswordVersionResult> {
+  try {
+    const response = await authenticatedFetch(withBasePath("/saas/auth/me"));
+    if (!response.ok) return { ok: false, error: "Could not load password settings." };
+    const body = (await response.json()) as { password_version?: unknown };
+    const version = body.password_version;
+    // An older SaaS server does not advertise this capability.
+    if (version == null) return { ok: true, version: null };
+    if (typeof version === "number" && Number.isSafeInteger(version) && version >= 1) {
+      return { ok: true, version };
+    }
+  } catch {
+    // Preserve the current session when status cannot be established.
+  }
+  return { ok: false, error: "Could not load password settings." };
+}
+
+/** Rotate through SaaS authority; the server checks the version and revokes every session. */
+export async function changeSaasPassword(input: {
+  currentPassword: string;
+  newPassword: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const response = await authenticatedFetch(withBasePath("/saas/password"), {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": input.idempotencyKey,
+      },
+      body: JSON.stringify({
+        current_password: input.currentPassword,
+        new_password: input.newPassword,
+        expected_version: input.expectedVersion,
+      }),
+    });
+    if (response.ok) {
+      const body = (await response.json()) as { reauthentication_required?: unknown };
+      if (body.reauthentication_required === true) return { ok: true };
+      return { ok: false, error: "Sign in again to confirm your password change." };
+    }
+    const body = (await response.json()) as { detail?: { code?: string } };
+    if (body.detail?.code === "invalid_credentials") {
+      return { ok: false, error: "Current password is incorrect." };
+    }
+    if (body.detail?.code === "credential_version_conflict") {
+      return { ok: false, error: "Your password changed. Sign in again before retrying." };
+    }
+  } catch {
+    return { ok: false, error: "Could not confirm the change. Sign in again before retrying." };
+  }
+  return { ok: false, error: "Could not change password. Try again." };
 }
 
 /** Read the browser-only SaaS CSRF token without breaking restricted storage contexts. */

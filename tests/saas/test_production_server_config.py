@@ -272,6 +272,27 @@ def test_loads_exact_release_and_owner_only_secret_files(tmp_path: Path) -> None
     )
     assert config.official_builtin_agent_seed_enabled is False
     assert config.official_cross_workspace_scheduler_enabled is False
+    assert config.host_sharded is False
+
+
+@pytest.mark.parametrize("value", ["false", "true"])
+def test_loads_explicit_host_sharding_topology(tmp_path: Path, value: str) -> None:
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_HOST_SHARDED"] = value
+
+    config = load_production_server_config(environment)
+
+    assert config.host_sharded is (value == "true")
+    assert config.version_document["host_sharded"] is config.host_sharded
+
+
+@pytest.mark.parametrize("value", ["", "1", "TRUE", " true", "unknown"])
+def test_rejects_ambiguous_host_sharding_topology(tmp_path: Path, value: str) -> None:
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_HOST_SHARDED"] = value
+
+    with pytest.raises(ProductionServerConfigError, match="must be true or false"):
+        load_production_server_config(environment)
 
 
 def test_loads_platform_extensions_and_binds_them_to_migration_receipt(tmp_path: Path) -> None:

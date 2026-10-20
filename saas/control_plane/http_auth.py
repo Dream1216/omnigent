@@ -1087,12 +1087,14 @@ def create_saas_auth_router(
         return response
 
     @router.get("/auth/me")
-    def me(request: Request) -> dict[str, object]:
+    def me(request: Request, response: Response) -> dict[str, object]:
         principal = _require_principal(auth_provider, request)
+        response.headers["Cache-Control"] = "private, no-store"
         return {
             "user_id": str(principal.session.user_id),
             "security_version": principal.session.security_version,
             "authn_method": principal.session.authn_method,
+            "password_version": passwords.get_password_version(principal.session.user_id),
         }
 
     @router.get("/auth/status")

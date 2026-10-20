@@ -525,6 +525,7 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
                 "artifact_credential_revision": "sha256:" + "f" * 64,
                 "artifact_admission_receipt_sha256": "7" * 64,
                 "capabilities": ["run", "tenant"],
+                "host_sharded": False,
             }
             assert version.headers["cache-control"] == "no-store"
         built.close()
@@ -1129,9 +1130,11 @@ def test_official_dependency_repr_never_exposes_raw_server_config() -> None:
     assert leaked not in repr(dependencies)
 
 
+@pytest.mark.parametrize("host_sharded", [False, True])
 def test_production_composition_forces_context_free_official_jobs_off(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    host_sharded: bool,
 ) -> None:
     sessions = _sessions()
     captured: dict[str, Any] = {}
@@ -1142,7 +1145,7 @@ def test_production_composition_forces_context_free_official_jobs_off(
 
     monkeypatch.setattr(server_module, "create_omnigent_saas_app", capture_dependencies)
     try:
-        config = _config(tmp_path)
+        config = replace(_config(tmp_path), host_sharded=host_sharded)
         assert config.official_builtin_agent_seed_enabled is False
         assert config.official_cross_workspace_scheduler_enabled is False
 
@@ -1152,6 +1155,7 @@ def test_production_composition_forces_context_free_official_jobs_off(
         assert captured["scheduled_task_store"] is None
         assert captured["mcp_registry"] is None
         assert captured["public_sharing_max_level"] == "read"
+        assert captured["host_sharded"] is host_sharded
         assert captured["agent_store"].supports_user_agents is False
     finally:
         sessions.close()

@@ -1,10 +1,11 @@
 # Omnigent 0.19 SaaS adoption boundary
 
-The source baseline is `v0.19.0.dev20261015`, commit
-`09152b0a15af5075f20dd8f9178066957908a810`. The initial rollout retains
+The source baseline is `v0.19.0.dev20261020`, commit
+`3db749d784ff044304473939acaae3a65c0fec61`. The initial rollout retains
 adapter contract `0.2.0`, Runner Session initialization protocol `2`, official
-schema head `mm1a2b3c4d5e`, and control-plane head `p0s000000016`.
-The official migration tree is unchanged by the upstream tag. The SaaS head
+core schema head `nf12ab34cd56`, and control-plane head `p0s000000016`.
+The upstream adds the host-session index used for managed startup recovery;
+the entire official migration tree is preserved. The SaaS head
 adds a reversible authority correction and still requires old-data, RLS, restore
 and N-1 tests.
 
@@ -48,12 +49,22 @@ migration is rewritten.
 - ServerInfo and Session APIs retain the SaaS authentication, CSRF/Origin and
   RuntimeContext middleware. New routes still require the full isolation matrix.
 - SaaS image builds enable `VITE_OMNIGENT_HOST_ROUTING=true`. Multi-replica
-  deployments also require `OMNIGENT_HOST_SLICE_KEY_ENABLED=1` on executing
+  deployments set `OMNIGENT_SAAS_HOST_SHARDED=true` on the Server and
+  `OMNIGENT_HOST_SLICE_KEY_ENABLED=1` on executing
   Hosts and consistent hashing of the existing slice header/query onto the
   same Server endpoints. Shared PostgreSQL does not share live tunnels.
   Endpoint updates must drain ingress workers so the Host and browser reconnect
   to the same destination. The upstream unauthenticated prototype alone does
   not satisfy the SaaS rollout gate.
+- `OMNIGENT_SAAS_HOST_SHARDED` accepts only `true` or `false`, defaults to
+  `false` for a single replica, and is reported by `/saas/version`. The
+  two-replica template explicitly enables it. It controls wrong-replica
+  recovery, never authorization or placement authority.
+- SaaS Account settings read the caller's password version from `/saas/auth/me`
+  and use the existing versioned `/saas/password` mutation with CSRF and an
+  idempotency key. Successful rotation revokes all sessions, clears local
+  authenticated state and requires sign-in again. Accounts without a local
+  credential and older servers without the metadata keep this action hidden.
 - The ADR candidate is refreshed with `review_required` intact. Historical
   approvals and evidence remain immutable and do not approve this release.
 
@@ -90,10 +101,12 @@ capability boundary is not a substitute for those gates.
 
 ## Trusted main review
 
-The candidate refreshes only the exact `pyproject.toml` and `uv.lock` hashes
-in the N-1 input allowlist, retaining the current 0.18 main hashes. It does not
-change the evaluator, workflow identity, required assertions or acceptance
-logic. Upstream also changes ten GitHub workflows. The trusted main evaluator
+The candidate refreshes exact dependency and test-input hashes in the N-1
+allowlist while retaining protected-main hashes and the evaluator's required
+assertions and acceptance logic. The final commit's review packet must list
+all changed automation and every trusted input not accepted by protected main.
+Earlier scope-specific approvals do not automatically approve later changes.
+The trusted main evaluator
 requires explicit administrator review for policy and automation changes and
 will reject this candidate until that review is resolved. A candidate-side
 green test does not authorize that merge or any production promotion.
@@ -110,6 +123,11 @@ attachment and relay fallback passed six real browser cases without retries.
 All reconnect, input and fallback assertions remain enforced. Product code
 is unchanged. The 4,576-line ceiling, nine patches, 0.85 isolation floor,
 forbidden paths, reverse dependencies and release gates remain enforced.
+
+Subsequent individually approved increases set the direct-file ceiling to 156.
+The latest increase covers the upstream MCP Registry compatibility test fix;
+all other limits above remain unchanged. Current measurements belong to the
+exact candidate and must be recomputed after each source change.
 
 ## Performance comparison in the SaaS fork
 

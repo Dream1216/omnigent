@@ -221,6 +221,7 @@ class ProductionServerConfig:
     preview_root_domain: str | None = None
     preview_lease_seconds: int = 300
     delivery_config: DeliveryConfig | None = field(default=None, repr=False)
+    host_sharded: bool = False
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
 
@@ -255,6 +256,7 @@ class ProductionServerConfig:
                     self.artifact_admission_receipt.source_sha256
                 ),
                 "capabilities": sorted(self.capabilities),
+                "host_sharded": self.host_sharded,
             }
         )
 
@@ -977,6 +979,9 @@ def load_production_server_config(
     if _REVISION.fullmatch(active_key_id) is None or len(active_key_id) > 16:
         raise ProductionServerConfigError("OMNIGENT_SAAS_ACTIVE_KEY_ID is invalid")
     capabilities = _capabilities(_required(source, "OMNIGENT_SAAS_CAPABILITIES"))
+    host_sharded = source.get("OMNIGENT_SAAS_HOST_SHARDED", "false")
+    if host_sharded not in {"true", "false"}:
+        raise ProductionServerConfigError("OMNIGENT_SAAS_HOST_SHARDED must be true or false")
 
     try:
         service_role_bindings = load_production_service_role_bindings(source)
@@ -1135,6 +1140,7 @@ def load_production_server_config(
         preview_root_domain=preview_root_domain,
         preview_lease_seconds=preview_lease_seconds,
         delivery_config=delivery_config,
+        host_sharded=host_sharded == "true",
     )
 
 

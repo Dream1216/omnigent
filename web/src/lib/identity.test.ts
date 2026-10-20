@@ -189,6 +189,69 @@ describe("logoutBrowserSession", () => {
   });
 });
 
+describe("SaaS password authority", () => {
+  it.each([2, null, undefined])(
+    "reads password version %s without assuming an older server supports changes",
+    async (version) => {
+      fetchMock.mockResolvedValueOnce(mockJsonResponse({ password_version: version }));
+      const { getSaasPasswordVersion } = await import("./identity");
+      expect(await getSaasPasswordVersion()).toEqual({ ok: true, version: version ?? null });
+      expect(fetchMock.mock.calls[0][0]).toBe("/saas/auth/me");
+    },
+  );
+
+  it.each([0, -1, 1.5, "2"])("rejects malformed password version %s", async (version) => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ password_version: version }));
+    const { getSaasPasswordVersion } = await import("./identity");
+    expect(await getSaasPasswordVersion()).toEqual({
+      ok: false,
+      error: "Could not load password settings.",
+    });
+  });
+
+  it("sends CSRF, credential version and one idempotency key to the SaaS endpoint", async () => {
+    window.localStorage.setItem("omnigent.saas.csrf", "csrf-password-test");
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ reauthentication_required: true }));
+    const { changeSaasPassword } = await import("./identity");
+    expect(
+      await changeSaasPassword({
+        currentPassword: "old-test-password",
+        newPassword: "new-test-password",
+        expectedVersion: 3,
+        idempotencyKey: "password-change-test",
+      }),
+    ).toEqual({ ok: true });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/saas/password");
+    expect(init.method).toBe("PUT");
+    expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-password-test");
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBe("password-change-test");
+    expect(JSON.parse(init.body)).toEqual({
+      current_password: "old-test-password",
+      new_password: "new-test-password",
+      expected_version: 3,
+    });
+  });
+
+  it.each([
+    ["invalid_credentials", "Current password is incorrect."],
+    ["credential_version_conflict", "Your password changed. Sign in again before retrying."],
+  ])("preserves the %s denial", async (code, error) => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ detail: { code } }, { ok: false, status: 409 }),
+    );
+    const { changeSaasPassword } = await import("./identity");
+    expect(
+      await changeSaasPassword({
+        currentPassword: "old-test-password",
+        newPassword: "new-test-password",
+        expectedVersion: 3,
+        idempotencyKey: "password-change-test",
+      }),
+    ).toEqual({ ok: false, error });
+  });
+});
+
 describe("resolveIdentity transient failures", () => {
   afterEach(() => {
     vi.useRealTimers();

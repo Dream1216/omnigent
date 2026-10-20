@@ -49,6 +49,8 @@ const mocks = vi.hoisted(() => ({
   projectNames: [] as string[],
   hasNextPage: false,
   fetchNextPage: vi.fn(),
+  getSaasPasswordVersion: vi.fn(),
+  changeSaasPassword: vi.fn(),
 }));
 
 vi.mock("next-themes", () => ({
@@ -71,6 +73,9 @@ vi.mock("@/lib/accountsApi", () => ({
   changePassword: vi.fn(),
 }));
 vi.mock("@/lib/identity", () => ({
+  getSaasPasswordVersion: mocks.getSaasPasswordVersion,
+  changeSaasPassword: mocks.changeSaasPassword,
+  clearBrowserSessionIdentity: vi.fn(),
   resolveIdentity: () => Promise.resolve(mocks.me?.id ?? null),
   getCurrentIsAdmin: () => mocks.me?.is_admin ?? false,
   getCurrentUserId: () => mocks.me?.id ?? null,
@@ -239,6 +244,8 @@ beforeEach(() => {
   mocks.bulkArchiveMutate.mockReset();
   mocks.bulkDeleteMutate.mockReset();
   mocks.fetchNextPage.mockReset();
+  mocks.getSaasPasswordVersion.mockReset().mockResolvedValue({ ok: true, version: 2 });
+  mocks.changeSaasPassword.mockReset();
   mocks.conversationQuery.mockReset();
   mocks.theme = "system";
   mocks.isEmbedded = false;
@@ -1229,6 +1236,57 @@ describe("SettingsPage", () => {
     expect(screen.queryByRole("button", { name: /Change password/ })).toBeNull();
     // Sign out is still available.
     expect(screen.getByRole("button", { name: /Sign out/ })).toBeInTheDocument();
+  });
+
+  it("uses SaaS password authority with version checks and stable retry keys", async () => {
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = "/saas/login";
+    mocks.changeSaasPassword.mockResolvedValue({
+      ok: false,
+      error: "Current password is incorrect.",
+    });
+    renderPage("/settings/account");
+    fireEvent.click(await screen.findByRole("button", { name: "Change password" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByPlaceholderText("Current password"), {
+      target: { value: "old-test-password" },
+    });
+    for (const name of ["New password", "Confirm new password"]) {
+      fireEvent.change(within(dialog).getByPlaceholderText(name), {
+        target: { value: "new-test-password" },
+      });
+    }
+    const submit = within(dialog).getByRole("button", { name: "Change password" });
+    fireEvent.click(submit);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Current password is incorrect.");
+    const first = mocks.changeSaasPassword.mock.calls[0][0];
+    expect(first).toEqual({
+      currentPassword: "old-test-password",
+      newPassword: "new-test-password",
+      expectedVersion: 2,
+      idempotencyKey: expect.any(String),
+    });
+    fireEvent.click(submit);
+    await waitFor(() => expect(mocks.changeSaasPassword).toHaveBeenCalledTimes(2));
+    expect(mocks.changeSaasPassword.mock.calls[1][0]).toEqual(first);
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    for (const name of ["New password", "Confirm new password"]) {
+      fireEvent.change(within(dialog).getByPlaceholderText(name), {
+        target: { value: "different-test-password" },
+      });
+    }
+    fireEvent.click(submit);
+    await waitFor(() => expect(mocks.changeSaasPassword).toHaveBeenCalledTimes(3));
+    expect(mocks.changeSaasPassword.mock.calls[2][0].idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it("keeps password changes hidden for a SaaS account without an advertised credential", async () => {
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = "/saas/login";
+    mocks.getSaasPasswordVersion.mockResolvedValue({ ok: true, version: null });
+    renderPage("/settings/account");
+    await waitFor(() => expect(mocks.getSaasPasswordVersion).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: "Change password" })).toBeNull();
   });
 
   it("renders the Members section at /settings/members when accounts is on", async () => {

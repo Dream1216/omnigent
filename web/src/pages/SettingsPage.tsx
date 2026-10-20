@@ -119,7 +119,14 @@ import {
   fetchDatabricksStatus,
   type DatabricksConnectionStatus,
 } from "@/lib/databricksIntegration";
-import { getCurrentIsAdmin, logoutBrowserSession, resolveIdentity } from "@/lib/identity";
+import {
+  changeSaasPassword,
+  clearBrowserSessionIdentity,
+  getCurrentIsAdmin,
+  getSaasPasswordVersion,
+  logoutBrowserSession,
+  resolveIdentity,
+} from "@/lib/identity";
 import { clearOptimisticTitles } from "@/lib/optimisticTitles";
 import { clearSessionDrafts } from "@/lib/sessionDrafts";
 import { sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
@@ -2582,12 +2589,20 @@ function AccountSection() {
   const info = useServerInfo();
   const queryClient = useQueryClient();
   const accountsEnabled = info !== "loading" && info.accounts_enabled;
+  const saasMode = info !== "loading" && info.login_url === "/saas/login";
   // Identity for display. Sourced from the mode-agnostic `/v1/me` probe so it
   // works under OIDC too (the accounts-only `/auth/me` doesn't exist there).
   const [me, setMe] = useState<{ id: string; is_admin: boolean } | null | "unknown">("unknown");
 
-  // Change-password dialog state (lifted verbatim from the old AccountMenu).
-  // Only used in accounts mode — OIDC identities have no local password.
+  // SaaS advertises the account's version before enabling password changes.
+  const [passwordVersion, setPasswordVersion] = useState<number | null>(null);
+  const [passwordStatusError, setPasswordStatusError] = useState<string | null>(null);
+  const passwordSubmission = useRef<{
+    currentPassword: string;
+    newPassword: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+  } | null>(null);
   const [pwOpen, setPwOpen] = useState(false);
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -2605,6 +2620,19 @@ function AccountSection() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!saasMode) return;
+    let active = true;
+    void getSaasPasswordVersion().then((result) => {
+      if (!active) return;
+      if (result.ok) setPasswordVersion(result.version);
+      else setPasswordStatusError(result.error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [saasMode]);
+
   const onSignOut = useCallback(async () => {
     if (info === "loading" || signOutBusy) return;
     if (!accountsEnabled && info.login_url !== "/saas/login") {
@@ -2614,7 +2642,6 @@ function AccountSection() {
 
     setSignOutBusy(true);
     setSignOutError(null);
-    const saasMode = info.login_url === "/saas/login";
     const result = await logoutBrowserSession(saasMode ? "/saas/auth/logout" : "/auth/logout");
     if (!result.ok) {
       setSignOutError(result.error);
@@ -2627,7 +2654,7 @@ function AccountSection() {
     clearSessionDrafts();
     clearOptimisticTitles();
     window.location.href = withBasePath(saasMode ? "/saas/login" : "/login");
-  }, [accountsEnabled, info, queryClient, signOutBusy]);
+  }, [accountsEnabled, info, queryClient, signOutBusy, saasMode]);
 
   const resetPwForm = useCallback(() => {
     setOldPw("");
@@ -2636,26 +2663,62 @@ function AccountSection() {
     setPwError(null);
     setPwDone(false);
     setPwBusy(false);
+    passwordSubmission.current = null;
   }, []);
 
   const onSubmitPassword = useCallback(async () => {
+    if (pwBusy) return;
     if (newPw !== confirmPw) {
       setPwError("New passwords don't match.");
       return;
     }
     setPwBusy(true);
     setPwError(null);
-    const result = await changePassword({ old_password: oldPw, new_password: newPw });
+    let result: { ok: true } | { ok: false; error: string };
+    if (saasMode) {
+      if (passwordVersion === null) {
+        setPwBusy(false);
+        setPwError("Reload password settings before trying again.");
+        return;
+      }
+      let submission = passwordSubmission.current;
+      if (
+        submission === null ||
+        submission.currentPassword !== oldPw ||
+        submission.newPassword !== newPw ||
+        submission.expectedVersion !== passwordVersion
+      ) {
+        submission = {
+          currentPassword: oldPw,
+          newPassword: newPw,
+          expectedVersion: passwordVersion,
+          idempotencyKey: crypto.randomUUID(),
+        };
+      }
+      passwordSubmission.current = submission;
+      result = await changeSaasPassword(submission);
+    } else {
+      result = await changePassword({ old_password: oldPw, new_password: newPw });
+    }
     setPwBusy(false);
     if (result.ok) {
       setPwDone(true);
       setOldPw("");
       setNewPw("");
       setConfirmPw("");
+      passwordSubmission.current = null;
+      if (saasMode) {
+        clearBrowserSessionIdentity();
+        sessionUpdatesSocket.stop();
+        queryClient.clear();
+        clearSessionDrafts();
+        clearOptimisticTitles();
+        window.location.href = withBasePath("/saas/login");
+      }
     } else {
       setPwError(result.error);
     }
-  }, [oldPw, newPw, confirmPw]);
+  }, [oldPw, newPw, confirmPw, pwBusy, saasMode, passwordVersion, queryClient]);
 
   if (me === "unknown" || me === null) {
     return <Section title="Account">{null}</Section>;
@@ -2684,9 +2747,7 @@ function AccountSection() {
             instead of navigating away from /settings. */}
 
         <div className="flex flex-col gap-1">
-          {/* Change password is accounts-only — an OIDC identity's password
-              lives with the IdP, so there's nothing to change here. */}
-          {accountsEnabled && (
+          {(accountsEnabled || (saasMode && passwordVersion !== null)) && (
             <Button
               variant="ghost"
               className="w-full justify-start gap-2"
@@ -2717,6 +2778,7 @@ function AccountSection() {
               {signOutError}
             </div>
           )}
+          {passwordStatusError && <p role="alert">{passwordStatusError} Reload to retry.</p>}
         </div>
       </div>
 
@@ -2758,6 +2820,7 @@ function AccountSection() {
                 type="password"
                 autoComplete="new-password"
                 placeholder="New password"
+                minLength={saasMode ? 12 : undefined}
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
                 disabled={pwBusy}

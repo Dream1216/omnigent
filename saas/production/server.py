@@ -1495,6 +1495,7 @@ def build_production_server(
     app_dependencies["scheduled_task_store"] = None
     app_dependencies["mcp_registry"] = None
     app_dependencies["public_sharing_max_level"] = "read"
+    app_dependencies["host_sharded"] = config.host_sharded
     from saas.production.agent_store import disable_standalone_agent_installs
 
     app_dependencies["agent_store"] = disable_standalone_agent_installs(
