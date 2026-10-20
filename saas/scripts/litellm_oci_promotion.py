@@ -43,6 +43,17 @@ def validate_runtime_release_contract(repo: Path, workflow: str, action: str) ->
         )
 
     violations = []
+    for event, following in (("pull_request", "push"), ("push", "workflow_dispatch")):
+        marker = f"  {event}:\n"
+        event_source = (
+            workflow.split(marker, 1)[1].split(f"  {following}:\n", 1)[0]
+            if workflow.count(marker) == 1
+            else ""
+        )
+        if event_source.count('      - "deploy/litellm/**"') != 1:
+            violations.append(
+                f"LiteLLM runtime changes must trigger the formal candidate: {event}"
+            )
     path = repo / "deploy/litellm/Dockerfile"
     dockerfile = ""
     if path.is_file() and not any(

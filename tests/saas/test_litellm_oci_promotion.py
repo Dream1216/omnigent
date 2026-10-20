@@ -28,6 +28,24 @@ from tests.saas.test_oci_promotion import EPOCH, REVISION, candidate, write_json
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+def test_runtime_only_changes_trigger_the_formal_candidate(event: str) -> None:
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/saas-image-candidate.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    assert "deploy/litellm/**" in workflow["on"][event]["paths"]
+
+
+def test_runtime_gate_rejects_missing_runtime_only_trigger() -> None:
+    workflow = (ROOT / ".github/workflows/saas-image-candidate.yml").read_text()
+    action = (ROOT / "saas/actions/build-oci-candidate/action.yml").read_text()
+    changed = workflow.replace('      - "deploy/litellm/**"\n', "", 1)
+    assert (
+        "LiteLLM runtime changes must trigger the formal candidate: pull_request"
+        in validate_runtime_release_contract(ROOT, changed, action)
+    )
+
+
 def test_runtime_release_shell_steps_parse_after_github_expression_binding() -> None:
     workflow = yaml.load(
         (ROOT / ".github/workflows/saas-image-candidate.yml").read_text(), Loader=yaml.BaseLoader
