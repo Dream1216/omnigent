@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -12,8 +13,10 @@ from saas.production.server_config import (
     ProductionServerConfigError,
     load_production_migration_receipt,
 )
+from saas.production.worker import ProductionWorkerConfigError, load_production_worker_config
 from saas.scripts import render_kubernetes_release as renderer
 from tests.saas.test_production_server_config import _bindings, _receipt
+from tests.saas.test_production_worker import _environment as _worker_environment
 from tests.saas.test_render_kubernetes_release import (
     _canonical_json,
     _copy_sources,
@@ -236,3 +239,41 @@ def test_role_loader_rejects_declared_hash_drift_and_partial_profile_facts(tmp_p
         message = "FILE is required"
     with pytest.raises(bindings.ProductionServiceRoleBindingsError, match=message):
         bindings.load_production_service_role_graph(source)
+
+
+@pytest.mark.parametrize("count", [18, 19])
+def test_worker_configuration_consumes_the_complete_declared_receipt_graph(tmp_path, count):
+    source = _worker_environment(tmp_path)
+    known = dict(bindings.load_production_service_role_bindings(source).by_service)
+    profiles = bindings.OPTIONAL_SERVICE_ROLE_PROFILES[: 2 if count == 18 else 3]
+    for prefix, filename, roles in profiles:
+        rows = tuple(
+            known.get(service)
+            or bindings.ProductionServiceRoleBinding(service, f"release_{service}_login", role)
+            for service, role in roles.items()
+        )
+        known.update((row.service, row) for row in rows)
+        raw = bindings.render_production_service_role_bindings(rows)
+        path = tmp_path / filename
+        path.write_text(raw)
+        path.chmod(0o400)
+        source[prefix + "_FILE"] = str(path)
+        source[prefix + "_SHA256"] = hashlib.sha256(raw.encode("ascii")).hexdigest()
+    graph = bindings.load_production_service_role_graph(source)
+    receipt_path = Path(source["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"])
+    document = json.loads(receipt_path.read_text())
+    document["service_role_graph_sha256"] = graph.sha256
+    document["saas_head"] = "lm2r00000001"
+    source["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] = "lm2r00000001"
+    receipt_path.chmod(0o600)
+    receipt_path.write_text(json.dumps(document))
+    receipt_path.chmod(0o400)
+    config = load_production_worker_config(source)
+    assert config.migration_receipt.service_role_graph_sha256 == graph.sha256
+    stripped = {
+        key: value
+        for key, value in source.items()
+        if not any(key.startswith(prefix) for prefix, _filename, _roles in profiles)
+    }
+    with pytest.raises(ProductionWorkerConfigError, match="verification facts"):
+        load_production_worker_config(stripped)
