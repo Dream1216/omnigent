@@ -119,3 +119,14 @@ def test_managed_sandbox_controller_litellm_and_pg18_billing(
         tmp_path,
         runtime_probe=probe,
     )
+
+
+def test_cold_controller_reuses_existing_databases_credentials_and_workspace(monkeypatch):
+    path = os.environ.get("OMNIGENT_SAAS_TEST_COLD_RESTORE_ROOT")
+    if path is None:
+        pytest.skip("requires task-owned replacement Pod and retained controller databases")
+    from tests.saas.interactive_cold_restore import load_cold_checkpoint
+    from tests.saas.interactive_cold_restore_runtime import run_cold_controller
+
+    _assert_cluster_authority(load_cold_checkpoint(Path(path))["payload"]["cluster"])
+    run_cold_controller(Path(path), monkeypatch)

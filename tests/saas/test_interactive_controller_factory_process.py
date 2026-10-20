@@ -104,6 +104,7 @@ from saas.production.runner_control import (
 )
 from saas.production.runner_readiness import assert_postgresql_runner_fleet_ready
 from tests.saas import test_model_deployments, test_tenant_model_catalog_postgresql
+from tests.saas.interactive_cold_restore import immutable_private_material
 from tests.saas.test_billing_metering_transport import _server_context, _ServerThread
 from tests.saas.test_execution_control_plane import _execution_fixture
 from tests.saas.test_gateway_machine_metering import (
@@ -216,9 +217,7 @@ def _readiness_tls(root):
 
 
 def _private(path, value):
-    path.write_text(value)
-    path.chmod(0o400)
-    return str(path)
+    return immutable_private_material(path, value)
 
 
 def _supervise_controller_crash(drive, *, factory, workers, tmp_path, exchange, metering_server):
@@ -637,6 +636,47 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 RunnerCertificateAuthority(metering, accepted_trust_bundle_versions=("test-v1",)),
                 expected_host="localhost",
             )
+            if cluster is not None and cluster.get("managed_cold_restore") is True:
+                assert dormant_managed and not failed_resume
+                case.cold_restore_bootstrap = {
+                    "case": {
+                        "source": case.source,
+                        "product_revision": case.product_revision,
+                        "image_digest": case.image_digest,
+                        "schema_revision": case.schema_revision,
+                        "connection_token": case.connection_token,
+                        "member": asdict(case.member),
+                        "pool_id": str(case.pool_id),
+                        "placement_id": str(case.placement_id),
+                        "database_url": case.engine.url.render_as_string(hide_password=False),
+                        "runner_url": case.runner_engine.url.render_as_string(hide_password=False),
+                    },
+                    "official_database_url": db_uri,
+                    "application_urls": {
+                        key: engine.url.render_as_string(hide_password=False)
+                        for key, engine in applications.items()
+                    },
+                    "worker_urls": {
+                        key: sessions.kw["bind"].url.render_as_string(hide_password=False)
+                        for key, sessions in workers.items()
+                    },
+                    "billing_url": billing.kw["bind"].url.render_as_string(hide_password=False),
+                    "metering_url": metering.kw["bind"].url.render_as_string(hide_password=False),
+                    "actual_litellm": actual,
+                    "certificates": {
+                        group: {
+                            key: {
+                                field: str(getattr(value, field))
+                                for field in ("ca", "certificate", "private_key")
+                            }
+                            for key, value in certificates.items()
+                        }
+                        for group, certificates in (
+                            ("control", control_certificates),
+                            ("metering", meter_certificates),
+                        )
+                    },
+                }
 
             def drive(**recovery_options):
                 metering_thread = _ServerThread(metering_server)
@@ -1016,6 +1056,7 @@ def _serve_controller(
     tls_material=None,
     ready_material=None,
     cluster=None,
+    cold_restore=None,
 ):
     retire_managed = cluster is not None and cluster.get("managed_retirement") is True
     generation_managed = cluster is not None and cluster.get("managed_generation") is True
@@ -1694,6 +1735,25 @@ def _serve_controller(
                 )
             else:
                 _wait(lambda: adapter._bound or adapter._task.done(), "managed controller startup")
+            if cold_restore is not None:
+                from tests.saas.interactive_cold_restore_runtime import assert_restored_dormant
+
+                assert_restored_dormant(
+                    state=cold_restore,
+                    adapter=adapter,
+                    app=app,
+                    app_loop=app_loop,
+                    runtime=runtime,
+                    conversation=conversation,
+                    delegate=delegate,
+                    factory=factory,
+                    workers=workers,
+                    issued=issued,
+                    certificate=certificate,
+                    exchange=exchange,
+                    observed=observed,
+                )
+                return
             if restarted:
                 _wait(lambda: adapter._bound or adapter._task.done(), "cold controller recovery")
                 adapter.assert_production_ready()
@@ -3333,6 +3393,21 @@ def _serve_controller(
                 if dormant_managed:
                     read_persistent_marker(record)
                 retirement_evidence, origin = retire_generation(record, runs)
+                if cluster.get("managed_cold_restore") is True:
+                    from tests.saas.interactive_cold_restore import checkpoint_suspended_fixture
+
+                    evidence = checkpoint_suspended_fixture(
+                        root=tmp_path,
+                        bootstrap=case.cold_restore_bootstrap,
+                        source=source,
+                        record=origin,
+                        old_bearer=private_bearers[-1],
+                        cluster=cluster,
+                    )
+                    (exchange / "cold-ready.json").write_text(json.dumps(evidence))
+                    assert not threading.Event().wait(300), (
+                        "owned Pod replacement did not occur after the durable checkpoint"
+                    )
                 if generation_managed:
                     credential_origin = origin
                     for generation_index in range(1, 3 if dormant_managed else 2):
