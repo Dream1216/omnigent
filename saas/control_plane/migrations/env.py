@@ -28,8 +28,10 @@ from saas.control_plane import scheduling_models as _scheduling_models  # noqa: 
 from saas.control_plane import webhook_models as _webhook_models  # noqa: F401
 from saas.control_plane import worktree_models as _worktree_models  # noqa: F401
 from saas.control_plane.db_models import SaasBase
+from saas.control_plane.migrations.schema_metadata import control_plane_migration_metadata
 
 config = context.config
+target_metadata = control_plane_migration_metadata(SaasBase.metadata)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
@@ -47,14 +49,32 @@ if db_url:
 
 
 def _configure(connection: Connection) -> None:
+    sqlite = connection.dialect.name == "sqlite"
     context.configure(
         connection=connection,
-        target_metadata=SaasBase.metadata,
+        target_metadata=target_metadata,
         render_as_batch=True,
         version_table="saas_alembic_version",
+        transactional_ddl=True if sqlite else None,
     )
     with context.begin_transaction():
+        deferred = None
+        if sqlite:
+            driver = connection.connection.driver_connection
+            if driver is None:
+                raise RuntimeError("SQLite migration connection is unavailable")
+            if not driver.in_transaction:
+                connection.exec_driver_sql("BEGIN")
+            deferred = connection.exec_driver_sql("PRAGMA defer_foreign_keys").scalar_one()
+            connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
         context.run_migrations()
+        if sqlite:
+            if connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(1):
+                raise RuntimeError("SQLite migration would retain invalid foreign keys")
+            # Rebuilt parent names are valid again; clear SQLite's deferred DDL count.
+            connection.exec_driver_sql("PRAGMA defer_foreign_keys=OFF")
+            if deferred:
+                connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
 
 
 def run_migrations_offline() -> None:
@@ -62,7 +82,7 @@ def run_migrations_offline() -> None:
 
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
-        target_metadata=SaasBase.metadata,
+        target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table="saas_alembic_version",
