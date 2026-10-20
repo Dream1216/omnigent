@@ -314,7 +314,12 @@ BEGIN
                 AND NOT bound.connoinherit AND NOT format.connoinherit
                 AND bound.conkey @> ARRAY[attribute.attnum]::smallint[]
                 AND format.conkey=ARRAY[attribute.attnum]::smallint[]
-                AND pg_get_expr(bound.conbin,bound.conrelid)=expected.bound_expr
+                AND pg_get_expr(bound.conbin,bound.conrelid) IN (
+                    expected.bound_expr,
+                    CASE WHEN expected.bound_name='ck_model_publication_documents' THEN
+                        '((length(canonical_snapshot) >= 8) AND (length(canonical_snapshot) <= 16383) AND ((length(canonical_readiness) >= 8) AND (length(canonical_readiness) <= 16383)))'
+                    ELSE expected.bound_expr END
+                )
                 AND pg_get_expr(format.conbin,format.conrelid)=expected.format_expr
         )
     ) THEN

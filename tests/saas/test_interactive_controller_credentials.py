@@ -86,6 +86,7 @@ async def test_recovery_allows_host_ingress_without_claiming_before_exact_stop(
     adapter._engine = SimpleNamespace(dispose=lambda: None)
     runtime = SimpleNamespace(create_authority=lambda **_: object())
     app = FastAPI()
+    app.state.sandbox_config = None
     app.state.production_interactive_conversation_store = SimpleNamespace()
 
     @app.post("/isolated-host-ready")
@@ -227,6 +228,7 @@ async def test_adapter_binds_metering_paths_to_grant_and_recovery(
     authority = SimpleNamespace(verify_recovery=lambda record: recovered.append(record))
     runtime = SimpleNamespace(create_authority=lambda **_: authority)
     app = FastAPI()
+    app.state.sandbox_config = None
     app.state.production_interactive_conversation_store = SimpleNamespace()
     adapter._bind_runtime(app=app, runtime=runtime, official=object())
     try:

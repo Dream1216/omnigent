@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -29,6 +30,7 @@ _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
 _RUNTIME_REVISION_BINDER = "saas/scripts/bind_runtime_build_revision.py"
+_SCHEMA_REVISION_SOURCE = "saas/control_plane/schema_revision.py"
 _WOLFI_RUNTIME_LOCK = "saas/supply_chain/wolfi-runtime-lock.json"
 _GITHUB_CLI_SOURCE_LOCK = "saas/supply_chain/github-cli-source-lock.json"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
@@ -514,6 +516,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     )
     if workflow is None:
         return violations
+    try:
+        candidate_schema_revision(repo)
+    except ValueError:
+        violations.append("packaged control-plane schema binding is invalid")
 
     candidate_steps = [
         (
@@ -570,8 +576,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)",
         ("adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)"),
         (
-            "schema_revision=$(jq -r .revision_contract.control_plane_schema_revision "
-            "saas/production/baseline.json)"
+            "schema_revision=$(uv run python -m saas.scripts.check_image_supply_chain "
+            "--print-schema-revision)"
         ),
     }
     if any(source not in workflow for source in material_sources):
@@ -2210,10 +2216,13 @@ def _validate_evidence(
     for field in ("upstream_revision", "adapter_contract_version"):
         if evidence.get(field) != upstream.get(field):
             violations.append(f"image evidence {field} does not match the upstream manifest")
-    baseline = json.loads((repo / "saas/production/baseline.json").read_text(encoding="utf-8"))
-    schema_revision = baseline["revision_contract"]["control_plane_schema_revision"]
-    if evidence.get("control_plane_schema_revision") != schema_revision:
-        violations.append("image evidence schema revision does not match production baseline")
+    try:
+        schema_revision = candidate_schema_revision(repo)
+    except ValueError:
+        violations.append("packaged control-plane schema binding is invalid")
+    else:
+        if evidence.get("control_plane_schema_revision") != schema_revision:
+            violations.append("image evidence schema revision does not match packaged source")
 
     violations.extend(_validate_workflow(policy, evidence.get("workflow")))
 
@@ -2382,15 +2391,52 @@ def validate_release(
     }
 
 
+def candidate_schema_revision(repo: Path) -> str:
+    """Read the packaged schema constant without executing candidate source."""
+
+    violations: list[str] = []
+    source = _read_repository_contract(
+        repo, _SCHEMA_REVISION_SOURCE, label="packaged schema", violations=violations
+    )
+    try:
+        body = ast.parse(source or "").body
+    except SyntaxError as error:
+        raise ValueError("packaged control-plane schema binding is invalid") from error
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        if isinstance(body[0].value.value, str):
+            body = body[1:]
+    if (
+        violations
+        or len(body) != 1
+        or not isinstance(body[0], ast.Assign)
+        or len(body[0].targets) != 1
+        or not isinstance(body[0].targets[0], ast.Name)
+        or body[0].targets[0].id != "CONTROL_PLANE_SCHEMA_REVISION"
+        or not isinstance(body[0].value, ast.Constant)
+        or not isinstance(body[0].value.value, str)
+        or re.fullmatch(r"[a-z0-9]{1,32}", body[0].value.value) is None
+    ):
+        raise ValueError("packaged control-plane schema binding is invalid")
+    return body[0].value.value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", default="saas/supply_chain/release-policy.json")
     parser.add_argument("--evidence")
     parser.add_argument("--product-revision")
     parser.add_argument("--output")
-    parser.add_argument("--require-ready", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--require-ready", action="store_true")
+    mode.add_argument("--print-schema-revision", action="store_true")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
+    if args.print_schema_revision:
+        try:
+            print(candidate_schema_revision(repo))
+        except ValueError as error:
+            parser.error(str(error))
+        return 0
     policy = json.loads((repo / args.policy).read_text(encoding="utf-8"))
     evidence_path = args.evidence or policy.get("production_evidence")
     try:

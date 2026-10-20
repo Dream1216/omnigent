@@ -4,14 +4,17 @@ from hashlib import sha256
 
 import pytest
 import sqlalchemy as sa
-from alembic import command
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 
 from saas.control_plane.billing_models import UsageEventRecord
 from saas.control_plane.execution_models import RunEventRecord, RunRecord
+from saas.control_plane.migrations.versions import (
+    lm2o00000001_terminal_physical_recovery as recovery_migration,
+)
 from saas.control_plane.migrations.versions.lm2k00000001_interactive_physical_recovery import (
     _BODY as _ORPHAN_BODY,
 )
-from saas.control_plane.migrations.versions.lm2o00000001_terminal_physical_recovery import _BODY
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scheduling import SchedulingControlPlane, SchedulingError
 from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
@@ -19,7 +22,6 @@ from saas.production.interactive_recovery import (
     UnstartedInteractiveRecoveryRecord,
     physical_recovery_proof_sha256,
 )
-from tests.saas.test_control_plane_migration import _migration_config
 from tests.saas.test_interactive_dispatch_postgresql import _worker_logins
 from tests.saas.test_interactive_execution_postgresql import (
     interactive_postgresql as interactive_postgresql,
@@ -173,7 +175,7 @@ def test_real_executor_confirms_released_terminal_without_reopening_execution(
 
         if terminal == "cancelled":
             with f.engine.begin() as db:
-                config = _migration_config(db)
+                original_head = db.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
                 signature = "public.saas_interactive_physical_recovery_guard_v1()"
                 original = db.execute(
                     sa.text(
@@ -183,11 +185,13 @@ def test_real_executor_confirms_released_terminal_without_reopening_execution(
                 ).one()
                 db.exec_driver_sql(f"GRANT CREATE ON SCHEMA public TO {f.table_owner}")
                 db.exec_driver_sql(f"SET LOCAL ROLE {f.table_owner}")
-                for target, body in (("lm2n00000001", _ORPHAN_BODY), ("head", _BODY)):
-                    if target == "head":
-                        command.upgrade(config, target)
-                    else:
-                        command.downgrade(config, target)
+                # Exercise the function replacement without downgrading live accounting data.
+                for operation, body in (
+                    (recovery_migration.downgrade, _ORPHAN_BODY),
+                    (recovery_migration.upgrade, recovery_migration._BODY),
+                ):
+                    with Operations.context(MigrationContext.configure(db)):
+                        operation()
                     observed = db.execute(
                         sa.text(
                             "SELECT proowner,proacl::text,prosrc FROM pg_proc "
@@ -201,6 +205,10 @@ def test_real_executor_confirms_released_terminal_without_reopening_execution(
                     )
                 db.exec_driver_sql("RESET ROLE")
                 db.exec_driver_sql(f"REVOKE CREATE ON SCHEMA public FROM {f.table_owner}")
+                assert (
+                    db.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                    == original_head
+                )
                 assert (
                     db.scalar(
                         sa.select(RunDispatchRecord.physical_recovery_fence).where(

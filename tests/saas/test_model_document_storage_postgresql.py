@@ -107,7 +107,39 @@ def test_real_postgresql_billing_attempt_survives_gateway_document_roundtrip(
         engine.dispose()
 
 
-@pytest.mark.parametrize("drift", ("spoofed_head", "weakened_bound", "new_foreign_key"))
+def test_role_projection_accepts_exact_pg_dump_publication_check_form(isolated_postgres_url):
+    engine = sa.create_engine(isolated_postgres_url)
+    roles = (
+        Path(__file__).resolve().parents[2] / "saas/control_plane/postgresql_roles.sql"
+    ).read_text()
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_config(connection), "lm2q00000001")
+            connection.exec_driver_sql(
+                "ALTER TABLE saas_model_publication_versions "
+                "DROP CONSTRAINT ck_model_publication_documents"
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE saas_model_publication_versions "
+                "ADD CONSTRAINT ck_model_publication_documents CHECK ("
+                "length(canonical_snapshot)>=8 AND length(canonical_snapshot)<=16383 AND "
+                "(length(canonical_readiness)>=8 AND length(canonical_readiness)<=16383))"
+            )
+            connection.exec_driver_sql(roles)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "spoofed_head",
+        "weakened_bound",
+        "weakened_snapshot",
+        "weakened_readiness",
+        "new_foreign_key",
+    ),
+)
 def test_role_projection_requires_the_exact_document_and_relationship_contract(
     isolated_postgres_url, drift
 ):
@@ -139,6 +171,21 @@ def test_role_projection_requires_the_exact_document_and_relationship_contract(
                         "ALTER TABLE saas_model_deployment_versions "
                         "ADD CONSTRAINT ck_model_deployment_configuration "
                         "CHECK (length(canonical_configuration) BETWEEN 8 AND 16384)"
+                    )
+                elif drift in {"weakened_snapshot", "weakened_readiness"}:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE saas_model_publication_versions "
+                        "DROP CONSTRAINT ck_model_publication_documents"
+                    )
+                    snapshot_limit = 16384 if drift == "weakened_snapshot" else 16383
+                    readiness_limit = 16384 if drift == "weakened_readiness" else 16383
+                    connection.exec_driver_sql(
+                        "ALTER TABLE saas_model_publication_versions "
+                        "ADD CONSTRAINT ck_model_publication_documents CHECK ("
+                        "length(canonical_snapshot)>=8 AND "
+                        f"length(canonical_snapshot)<={snapshot_limit} AND "
+                        "(length(canonical_readiness)>=8 AND "
+                        f"length(canonical_readiness)<={readiness_limit}))"
                     )
                 else:
                     connection.exec_driver_sql(

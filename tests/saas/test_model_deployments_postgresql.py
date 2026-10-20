@@ -26,6 +26,7 @@ from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
     PlatformSecurityError,
 )
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from tests.saas.test_model_connections import _KEY, _Cipher, _fixture
 from tests.saas.test_model_deployments import _command
 
@@ -156,7 +157,7 @@ def test_real_postgresql_draft_admission_and_projection_use_separate_restricted_
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "lm1f00000001"
+                == CONTROL_PLANE_SCHEMA_REVISION
             )
             assert connection.scalar(
                 sa.text(
