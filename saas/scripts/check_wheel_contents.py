@@ -282,6 +282,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/p0s000000013_platform_model_provider.py",
     "saas/control_plane/migrations/versions/p0s000000014_local_staff_password.py",
     "saas/control_plane/migrations/versions/p0s000000015_preview_tunnel_reconnect.py",
+    "saas/control_plane/migrations/versions/p0s000000016_public_api_bound_logins.py",
     "saas/control_plane/preview_execution.py",
     "saas/control_plane/preview_models.py",
     "saas/control_plane/preview_sessions.py",

@@ -3,8 +3,10 @@
 The source baseline is `v0.19.0.dev20261015`, commit
 `09152b0a15af5075f20dd8f9178066957908a810`. The initial rollout retains
 adapter contract `0.2.0`, Runner Session initialization protocol `2`, official
-schema head `mm1a2b3c4d5e`, and control-plane head `p0s000000015`.
-Unchanged schema heads do not replace old-data, RLS, restore or N-1 tests.
+schema head `mm1a2b3c4d5e`, and control-plane head `p0s000000016`.
+The official migration tree is unchanged by the upstream tag. The SaaS head
+adds a reversible authority correction and still requires old-data, RLS, restore
+and N-1 tests.
 
 ## Initial production capability boundary
 
@@ -54,6 +56,28 @@ migration is rewritten.
   not satisfy the SaaS rollout gate.
 - The ADR candidate is refreshed with `review_required` intact. Historical
   approvals and evidence remain immutable and do not approve this release.
+
+## Bound Public API login migration
+
+`p0s000000016` corrects a pre-existing mismatch between dedicated service logins
+and the Public API base-role name. The service requires the exact login from the
+immutable role-binding manifest, inherited Public API authority, no privileged
+role flags, and no other base-role grants. It does not switch database roles.
+
+The migration alters only the Public API authority predicate in 26 existing
+policies. Credential ID, account, Tenant, Space and Project predicates, policy
+identity/targets/command/permissiveness, and FORCE RLS remain intact. Previous
+migration files and P0S15 source anchors are retained. Clean PG16/18 replays cover
+Core, model, platform-admin and Preview profiles; predecessor captures must first
+match the existing P0S15 anchors before P0S16 digests are recorded.
+
+Downgrade restores the original policy expressions without rewriting business
+rows. This does not by itself admit the original signed 0.18 image against P0S16:
+its schema tuple and startup checks must be exercised. A rollback that requires
+P0S15 must drain writes, apply the reviewed downgrade and refresh the actual
+release-bound receipts before restoring the pinned N-1 components. The complete
+recovery must meet the existing 900-second gate. No automatic rollback claim is
+made from migration reversibility alone.
 
 ## Release requirements
 

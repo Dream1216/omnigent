@@ -1,5 +1,24 @@
 # Upstream patch queue
 
+
+## Current replay target: daily20 (2026-10-20)
+
+The user retargeted the upgrade to `v0.19.0.dev20261020`, full revision
+`3db749d784ff044304473939acaae3a65c0fec61`. The existing nine-patch boundary
+is retained. Patches0005 and0010 have been regenerated against this exact tree
+from the merged source, preserving SaaS workspace routing, token expiry/revocation,
+stable input receipts and upstream startup-worker wakeups, auth-rejected exits and
+monotonic tunnel liveness. The other seven patches replay unchanged. Old patch
+bytes and hashes are preserved in the daily20 BuildArtifacts evidence directory.
+
+Text application alone initially succeeded for all nine patches, but replayed
+bytes differed on eleven files; that failure is retained. The new replay must
+match every official-source byte. This records source rebasing only: dependency,
+protocol, migration, original scope approvals, full CI, physical multiarch builds,
+real business P4 and production admission remain pending. Historical approved
+budgets and hash/workflow exceptions below are not extended by this section.
+
+
 Every `.patch` must have a ledger entry recording its owner, affected upstream
 paths, tests, upstream issue or pull request, first/last replayed revisions, and
 removal condition. Runtime monkey patches and whole-file overrides are not

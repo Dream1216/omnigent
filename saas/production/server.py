@@ -1304,6 +1304,7 @@ def build_production_saas_services(
     )
     public_execution = PublicApiExecutionService(
         sessions.public_api,
+        database_login=config.service_role_bindings.login_for("public_api"),
         cursor_codec=FilterBoundCursorCodec(
             keys={config.active_key_id: config.secrets.cursor_hmac_key},
             active_key_id=config.active_key_id,

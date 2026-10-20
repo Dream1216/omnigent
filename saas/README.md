@@ -63,7 +63,7 @@ treating code contracts as production Provider evidence:
 - poison Outbox events use content-blind error facts, bounded retry and an
   immutable Quarantine receipt. A dedicated actor-owned status authority exposes
   only the customer's onboarding projection;
-- candidate schema revision `p0s000000015` extends the forced-RLS control plane
+- candidate schema revision `p0s000000016` extends the forced-RLS control plane
   through exact dispatch/profile binding, Preview execution sessions,
   per-Runner-incarnation database authority, local Staff password credentials,
   and serialized preview tunnel reconnect.
@@ -2288,3 +2288,54 @@ explicit, not an inherited approval. Local Patch Replay, delta, migration, RLS, 
 SDK, Wheel, regression, or image checks are candidate evidence only. Production N-1,
 dual-architecture signed-image admission, Canary, and release `GO` require their own
 protected exact-revision evidence.
+
+## Private Snapshot object authority
+
+The dedicated client-authenticated Delivery authorization listener can optionally
+serve Snapshot upload allocation, independent metadata/hash verification, object
+streaming and upload revocation. Set
+`OMNIGENT_SAAS_SNAPSHOT_OBJECT_AUTHORITY_FILE` to an owner-only regular JSON file
+with this schema; leaving it unset keeps the endpoints disabled:
+
+```json
+{
+  "schema_version": "omnigent.saas.snapshot-object-authority/v1",
+  "bearer_token_file": "/run/snapshot-authority/bearer.token",
+  "active_key_id": "data-v1",
+  "keys": {"data-v1": "/run/snapshot-authority/data-v1.key"},
+  "ttl_seconds": 300,
+  "max_bytes": 134217728
+}
+```
+
+These are configuration examples, not deployed validation resources. Materialize
+the configuration, a dedicated ASCII bearer of at least 32 bytes, and each raw
+32-byte data key as regular files owned by the service UID with mode0600 or
+stricter. Keep every key ID needed by retained objects when selecting a new active
+key. Provider credentials, enrollment keys and production signing identities are
+separate. No credential or key belongs in Git or an environment variable.
+
+Allocation resolves the actor's current database identity, project actions,
+environment and membership version before signing. The fixed artifact store URI
+selects the bucket and a new `dcp-source-snapshots/v1` subprefix inside the already
+admitted `executor_storage` keyspace; no additional bucket authority is granted.
+Uploads bind their
+project/build metadata, SSE-C headers and `If-None-Match: *` in the signature.
+Per-object encryption keys are derived from the private keyring, bucket and
+canonical key. Normal TLS and the storage engine enforce encryption; metadata
+verification also reads and hashes the actual decrypted bytes. Revocation fences
+an unused upload with an immutable tombstone; it does not delete retained data.
+The exporter enforces the upload byte limit, and independent verification rejects
+oversized objects before a Snapshot can become ready.
+
+RustFS documents [SSE-C support](https://docs.rustfs.com/en/security-compliance/encryption),
+and [S3 requires encryption headers with presigned SSE-C requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/specifying-s3-c-encryption.html).
+The actual isolated pinned RustFS passed encrypted readback, missing/wrong-key
+denial and412 overwrite refusal; that storage probe is not product acceptance.
+The matching DCP must configure its private S3 upload CA explicitly. Its
+`checkpoint` mode supports completed-Run import/read/promotion without dummy
+Runner/issuer URLs; native Runner commands require the separate `configured`
+mode and actual compatible services. These object endpoints do not implement a
+Runner grant issuer. Existing object references outside the new prefix need
+their original verified reader or a reviewed migration before compatibility can
+be claimed. Production enabling still requires exact-image full P4 and P5.

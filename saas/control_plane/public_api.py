@@ -215,9 +215,11 @@ class PublicApiExecutionService:
         upstream_revision: str,
         schema_revision: str,
         adapter_contract_version: str,
+        database_login: str = "saas_public_api",
         rate_limits: Mapping[str, tuple[int, timedelta]] | None = None,
     ) -> None:
         self._sessions = session_factory
+        self._database_login = _text(database_login, "database_login", 63)
         self._cursors = cursor_codec
         self._idempotency = PublicApiIdempotencyKeyring(
             keys=idempotency_keys,
@@ -1043,7 +1045,22 @@ class PublicApiExecutionService:
                 "project_scope_required", "Public execution requires a project-scoped credential"
             )
         if db.get_bind().dialect.name == "postgresql" and not bool(
-            db.scalar(sa.text("SELECT current_user = 'saas_public_api'"))
+            db.scalar(
+                sa.text(
+                    "SELECT current_user = :login AND NOT (role.rolsuper OR "
+                    "role.rolbypassrls OR role.rolcreaterole OR role.rolcreatedb OR "
+                    "role.rolreplication) AND "
+                    "pg_has_role(current_user, 'saas_public_api', 'USAGE') AND "
+                    "(current_user = 'saas_public_api' OR "
+                    "(role.rolcanlogin AND role.rolinherit AND NOT EXISTS ("
+                    "SELECT 1 FROM pg_auth_members membership "
+                    "JOIN pg_roles granted ON granted.oid = membership.roleid "
+                    "WHERE membership.member = role.oid AND "
+                    "(granted.rolname <> 'saas_public_api' OR membership.admin_option)))) "
+                    "FROM pg_roles role WHERE role.rolname = current_user"
+                ),
+                {"login": self._database_login},
+            )
         ):
             raise PublicApiError(
                 "public_api_database_role_required",

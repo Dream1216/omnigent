@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -58,19 +59,15 @@ def _enable_replay_tls(connection: sa.Connection, tmp_path: Path) -> Path:
         serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption(),
     )
-    # COPY writes only these two fixture files, owned by the fresh cluster's OS user.
+    # Each fixture owns its certificate files across repeated cluster replays.
+    prefix = f"/tmp/omnigent-production-replay-{uuid4().hex}"
     for name, pem in (("crt", certificate_pem), ("key", key_pem)):
         lines = ",".join("'" + line + "'" for line in pem.decode().splitlines())
-        connection.exec_driver_sql(
-            f"COPY (SELECT unnest(ARRAY[{lines}])) TO '/tmp/omnigent-production-replay.{name}'"
-        )
+        connection.exec_driver_sql(f"COPY (SELECT unnest(ARRAY[{lines}])) TO '{prefix}.{name}'")
         setting = "ssl_cert_file" if name == "crt" else "ssl_key_file"
-        connection.exec_driver_sql(
-            f"ALTER SYSTEM SET {setting} = '/tmp/omnigent-production-replay.{name}'"
-        )
+        connection.exec_driver_sql(f"ALTER SYSTEM SET {setting} = '{prefix}.{name}'")
     connection.exec_driver_sql(
-        "COPY (SELECT '') TO PROGRAM "
-        "'chmod 0600 /tmp/omnigent-production-replay.key && cat >/dev/null'"
+        f"COPY (SELECT '') TO PROGRAM 'chmod 0600 {prefix}.key && cat >/dev/null'"
     )
     connection.exec_driver_sql("ALTER SYSTEM SET ssl = 'on'")
     assert connection.exec_driver_sql("SELECT pg_reload_conf()").scalar_one()
@@ -79,9 +76,9 @@ def _enable_replay_tls(connection: sa.Connection, tmp_path: Path) -> Path:
     return ca_path
 
 
-@pytest.fixture
+@pytest.fixture(params=["core", "model", "admin"])
 def production_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> Iterator[migration.ProductionPostgreSqlPlan]:
     configured = os.environ.get("OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL")
     if not configured:
@@ -194,11 +191,38 @@ def production_replay(
         official_owner_url=authority_url("official_owner"),
         saas_owner_url=authority_url("saas_owner"),
         service_role_bindings=manifest,
-        platform_model_service_role_bindings=platform_manifest,
-        platform_admin_service_role_bindings=platform_admin_manifest,
+        platform_model_service_role_bindings=(
+            platform_manifest if request.param != "core" else None
+        ),
+        platform_admin_service_role_bindings=(
+            platform_admin_manifest if request.param == "admin" else None
+        ),
         require_tls=True,
     )
-    yield plan
+    try:
+        yield plan
+    finally:
+        cleanup = sa.create_engine(url, isolation_level="AUTOCOMMIT")
+        try:
+            with cleanup.connect() as connection:
+                connection.exec_driver_sql("DROP DATABASE IF EXISTS admission_replay WITH (FORCE)")
+                roles = (
+                    connection.execute(
+                        sa.text(
+                            "SELECT rolname FROM pg_roles "
+                            "WHERE rolname <> 'postgres' AND rolname NOT LIKE 'pg_%'"
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if roles:
+                    quote = connection.dialect.identifier_preparer.quote
+                    connection.exec_driver_sql(
+                        "DROP ROLE " + ", ".join(quote(role) for role in roles)
+                    )
+        finally:
+            cleanup.dispose()
 
 
 def test_real_clean_replay_upgrade_and_catalog_rejections(
@@ -211,7 +235,14 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     first = migration.run_production_postgresql_migration(plan)
     assert first.status == "pass" and first.official_head == target
     assert first.service_role_graph_sha256 == plan.service_role_graph.sha256
-    assert len(plan.service_role_graph.bindings) == 18
+    profile = (
+        "core"
+        if plan.platform_model_service_role_bindings is None
+        else "model"
+        if plan.platform_admin_service_role_bindings is None
+        else "admin"
+    )
+    assert len(plan.service_role_graph.bindings) == {"core": 15, "model": 17, "admin": 18}[profile]
     verified = migration.run_production_postgresql_migration(plan, verify_only=True)
     assert verified.catalog_sha256 == first.catalog_sha256
     repeated = migration.run_production_postgresql_migration(plan)
@@ -232,7 +263,11 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         with monkeypatch.context() as context:
             context.setattr(
                 migration,
-                "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                {
+                    "core": "_SOURCE_SECURITY_CATALOG_SHA256",
+                    "model": "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
+                    "admin": "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                }[profile],
                 {},
             )
             with pytest.raises(migration.PostgreSqlMigrationError) as absent:
@@ -268,7 +303,24 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         assert final.catalog_sha256 == first.catalog_sha256
     finally:
         owner.dispose()
-    _verify_preview_deployment_and_startup(plan, final, tmp_path)
+    if profile == "admin":
+        _verify_preview_deployment_and_startup(plan, final, tmp_path)
+    else:
+        config, engines = _startup_config(plan, final, tmp_path)
+        try:
+            migration.verify_production_postgresql_state(engines=engines, config=config)
+            sessions = create_role_session_factories(
+                config,  # type: ignore[arg-type]
+                verify_state=lambda service_engines, service_config: (
+                    migration.verify_production_postgresql_state(
+                        engines=service_engines, config=service_config
+                    )
+                ),
+            )
+            sessions.close()
+        finally:
+            for engine in engines.values():
+                engine.dispose()
 
 
 def _startup_config(
@@ -283,7 +335,10 @@ def _startup_config(
         service: sa.make_url(plan.saas_owner.url)
         .set(username=plan.service_role_graph.login_for(service))
         .render_as_string(hide_password=False)
-        for service in (*migration._SERVER_SERVICE_ROLES, "billing")
+        for service in (
+            *migration._SERVER_SERVICE_ROLES,
+            *(("billing",) if "billing" in plan.service_role_graph.by_service else ()),
+        )
     }
     config = SimpleNamespace(
         product_revision=plan.product_revision,
@@ -291,7 +346,11 @@ def _startup_config(
         control_plane_schema_revision=receipt.saas_head,
         service_role_bindings=plan.service_role_bindings,
         service_role_graph=plan.service_role_graph,
-        capabilities=frozenset({"billing"}),
+        capabilities=(
+            frozenset({"billing"})
+            if "billing" in plan.service_role_graph.by_service
+            else frozenset()
+        ),
         secrets=SimpleNamespace(database_urls=SimpleNamespace(as_mapping=lambda: urls)),
         migration_receipt=ProductionMigrationReceipt(
             path=path,

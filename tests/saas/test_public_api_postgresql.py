@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,9 +30,12 @@ def _migration_config(connection: sa.Connection, root: Path) -> Config:
     return config
 
 
-def _public_service(factory: sessionmaker[Session]) -> PublicApiExecutionService:
+def _public_service(
+    factory: sessionmaker[Session], *, database_login: str = "saas_public_api"
+) -> PublicApiExecutionService:
     return PublicApiExecutionService(
         factory,
+        database_login=database_login,
         cursor_codec=FilterBoundCursorCodec(
             keys={"2026-08": b"public-api-cursor-acceptance-key-v1"},
             active_key_id="2026-08",
@@ -78,8 +82,11 @@ def _set_public_context(
     )
 
 
+@pytest.mark.parametrize("dedicated_login", [False, True], ids=["base-role", "bound-login"])
 def test_public_api_real_role_rls_provenance_rate_and_idempotency(
     isolated_postgres_url: str,
+    request: pytest.FixtureRequest,
+    dedicated_login: bool,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(isolated_postgres_url)
@@ -127,8 +134,46 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
             connection.execute(
                 sa.text("SELECT version_num FROM saas_alembic_version")
             ).scalar_one()
-            == "p0s000000015"
+            == "p0s000000016"
         )
+
+        def policy_projection() -> dict[tuple[str, str], tuple[object, ...]]:
+            rows = connection.execute(
+                sa.text(
+                    "SELECT relation.relname, policy.polname, policy.oid, policy.polcmd, "
+                    "policy.polpermissive, policy.polroles, relation.relrowsecurity, "
+                    "relation.relforcerowsecurity, "
+                    "pg_get_expr(policy.polqual, policy.polrelid), "
+                    "pg_get_expr(policy.polwithcheck, policy.polrelid) "
+                    "FROM pg_policy policy JOIN pg_class relation "
+                    "ON relation.oid = policy.polrelid JOIN pg_namespace namespace "
+                    "ON namespace.oid = relation.relnamespace WHERE namespace.nspname = 'public'"
+                )
+            )
+            return {(row[0], row[1]): tuple(row[2:]) for row in rows}
+
+        command.downgrade(migration, "p0s000000015")
+        before_policies = policy_projection()
+        command.upgrade(migration, "head")
+        after_policies = policy_projection()
+        assert before_policies.keys() == after_policies.keys()
+        changed = [key for key in before_policies if before_policies[key] != after_policies[key]]
+        assert len(changed) == 26
+        for key in changed:
+            assert before_policies[key][:-2] == after_policies[key][:-2]
+            assert after_policies[key][4:6] == (True, True)
+            for expression in after_policies[key][-2:]:
+                if expression is not None:
+                    assert "CURRENT_USER = 'saas_public_api'::name" not in expression
+                    assert (
+                        "pg_has_role(CURRENT_USER, 'saas_public_api'::name, 'USAGE'::text)"
+                        in expression
+                    )
+        command.downgrade(migration, "p0s000000015")
+        assert policy_projection() == before_policies
+        command.upgrade(migration, "head")
+        assert policy_projection() == after_policies
+
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         connection.execute(
             sa.text(
@@ -241,13 +286,54 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
             },
         )
 
-    public_sessions = sessionmaker(engine, expire_on_commit=False)
+    public_login = "saas_public_api"
+    if dedicated_login:
+        from psycopg import sql
 
-    @sa.event.listens_for(public_sessions, "after_begin")
-    def _use_public_role(
-        _session: Session, _transaction: object, connection: sa.Connection
-    ) -> None:
-        connection.exec_driver_sql("SET LOCAL ROLE saas_public_api")
+        public_login = "test_public_" + uuid4().hex
+        password = secrets.token_hex(32)
+        with engine.begin() as connection:
+            cursor = connection.connection.driver_connection.cursor()
+            try:
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE ROLE {} LOGIN INHERIT NOSUPERUSER NOCREATEDB "
+                        "NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}"
+                    ).format(sql.Identifier(public_login), sql.Literal(password))
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "GRANT saas_public_api TO {} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+                    ).format(sql.Identifier(public_login))
+                )
+                cursor.execute(
+                    sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                        sql.Identifier(engine.url.database), sql.Identifier(public_login)
+                    )
+                )
+            finally:
+                cursor.close()
+        public_engine = sa.create_engine(engine.url.set(username=public_login, password=password))
+
+        def cleanup_login() -> None:
+            public_engine.dispose()
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f'REVOKE CONNECT ON DATABASE "{engine.url.database}" FROM "{public_login}"'
+                )
+                connection.exec_driver_sql(f'DROP ROLE "{public_login}"')
+            engine.dispose()
+
+        request.addfinalizer(cleanup_login)
+        public_sessions = sessionmaker(public_engine, expire_on_commit=False)
+    else:
+        public_sessions = sessionmaker(engine, expire_on_commit=False)
+
+        @sa.event.listens_for(public_sessions, "after_begin")
+        def _use_public_role(
+            _session: Session, _transaction: object, connection: sa.Connection
+        ) -> None:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_public_api")
 
     principal = ValidatedApiCredential(
         credential_id=credential_id,
@@ -260,7 +346,25 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
         authenticated_at=now,
         expires_at=now + timedelta(days=1),
     )
-    service = _public_service(public_sessions)
+    service = _public_service(public_sessions, database_login=public_login)
+    misbound_service = _public_service(public_sessions, database_login="different_public_login")
+    with pytest.raises(PublicApiError) as wrong_login:
+        misbound_service.get_project(principal, project_id=project_id)
+    assert wrong_login.value.code == "public_api_database_role_required"
+    privileged_service = _public_service(
+        sessionmaker(engine), database_login=engine.url.username or "postgres"
+    )
+    with pytest.raises(PublicApiError) as privileged:
+        privileged_service.get_project(principal, project_id=project_id)
+    assert privileged.value.code == "public_api_database_role_required"
+    if dedicated_login:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'GRANT saas_app TO "{public_login}"')
+        with pytest.raises(PublicApiError) as broadened:
+            service.get_project(principal, project_id=project_id)
+        assert broadened.value.code == "public_api_database_role_required"
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f'REVOKE saas_app FROM "{public_login}"')
 
     class _AuthenticatedMachine:
         @staticmethod

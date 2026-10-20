@@ -573,6 +573,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
     current_inventory = {
         (
             16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "60eb65c90e638b2287c580ed382a56b5cc66b3d631baf7079fe50b446540add3",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "b7d392d2f9735d5ad330c9fac68fd2fd1865f6a1f5071bec5cb02ce85a45dcc1",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
+        (
+            16,
             "mm1a2b3c4d5e",
             "p0s000000015",
         ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
@@ -593,6 +613,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
     }
     current_security = {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "a2eabd3ddc1c42c7ffb405948bd83e0ce1eae4bf09d7b44a0db3555ecd066ca7",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "04a54a1b32a40e6e2477640dab6911e183f82937222931c8644d68000288d986",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "8e535eb8515687213b7f62e3cb06a6757c59ca028af42efe7893978c66310f49",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "d4b69a4e5b16c963196b79bacc4b784af48d347dd6b5aa26d006f900f6039491",
         (
             16,
             "mm1a2b3c4d5e",
@@ -617,6 +657,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
     assert migration._PUBLIC_SCHEMA_INVENTORY_SHA256.items() >= current_inventory.items()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= current_security.items()
     platform_model_security = {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "43fb356c2dff8a18b3989ac1233b1ef6ac81dd14834f07b2d142a5abdc811e67",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "6f266ed84bcf28ac4f7f4fdb0438ea73e79e12ddb90767102635a920ffa7af46",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "38bacb4070264eaa1b764c433a23550dc8d98cbcc729f1452514597d79636df1",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "94e868710ff88c16507dfb95f648ac134219c3c4bee1cbd06ff9e7eaebf86106",
         (
             16,
             "mm1a2b3c4d5e",
@@ -673,6 +733,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         >= platform_model_security.items()
     )
     platform_admin_security = {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "0aceff134402bd462e04e2a30320b6c956eb4c6a246e1e78c2db0204be3af81b",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "ada0ecc253539b93fa6918dd7345601b0aae2f4ca460389cf3c47f1c22de4b90",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "c7040d4e24bb8f02c175a49534ffcde09260dc707048835cf5774d9440e5822a",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "b0f24327c0d603112e7bd88159819ddae025fe1f10389b3968f5ce57c2b5cbf1",
         (
             16,
             "mm1a2b3c4d5e",

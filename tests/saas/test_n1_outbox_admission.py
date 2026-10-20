@@ -175,6 +175,7 @@ def test_n1_roles_replay_p0s8_through_p0s15_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000013",
         "p0s000000014",
         "p0s000000015",
+        "p0s000000016",
     )
     normalized_constraint_contract = " ".join(constraint_contract.split())
 
@@ -192,6 +193,7 @@ def test_n1_roles_replay_p0s8_through_p0s15_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000013",
         "p0s000000014",
         "p0s000000015",
+        "p0s000000016",
     )
     assert tuple(consume_hashes) == (
         "p0s000000005",
@@ -205,6 +207,7 @@ def test_n1_roles_replay_p0s8_through_p0s15_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000013",
         "p0s000000014",
         "p0s000000015",
+        "p0s000000016",
     )
     assert {revision: consume_hashes[revision] for revision in forward_revisions} == dict.fromkeys(
         forward_revisions, p0s7_consume_hash
@@ -215,7 +218,7 @@ def test_n1_roles_replay_p0s8_through_p0s15_reuse_exact_p0s7_rate_contracts() ->
     assert (
         "schema_revision IN ( 'p0s000000006', 'p0s000000007', "
         "'p0s000000008', 'p0s000000009', 'p0s000000010', 'p0s000000011', "
-        "'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015' )"
+        "'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016' )"
         in normalized_constraint_contract
     )
     assert set(re.findall(r"'((?:p0s)[0-9]{9})'", normalized_constraint_contract)) == {
@@ -230,6 +233,7 @@ def test_n1_roles_replay_p0s8_through_p0s15_reuse_exact_p0s7_rate_contracts() ->
         "p0s000000013",
         "p0s000000014",
         "p0s000000015",
+        "p0s000000016",
     }
 
 

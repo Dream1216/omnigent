@@ -216,6 +216,26 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "60eb65c90e638b2287c580ed382a56b5cc66b3d631baf7079fe50b446540add3",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "b7d392d2f9735d5ad330c9fac68fd2fd1865f6a1f5071bec5cb02ce85a45dcc1",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
+    (
+        16,
         "mm1a2b3c4d5e",
         "p0s000000015",
     ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
@@ -296,6 +316,26 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "a2eabd3ddc1c42c7ffb405948bd83e0ce1eae4bf09d7b44a0db3555ecd066ca7",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "04a54a1b32a40e6e2477640dab6911e183f82937222931c8644d68000288d986",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "8e535eb8515687213b7f62e3cb06a6757c59ca028af42efe7893978c66310f49",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "d4b69a4e5b16c963196b79bacc4b784af48d347dd6b5aa26d006f900f6039491",
     (
         16,
         "mm1a2b3c4d5e",
@@ -380,6 +420,26 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "43fb356c2dff8a18b3989ac1233b1ef6ac81dd14834f07b2d142a5abdc811e67",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "6f266ed84bcf28ac4f7f4fdb0438ea73e79e12ddb90767102635a920ffa7af46",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "38bacb4070264eaa1b764c433a23550dc8d98cbcc729f1452514597d79636df1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "94e868710ff88c16507dfb95f648ac134219c3c4bee1cbd06ff9e7eaebf86106",
+    (
+        16,
         "mm1a2b3c4d5e",
         "p0s000000015",
     ): "61239caab9e58b03e93f9ee59a59f05c83ce28326c97d5580f275d47777660eb",
@@ -432,6 +492,26 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "0aceff134402bd462e04e2a30320b6c956eb4c6a246e1e78c2db0204be3af81b",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "ada0ecc253539b93fa6918dd7345601b0aae2f4ca460389cf3c47f1c22de4b90",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "c7040d4e24bb8f02c175a49534ffcde09260dc707048835cf5774d9440e5822a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "b0f24327c0d603112e7bd88159819ddae025fe1f10389b3968f5ce57c2b5cbf1",
+    (
+        16,
         "mm1a2b3c4d5e",
         "p0s000000015",
     ): "fb328b45607f5117d72c3fcafabb9997ee9e33c18e3fe4334254546ffe875de4",
@@ -479,6 +559,26 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "50fdd2521871d6619519cfaf5c2a5e4cfd1e9fed2fcfa6f567b7397d6994937e",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "ec3ed16dd01d6a05f7930f26f1e46ccac50c5bcd93a5e08008ee5acd1f8cfa57",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "389098bfb06040e6e5e8c0fdd00a3014057ef772769fd86760f03286e33c5f7f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "b9259705dd665c9c08201bc929e75cd0c8db927dc94db98fad1c7b0c083b6fad",
+    (
+        16,
         "mm1a2b3c4d5e",
         "p0s000000015",
     ): "389098bfb06040e6e5e8c0fdd00a3014057ef772769fd86760f03286e33c5f7f",
@@ -499,6 +599,26 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "5d0fe538017cb0926f7d08c833df89766dfc667ad06a6fe0774cd28c1a749428",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "be256ac4d20d551073fa5baae1e75412b2e680f46a999d59e389ab21b1f58e16",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "9a6b3dd2af5a9db7af81f9bbebe16b96a007c7404151d2302145cb9f25465e62",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "4bafa07bee798b114c04df1e0be3a488ff3afe837ab7c25f3d45f90b55b49ae1",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2591,7 +2711,7 @@ def _verify_preview_owner_lease_definers(
     return frozenset(f"routine:{row[1]}" for row in function_rows)
 
 
-def _verify_object_ownership(
+def _object_ownership_projection(
     official_connection: Connection,
     saas_connection: Connection,
     *,
@@ -2664,12 +2784,28 @@ def _verify_object_ownership(
         for table, owner in foreign_saas_owners
     ):
         raise PostgreSqlMigrationError("saas_object_ownership_drifted", "verification")
+    return tuple((str(table), str(owner)) for table, owner in (*official_rows, *saas_rows))
+
+
+def _verify_object_ownership(
+    official_connection: Connection,
+    saas_connection: Connection,
+    *,
+    official_owner: str,
+    saas_owner: str,
+) -> tuple[tuple[str, str], ...]:
+    ownership = _object_ownership_projection(
+        official_connection,
+        saas_connection,
+        official_owner=official_owner,
+        saas_owner=saas_owner,
+    )
     _verify_public_schema_inventory(
         official_connection,
         official_owner=official_owner,
         saas_owner=saas_owner,
     )
-    return tuple((str(table), str(owner)) for table, owner in (*official_rows, *saas_rows))
+    return ownership
 
 
 def _verify_runtime_acl(connection: Connection) -> tuple[tuple[str, str, bool], ...]:

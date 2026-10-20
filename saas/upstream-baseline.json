@@ -21,7 +21,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "mm1a2b3c4d5e"
+    "nf12ab34cd56"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -680,6 +680,6 @@
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "09152b0a15af5075f20dd8f9178066957908a810",
-  "upstream_version": "0.19.0.dev20261015"
+  "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+  "upstream_version": "0.19.0.dev20261020"
 }
