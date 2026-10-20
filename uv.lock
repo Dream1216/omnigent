@@ -3277,6 +3277,7 @@ agents-sdk = [
     { name = "opentelemetry-instrumentation-openai-agents-v2" },
 ]
 all = [
+    { name = "aiohttp" },
     { name = "databricks-sdk", version = "0.67.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-omnigent-antigravity'" },
     { name = "databricks-sdk", version = "0.115.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-omnigent-cwsandbox' or extra == 'extra-8-omnigent-databricks' or extra == 'extra-8-omnigent-modal' or extra == 'group-8-omnigent-dev' or extra == 'group-8-omnigent-lint' or extra != 'extra-8-omnigent-antigravity'" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
@@ -3398,6 +3399,7 @@ dev = [
     { name = "filelock" },
     { name = "grpcio-tools" },
     { name = "hindsight-client" },
+    { name = "kubernetes" },
     { name = "moto", extra = ["s3"], marker = "extra == 'extra-8-omnigent-cwsandbox' or extra == 'extra-8-omnigent-databricks' or extra == 'extra-8-omnigent-modal' or extra == 'group-8-omnigent-dev' or extra == 'group-8-omnigent-lint' or extra != 'extra-8-omnigent-antigravity'" },
     { name = "nimble-python" },
     { name = "pre-commit" },
@@ -3427,6 +3429,7 @@ test = [
     { name = "build" },
     { name = "filelock" },
     { name = "hindsight-client" },
+    { name = "kubernetes" },
     { name = "moto", extra = ["s3"] },
     { name = "nimble-python" },
     { name = "psycopg", extra = ["binary"] },
@@ -3445,6 +3448,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.4,<4" },
     { name = "alembic", specifier = ">=1.0,<2" },
     { name = "anyio", specifier = ">=4.0,<5" },
     { name = "argon2-cffi", specifier = ">=23.1,<26" },
@@ -3461,7 +3465,7 @@ requires-dist = [
     { name = "cachetools", specifier = ">=5.0,<8" },
     { name = "cel-python", specifier = ">=0.5" },
     { name = "certifi", specifier = ">=2023.7" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.62" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.121" },
     { name = "click", specifier = ">=8.0,<10" },
     { name = "cursor-sdk", marker = "extra == 'cursor'", specifier = ">=0.1.7" },
     { name = "cwsandbox", marker = "extra == 'cwsandbox'", specifier = ">=0.24,<1" },
@@ -3486,7 +3490,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=24,<26" },
     { name = "kubernetes", marker = "extra == 'kubernetes'", specifier = ">=36,<37" },
     { name = "locust", marker = "extra == 'loadtest'", specifier = ">=2.30,<3" },
-    { name = "mcp", specifier = ">=1.0,<2" },
+    { name = "mcp", specifier = ">=1.30.0,<2" },
     { name = "microsandbox", marker = "extra == 'microsandbox'", specifier = ">=0.6.9,<0.7" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.0,<2" },
     { name = "nimble-python", marker = "extra == 'nimble'", specifier = ">=1.2.0,<2" },
@@ -3552,6 +3556,7 @@ dev = [
     { name = "filelock", specifier = ">=3.0" },
     { name = "grpcio-tools", specifier = ">=1.68,<=1.81.1" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
+    { name = "kubernetes", specifier = ">=36,<37" },
     { name = "moto", extras = ["s3"], specifier = ">=5,<6" },
     { name = "nimble-python", specifier = ">=1.2.0,<2" },
     { name = "pre-commit", specifier = ">=3.5" },
@@ -3581,6 +3586,7 @@ test = [
     { name = "build", specifier = ">=1.2" },
     { name = "filelock", specifier = ">=3.0" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
+    { name = "kubernetes", specifier = ">=36,<37" },
     { name = "moto", extras = ["s3"], specifier = ">=5,<6" },
     { name = "nimble-python", specifier = ">=1.2.0,<2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1,<4" },

@@ -23,7 +23,6 @@ from sqlalchemy.orm import sessionmaker
 from omnigent.db.db_models import current_workspace_id
 from omnigent.runtime import init as init_runtime
 from omnigent.server import app as official_server_app
-from omnigent.server.managed_hosts import parse_sandbox_config
 from saas.compatibility import OmnigentStoreAdapter
 from saas.control_plane.client_network import (
     TrustedClientNetworkConfig,
@@ -953,10 +952,13 @@ def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: 
         "agent_sandbox",
         "kubernetes",
     ]
-    parsed = parse_sandbox_config(cast(dict[str, object], loaded["sandbox"]))
+    parsed = server_module.parse_tenant_sandbox_config(loaded["sandbox"])
     assert parsed is not None
     assert parsed.launchable_providers() == ("agent_sandbox", "kubernetes")
     assert parsed.reaper.terminate_after_offline_days == 7
+    launcher = parsed.default.launcher_factory()
+    with pytest.raises(RuntimeError, match="runtime context is not bound"):
+        launcher._resolve_sandbox_env()
 
 
 @pytest.mark.parametrize(
