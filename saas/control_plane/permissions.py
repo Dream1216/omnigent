@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-10-19.p2-model-revocation"
+POLICY_VERSION: Final = "2026-10-21.p2-model-pagination"
 
 
 class PermissionScope(StrEnum):
@@ -381,11 +381,13 @@ _DEFINITIONS = (
             "GET /v2/platform-admin/model-connections",
             "GET /v2/platform-admin/model-connections/{connection_id}/credential-versions",
             "GET /v2/platform-admin/model-deployments",
+            "GET /v2/platform-admin/model-deployments/current-generation",
             "GET /v2/platform-admin/model-operations",
             "GET /v2/platform-admin/model-operations/{operation_id}",
             "GET /v2/platform-admin/model-test-funding",
             "GET /v2/platform-admin/model-operations/{operation_id}/verification",
             "GET /v2/platform-admin/model-publications",
+            "GET /v2/platform-admin/model-publications/current-generation",
             "GET /v2/platform-admin/model-operations/{operation_id}/publication",
             "GET /v2/platform-admin/model-publication-disablements",
             "GET /v2/platform-admin/model-publication-disablements/{disablement_id}",

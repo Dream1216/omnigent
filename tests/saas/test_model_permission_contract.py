@@ -17,11 +17,13 @@ _MODEL_ROUTES = {
         "GET /v2/platform-admin/model-connections",
         "GET /v2/platform-admin/model-connections/{connection_id}/credential-versions",
         "GET /v2/platform-admin/model-deployments",
+        "GET /v2/platform-admin/model-deployments/current-generation",
         "GET /v2/platform-admin/model-operations",
         "GET /v2/platform-admin/model-operations/{operation_id}",
         "GET /v2/platform-admin/model-test-funding",
         "GET /v2/platform-admin/model-operations/{operation_id}/verification",
         "GET /v2/platform-admin/model-publications",
+        "GET /v2/platform-admin/model-publications/current-generation",
         "GET /v2/platform-admin/model-operations/{operation_id}/publication",
         "GET /v2/platform-admin/model-publication-disablements",
         "GET /v2/platform-admin/model-publication-disablements/{disablement_id}",
@@ -57,7 +59,7 @@ def test_registered_model_routes_have_exact_permission_declarations(enabled):
         for method in route.methods
     }
     expected = {surface: name for name, surfaces in _MODEL_ROUTES.items() for surface in surfaces}
-    assert len(expected) == len(registered) == 24
+    assert len(expected) == len(registered) == 26
     assert registered == set(expected)
     declared = {
         surface: {
@@ -68,6 +70,21 @@ def test_registered_model_routes_have_exact_permission_declarations(enabled):
     assert declared == {surface: {name} for surface, name in expected.items()}
     for name, surfaces in _MODEL_ROUTES.items():
         assert set(PERMISSION_CATALOG[name].api_surfaces) == set(surfaces)
+
+
+@pytest.mark.parametrize("resource", ("model-deployments", "model-publications"))
+def test_current_generation_routes_require_staff_authentication(resource):
+    _, _, _, _, client, _ = _fixture()
+    client.cookies.clear()
+    response = client.get(
+        f"/v2/platform-admin/{resource}/current-generation",
+        params={
+            "tenant_id": "00000000-0000-0000-0000-000000000001",
+            "public_model_id": "deepseek-flash",
+            "wire_api": "openai_chat_completions",
+        },
+    )
+    assert response.status_code == 401
 
 
 def test_model_catalog_repair_preserves_risk_fresh_auth_and_role_boundaries():
