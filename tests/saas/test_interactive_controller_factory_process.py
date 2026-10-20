@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import io
 import json
 import os
 import secrets
@@ -11,6 +12,7 @@ import signal
 import socket
 import ssl
 import subprocess
+import tarfile
 import threading
 import time
 import traceback
@@ -39,6 +41,7 @@ from saas.application import create_omnigent_saas_app
 from saas.billing_metering_transport import MutualTlsBillingMeteringServer
 from saas.compatibility import OmnigentStoreAdapter
 from saas.control_plane import (
+    AdmissionQuotaRecord,
     IdentityManagementService,
     MembershipLifecycleService,
     PasswordCredentialService,
@@ -81,6 +84,7 @@ from saas.production.interactive_execution import InteractiveConversationStore
 from saas.production.interactive_recovery import (
     InteractiveRecoveryRecord,
     managed_retirement_proof_sha256,
+    managed_suspension_proof_sha256,
     physical_recovery_proof_sha256,
 )
 from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
@@ -124,6 +128,34 @@ from tests.saas.test_production_runner_control import _server_context as _contro
 from tests.server.helpers import build_agent_bundle
 
 ORIGIN = "https://next.test"
+
+
+def _controller_agent_bundle(*, workspace=False, **options):
+    bundle = build_agent_bundle(**options)
+    if not workspace:
+        return bundle
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as archive:
+        assert archive.getnames() == ["config.yaml"]
+        config = archive.extractfile("config.yaml").read()
+    config += b"\nos_env:\n  type: caller_process\n  cwd: .\n  sandbox:\n    type: none\n"
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        info = tarfile.TarInfo("config.yaml")
+        info.size = len(config)
+        archive.addfile(info, io.BytesIO(config))
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("workspace", [False, True])
+def test_controller_bundle_exposes_filesystem_only_when_requested(workspace):
+    import yaml
+
+    bundle = _controller_agent_bundle(workspace=workspace, name="controller-agent")
+    with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as archive:
+        config = yaml.safe_load(archive.extractfile("config.yaml").read())
+    assert config.get("os_env") == (
+        {"type": "caller_process", "cwd": ".", "sandbox": {"type": "none"}} if workspace else None
+    )
 
 
 @contextmanager
@@ -335,6 +367,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
     assert exchange == Path("/exchange")
     monkeypatch.setenv("OMNIGENT_WS_ALLOWED_ORIGINS", ORIGIN)
     scenario = getattr(case, "scenario", "single")
+    dormant_managed = cluster is not None and cluster.get("managed_dormant") is True
     assert scenario in {
         "single",
         "tools_cross_run",
@@ -363,6 +396,11 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
             credential_init(self, **kwargs, ttl=timedelta(seconds=90))
 
         monkeypatch.setattr(ModelRunCredentialService, "__init__", short_lived_credentials)
+    elif dormant_managed:
+        command = test_model_deployments._command
+        monkeypatch.setattr(
+            test_model_deployments, "_command", lambda: replace(command(), max_output_tokens=256)
+        )
     original = test_tenant_model_catalog_postgresql._fixture
 
     def funded():
@@ -395,6 +433,21 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 runtime_version=manifest["upstream_version"],
             )
             runtime = fixture.runtime
+            if dormant_managed:
+                with factory.begin() as db:
+                    quota = db.scalars(
+                        sa.select(AdmissionQuotaRecord).where(
+                            AdmissionQuotaRecord.tenant_id == runtime.tenant_id,
+                            AdmissionQuotaRecord.project_id == runtime.project_id,
+                            AdmissionQuotaRecord.resource == "run",
+                        )
+                    ).one()
+                    assert (quota.limit_units, quota.reserved_units, quota.consumed_units) == (
+                        2,
+                        0,
+                        0,
+                    )
+                    quota.limit_units = 3
             if cluster is not None:
                 monkeypatch.setenv(
                     "OMNIGENT_HOST_WORKSPACE_ID", str(runtime.physical_workspace_id)
@@ -424,12 +477,14 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 host_store.set_offline("c" * 32)
             dependencies["artifact_store"].put(
                 "controller/bundle",
-                build_agent_bundle(
+                _controller_agent_bundle(
+                    workspace=dormant_managed,
                     name="controller-agent",
                     executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
                     include_llm=False,
                     max_iterations=8
                     if scenario in {"tools_cross_run", "controller_crash_recovery"}
+                    or dormant_managed
                     else None,
                     terminals={
                         "shell": {
@@ -437,12 +492,13 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                             "args": ["--noprofile", "--norc"],
                             "os_env": {
                                 "type": "caller_process",
-                                "cwd": "/workspace",
+                                "cwd": "." if dormant_managed else "/workspace",
                                 "sandbox": {"type": "none"},
                             },
                         }
                     }
                     if scenario in {"tools_cross_run", "controller_crash_recovery"}
+                    or dormant_managed
                     else None,
                 ),
             )
@@ -631,6 +687,8 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 assert len(after_calls["requests"]) - len(before_calls["requests"]) == (
                     0
                     if scenario in {"create_ack_rejected", "create_ack_recovered"}
+                    else 5
+                    if dormant_managed
                     else 4
                     if scenario in {"tools_cross_run", "controller_crash_recovery"}
                     else 2
@@ -956,6 +1014,9 @@ def _serve_controller(
 ):
     retire_managed = cluster is not None and cluster.get("managed_retirement") is True
     generation_managed = cluster is not None and cluster.get("managed_generation") is True
+    dormant_managed = cluster is not None and cluster.get("managed_dormant") is True
+    if dormant_managed:
+        assert generation_managed and cluster["provider"] == "agent_sandbox"
     if generation_managed:
         assert retire_managed and scenario == "single"
     if retire_managed:
@@ -973,6 +1034,8 @@ def _serve_controller(
         "security_revoke_stream": "P0_CANCEL_STREAM: security revoke after the stream starts",
         "controller_crash_recovery": "P0_MANAGED_TOOL P0_CRASH_RECOVERY: write one unique marker",
     }.get(scenario, "Build the requested page")
+    if dormant_managed:
+        initial_text = "P0_MANAGED_TOOL P0_PVC_WRITE: write one persistent marker exactly once"
 
     class ObservedAuthority(ProductionRunnerMachineAuthority):
         def _observe(self, operation, values):
@@ -1140,6 +1203,7 @@ def _serve_controller(
                     if row.managed_preparation is not None
                     and row.managed_preparation.namespace == namespace
                     and row.managed_preparation.resource_name == manifest["metadata"]["name"]
+                    and row.phase == "preparing"
                 ]
                 assert len(rows) == 1
                 row = rows[0]
@@ -1167,6 +1231,7 @@ def _serve_controller(
                     and row.managed_preparation is not None
                     and row.managed_preparation.resource_name == sandbox_id
                     and row.managed_preparation.host_id == host_id
+                    and row.phase == "preparing"
                 ]
                 assert len(candidates) == 1
                 row = candidates[0]
@@ -1182,7 +1247,11 @@ def _serve_controller(
                 path = adapter._journal.root / f"{row.run_id}.json"
                 assert path.stat().st_mode & 0o777 == 0o600
                 assert json.loads(path.read_bytes())["schema_version"] == (
-                    9 if generation_managed and row.managed_predecessor_run_id is not None else 5
+                    11
+                    if row.managed_resume
+                    else 9
+                    if generation_managed and row.managed_predecessor_run_id is not None
+                    else 5
                 )
                 assert row.managed_creation is not None
                 assert not row.managed_creation.secret_submitted
@@ -1193,7 +1262,9 @@ def _serve_controller(
                     current = adapter._journal.read(row.run_id)
                     assert current.official_runner_id is None
                     assert current.managed_creation.pod_name == sandbox_id
-                    assert json.loads(path.read_bytes())["schema_version"] == 10
+                    assert json.loads(path.read_bytes())["schema_version"] == (
+                        11 if current.managed_resume else 10
+                    )
                     pod = launcher._load_core().read_namespaced_pod(
                         sandbox_id, binding.namespace, _request_timeout=10
                     )
@@ -1225,6 +1296,7 @@ def _serve_controller(
                     and row.managed_preparation is not None
                     and row.managed_preparation.resource_name == sandbox_id
                     and row.managed_preparation.namespace == namespace
+                    and row.phase == "preparing"
                 ]
                 assert len(candidates) == 1
                 row = candidates[0]
@@ -1232,7 +1304,11 @@ def _serve_controller(
                 assert row.managed_resources is not None and not row.process_stopped
                 path = adapter._journal.root / f"{row.run_id}.json"
                 assert json.loads(path.read_bytes())["schema_version"] == (
-                    9 if generation_managed and row.managed_predecessor_run_id is not None else 5
+                    11
+                    if row.managed_resume
+                    else 9
+                    if generation_managed and row.managed_predecessor_run_id is not None
+                    else 5
                 )
                 assert row.managed_creation is not None and row.managed_creation.workload_submitted
                 assert row.managed_creation.secret_uid == row.managed_resources.token_secret_uid
@@ -2874,7 +2950,7 @@ def _serve_controller(
                 )
                 run = next(r for r in runs if expected_runs == 1 or r.id != first_run.id)
                 assert db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases == 0
-                calls = 4 if scenario == "tools_cross_run" else 1
+                calls = 3 if dormant_managed else 4 if scenario == "tools_cross_run" else 1
                 for model, count in (
                     (TaskRecord, expected_runs),
                     (
@@ -3053,6 +3129,8 @@ def _serve_controller(
                         == record.managed_resources
                     )
             retirement_evidence, generation_history = None, []
+            dormant_workspace_reads, final_retirement = [], None
+            dormant_quota_rejected = False
             if retire_managed:
                 from saas.production.interactive_managed_retirement import (
                     ControllerManagedSandboxReaper,
@@ -3062,20 +3140,55 @@ def _serve_controller(
                 assert isinstance(reaper, ControllerManagedSandboxReaper)
                 assert reaper._sandbox_config.reaper.terminate_after_offline_days == 7
 
+                def read_persistent_marker(current):
+                    with httpx.Client(
+                        base_url=ORIGIN,
+                        trust_env=False,
+                        verify=ssl.create_default_context(cafile=str(certificate)),
+                        cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                        timeout=30,
+                    ) as client:
+                        environment = client.get(
+                            f"/v1/sessions/{conversation.id}/resources/environments/default"
+                        )
+                        assert environment.status_code == 200, environment.text
+                        assert environment.json()["metadata"]["root"] == "/home/omnigent/workspace"
+                        response = client.get(
+                            f"/v1/sessions/{conversation.id}/resources/environments/default/filesystem/litellm-pvc-once.txt"
+                        )
+                    assert response.status_code == 200, response.text
+                    value = response.json()
+                    assert value["object"] == "session.environment.filesystem.file_content"
+                    assert value["encoding"] == "utf-8" and not value["truncated"]
+                    assert value["content"] == "LITELLM_PVC_ONCE\n"
+                    dormant_workspace_reads.append(
+                        {
+                            "run_id": str(current.run_id),
+                            "runner_id": current.official_runner_id,
+                            "sha256": sha256(value["content"].encode()).hexdigest(),
+                            "lines": 1,
+                            "public_filesystem_status": response.status_code,
+                        }
+                    )
+
                 def retire_generation(current, completed):
                     origin = adapter._journal.read(current.managed_origin_run_id or current.run_id)
                     assert not origin.process_stopped
-                    future = int(time.time()) + 8 * 86400
+                    offline_age = 1800 if dormant_managed else 8 * 86400
+                    future = int(time.time()) + offline_age
 
                     def retired():
                         asyncio.run_coroutine_threadsafe(
-                            reaper.sweep_once(now=future), app_loop
+                            reaper.sweep_once(now=future),
+                            app_loop,
                         ).result(45)
                         source = adapter._journal.read(origin.run_id)
-                        if (
-                            source.managed_termination is None
-                            or not source.managed_termination.complete
-                        ):
+                        receipt = (
+                            source.managed_suspension
+                            if dormant_managed
+                            else source.managed_termination
+                        )
+                        if receipt is None or not receipt.complete:
                             return False
                         with OmnigentStoreAdapter("0.2.0").bind(runtime):
                             host = host_store.get_host(origin.managed_preparation.host_id)
@@ -3104,10 +3217,17 @@ def _serve_controller(
                     assert terminal_pod_facts
                     evidence = {
                         "controller_owned_reaper": True,
-                        "controlled_offline_age_seconds": 8 * 86400,
+                        "controlled_offline_age_seconds": offline_age,
                         "configured_offline_days": 7,
                         "origin_run_id": str(origin.run_id),
-                        "termination_receipt": asdict(origin.managed_termination),
+                        "termination_receipt": asdict(
+                            origin.managed_suspension.termination
+                            if dormant_managed
+                            else origin.managed_termination
+                        ),
+                        "suspension_receipt": asdict(origin.managed_suspension)
+                        if dormant_managed
+                        else None,
                         "peer_stop_kinds": {
                             str(row.id): adapter._journal.read(row.id).stop_kind
                             for row in completed
@@ -3128,135 +3248,217 @@ def _serve_controller(
                                 "channel_sha256": sha256(
                                     origin.channel_value.encode()
                                 ).hexdigest(),
-                                "stop_sha256": managed_retirement_proof_sha256(origin),
+                                "stop_sha256": (
+                                    managed_suspension_proof_sha256
+                                    if dormant_managed
+                                    else managed_retirement_proof_sha256
+                                )(origin),
                                 "predecessor_run_id": str(origin.managed_predecessor_run_id)
                                 if origin.managed_predecessor_run_id
                                 else None,
                                 "predecessor_stop_sha256": origin.managed_predecessor_stop_sha256,
+                                "managed_resume": origin.managed_resume,
                                 "retirement": evidence,
                             }
                         )
                     return evidence, origin
 
+                if dormant_managed:
+                    read_persistent_marker(record)
                 retirement_evidence, origin = retire_generation(record, runs)
                 if generation_managed:
-                    first_origin, first_channel = origin, origin.channel_value
-                    first_id, first_runner = run.id, origin.official_runner_id
-                    expected_runs = 2
-                    with httpx.Client(
-                        base_url=ORIGIN,
-                        trust_env=False,
-                        verify=ssl.create_default_context(cafile=str(certificate)),
-                        cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
-                        timeout=60,
-                    ) as client:
-                        for _ in range(2):
+                    for generation_index in range(1, 3 if dormant_managed else 2):
+                        first_origin, first_channel = origin, origin.channel_value
+                        prior_ids = {row.id for row in runs}
+                        first_runner, first_bearer = origin.official_runner_id, private_bearers[-1]
+                        expected_runs = generation_index + 1
+                        expected_calls = 3 + generation_index if dormant_managed else 2
+                        with httpx.Client(
+                            base_url=ORIGIN,
+                            trust_env=False,
+                            verify=ssl.create_default_context(cafile=str(certificate)),
+                            cookies={
+                                app.state.saas_http_integration.cookie_config.name: issued.token
+                            },
+                            timeout=60,
+                        ) as client:
+                            for _ in range(2):
+                                response = client.post(
+                                    f"/v1/sessions/{conversation.id}/events",
+                                    json=_message(
+                                        str(generation_index + 4) * 32,
+                                        "Use retained files; do not write the marker again"
+                                        if dormant_managed
+                                        else "Start fresh after resource retirement",
+                                    ),
+                                    headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                                )
+                                assert response.status_code in {200, 202}, response.text
+                        assert (
+                            _queued_worker(workers["dispatcher"], workers["executor"])
+                            .dispatch_once()
+                            .published
+                            == 1
+                        )
+                        _wait(released, "fresh generation after complete retirement", timeout=180)
+                        with factory() as db:
+                            runs = db.scalars(sa.select(RunRecord)).all()
+                            assert len(runs) == expected_runs and {row.status for row in runs} == {
+                                "succeeded"
+                            }
+                            run = next(row for row in runs if row.id not in prior_ids)
+                            assert (
+                                db.get(
+                                    RunnerRegistrationRecord, case.member.runner_id
+                                ).active_leases
+                                == 0
+                            )
+                            for model, count in (
+                                (TaskRecord, expected_runs),
+                                (ModelRunTokenRecord, expected_runs),
+                                (UsageEventRecord, 2 * expected_calls),
+                                (BillingMeteringReceiptRecord, 2 * expected_calls),
+                            ):
+                                assert (
+                                    db.scalar(sa.select(sa.func.count()).select_from(model))
+                                    == count
+                                )
+                            assert (
+                                db.scalar(
+                                    sa.select(sa.func.sum(UsageEventRecord.customer_charge_minor))
+                                )
+                                == 2 * expected_calls
+                            )
+                            settled = db.scalars(
+                                sa.select(ModelProviderBudgetReservationRecord).where(
+                                    ModelProviderBudgetReservationRecord.purpose == "tenant_run"
+                                )
+                            ).all()
+                            assert len(settled) == expected_calls and all(
+                                row.status == "settled" and row.settled_tokens == 22
+                                for row in settled
+                            )
+                        record = adapter._journal.read(run.id)
+                        assert record.managed_predecessor_run_id == first_origin.run_id
+                        assert record.managed_predecessor_stop_sha256 == (
+                            managed_suspension_proof_sha256
+                            if dormant_managed
+                            else managed_retirement_proof_sha256
+                        )(first_origin)
+                        assert record.grant.run_id == run.id != first_origin.grant.run_id
+                        assert record.managed_origin_run_id is None
+                        assert record.official_runner_id != first_runner
+                        assert (
+                            record.managed_resources.workload_uid
+                            == first_origin.managed_resources.workload_uid
+                        ) == dormant_managed
+                        assert record.managed_resume == dormant_managed
+                        assert (
+                            record.managed_resources.token_secret_uid
+                            != first_origin.managed_resources.token_secret_uid
+                        )
+                        assert record.managed_creation.nonce != first_origin.managed_creation.nonce
+                        assert (
+                            record.managed_resources.host_token_sha256
+                            != first_origin.managed_resources.host_token_sha256
+                        )
+                        assert record.channel_value != first_channel
+                        assert (
+                            len(creation_checkpoints) == len(resource_checkpoints) == expected_runs
+                        )
+                        with httpx.Client(
+                            trust_env=False,
+                            verify=ssl.create_default_context(cafile=str(certificate)),
+                            timeout=20,
+                        ) as client:
+                            from saas.production.interactive_model_channel import channel_url
+
+                            denied = client.post(
+                                channel_url(ORIGIN, record.scope.session_id) + "/responses",
+                                headers={"Authorization": "Bearer " + first_channel},
+                                json={},
+                            )
+                        assert (
+                            denied.status_code == 403
+                            and denied.json()["error"]["code"]
+                            == "interactive_model_channel_unavailable"
+                        )
+                        denied = httpx.post(
+                            "http://127.0.0.1:8090/v1/chat/completions",
+                            trust_env=False,
+                            headers={"Authorization": "Bearer " + first_bearer},
+                            json=_document(conversation.model_override, limit=32),
+                        )
+                        assert (
+                            denied.status_code == 403
+                            and denied.json()["error"]["code"]
+                            == "platform_model_run_authority_unavailable"
+                        )
+                        if dormant_managed:
+                            assert [row["status"] for row in observed].count(200) == expected_calls
+                            assert [row["status"] for row in observed].count(
+                                403
+                            ) == generation_index
+                            assert len(observed) == expected_calls + generation_index
+                            read_persistent_marker(record)
+                        else:
+                            assert [row["status"] for row in observed] == [200, 200, 403]
+                        assert (
+                            len(managed_generation_reads) == generation_index
+                            and not managed_reuse_reads
+                        )
+                        assert adapter._journal.read(first_origin.run_id) == first_origin
+                        # Simulate re-opening the retired-origin scan without operator cleanup.
+                        adapter._executor._completed_retirements.clear()
+                        retirement_evidence, origin = retire_generation(record, runs)
+                        calls = expected_calls
+                    if dormant_managed:
+                        with httpx.Client(
+                            base_url=ORIGIN,
+                            trust_env=False,
+                            verify=ssl.create_default_context(cafile=str(certificate)),
+                            cookies={
+                                app.state.saas_http_integration.cookie_config.name: issued.token
+                            },
+                            timeout=60,
+                        ) as client:
                             response = client.post(
                                 f"/v1/sessions/{conversation.id}/events",
-                                json=_message(
-                                    "e" * 32,
-                                    "Start a distinct input after full environment retirement",
-                                ),
+                                json=_message("7" * 32, "Reject this fourth Run at the quota"),
                                 headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
                             )
-                            assert response.status_code in {200, 202}, response.text
-                    assert (
-                        _queued_worker(workers["dispatcher"], workers["executor"])
-                        .dispatch_once()
-                        .published
-                        == 1
-                    )
-                    _wait(released, "fresh generation after complete retirement", timeout=180)
-                    with factory() as db:
-                        runs = db.scalars(sa.select(RunRecord)).all()
-                        assert len(runs) == 2 and {row.status for row in runs} == {"succeeded"}
-                        run = next(row for row in runs if row.id != first_id)
-                        assert (
-                            db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases
-                            == 0
-                        )
-                        for model, count in (
-                            (TaskRecord, 2),
-                            (ModelRunTokenRecord, 2),
-                            (UsageEventRecord, 4),
-                            (BillingMeteringReceiptRecord, 4),
-                        ):
-                            assert (
-                                db.scalar(sa.select(sa.func.count()).select_from(model)) == count
-                            )
-                        assert (
-                            db.scalar(
-                                sa.select(sa.func.sum(UsageEventRecord.customer_charge_minor))
-                            )
-                            == 4
-                        )
-                        settled = db.scalars(
-                            sa.select(ModelProviderBudgetReservationRecord).where(
-                                ModelProviderBudgetReservationRecord.purpose == "tenant_run"
-                            )
-                        ).all()
-                        assert len(settled) == 2 and all(
-                            row.status == "settled" and row.settled_tokens == 22 for row in settled
-                        )
-                    record = adapter._journal.read(run.id)
-                    assert record.managed_predecessor_run_id == first_origin.run_id
-                    assert (
-                        record.managed_predecessor_stop_sha256
-                        == managed_retirement_proof_sha256(first_origin)
-                    )
-                    assert record.grant.run_id == run.id != first_origin.grant.run_id
-                    assert record.managed_origin_run_id is None
-                    assert record.official_runner_id != first_runner
-                    assert (
-                        record.managed_resources.workload_uid
-                        != first_origin.managed_resources.workload_uid
-                    )
-                    assert (
-                        record.managed_resources.token_secret_uid
-                        != first_origin.managed_resources.token_secret_uid
-                    )
-                    assert record.managed_creation.nonce != first_origin.managed_creation.nonce
-                    assert (
-                        record.managed_resources.host_token_sha256
-                        != first_origin.managed_resources.host_token_sha256
-                    )
-                    assert record.channel_value != first_channel
-                    assert len(creation_checkpoints) == len(resource_checkpoints) == 2
-                    with httpx.Client(
-                        trust_env=False,
-                        verify=ssl.create_default_context(cafile=str(certificate)),
-                        timeout=20,
-                    ) as client:
-                        from saas.production.interactive_model_channel import channel_url
+                        assert response.status_code == 400, response.text
+                        assert response.json()["error"] == {
+                            "code": "invalid_input",
+                            "message": "quota_exceeded",
+                        }
+                        with factory() as db:
+                            for model in (TaskRecord, RunRecord, ModelRunTokenRecord):
+                                assert (
+                                    db.scalar(sa.select(sa.func.count()).select_from(model)) == 3
+                                )
+                        dormant_quota_rejected = True
+                        stopped_proof = physical_recovery_proof_sha256(origin)
 
-                        denied = client.post(
-                            channel_url(ORIGIN, record.scope.session_id) + "/responses",
-                            headers={"Authorization": "Bearer " + first_channel},
-                            json={},
+                        def dispose_retained_parent():
+                            asyncio.run_coroutine_threadsafe(
+                                reaper.sweep_once(now=int(time.time()) + 8 * 86400), app_loop
+                            ).result(45)
+                            current = adapter._journal.read(origin.run_id)
+                            return (
+                                current.managed_termination is not None
+                                and current.managed_termination.complete
+                            )
+
+                        _wait(
+                            dispose_retained_parent,
+                            "complete retained-generation retirement",
+                            timeout=150,
                         )
-                    assert (
-                        denied.status_code == 403
-                        and denied.json()["error"]["code"]
-                        == "interactive_model_channel_unavailable"
-                    )
-                    denied = httpx.post(
-                        "http://127.0.0.1:8090/v1/chat/completions",
-                        trust_env=False,
-                        headers={"Authorization": "Bearer " + private_bearers[0]},
-                        json=_document(conversation.model_override, limit=32),
-                    )
-                    assert (
-                        denied.status_code == 403
-                        and denied.json()["error"]["code"]
-                        == "platform_model_run_authority_unavailable"
-                    )
-                    assert [row["status"] for row in observed] == [200, 200, 403]
-                    assert len(managed_generation_reads) == 1 and not managed_reuse_reads
-                    assert adapter._journal.read(first_origin.run_id) == first_origin
-                    # Simulate re-opening the retired-origin scan without operator cleanup.
-                    adapter._executor._completed_retirements.clear()
-                    retirement_evidence, origin = retire_generation(record, runs)
-                    calls = 2
+                        disposed = adapter._journal.read(origin.run_id)
+                        assert physical_recovery_proof_sha256(disposed) == stopped_proof
+                        assert disposed.managed_suspension == origin.managed_suspension
+                        final_retirement = asdict(disposed.managed_termination)
                 record = adapter._journal.read(run.id)
             elif scenario in {"public_stop", "public_archive"}:
                 with httpx.Client(
@@ -3349,7 +3551,12 @@ def _serve_controller(
                             else None
                         ),
                         "managed_generations": generation_history,
-                        "fresh_runner_after_retirement": generation_managed,
+                        "fresh_runner_after_retirement": generation_managed
+                        and not dormant_managed,
+                        "dormant_resume_verified": dormant_managed,
+                        "dormant_workspace_reads": dormant_workspace_reads,
+                        "dormant_fourth_run_quota_rejected": dormant_quota_rejected,
+                        "managed_final_retirement": final_retirement,
                         "old_channel_and_mrt_rejected": generation_managed,
                         "managed_origin_links": {
                             str(run.id): str(row.managed_origin_run_id)

@@ -53,6 +53,30 @@ def test_managed_supplier_never_guesses_an_undeclared_tool(supplier):
         supplier(document)
 
 
+@pytest.mark.parametrize("encode", [json.dumps, repr])
+def test_pvc_supplier_requires_tool_success_and_does_not_repeat_the_write(supplier, encode):
+    document = _document("call_managed_launch")
+    document["messages"][0]["content"] += " P0_PVC_WRITE"
+    document["messages"][1]["content"] = encode({"status": "launched", "has_os_env": True})
+    send = supplier(document)
+    assert json.loads(send["function"]["arguments"])["text"].endswith(
+        'LITELLM_PVC_ONCE >> "$HOME/workspace/litellm-pvc-once.txt"'
+    )
+    document["messages"].append(
+        {
+            "role": "tool",
+            "tool_call_id": "call_managed_send",
+            "content": encode({"status": "sent"}),
+        }
+    )
+    assert supplier(document) is None
+    document["messages"][-1]["content"] = encode({"error": "send failed"})
+    with pytest.raises(ValueError, match="managed_probe_terminal_execution_failed"):
+        supplier(document)
+    document["messages"].append({"role": "user", "content": "Continue without writing again"})
+    assert supplier(document) is None
+
+
 def test_partial_stream_requires_streaming_and_does_not_leak_into_the_next_turn(monkeypatch):
     monkeypatch.setenv("PROBE_PROVIDER_KEY", "isolated-not-a-provider-key")
     requested = runpy.run_path(str(Path(__file__).parent / "fixtures/litellm/upstream.py"))[

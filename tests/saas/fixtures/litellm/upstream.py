@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import secrets
@@ -36,6 +37,27 @@ def managed_terminal_tool(document):
     latest = next((r for r in reversed(messages) if r.get("role") == "user"), {})
     if "P0_MANAGED_TOOL" not in str(latest.get("content", "")):
         return None
+    if "P0_PVC_WRITE" in str(latest.get("content", "")):
+        for row in messages:
+            if row.get("role") != "tool":
+                continue
+            expected = {
+                "call_managed_launch": "launched",
+                "call_managed_send": "sent",
+            }.get(row.get("tool_call_id"))
+            if expected:
+                content = row.get("content")
+                if not isinstance(content, str) or len(content) > 8192:
+                    raise ValueError("managed_probe_terminal_execution_failed")
+                try:
+                    result = json.loads(content)
+                except json.JSONDecodeError:
+                    try:
+                        result = ast.literal_eval(content)
+                    except (ValueError, SyntaxError):
+                        raise ValueError("managed_probe_terminal_execution_failed") from None
+                if not isinstance(result, dict) or result.get("status") != expected:
+                    raise ValueError("managed_probe_terminal_execution_failed")
     returned = {r.get("tool_call_id") for r in messages if r.get("role") == "tool"}
     if "call_managed_send" in returned:
         return None
@@ -51,6 +73,10 @@ def managed_terminal_tool(document):
     arguments = {"terminal": "shell", "session": "managed-probe"}
     if sending:
         arguments["text"] = "printf '%s\\n' LITELLM_TOOL_ONCE >> /workspace/litellm-once.txt"
+        if "P0_PVC_WRITE" in str(latest.get("content", "")):
+            arguments["text"] = (
+                "printf '%s\\n' LITELLM_PVC_ONCE >> \"$HOME/workspace/litellm-pvc-once.txt\""
+            )
     return {
         "id": "call_managed_send" if sending else "call_managed_launch",
         "type": "function",
@@ -103,8 +129,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             managed_tool = managed_terminal_tool(document)
             partial_stream = partial_stream_requested(document)
-        except ValueError:
-            self._send(422, b'{"error":{"message":"managed_probe_terminal_tool_missing"}}')
+        except ValueError as error:
+            code = str(error)
+            if code not in {
+                "managed_probe_terminal_tool_missing",
+                "managed_probe_terminal_execution_failed",
+                "managed_probe_streaming_required",
+            }:
+                code = "managed_probe_protocol_invalid"
+            self._send(422, json.dumps({"error": {"message": code}}).encode())
             return
         if managed_tool is not None:
             mode = "tool"
