@@ -137,9 +137,13 @@ def test_recovery_policy_tracks_the_forced_rls_inventory_size() -> None:
         )
         == 1
     )
-    expected_runtime = f"forced_rls_runtime_{len(load_runtime_rls_contract())}"
-    assert expected_runtime in required_checks  # type: ignore[operator]
-    assert sum(check.startswith("forced_rls_runtime_") for check in required_checks) == 1  # type: ignore[union-attr]
+
+
+def test_recovery_policy_tracks_the_complete_runtime_rls_inventory() -> None:
+    checks = _policy()["required_checks"]
+    expected = f"forced_rls_runtime_{len(load_runtime_rls_contract())}"
+    assert expected in checks  # type: ignore[operator]
+    assert sum(check.startswith("forced_rls_runtime_") for check in checks) == 1  # type: ignore[union-attr]
 
 
 def test_recovery_policy_rejects_an_incomplete_runtime_rls_inventory() -> None:
