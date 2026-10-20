@@ -77,6 +77,16 @@ def test_production_baseline_tracks_typed_and_untyped_alembic_revisions() -> Non
     assert _migration_heads(_repo()) == set(ScriptDirectory.from_config(config).get_heads())
 
 
+def test_migration_graph_tracks_typed_and_untyped_revisions(tmp_path: Path) -> None:
+    versions = tmp_path / "saas/control_plane/migrations/versions"
+    versions.mkdir(parents=True)
+    (versions / "typed.py").write_text(
+        'revision: str = "first"\ndown_revision: str | None = None\n'
+    )
+    (versions / "untyped.py").write_text('revision = "second"\ndown_revision = "first"\n')
+    assert _migration_heads(tmp_path) == {"second"}
+
+
 def test_production_baseline_rejects_unrelated_approved_schema_lineage() -> None:
     baseline = copy.deepcopy(_baseline())
     baseline["approval"]["approved_control_plane_schema_revision"] = "not-a-revision"  # type: ignore[index]
