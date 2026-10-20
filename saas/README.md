@@ -4,6 +4,42 @@ This directory owns the commercial SaaS control plane and the permanent
 compatibility layer around the official Omnigent runtime. The official runtime
 must not import this package; dependencies only flow from `saas` to `omnigent`.
 
+### Managed Sandbox tenant identity
+
+The production server composes both reviewed Kubernetes launchers through
+`production/tenant_sandbox.py`. Each launch, including a background task or
+relaunch, derives its physical workspace and model tenant from the authorized
+`RuntimeContext`, never the Server process's fixed Host identity. A missing or
+inconsistent context rejects the launch before creating a credential or
+workload. Context-free cleanup remains available, and the fixed Host is unchanged.
+
+New tenants require an independent signing key and a deployment-owned binding.
+`OMNIGENT_SAAS_TENANT_MODEL_BINDINGS_FILE` and
+`OMNIGENT_SAAS_TENANT_MODEL_BINDINGS_SHA256` pin the same canonical JSON on the
+Server and model gateway. Schema 1 contains `bindings`, at most 32 entries with
+exact `tenant_id`, `workspace_id`, `sandbox_secret_name`, and `gateway_key_file`
+fields. The secret name must be `omnigent-sandbox-model-<tenant UUID hex>`.
+Only the gateway reads `gateway_key_file`, staged as an owner-only regular
+file; the Server uses only the non-secret binding metadata. Bindings must be
+checked against the current authorized Tenant/Partition records before release.
+
+The Server selects only the bound tenant's key Secret at the existing credential
+mount, without exposing the gateway's other keys. The gateway retains the legacy
+tenant verifier and selects additional verifiers only from this allowlist. Each
+verifier checks the complete signature and exact tenant; missing, shared,
+reused-legacy, or insecure new keys fail startup. A bearer tenant claim selects a
+configured verifier, never creates authority. Unknown tenants and cross-tenant
+forgeries remain denied before budget reservation or Provider egress.
+
+Provision new keys without exporting their bytes to logs, chat, or Git. Keep
+the existing tenant's key and mounted Host identity unchanged. Stage and verify
+gateway configuration before admitting new launches, and preserve user data
+before any Server/Host cutover. Configuration preparation and a successful Host
+connection are not signed-artifact admission or real conversation acceptance.
+
+Run the launch and gateway regressions with
+`python -m pytest tests/saas/test_tenant_sandbox.py tests/saas/test_tenant_model_keys.py tests/saas/test_platform_model_gateway.py`.
+
 P0 establishes executable controls that stay independent of feature claims:
 
 1. `upstream-baseline.json` pins the verified official source, schema, runner
