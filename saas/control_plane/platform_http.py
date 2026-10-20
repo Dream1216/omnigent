@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from importlib.resources import files
 from typing import TYPE_CHECKING, Literal, TypeVar
@@ -51,10 +51,15 @@ if TYPE_CHECKING:
         EmailProviderConfigurationService,
         EmailProviderConfigurationView,
     )
+    from saas.control_plane.model_connections import ModelConnectionService
+    from saas.control_plane.model_deployments import ModelDeploymentService
     from saas.control_plane.model_provider import (
         ModelProviderConfigurationService,
         ModelProviderConfigurationView,
     )
+    from saas.control_plane.model_publications import ModelPublicationService
+    from saas.control_plane.model_test_funding import ModelTestFundingService
+    from saas.control_plane.model_verifications import ModelVerificationService
     from saas.control_plane.notification_http import (
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
@@ -238,6 +243,70 @@ class _ModelProviderTestCommand(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class _CreateModelConnectionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=0, le=0)
+    display_name: str = Field(min_length=1, max_length=128)
+    provider_id: Literal["deepseek"]
+    base_url: Literal["https://api.deepseek.com"]
+    api_key: SecretStr = Field(min_length=16, max_length=4096)
+
+
+class _CreateModelDeploymentCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    public_model_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=128)
+    connection_id: UUID
+    credential_version_id: UUID
+    expected_generation: int = Field(ge=0, lt=(1 << 31) - 1)
+    wire_api: Literal["openai_chat_completions", "openai_responses"]
+    max_output_tokens: int = Field(ge=1, le=65536)
+
+
+class _RotateModelCredentialCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=1)
+    api_key: SecretStr = Field(min_length=16, max_length=4096)
+
+
+class _ModelTestFundingCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_version: int = Field(ge=0, lt=(1 << 31) - 1)
+    enabled: bool
+    monthly_budget_microusd: int = Field(ge=1, le=10**15)
+    daily_test_budget_microusd: int = Field(ge=1, le=10**15)
+    daily_test_token_limit: int = Field(ge=1, le=10**9)
+    max_test_microusd: int = Field(ge=1, le=10**15)
+    max_test_tokens: int = Field(ge=1, le=2048)
+    daily_test_attempt_limit: int = Field(ge=1, le=1000)
+
+
+class _ModelVerificationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    configuration_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_funding_policy_version: int = Field(ge=1, lt=(1 << 31))
+
+
+class _ModelPublicationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    tenant_id: UUID
+    verification_operation_id: UUID
+    configuration_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_generation: int = Field(ge=0, lt=(1 << 31) - 1)
+
+
+class _ModelDisablementCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_generation: int = Field(ge=1, lt=(1 << 31))
+
+
 def _parse_privacy_operation_command(
     body: bytes,
     content_type: str,
@@ -326,6 +395,8 @@ def _request_id(request: Request) -> str:
 
 
 def _status_for(error: PlatformSecurityError) -> int:
+    if error.code == "platform_model_credential_not_projected":
+        return 409
     if error.code == "platform_feature_disabled":
         return 404
     if error.code in {
@@ -333,6 +404,7 @@ def _status_for(error: PlatformSecurityError) -> int:
         "platform_invalid_credentials",
         "platform_realm_mismatch",
         "platform_session_invalid",
+        "platform_session_expired",
         "platform_principal_inactive",
     }:
         return 401
@@ -365,6 +437,11 @@ def create_platform_admin_app(
     notification_operations: NotificationOperationsProtocol | None = None,
     email_configuration: EmailProviderConfigurationService | None = None,
     model_provider: ModelProviderConfigurationService | None = None,
+    model_connections: ModelConnectionService | None = None,
+    model_deployments: ModelDeploymentService | None = None,
+    model_test_funding: ModelTestFundingService | None = None,
+    model_verifications: ModelVerificationService | None = None,
+    model_publications: ModelPublicationService | None = None,
     password_authentication: PlatformPasswordAuthenticationService | None = None,
 ) -> FastAPI:
     """Build the standalone Platform Control Plane API, never the Tenant app."""
@@ -516,6 +593,42 @@ def create_platform_admin_app(
                 "Platform Model Provider authority is unavailable",
             )
         return model_provider
+
+    def model_connection_service() -> ModelConnectionService:
+        if model_connections is None:
+            raise PlatformSecurityError(
+                "platform_model_connections_unavailable",
+                "Model connection management is unavailable",
+            )
+        return model_connections
+
+    def model_deployment_service() -> ModelDeploymentService:
+        if model_deployments is None:
+            raise PlatformSecurityError(
+                "platform_model_deployments_unavailable", "Model drafts are not configured"
+            )
+        return model_deployments
+
+    def model_test_funding_service() -> ModelTestFundingService:
+        if model_test_funding is None:
+            raise PlatformSecurityError(
+                "platform_model_test_funding_unavailable", "Platform test funding is unavailable"
+            )
+        return model_test_funding
+
+    def model_verification_service() -> ModelVerificationService:
+        if model_verifications is None:
+            raise PlatformSecurityError(
+                "platform_model_verification_unavailable", "Priced model testing is unavailable"
+            )
+        return model_verifications
+
+    def model_publication_service() -> ModelPublicationService:
+        if model_publications is None:
+            raise PlatformSecurityError(
+                "platform_model_publication_unavailable", "Model publication is unavailable"
+            )
+        return model_publications
 
     async def privacy_operation_command_context(
         request: Request,
@@ -711,6 +824,11 @@ def create_platform_admin_app(
                 ),
                 "email_configuration_enabled": email_configuration is not None,
                 "model_provider_enabled": model_provider is not None,
+                "model_connections_enabled": model_connections is not None,
+                "model_deployments_enabled": model_deployments is not None,
+                "model_test_funding_enabled": model_test_funding is not None,
+                "model_verification_enabled": model_verifications is not None,
+                "model_publication_enabled": model_publications is not None,
             },
         }
 
@@ -775,6 +893,355 @@ def create_platform_admin_app(
             "policy_version": POLICY_VERSION,
             "status": "accepted",
             "configuration_version": command.expected_version,
+        }
+
+    @app.get("/v2/platform-admin/model-connections")
+    def list_model_connections(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = model_connection_service().page(principal, limit=limit, cursor=cursor)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
+        }
+
+    @app.post("/v2/platform-admin/model-connections", status_code=202)
+    async def create_model_connection(request: Request) -> dict[str, object]:
+        from saas.control_plane.model_connections import CreateModelConnection
+
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _CreateModelConnectionCommand,
+        )
+        value = model_connection_service().create(
+            principal,
+            command=CreateModelConnection(
+                display_name=command.display_name,
+                provider_id=command.provider_id,
+                base_url=command.base_url,
+                api_key=command.api_key.get_secret_value(),
+            ),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
+        }
+
+    @app.post(
+        "/v2/platform-admin/model-connections/{connection_id}/credential-versions", status_code=202
+    )
+    async def rotate_model_credential(request: Request, connection_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _RotateModelCredentialCommand,
+        )
+        value = model_connection_service().rotate_credential(
+            principal,
+            connection_id=connection_id,
+            expected_version=command.expected_version,
+            api_key=command.api_key.get_secret_value(),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-operations")
+    def find_model_operation(
+        request: Request, idempotency_key: str = Query(min_length=1, max_length=128)
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = model_connection_service().find_operation(principal, idempotency_key)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "operation": None if value is None else asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-connections/{connection_id}/credential-versions")
+    def list_model_credential_versions(
+        request: Request,
+        connection_id: UUID,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = model_deployment_service().credential_page(
+            principal, connection_id, limit=limit, cursor=cursor
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
+        }
+
+    @app.get("/v2/platform-admin/model-deployments")
+    def list_model_deployments(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = model_deployment_service().page(principal, limit=limit, cursor=cursor)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
+        }
+
+    @app.get("/v2/platform-admin/model-deployments/current-generation")
+    def current_model_deployment_generation(
+        request: Request, public_model_id: str = Query(min_length=1, max_length=128)
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "generation": model_deployment_service().current_generation(
+                principal, public_model_id
+            ),
+        }
+
+    @app.post("/v2/platform-admin/model-deployments", status_code=202)
+    async def create_model_deployment(request: Request) -> dict[str, object]:
+        from saas.control_plane.model_deployments import CreateModelDeploymentDraft
+
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _CreateModelDeploymentCommand,
+        )
+        value = model_deployment_service().create(
+            principal,
+            command=CreateModelDeploymentDraft(**command.model_dump()),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-publications")
+    def list_model_publications(
+        request: Request,
+        tenant_id: UUID | None = None,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ):
+        principal, _token = authenticate(request)
+        page = model_publication_service().page(
+            principal, tenant_id=tenant_id, limit=limit, cursor=cursor
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
+            "runtime_enabled": False,
+        }
+
+    @app.get("/v2/platform-admin/model-publications/current-generation")
+    def current_model_publication_generation(
+        request: Request,
+        tenant_id: UUID,
+        public_model_id: str = Query(min_length=1, max_length=128),
+        wire_api: str = Query(min_length=1, max_length=32),
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "generation": model_publication_service().current_generation(
+                principal, tenant_id=tenant_id, public_model_id=public_model_id, wire_api=wire_api
+            ),
+        }
+
+    @app.get("/v2/platform-admin/model-publication-disablements")
+    def find_model_disablement(request: Request, idempotency_key: str):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "disablement": model_publication_service().find_disablement(
+                principal, idempotency_key=idempotency_key
+            ),
+        }
+
+    @app.get("/v2/platform-admin/model-publication-disablements/{disablement_id}")
+    def get_model_disablement(request: Request, disablement_id: UUID):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().disablement_receipt(principal, disablement_id),
+        }
+
+    @app.get("/v2/platform-admin/model-publication-revocations")
+    def find_model_revocation(request: Request, idempotency_key: str):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "revocation": model_publication_service().security_revocations.find(
+                principal, idempotency_key=idempotency_key
+            ),
+        }
+
+    @app.get("/v2/platform-admin/model-publication-revocations/{revocation_id}")
+    def get_model_revocation(request: Request, revocation_id: UUID):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().security_revocations.receipt(principal, revocation_id),
+        }
+
+    @app.post(
+        "/v2/platform-admin/model-publication-disablements/{disablement_id}/revoke",
+        status_code=202,
+    )
+    async def request_model_revocation(request: Request, disablement_id: UUID):
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(), request.headers.get("content-type", ""), _ModelDisablementCommand
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().security_revocations.request(
+                principal,
+                disablement_id=disablement_id,
+                **command.model_dump(),
+                idempotency_key=request.headers.get("Idempotency-Key", ""),
+            ),
+        }
+
+    @app.post("/v2/platform-admin/model-publications/{publication_id}/disable")
+    async def disable_model_publication(request: Request, publication_id: UUID):
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(), request.headers.get("content-type", ""), _ModelDisablementCommand
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().disable(
+                principal,
+                publication_id=publication_id,
+                **command.model_dump(),
+                idempotency_key=request.headers.get("Idempotency-Key", ""),
+            ),
+        }
+
+    @app.post("/v2/platform-admin/model-deployments/{deployment_id}/publish", status_code=202)
+    async def publish_model_deployment(request: Request, deployment_id: UUID):
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(), request.headers.get("content-type", ""), _ModelPublicationCommand
+        )
+        operation = model_publication_service().admit(
+            principal,
+            deployment_id=deployment_id,
+            **command.model_dump(),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(operation),
+        }
+
+    @app.get("/v2/platform-admin/model-operations/{operation_id}/publication")
+    def get_model_publication(request: Request, operation_id: UUID):
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_publication_service().receipt(principal, operation_id),
+        }
+
+    @app.post("/v2/platform-admin/model-deployments/{deployment_id}/test", status_code=202)
+    async def test_model_deployment(request: Request, deployment_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(),
+            request.headers.get("content-type", ""),
+            _ModelVerificationCommand,
+        )
+        operation = model_verification_service().admit(
+            principal,
+            deployment_id=deployment_id,
+            **command.model_dump(),
+            idempotency_key=request.headers.get("Idempotency-Key", ""),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(operation),
+        }
+
+    @app.get("/v2/platform-admin/model-operations/{operation_id}/verification")
+    def get_model_verification(request: Request, operation_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **model_verification_service().receipt(principal, operation_id),
+        }
+
+    @app.get("/v2/platform-admin/model-operations/{operation_id}")
+    def get_model_operation(request: Request, operation_id: UUID) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        value = model_connection_service().operation(principal, operation_id)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
+        }
+
+    @app.get("/v2/platform-admin/model-test-funding")
+    def get_model_test_funding(request: Request) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(model_test_funding_service().get(principal)),
+        }
+
+    @app.put("/v2/platform-admin/model-test-funding")
+    async def configure_model_test_funding(request: Request) -> dict[str, object]:
+        from saas.control_plane.model_test_funding import ModelTestFundingPolicy
+
+        principal, _token = authenticate(request)
+        command = _parse_model_provider_command(
+            await request.body(), request.headers.get("content-type", ""), _ModelTestFundingCommand
+        )
+        value = model_test_funding_service().configure(
+            principal,
+            expected_version=command.expected_version,
+            policy=ModelTestFundingPolicy(**command.model_dump(exclude={"expected_version"})),
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            **asdict(value),
         }
 
     @app.get("/v2/platform-admin/model-provider")

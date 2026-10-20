@@ -4780,6 +4780,7 @@ function SessionHarnessPicker({
         </>
       )}
       <ComposerConfigSections
+        managedCandidates
         models={
           showModels
             ? {

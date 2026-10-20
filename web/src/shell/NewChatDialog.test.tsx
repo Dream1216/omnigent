@@ -60,6 +60,7 @@ import { useSandboxModelOptions, type SandboxModelOptions } from "@/hooks/useSan
 import { ComposerAddMenu } from "@/components/composer/ComposerAddMenu";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
 import type { ServerInfo } from "@/lib/capabilities";
+import * as capabilities from "@/lib/capabilities";
 import { authenticatedFetch, getCurrentUserId, resolveIdentity } from "@/lib/identity";
 import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "@/lib/backgroundSessionTitlesPreferences";
 import {
@@ -1387,7 +1388,10 @@ async function submitAndReadBody(
 }
 
 /** Wait for the create POST and read its raw + parsed body. */
-async function readCreateBody(): Promise<{ raw: string; body: Record<string, unknown> }> {
+async function readCreateBody(): Promise<{
+  raw: string;
+  body: Record<string, unknown>;
+}> {
   await waitFor(() =>
     expect(
       authenticatedFetchMock.mock.calls.some(
@@ -6304,7 +6308,11 @@ describe("NewChatLandingScreen", () => {
       const [, init] = authenticatedFetchMock.mock.calls[0];
       const body = JSON.parse((init as RequestInit).body as string) as {
         workspace?: string;
-        git?: { branch_name: string; existing_worktree?: boolean; base_branch?: string };
+        git?: {
+          branch_name: string;
+          existing_worktree?: boolean;
+          base_branch?: string;
+        };
       };
       // Workspace is bound straight to the worktree dir. The git block is in
       // bind mode (`existing_worktree`): no worktree is created, but the
@@ -6851,12 +6859,21 @@ describe("NewChatLandingScreen", () => {
   it("files a pre-selected project, and invalidates project sessions", async () => {
     // Sequence: create POST → list projects (resolve name→id) → PATCH project_id.
     authenticatedFetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conv_new" }) } as Response)
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ object: "list", data: [{ id: "p_docs", name: "docs" }] }),
+        json: async () => ({ id: "conv_new" }),
       } as Response)
-      .mockResolvedValue({ ok: true, json: async () => ({ id: "conv_new" }) } as Response);
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          object: "list",
+          data: [{ id: "p_docs", name: "docs" }],
+        }),
+      } as Response)
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "conv_new" }),
+      } as Response);
     const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     // A `?project=` landing (e.g. via the sidebar's per-project pencil) names the
     // project in the hero heading rather than a tray chip.
@@ -6904,12 +6921,21 @@ describe("NewChatLandingScreen", () => {
     // The sidebar's per-project "new session" pencil lands here with the
     // project pre-selected — the hero heading reflects it with no interaction.
     authenticatedFetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conv_new" }) } as Response)
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ object: "list", data: [{ id: "p_sprint", name: "Sprint 42" }] }),
+        json: async () => ({ id: "conv_new" }),
       } as Response)
-      .mockResolvedValue({ ok: true, json: async () => ({ id: "conv_new" }) } as Response);
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          object: "list",
+          data: [{ id: "p_sprint", name: "Sprint 42" }],
+        }),
+      } as Response)
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "conv_new" }),
+      } as Response);
     renderLanding({}, "/?project=Sprint%2042");
 
     await waitFor(() => expect(screen.getByText("Sprint 42")).toBeTruthy());
@@ -10401,6 +10427,117 @@ describe("NewChatLandingScreen Smart Routing flavors are scoped separately", () 
     expect(screen.getByTestId("new-chat-landing-config-harness").textContent).toContain(
       "Smart Routing",
     );
+  });
+});
+
+describe("tenant managed model selection", () => {
+  const reference = `managed-model:openai_chat_completions:1:${"a".repeat(64)}`;
+  const candidate = {
+    model_id: "deepseek-customer-contract",
+    display_name: "DeepSeek tenant model",
+    provider_id: "deepseek",
+    channel_id: "deepseek",
+    transport: "litellm",
+    wire_api: "openai_chat_completions",
+    generation: 1,
+    configuration_revision: reference,
+    available: true,
+    unavailable_reason: null,
+  };
+
+  beforeEach(() => {
+    setupLandingMocks();
+    getCurrentUserIdMock.mockReturnValue("tenant-user");
+    vi.spyOn(capabilities, "getCachedServerInfo").mockReturnValue({
+      login_url: "/saas/login",
+    } as ServerInfo);
+    useProjectsMock.mockReturnValue({
+      ...SUCCESS_QUERY_STATE,
+      data: [{ id: "proj_alpha", name: "Alpha" }],
+    });
+    useProjectConfigMock.mockReturnValue({ ...SUCCESS_QUERY_STATE, data: {} });
+    mockAgents([
+      testAgent("a_managed", "polly", {
+        display_name: "Managed SDK",
+        harness: "openai-agents",
+      }),
+      ...DEFAULT_LANDING_AGENTS,
+    ]);
+    localStorage.setItem("omnigent:last-agent-id", "a_managed");
+    authenticatedFetchMock.mockImplementation(
+      async (url) =>
+        new Response(
+          JSON.stringify(
+            String(url).startsWith("/v1/managed-model-catalog")
+              ? { models: [candidate], runtime_enabled: true }
+              : { id: "conv_new" },
+          ),
+        ),
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  async function pick() {
+    openAgentConfig("a_managed");
+    const row = await screen.findByRole("menuitemcheckbox", {
+      name: /DeepSeek tenant model/,
+    });
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(screen.getByTestId("new-chat-landing-input"));
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(screen.getByTestId("new-chat-landing-agent-select")).toHaveTextContent(
+      "DeepSeek tenant model",
+    );
+  }
+
+  it.each(["external", "kubernetes", "agent_sandbox"])(
+    "sends the selected immutable model version for %s",
+    async (provider) => {
+      renderLanding(
+        {
+          login_url: "/saas/login",
+          managed_sandboxes_enabled: provider !== "external",
+          sandbox_provider: provider === "external" ? null : provider,
+        },
+        "/?project=Alpha",
+      );
+      await pick();
+      const reads = authenticatedFetchMock.mock.calls.filter(([url]) =>
+        String(url).startsWith("/v1/managed-model-catalog"),
+      );
+      const target = new URL(String(reads.at(-1)![0]), "https://isolated.invalid").searchParams;
+      expect(target.get("project_id")).toBe("proj_alpha");
+      expect(target.get("harness")).toBe("openai-agents");
+      expect(target.get("host_type")).toBe(provider === "external" ? "external" : "managed");
+      const { body } = await submitAndReadBody();
+      expect(body.model_override).toBe(candidate.model_id);
+      expect(body.inference_configuration_revision).toBe(reference);
+      expect(body.cost_control_mode_override).toBe("off");
+      expect(body.project_id).toBe("proj_alpha");
+      if (provider !== "external") expect(body.sandbox_provider).toBe(provider);
+    },
+  );
+
+  it("does not resurrect a prior model when switching away and back to an Agent", async () => {
+    renderLanding({ login_url: "/saas/login" }, "/?project=Alpha");
+    await pick();
+    selectAgent("a1");
+    selectAgent("a_managed");
+    const { body } = await submitAndReadBody();
+    expect(body.inference_configuration_revision).toBeUndefined();
+    expect(body.model_override).not.toBe(candidate.model_id);
+  });
+
+  it("can clear the platform model and keep the previous model configuration", async () => {
+    renderLanding({ login_url: "/saas/login" }, "/?project=Alpha");
+    await pick();
+    openAgentConfig("a_managed");
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /DeepSeek tenant model/ }));
+    closeMenu();
+    const { body } = await submitAndReadBody();
+    expect(body.inference_configuration_revision).toBeUndefined();
+    expect(body.model_override).not.toBe(candidate.model_id);
   });
 });
 

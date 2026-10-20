@@ -25,6 +25,7 @@ from saas.production.platform_model_gateway import (
     PlatformModelGateway,
     PlatformModelPrice,
     PlatformModelPricingPolicy,
+    _UsageParser,
     build_platform_model_gateway,
     create_platform_model_gateway_app,
     load_platform_model_pricing,
@@ -63,6 +64,8 @@ class _Budgets:
         self.reserved: list[dict[str, object]] = []
         self.settled: list[dict[str, object]] = []
         self.released: list[dict[str, object]] = []
+        self.uncertain: list[dict[str, object]] = []
+        self.reservations: dict[UUID, ModelProviderBudgetReservationView] = {}
 
     def reserve(self, **kwargs: object) -> ModelProviderBudgetReservationView:
         self.reserved.append(kwargs)
@@ -70,7 +73,7 @@ class _Budgets:
         requested_tokens = kwargs["requested_tokens"]
         assert isinstance(requested_microusd, int)
         assert isinstance(requested_tokens, int)
-        return ModelProviderBudgetReservationView(
+        view = ModelProviderBudgetReservationView(
             id=uuid4(),
             provider_id="deepseek",
             tenant_id=TENANT_ID,
@@ -89,18 +92,50 @@ class _Budgets:
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
             version=1,
         )
+        self.reservations[view.id] = view
+        return view
 
-    def settle(self, **kwargs: object) -> ModelProviderBudgetReservationView:
-        self.settled.append(kwargs)
-        raise_if_called = kwargs.pop("raise_if_called", False)
-        assert not raise_if_called
-        reservation = self.reserved[-1]
-        return self.reserve(**reservation)
+    def _replace(self, kwargs, **changes):
+        identity = kwargs["reservation_id"]
+        view = replace(self.reservations[identity], **changes)
+        self.reservations[identity] = view
+        return view
+
+    def begin_attempt(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "reserved"
+        return self._replace(kwargs, status="in_flight")
+
+    def mark_uncertain(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "in_flight"
+        self.uncertain.append(kwargs)
+        return self._replace(kwargs, status="uncertain")
+
+    def resolve_attempt(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "in_flight"
+        witness = kwargs["evidence_sha256"]
+        if kwargs.get("gateway_usage") is not None:
+            assert witness is None
+            witness = "f" * 64
+        assert isinstance(witness, str) and len(witness) == 64
+        self.settled.append(
+            {
+                name: value
+                for name, value in kwargs.items()
+                if name not in {"evidence_sha256", "gateway_usage"}
+            }
+        )
+        return self._replace(
+            kwargs,
+            status="settled",
+            settled_microusd=kwargs["actual_microusd"],
+            settled_tokens=kwargs["actual_tokens"],
+            outcome_evidence_sha256=witness,
+        )
 
     def release(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "reserved"
         self.released.append(kwargs)
-        reservation = self.reserved[-1]
-        return self.reserve(**reservation)
+        return self._replace(kwargs, status="released")
 
 
 def _configuration() -> PlatformManagedModelRuntimeConfiguration:
@@ -163,7 +198,15 @@ def _client(
     )
 
 
-def test_streams_provider_bytes_and_settles_observed_usage() -> None:
+@pytest.mark.parametrize(
+    "cache_fields",
+    (
+        b'"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":6,',
+        b'"prompt_tokens_details":{"cached_tokens":4},',
+    ),
+    ids=("deepseek-native-cache", "litellm-standard-cache"),
+)
+def test_streams_provider_bytes_and_settles_observed_usage(cache_fields: bytes) -> None:
     async def upstream(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Bearer provider-secret-never-returned"
         sent = __import__("json").loads(request.content)
@@ -171,9 +214,9 @@ def test_streams_provider_bytes_and_settles_observed_usage() -> None:
         body = (
             b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
             b'data: {"choices":[],"usage":{"prompt_tokens":10,'
-            b'"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":6,'
-            b'"completion_tokens":5,"total_tokens":15}}\n\n'
-            b"data: [DONE]\n\n"
+            + cache_fields
+            + b'"completion_tokens":5,"total_tokens":15}}\n\n'
+            + b"data: [DONE]\n\n"
         )
         return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
@@ -201,6 +244,38 @@ def test_streams_provider_bytes_and_settles_observed_usage() -> None:
         }
     ]
     assert not budgets.released
+
+
+@pytest.mark.parametrize("cached", (-1, 11, True, "4", None))
+def test_standard_cache_usage_rejects_invalid_token_counts(cached: object) -> None:
+    parser = _UsageParser()
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "prompt_tokens_details": {"cached_tokens": cached},
+    }
+    parser.feed(("data: " + json.dumps({"usage": usage}) + "\n\n").encode())
+    parser.finish()
+    assert parser.total_tokens is None
+
+
+@pytest.mark.parametrize("legacy_hit", (3, True))
+def test_standard_cache_usage_does_not_hide_inconsistent_native_fields(
+    legacy_hit: object,
+) -> None:
+    parser = _UsageParser()
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "prompt_cache_hit_tokens": legacy_hit,
+        "prompt_cache_miss_tokens": 6,
+        "prompt_tokens_details": {"cached_tokens": 4},
+    }
+    parser.feed(("data: " + json.dumps({"usage": usage}) + "\n\n").encode())
+    parser.finish()
+    assert parser.total_tokens is None
 
 
 def test_streams_responses_api_and_settles_nested_usage() -> None:
@@ -242,10 +317,10 @@ def test_streams_responses_api_and_settles_nested_usage() -> None:
     ]
 
 
-def test_responses_accepts_nullable_output_limit() -> None:
+def test_responses_materializes_nullable_output_limit_before_egress() -> None:
     async def upstream(request: httpx.Request) -> httpx.Response:
         sent = json.loads(request.content)
-        assert sent["max_output_tokens"] is None
+        assert sent["max_output_tokens"] == 4096
         body = (
             b"event: response.completed\n"
             b'data: {"type":"response.completed","response":{"usage":'
@@ -268,7 +343,85 @@ def test_responses_accepts_nullable_output_limit() -> None:
     assert response.status_code == 200
 
 
-def test_provider_rejection_releases_budget_without_leaking_body() -> None:
+@pytest.mark.parametrize(
+    ("responses", "limits", "expected"),
+    (
+        (False, {}, 4096),
+        (False, {"max_tokens": None}, 4096),
+        (False, {"max_completion_tokens": None}, 4096),
+        (False, {"max_tokens": 17}, 17),
+        (False, {"max_completion_tokens": 19}, 19),
+        (False, {"max_tokens": 17, "max_completion_tokens": 17}, 17),
+        (True, {}, 4096),
+        (True, {"max_output_tokens": None}, 4096),
+        (True, {"max_output_tokens": 23}, 23),
+    ),
+)
+def test_output_hold_limit_is_always_an_explicit_upstream_bound(
+    responses: bool, limits: dict[str, object], expected: int
+) -> None:
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        assert sent["max_output_tokens" if responses else "max_tokens"] == expected
+        assert "max_completion_tokens" not in sent
+        if responses:
+            body = (
+                b'data: {"type":"response.completed","response":{"usage":'
+                b'{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+            )
+        else:
+            body = (
+                b'data: {"usage":{"prompt_tokens":1,"completion_tokens":1,'
+                b'"total_tokens":2}}\n\ndata: [DONE]\n\n'
+            )
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    document = {"model": "deepseek-flash", "stream": True, **limits}
+    document["input" if responses else "messages"] = "hello" if responses else []
+    response = client.post(
+        "/v1/responses" if responses else "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json=document,
+    )
+    assert response.status_code == 200
+    assert budgets.reserved[0]["requested_tokens"] >= expected
+    assert len(budgets.settled) == 1 and not budgets.released
+
+
+@pytest.mark.parametrize(
+    ("responses", "limits"),
+    (
+        (False, {"max_tokens": 17, "max_completion_tokens": 19}),
+        (False, {"max_tokens": None, "max_completion_tokens": 19}),
+        (False, {"n": 2}),
+        (False, {"n": True}),
+        (False, {"n": None}),
+        (False, {"n": "1"}),
+        (True, {"n": 1}),
+    ),
+)
+def test_ambiguous_or_multisample_limits_fail_before_budget_or_provider(
+    responses: bool, limits: dict[str, object]
+) -> None:
+    calls = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(500)
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses" if responses else "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "stream": True, **limits},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "platform_model_request_invalid"
+    assert not calls and not budgets.reserved and not budgets.settled and not budgets.released
+
+
+def test_provider_rejection_retains_uncertain_budget_without_leaking_body() -> None:
     async def upstream(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "contains-sensitive-provider-detail"})
 
@@ -281,8 +434,8 @@ def test_provider_rejection_releases_budget_without_leaking_body() -> None:
 
     assert response.status_code == 502
     assert "contains-sensitive-provider-detail" not in response.text
-    assert len(budgets.released) == 1
-    assert not budgets.settled
+    assert len(budgets.uncertain) == 1
+    assert not budgets.settled and not budgets.released
 
 
 def test_unconfigured_provider_is_ready_but_requests_fail_closed() -> None:
@@ -677,9 +830,11 @@ def test_host_gateway_config_contains_only_synthetic_bearer_name() -> None:
     assert "sk-" not in rendered
 
 
+@pytest.mark.parametrize("managed", [False, True])
 def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
     tmp_path: Path,
     monkeypatch,
+    managed,
 ) -> None:
     from saas.production import platform_model_gateway as module
 
@@ -705,6 +860,10 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
         path=tmp_path / "platform-model-bindings.json",
         sha256="0" * 64,
         bindings=(
+            ProductionServiceRoleBinding("app", "next_beta_app", "saas_app"),
+            ProductionServiceRoleBinding(
+                "authenticator", "next_beta_authenticator", "saas_authenticator"
+            ),
             ProductionServiceRoleBinding("billing", "next_beta_billing", "saas_billing"),
             ProductionServiceRoleBinding(
                 "secret_broker", "next_beta_secret_broker", "saas_secret_broker"
@@ -739,15 +898,31 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
         lambda *_args, **_kwargs: _ConfigurationReader(None),
     )
 
-    app, built_engines = build_platform_model_gateway(
-        {
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID": str(TENANT_ID),
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
-        }
-    )
+    source = {
+        "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID": str(TENANT_ID),
+        "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
+    }
+    if managed:
+        inference_key = tmp_path / "inference-only-key"
+        inference_key.write_text("isolated-runtime-inference-key")
+        inference_key.chmod(0o400)
+        source.update(
+            {
+                "OMNIGENT_SAAS_MODEL_RUN_INFERENCE_ENABLED": "true",
+                "OMNIGENT_SAAS_LITELLM_INFERENCE_BASE_URL": "http://omnigent-litellm",
+                "OMNIGENT_SAAS_LITELLM_INFERENCE_KEY_FILE": str(inference_key),
+                "OMNIGENT_SAAS_LITELLM_RUN_ALIASES": "platform-model-" + "1" * 32,
+                "OMNIGENT_SAAS_RUNTIME_VERSION": "isolated-version",
+                "OMNIGENT_SAAS_UPSTREAM_REVISION": "a" * 40,
+                "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": "isolated-schema",
+                "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": "isolated-contract",
+            }
+        )
+    app, built_engines = build_platform_model_gateway(source)
 
     assert app is not None
     assert built_engines == tuple(engines)
+    assert len(built_engines) == (4 if managed else 2)
     health = TestClient(app).get("/healthz")
     assert health.status_code == 200
     assert health.json() == {"status": "ok", "provider_secret_exported": False}

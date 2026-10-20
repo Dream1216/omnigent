@@ -1,10 +1,10 @@
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 9b3cde274..916d1d20e 100644
+index 9b3cde274..49aaa1153 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
 @@ -21 +21 @@ from typing import cast
 -from sqlalchemy import Engine, or_, select, tuple_, update
-+from sqlalchemy import Engine, and_, or_, select, tuple_, update
++from sqlalchemy import Engine, and_, or_, select, true, tuple_, update
 @@ -309,3 +309,4 @@ class HostStore:
 -        :param managed_token: Raw launch token for a managed host. When set,
 -            registration atomically revalidates the current credential instead
@@ -30,6 +30,62 @@ index 9b3cde274..916d1d20e 100644
 +                                    SqlHost.terminating_sandbox_id.is_(None),
 +                                ),
 +                            ),
-@@ -1077 +1090 @@ class HostStore:
+@@ -854 +867 @@ class HostStore:
+-    def get_host(self, host_id: str) -> Host | None:
++    def get_host(self, host_id: str, *, include_deleted: bool = False) -> Host | None:
+@@ -867 +880 @@ class HostStore:
+-                    SqlHost.deleted_at.is_(None),
++                    SqlHost.deleted_at.is_(None) if not include_deleted else true(),
+@@ -942,0 +956 @@ class HostStore:
++        expected_retired_host: Host | None = None,
+@@ -948,0 +963,2 @@ class HostStore:
++        An expected retired snapshot additionally rejects heartbeat or credential
++        drift and requires both resource names and the old token to be cleared.
+@@ -962,0 +979,7 @@ class HostStore:
++            if expected_retired_host is not None and (
++                _row_to_host(existing) != expected_retired_host
++                or existing.token_hash is not None
++                or existing.sandbox_id is not None
++                or existing.terminating_sandbox_id is not None
++            ):
++                return None
+@@ -1077 +1100 @@ class HostStore:
 -            if row.token_expires_at < now_epoch():
 +            if row.token_expires_at <= now_epoch():
+@@ -1090,0 +1114 @@ class HostStore:
++        expected_external_inference_snapshot: dict | None = None,
+@@ -1097,0 +1122,2 @@ class HostStore:
++        A trusted controller may pin an external inference snapshot; the locked
++        stored value must still match, and public launch routes never supply it.
+@@ -1154 +1180,8 @@ class HostStore:
+-            if meta.inference_snapshot is not None and host.sandbox_provider is None:
++            if (
++                meta.inference_snapshot is not None
++                and host.sandbox_provider is None
++                and (
++                    expected_external_inference_snapshot is None
++                    or json.loads(meta.inference_snapshot) != expected_external_inference_snapshot
++                )
++            ):
+@@ -1197,0 +1231,2 @@ class HostStore:
++        expected_token_hash: str | None = None,
++        expected_revoked_host: Host | None = None,
+@@ -1208,0 +1244,2 @@ class HostStore:
++        :param expected_token_hash: Optional credential-generation fence for a trusted owner.
++        :param expected_revoked_host: Optional locked snapshot of an already revoked host.
+@@ -1211 +1248,10 @@ class HostStore:
+-        with self._session("detach_stale_managed_sandbox") as session:
++        with self._lifecycle_session("detach_stale_managed_sandbox") as session:
++            if expected_revoked_host is not None:
++                row = session.get(SqlHost, (current_workspace_id(), host_id), with_for_update=True)
++                if (
++                    row is None
++                    or row.token_hash is not None
++                    or row.token_expires_at is not None
++                    or _row_to_host(row) != expected_revoked_host
++                ):
++                    return False
+@@ -1223,0 +1270,3 @@ class HostStore:
++                        SqlHost.token_hash == expected_token_hash
++                        if expected_token_hash is not None
++                        else true(),

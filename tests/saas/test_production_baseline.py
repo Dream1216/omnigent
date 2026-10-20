@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from saas.scripts.check_production_baseline import validate_baseline
+from saas.scripts.check_production_baseline import _migration_heads, validate_baseline
 from tests.saas._approval_history import require_current_approval_history
 
 
@@ -66,6 +66,15 @@ def test_production_baseline_rejects_revision_drift() -> None:
         violation.startswith("control_plane_schema_revision must be the only migration head")
         for violation in report["violations"]
     )
+
+
+def test_production_baseline_tracks_typed_and_untyped_alembic_revisions() -> None:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(_repo() / "saas/control_plane/alembic.ini"))
+    config.set_main_option("script_location", str(_repo() / "saas/control_plane/migrations"))
+    assert _migration_heads(_repo()) == set(ScriptDirectory.from_config(config).get_heads())
 
 
 def test_production_baseline_rejects_unrelated_approved_schema_lineage() -> None:

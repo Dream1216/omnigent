@@ -28,6 +28,7 @@ from saas.control_plane.privacy_execution import (
     WorkloadIdentity,
 )
 from saas.control_plane.privacy_lifecycle import DeletionEvidenceKey, PrivacyLifecycleService
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.privacy_worker import verify_privacy_worker_database_role
 
 _OUTBOX_INSERT = sa.text(
@@ -321,7 +322,7 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
                 connection.execute(
                     sa.text("SELECT version_num FROM saas_alembic_version")
                 ).scalar_one()
-                == "p0s000000015"
+                == CONTROL_PLANE_SCHEMA_REVISION
             )
             connection.exec_driver_sql(
                 f'GRANT CONNECT ON DATABASE "{database_name}" TO '

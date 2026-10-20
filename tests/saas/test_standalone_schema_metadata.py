@@ -61,16 +61,24 @@ def _legacy_run(engine):
     return factory, run, session
 
 
-def test_schema_projection_does_not_import_or_mutate_runtime_model_records():
-    names = set(SaasBase.metadata.tables)
+def test_schema_projection_does_not_import_or_mutate_runtime_model_records(schema_database):
+    _upgrade(schema_database, "p0s000000015")
+    legacy = sa.MetaData()
+    legacy.reflect(schema_database)
+    names = set(legacy.tables)
+    legacy_columns = tuple(legacy.tables["saas_execution_sessions"].c.keys())
+    runtime_names = set(SaasBase.metadata.tables)
     columns = tuple(ExecutionSessionRecord.__table__.c.keys())
-    projected = control_plane_migration_metadata(SaasBase.metadata)
+    modules = set(sys.modules)
+    projected = control_plane_migration_metadata(legacy)
     assert len(_MODEL_TABLES) == 15
     assert set(projected.tables) - names == _MODEL_TABLES
-    assert set(SaasBase.metadata.tables) == names
+    assert set(legacy.tables) == names
+    assert tuple(legacy.tables["saas_execution_sessions"].c.keys()) == legacy_columns
+    assert set(SaasBase.metadata.tables) == runtime_names
     assert tuple(ExecutionSessionRecord.__table__.c.keys()) == columns
-    assert "customer_pricing_frozen" not in columns
-    assert "saas.control_plane.model_routing_models" not in sys.modules
+    assert "customer_pricing_frozen" not in legacy_columns
+    assert set(sys.modules) == modules
     assert not any(projected.tables[name].foreign_key_constraints for name in _MODEL_TABLES)
 
 
@@ -109,7 +117,49 @@ def test_nonempty_p0_execution_survives_schema_upgrade_with_foreign_keys_enabled
     schema_database,
 ):
     _upgrade(schema_database, "p0s000000015")
-    factory, run, session = _legacy_run(schema_database)
+    factory, _service, scope, _request = _execution_fixture(schema_database, create_schema=False)
+    run, task, session = uuid4(), uuid4(), uuid4()
+    legacy = sa.MetaData()
+    legacy.reflect(schema_database)
+    common = {
+        "tenant_id": scope.tenant_id.hex,
+        "space_id": scope.space_id.hex,
+        "project_id": scope.project_id.hex,
+        "created_by": scope.owner_id.hex,
+        "version": 1,
+    }
+    with schema_database.begin() as connection:
+        connection.execute(
+            legacy.tables["saas_execution_sessions"].insert(),
+            {**common, "id": session.hex, "status": "active"},
+        )
+        connection.execute(
+            legacy.tables["saas_tasks"].insert(),
+            {**common, "id": task.hex, "title": "Retained P0 execution"},
+        )
+        connection.execute(
+            legacy.tables["saas_runs"].insert(),
+            {
+                **common,
+                "id": run.hex,
+                "task_id": task.hex,
+                "session_id": session.hex,
+                "status": "queued",
+                "event_sequence": 0,
+                "queue_class": "interactive",
+                "priority": 0,
+                "idempotency_key": "retained-p0-execution",
+                "request_hash": "a" * 64,
+                "input": {"prompt": "synthetic retention test"},
+                "product_revision": "p0-product",
+                "upstream_revision": "p0-upstream",
+                "schema_revision": "p0s000000015",
+                "adapter_contract_version": "0.2.0",
+                "fence_token": 0,
+            },
+        )
+    assert not (_MODEL_TABLES & set(sa.inspect(schema_database).get_table_names()))
+    assert "customer_pricing_frozen" not in legacy.tables["saas_execution_sessions"].c
     _upgrade(schema_database)
     with factory() as db:
         retained = db.get(RunRecord, run)

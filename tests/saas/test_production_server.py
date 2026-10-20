@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from omnigent.db.db_models import current_workspace_id
 from omnigent.runtime import init as init_runtime
 from omnigent.server import app as official_server_app
+from omnigent.server.managed_hosts import parse_sandbox_config
 from saas.compatibility import OmnigentStoreAdapter
 from saas.control_plane.client_network import (
     TrustedClientNetworkConfig,
@@ -958,6 +959,134 @@ def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: 
     launcher = parsed.default.launcher_factory()
     with pytest.raises(RuntimeError, match="runtime context is not bound"):
         launcher._resolve_sandbox_env()
+
+
+def _controller_sandbox_config() -> dict[str, object]:
+    sandbox = _reviewed_production_sandbox_config()
+    sandbox["server_url"] = "https://next.example.test"
+    sandbox["host_config"] = {}
+    kubernetes = cast(dict[str, object], sandbox["kubernetes"])
+    kubernetes["env"] = [
+        "OMNIGENT_HOST_WORKSPACE_ID",
+        "OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND",
+    ]
+    kubernetes["secret_mounts"] = []
+    return sandbox
+
+
+def test_controller_sandbox_profile_has_no_static_model_or_signing_authority(
+    tmp_path: Path,
+) -> None:
+    sandbox = _controller_sandbox_config()
+    path = tmp_path / "controller.yaml"
+    path.write_text(yaml.safe_dump({"sandbox": sandbox}), encoding="utf-8")
+    path.chmod(0o600)
+    loaded = server_module._load_official_config(
+        path, controller_origin="https://next.example.test"
+    )
+    parsed = parse_sandbox_config(cast(dict[str, object], loaded["sandbox"]))
+    assert parsed is not None
+    assert parsed.launchable_providers() == ("agent_sandbox", "kubernetes")
+    assert loaded["sandbox"]["host_config"] == {}
+    assert loaded["sandbox"]["kubernetes"]["secret_mounts"] == []
+    with pytest.raises(ProductionServerCompositionError, match="sandbox"):
+        server_module._load_official_config(path)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "legacy_profile",
+        "static_provider",
+        "signer_mount",
+        "tenant_env",
+        "tagged_image",
+        "sa",
+        "env_from",
+        "http_callback",
+        "foreign_callback",
+    ),
+)
+def test_controller_sandbox_rejects_legacy_or_expanded_authority(
+    tmp_path: Path, mutation: str
+) -> None:
+    sandbox = _controller_sandbox_config()
+    kubernetes = cast(dict[str, object], sandbox["kubernetes"])
+    if mutation == "legacy_profile":
+        sandbox = _reviewed_production_sandbox_config()
+    elif mutation == "static_provider":
+        sandbox["host_config"] = _reviewed_production_sandbox_config()["host_config"]
+    elif mutation == "signer_mount":
+        kubernetes["secret_mounts"] = server_module._PRODUCTION_SANDBOX_SECRET_MOUNTS
+    elif mutation == "tenant_env":
+        kubernetes["env"] = ["OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"]
+    elif mutation == "tagged_image":
+        kubernetes["image"] = "ghcr.io/dream1216/omnigent-saas-host:latest"
+    elif mutation == "sa":
+        kubernetes["service_account"] = "privileged"
+    elif mutation == "http_callback":
+        sandbox["server_url"] = "http://next.example.test"
+    elif mutation == "foreign_callback":
+        sandbox["server_url"] = "https://foreign.example.test"
+    else:
+        kubernetes["secret_name"] = "all-model-credentials"
+    path = tmp_path / "unsafe-controller.yaml"
+    path.write_text(yaml.safe_dump({"sandbox": sandbox}), encoding="utf-8")
+    path.chmod(0o600)
+    with pytest.raises(ProductionServerCompositionError, match="sandbox"):
+        server_module._load_official_config(path, controller_origin="https://next.example.test")
+
+
+@pytest.mark.parametrize("enabled", (False, True))
+def test_production_store_receives_the_frozen_interactive_admission_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    from saas.production import interactive_execution
+
+    original = interactive_execution.InteractiveConversationStore
+    observed = []
+
+    def build_store(*args, **kwargs):
+        observed.append(kwargs.get("runtime_enabled"))
+        assert kwargs.get("agent_cache") is official.agent_cache
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(interactive_execution, "InteractiveConversationStore", build_store)
+    monkeypatch.setattr(server_module, "create_omnigent_saas_app", _fake_official_app)
+    sessions = _sessions()
+    official = _official()
+    built = None
+    try:
+        built = build_production_server(
+            replace(_config(tmp_path), interactive_controller_enabled=enabled),
+            sessions,
+            official=official,
+        )
+        assert observed == [enabled]
+    finally:
+        if built is not None:
+            built.close()
+        else:
+            sessions.close()
+
+
+@pytest.mark.parametrize("enabled", (False, True))
+def test_production_dependency_loader_passes_frozen_controller_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    from dataclasses import replace
+
+    config = replace(_config(tmp_path), interactive_controller_enabled=enabled)
+    observed = []
+
+    def load(path, *, controller_origin=None):
+        observed.append(controller_origin)
+        raise RuntimeError("loader reached before resources are opened")
+
+    monkeypatch.setattr(server_module, "_load_official_config", load)
+    with pytest.raises(RuntimeError, match="loader reached"):
+        server_module.build_official_runtime_dependencies(config)
+    assert observed == [config.public_origin if enabled else None]
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,7 @@ from saas.control_plane.scheduling import SchedulingControlPlane
 from saas.control_plane.scheduling_models import (
     CapabilityTokenRecord,
     RunDispatchRecord,
+    RunnerPoolRecord,
     RunnerRegistrationRecord,
     TenantQueueShareRecord,
 )
@@ -296,7 +297,7 @@ def runtime_dispatch_fixture() -> Iterator[RuntimeDispatchFixture]:
         capacity_slots=4,
         reserved_slots=0,
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
     )
@@ -353,6 +354,32 @@ def _admit(fixture: RuntimeDispatchFixture, *, key: str) -> UUID:
     return admission.run_id
 
 
+def test_product_fleet_pool_dispatch_keeps_upstream_and_product_revisions_distinct(
+    runtime_dispatch_fixture,
+):
+    fixture = runtime_dispatch_fixture
+    with fixture.factory.begin() as database:
+        database.get(RunnerPoolRecord, fixture.pool_id).source_revision = "product-revision"
+    run_id = _admit(fixture, key="product-fleet-revision")
+    result = _project(fixture, run_id)
+    assert result.pool_id == fixture.pool_id
+    with fixture.factory() as database:
+        run = database.get(RunRecord, run_id)
+        partition = database.get(RuntimePartitionRecord, fixture.partition_id)
+        assert run.product_revision == "product-revision"
+        assert run.upstream_revision == partition.source_revision == "upstream-revision"
+
+
+def test_upstream_only_pool_cannot_substitute_for_the_product_release(runtime_dispatch_fixture):
+    fixture = runtime_dispatch_fixture
+    with fixture.factory.begin() as database:
+        database.get(RunnerPoolRecord, fixture.pool_id).source_revision = "upstream-revision"
+    run_id = _admit(fixture, key="upstream-is-not-product")
+    with pytest.raises(OutboxPublishError) as rejected:
+        _project(fixture, run_id)
+    assert rejected.value.code == "run_dispatch_runner_pool_ambiguous"
+
+
 def _delivery(
     fixture: RuntimeDispatchFixture, run_id: UUID
 ) -> tuple[dict[str, object], dict[str, object], datetime]:
@@ -403,7 +430,7 @@ def _claim(
         instance_key=instance_key,
         failure_domain="cn-east-1a",
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
         capabilities=capabilities,
@@ -626,7 +653,7 @@ def test_rejects_multiple_active_pools(
         capacity_slots=2,
         reserved_slots=0,
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
     )
@@ -692,7 +719,7 @@ def test_scheduler_recovers_reconnected_runner_without_old_raw_token(
         instance_key="recover-reconnected",
         failure_domain="cn-east-1a",
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
         capabilities=list(_dispatch_capabilities(fixture, run_id)),

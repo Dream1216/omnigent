@@ -9,18 +9,17 @@ from the final OpenAI-compatible usage frame.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import math
+import logging
 import os
 import stat
-from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import UUID, uuid4
 
+import anyio
 import httpx
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
@@ -28,14 +27,36 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane.billing_metering import BillingMeteringError
 from saas.control_plane.model_budget import (
     ModelProviderBudgetAdmissionService,
     ModelProviderBudgetError,
     ModelProviderBudgetReservationView,
 )
+from saas.control_plane.model_gateway_evidence import GatewayRequestEvidence
+from saas.control_plane.model_gateway_metering import gateway_call_reservation_id
+from saas.control_plane.model_inference_requests import decode_inference_request
+from saas.control_plane.model_pricing import (
+    PlatformModelPrice,
+    PlatformModelPricingPolicy,
+    token_cost_microusd,
+)
 from saas.control_plane.model_provider import (
     ModelProviderConfigurationReader,
     PlatformManagedModelRuntimeConfiguration,
+)
+from saas.control_plane.model_usage import ModelTokenUsage, normalize_model_usage
+from saas.control_plane.resolver import RuntimeCompatibilityPolicy
+from saas.control_plane.tenant_model_catalog import TenantModelCatalogError
+from saas.production.model_run_credentials import (
+    MODEL_RUN_TOKEN_PREFIX,
+    ModelRunCredentialService,
+)
+from saas.production.model_run_inference import LiteLLMRunInference, load_litellm_run_inference
+from saas.production.model_run_watch import (
+    GuardedModelRunResponse,
+    ModelRunAuthorityLost,
+    ModelRunAuthorityWatch,
 )
 from saas.production.onboarding import build_production_secret_cipher
 from saas.production.postgresql_migration import _inspect_service_login
@@ -58,107 +79,12 @@ from saas.runner_adapter.platform_models import PLATFORM_MODEL_MAX_OUTPUT_TOKENS
 
 _MAX_REQUEST_BYTES = 2 * 1024 * 1024
 _MAX_SSE_LINE_BYTES = 256 * 1024
+_RUN_AUTHORITY_POLL_SECONDS = 1.0
+_RUN_AUTHORITY_TIMEOUT_SECONDS = 5.0
 _TENANT_ID_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
 _TOKEN_KEY_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"
 _PRICING_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PRICING_FILE"
-
-
-@dataclass(frozen=True, slots=True)
-class PlatformModelPrice:
-    model_sha256: str
-    peak_input_cache_hit_microusd_per_million_tokens: int
-    peak_input_cache_miss_microusd_per_million_tokens: int
-    peak_output_microusd_per_million_tokens: int
-    off_peak_input_cache_hit_microusd_per_million_tokens: int
-    off_peak_input_cache_miss_microusd_per_million_tokens: int
-    off_peak_output_microusd_per_million_tokens: int
-
-    def __post_init__(self) -> None:
-        if len(self.model_sha256) != 64 or any(
-            character not in "0123456789abcdef" for character in self.model_sha256
-        ):
-            raise ValueError("Platform model price is invalid")
-        for value in (
-            self.peak_input_cache_hit_microusd_per_million_tokens,
-            self.peak_input_cache_miss_microusd_per_million_tokens,
-            self.peak_output_microusd_per_million_tokens,
-            self.off_peak_input_cache_hit_microusd_per_million_tokens,
-            self.off_peak_input_cache_miss_microusd_per_million_tokens,
-            self.off_peak_output_microusd_per_million_tokens,
-        ):
-            if isinstance(value, bool) or not 1 <= value <= 10**12:
-                raise ValueError("Platform model price is invalid")
-
-    @property
-    def reservation_rate(self) -> int:
-        """Return the maximum possible rate for fail-closed pre-egress admission."""
-
-        return max(
-            self.peak_input_cache_hit_microusd_per_million_tokens,
-            self.peak_input_cache_miss_microusd_per_million_tokens,
-            self.peak_output_microusd_per_million_tokens,
-            self.off_peak_input_cache_hit_microusd_per_million_tokens,
-            self.off_peak_input_cache_miss_microusd_per_million_tokens,
-            self.off_peak_output_microusd_per_million_tokens,
-        )
-
-    def rates_at(self, at: datetime) -> tuple[int, int, int]:
-        """Resolve the pinned DeepSeek weekday UTC peak-window contract."""
-
-        normalized = at.astimezone(timezone.utc)
-        peak = normalized.weekday() < 5 and (1 <= normalized.hour < 4 or 6 <= normalized.hour < 10)
-        if peak:
-            return (
-                self.peak_input_cache_hit_microusd_per_million_tokens,
-                self.peak_input_cache_miss_microusd_per_million_tokens,
-                self.peak_output_microusd_per_million_tokens,
-            )
-        return (
-            self.off_peak_input_cache_hit_microusd_per_million_tokens,
-            self.off_peak_input_cache_miss_microusd_per_million_tokens,
-            self.off_peak_output_microusd_per_million_tokens,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class PlatformModelPricingPolicy:
-    revision: str
-    catalog_sha256: str
-    prices: tuple[PlatformModelPrice, ...]
-
-    def __post_init__(self) -> None:
-        if (
-            not self.revision
-            or len(self.revision) > 32
-            or any(ord(character) < 0x21 or ord(character) > 0x7E for character in self.revision)
-            or len(self.catalog_sha256) != 64
-            or any(character not in "0123456789abcdef" for character in self.catalog_sha256)
-            or not self.prices
-        ):
-            raise ValueError("Platform model pricing policy is invalid")
-        sealed_models = tuple(price.model_sha256 for price in self.prices)
-        if len(set(sealed_models)) != len(sealed_models):
-            raise ValueError("Platform model pricing policy is invalid")
-
-    def for_catalog(self, models: tuple[str, ...]) -> Mapping[str, PlatformModelPrice]:
-        """Return rates for a unique configured subset of the sealed catalog."""
-
-        indexed = {price.model_sha256: price for price in self.prices}
-        model_hashes = tuple(hashlib.sha256(model.encode("utf-8")).hexdigest() for model in models)
-        if (
-            not models
-            or len(set(models)) != len(models)
-            or any(model_hash not in indexed for model_hash in model_hashes)
-        ):
-            raise ValueError("Platform model pricing catalog is unavailable")
-        if len(models) == len(self.prices):
-            canonical = json.dumps(list(models), separators=(",", ":"), ensure_ascii=True).encode()
-            if hashlib.sha256(canonical).hexdigest() != self.catalog_sha256:
-                raise ValueError("Platform model pricing catalog is unavailable")
-        return {
-            model: indexed[model_hash]
-            for model, model_hash in zip(models, model_hashes, strict=True)
-        }
+_LOG = logging.getLogger(__name__)
 
 
 class ConfigurationReader(Protocol):
@@ -176,15 +102,34 @@ class BudgetAuthority(Protocol):
         requested_tokens: int,
         ttl: timedelta,
         now: datetime | None = None,
+        gateway_request: GatewayRequestEvidence | None = None,
+        gateway_call_id: UUID | None = None,
     ) -> ModelProviderBudgetReservationView: ...
 
-    def settle(
+    def begin_attempt(
+        self,
+        *,
+        reservation_id: UUID,
+        now: datetime | None = None,
+    ) -> ModelProviderBudgetReservationView: ...
+
+    def mark_uncertain(
+        self,
+        *,
+        reservation_id: UUID,
+        now: datetime | None = None,
+        reason: str = "provider_outcome_unknown",
+    ) -> ModelProviderBudgetReservationView: ...
+
+    def resolve_attempt(
         self,
         *,
         reservation_id: UUID,
         actual_microusd: int,
         actual_tokens: int,
+        evidence_sha256: str | None,
         now: datetime | None = None,
+        gateway_usage: ModelTokenUsage | None = None,
     ) -> ModelProviderBudgetReservationView: ...
 
     def release(
@@ -197,6 +142,19 @@ class BudgetAuthority(Protocol):
 
 class GatewayTokenVerifier(Protocol):
     def validate(self, token: str, *, now: int | None = None) -> PlatformModelGatewayClaims: ...
+
+
+def _streaming_document(document: dict[str, object], *, responses: bool) -> dict[str, object]:
+    outbound = dict(document)
+    outbound["stream"] = True
+    if responses:
+        outbound.pop("stream_options", None)
+        outbound["max_output_tokens"] = _output_token_limit(document, responses=True)
+    else:
+        outbound.pop("max_completion_tokens", None)
+        outbound["max_tokens"] = _output_token_limit(document, responses=False)
+        outbound["stream_options"] = {"include_usage": True}
+    return outbound
 
 
 class PlatformModelGateway:
@@ -213,6 +171,8 @@ class PlatformModelGateway:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         readiness_check: Callable[[], None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        run_credentials: ModelRunCredentialService | None = None,
+        run_inference: LiteLLMRunInference | None = None,
     ) -> None:
         if reservation_ttl <= timedelta(0) or reservation_ttl > timedelta(hours=24):
             raise ValueError("Platform model reservation TTL is invalid")
@@ -226,6 +186,8 @@ class PlatformModelGateway:
         )
         self._readiness_check = readiness_check
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._run_credentials = run_credentials
+        self._run_inference = run_inference
 
     def require_ready(self) -> None:
         if self._readiness_check is not None:
@@ -238,7 +200,14 @@ class PlatformModelGateway:
         return await self._proxy_stream(request, upstream_path="responses")
 
     async def _proxy_stream(self, request: Request, *, upstream_path: str):
-        claims = self._authenticate(request.headers.get("authorization", ""))
+        bearer = self._bearer(request.headers.get("authorization", ""))
+        if bearer.startswith(MODEL_RUN_TOKEN_PREFIX):
+            return await self._managed_run_request(
+                request, bearer=bearer, responses=upstream_path == "responses"
+            )
+        if self._run_inference is not None:
+            return _error(403, "platform_model_legacy_inference_disabled")
+        claims = self._tokens.validate(bearer)
         raw = await request.body()
         try:
             document = _request_document(raw, responses=upstream_path == "responses")
@@ -281,6 +250,16 @@ class PlatformModelGateway:
                 requested_microusd=requested_microusd,
                 requested_tokens=requested_tokens,
                 ttl=self._reservation_ttl,
+                now=requested_at,
+                gateway_request=GatewayRequestEvidence(
+                    model,
+                    "openai_responses"
+                    if upstream_path == "responses"
+                    else "openai_chat_completions",
+                    self._pricing.revision,
+                    price,
+                    _output_token_limit(document, responses=upstream_path == "responses"),
+                ),
             )
         except ModelProviderBudgetError as error:
             return _error(429, error.code)
@@ -292,35 +271,48 @@ class PlatformModelGateway:
             await self._release(reservation)
             return _error(409, "platform_model_configuration_changed")
 
-        outbound = dict(document)
-        outbound["stream"] = True
-        if upstream_path == "chat/completions":
-            outbound["stream_options"] = {"include_usage": True}
-        else:
-            outbound.pop("stream_options", None)
-        client = self._client_factory()
+        outbound = _streaming_document(document, responses=upstream_path == "responses")
+        client: httpx.AsyncClient | None = None
         try:
-            upstream = await client.send(
-                client.build_request(
-                    "POST",
-                    f"{configuration.base_url.rstrip('/')}/{upstream_path}",
-                    headers={
-                        "Authorization": f"Bearer {configuration.api_key}",
-                        "Content-Type": "application/json",
-                        "Accept": "text/event-stream",
-                    },
-                    json=outbound,
-                ),
-                stream=True,
+            client = self._client_factory()
+            outbound_request = client.build_request(
+                "POST",
+                f"{configuration.base_url.rstrip('/')}/{upstream_path}",
+                headers={
+                    "Authorization": f"Bearer {configuration.api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json=outbound,
             )
+        except Exception:  # noqa: BLE001 - local transport setup has not sent inference.
+            await self._release(reservation)
+            await self._close_transport(client)
+            return _error(503, "platform_model_transport_unavailable")
+        try:
+            attempt = await asyncio.to_thread(
+                self._budgets.begin_attempt, reservation_id=reservation.id
+            )
+            if attempt.id != reservation.id or attempt.status != "in_flight":
+                raise ValueError("Invalid budget attempt fence")
+        except Exception:  # noqa: BLE001 - a lost fence acknowledgement never permits egress.
+            await self._release(reservation)
+            await self._close_transport(client)
+            return _error(503, "platform_model_budget_attempt_unavailable")
+        try:
+            upstream = await client.send(outbound_request, stream=True)
         except httpx.HTTPError:
-            await client.aclose()
-            await self._release(reservation)
+            await self._retain_uncertain(reservation, reason="provider_unreachable")
+            await self._close_transport(client)
             return _error(502, "platform_model_provider_unreachable")
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                await self._retain_uncertain(reservation)
+                await self._close_transport(client)
+            raise
         if upstream.status_code != 200:
-            await upstream.aclose()
-            await client.aclose()
-            await self._release(reservation)
+            await self._retain_uncertain(reservation, reason="provider_rejected")
+            await self._close_transport(client, upstream)
             return _error(502, "platform_model_provider_rejected")
 
         return StreamingResponse(
@@ -330,6 +322,7 @@ class PlatformModelGateway:
                 reservation=reservation,
                 price=price,
                 requested_at=requested_at,
+                responses=upstream_path == "responses",
             ),
             status_code=200,
             media_type="text/event-stream",
@@ -340,11 +333,207 @@ class PlatformModelGateway:
             },
         )
 
-    def _authenticate(self, header: str) -> PlatformModelGatewayClaims:
+    @staticmethod
+    def _bearer(header: str) -> str:
         scheme, separator, token = header.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token or token != token.strip():
             raise PlatformModelGatewayTokenError("model gateway bearer is required")
-        return self._tokens.validate(token)
+        return token
+
+    async def _managed_run_request(self, request: Request, *, bearer: str, responses: bool):
+        """Never interpret a genuine Run credential as a legacy session bearer."""
+        credentials = self._run_credentials
+        if credentials is None:
+            return _error(503, "platform_model_run_authority_unavailable")
+        now = self._clock()
+        if now.tzinfo is None or now.utcoffset() is None:
+            return _error(503, "platform_model_gateway_unavailable")
+        try:
+            claims = await asyncio.to_thread(credentials.authenticate, bearer, now=now)
+        except PlatformModelGatewayTokenError:
+            raise
+        except Exception:  # noqa: BLE001 - redact authentication database diagnostics.
+            return _error(503, "platform_model_gateway_unavailable")
+        try:
+            authorized = await asyncio.to_thread(credentials.authorize, claims, now=now)
+        except (PermissionError, ValueError, TenantModelCatalogError):
+            return _error(403, "platform_model_run_authority_unavailable")
+        except Exception:  # noqa: BLE001 - redact current-scope and catalog diagnostics.
+            return _error(503, "platform_model_gateway_unavailable")
+        raw = await request.body()
+        try:
+            document = _request_document(raw, responses=responses)
+        except ValueError:
+            return _error(400, "platform_model_request_invalid")
+        try:
+            frozen = authorized.configuration
+            if document["model"] != frozen["public_model_id"] or frozen["wire_api"] != (
+                "openai_responses" if responses else "openai_chat_completions"
+            ):
+                return _error(400, "platform_model_not_allowed")
+            maximum = frozen["max_output_tokens"]
+            if type(maximum) is not int or not 1 <= maximum <= 65536:
+                return _error(503, "platform_model_gateway_unavailable")
+            output_fields = (
+                ("max_output_tokens",) if responses else ("max_tokens", "max_completion_tokens")
+            )
+            if any(document.get(name) is not None for name in output_fields) and (
+                _output_token_limit(document, responses=responses) > maximum
+            ):
+                return _error(400, "platform_model_output_limit_exceeded")
+        except (KeyError, TypeError):
+            return _error(503, "platform_model_gateway_unavailable")
+        inference = self._run_inference
+        if inference is None:
+            return _error(503, "platform_model_run_execution_unavailable")
+        try:
+            call_text = request.headers.get("X-Omnigent-Gateway-Call", "")
+            call_id = UUID(call_text)
+            if str(call_id) != call_text or not call_id.int:
+                raise ValueError
+            if not any(document.get(name) is not None for name in output_fields):
+                document[output_fields[0]] = min(
+                    maximum, _output_token_limit(document, responses=responses)
+                )
+            evidence = authorized.gateway_request(
+                output_token_limit=_output_token_limit(document, responses=responses)
+            )
+            await asyncio.to_thread(inference.require_financial_scope, authorized)
+        except BillingMeteringError:
+            return _error(403, "platform_model_customer_billing_unavailable")
+        except (ValueError, TypeError, KeyError):
+            return _error(400, "platform_model_call_reference_invalid")
+        except Exception:  # noqa: BLE001 - retain database and key details server-side.
+            return _error(503, "platform_model_gateway_unavailable")
+        requested_tokens = _requested_tokens(raw, document, responses=responses)
+        try:
+            reservation = await asyncio.to_thread(
+                self._budgets.reserve,
+                tenant_id=claims.tenant_id,
+                run_id=claims.run_id,
+                operation_key=f"model-gateway:{claims.run_id}:{call_id}",
+                gateway_call_id=call_id,
+                requested_microusd=_microusd(
+                    requested_tokens, evidence.model_price.reservation_rate
+                ),
+                requested_tokens=requested_tokens,
+                ttl=self._reservation_ttl,
+                now=now,
+                gateway_request=evidence,
+            )
+        except ModelProviderBudgetError as exc:
+            return _error(403, exc.code)
+        except Exception:  # noqa: BLE001 - reservation may have committed; no inference retry.
+            return _error(503, "platform_model_budget_unavailable")
+        if reservation.status == "rejected":
+            return _error(403, reservation.rejection_code or "platform_model_budget_rejected")
+        if (
+            reservation.id != gateway_call_reservation_id(claims.run_id, call_id)
+            or reservation.status != "reserved"
+        ):
+            return _error(409, "platform_model_call_already_admitted")
+        client = None
+        try:
+            outbound = _streaming_document(document, responses=responses)
+            outbound["model"] = frozen["deployment_alias"]
+            client = self._client_factory()
+            outbound_request = client.build_request(
+                "POST",
+                inference.base_url.rstrip("/")
+                + ("/v1/responses" if responses else "/v1/chat/completions"),
+                headers={
+                    "Authorization": "Bearer " + inference.inference_key,
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json=outbound,
+            )
+            await asyncio.to_thread(inference.require_financial_scope, authorized)
+        except Exception:  # noqa: BLE001 - setup failures precede the send fence.
+            await self._release(reservation)
+            await self._close_transport(client)
+            return _error(503, "platform_model_transport_unavailable")
+        try:
+            attempt = await asyncio.to_thread(
+                self._budgets.begin_attempt, reservation_id=reservation.id
+            )
+            if attempt.status != "in_flight" or attempt.id != reservation.id:
+                raise ValueError
+        except ModelProviderBudgetError as exc:
+            await self._release(reservation)
+            await self._close_transport(client)
+            return (
+                _error(403, exc.code)
+                if exc.code == "platform_model_disabled"
+                else _error(503, "platform_model_budget_attempt_unavailable")
+            )
+        except Exception:  # noqa: BLE001 - lost acknowledgement must not authorize another send.
+            await self._release(reservation)
+            await self._close_transport(client)
+            return _error(503, "platform_model_budget_attempt_unavailable")
+        watch = ModelRunAuthorityWatch(
+            lambda: credentials.require_in_flight(claims, now=self._clock()),
+            interval=_RUN_AUTHORITY_POLL_SECONDS,
+            timeout=_RUN_AUTHORITY_TIMEOUT_SECONDS,
+        )
+        try:
+            upstream = await watch.wait(client.send(outbound_request, stream=True))
+        except ModelRunAuthorityLost as exc:
+            await watch.close()
+            await self._retain_uncertain(reservation)
+            await self._close_transport(client)
+            return _error(exc.status_code, exc.code)
+        except httpx.HTTPError:
+            await watch.close()
+            await self._retain_uncertain(reservation, reason="provider_unreachable")
+            await self._close_transport(client)
+            return _error(502, "platform_model_provider_unreachable")
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                await watch.close()
+                await self._retain_uncertain(reservation)
+                await self._close_transport(client)
+            raise
+        if upstream.status_code != 200:
+            await watch.close()
+            await self._retain_uncertain(reservation, reason="provider_rejected")
+            await self._close_transport(client, upstream)
+            return _error(502, "platform_model_provider_rejected")
+        finalized, finish_lock = False, asyncio.Lock()
+
+        async def finalize(usage: ModelTokenUsage | None = None) -> None:
+            nonlocal finalized
+            with anyio.CancelScope(shield=True):
+                async with finish_lock:
+                    if finalized:
+                        return
+                    try:
+                        await watch.close()
+                        if usage is None:
+                            await self._retain_uncertain(reservation, reason="stream_incomplete")
+                        else:
+                            await self._resolve_usage(
+                                reservation, usage, price=evidence.model_price, requested_at=now
+                            )
+                    finally:
+                        await self._close_transport(client, upstream)
+                        finalized = True
+
+        return GuardedModelRunResponse(
+            self._stream_and_settle(
+                client=client,
+                upstream=upstream,
+                reservation=reservation,
+                price=evidence.model_price,
+                requested_at=now,
+                responses=responses,
+                watch=watch,
+                finalize=finalize,
+            ),
+            cleanup=finalize,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     async def _stream_and_settle(
         self,
@@ -354,88 +543,138 @@ class PlatformModelGateway:
         reservation: ModelProviderBudgetReservationView,
         price: PlatformModelPrice,
         requested_at: datetime,
+        responses: bool,
+        watch: ModelRunAuthorityWatch | None = None,
+        finalize: Callable[[ModelTokenUsage | None], Awaitable[None]] | None = None,
     ) -> AsyncIterator[bytes]:
-        parser = _UsageParser()
-        output_observed = False
-        completed = False
+        parser = _UsageParser(responses=responses)
         try:
-            async for chunk in upstream.aiter_bytes():
+            source = upstream.aiter_bytes()
+            async for chunk in source if watch is None else watch.stream(source):
                 if chunk:
-                    output_observed = True
                     parser.feed(chunk)
                     yield chunk
-            parser.finish()
-            completed = True
+            if watch is None or not watch.interrupted:
+                parser.finish()
         finally:
-            await upstream.aclose()
-            await client.aclose()
-            if completed and parser.total_tokens is not None:
-                actual_tokens = max(1, parser.total_tokens)
-                cache_hit_rate, cache_miss_rate, output_rate = price.rates_at(requested_at)
-                actual_cost = max(
-                    1,
-                    _microusd(parser.prompt_cache_hit_tokens or 0, cache_hit_rate)
-                    + _microusd(parser.prompt_cache_miss_tokens or 0, cache_miss_rate)
-                    + _microusd(parser.completion_tokens or 0, output_rate),
-                )
-                # The reservation uses the maximum configured rate and a byte-
-                # bounded token ceiling. A malformed Provider usage frame can
-                # never expand authority after egress.
-                if (
-                    actual_tokens <= reservation.admitted_tokens
-                    and actual_cost <= reservation.admitted_microusd
-                ):
-                    await self._settle(reservation, actual_cost, actual_tokens)
-                else:
-                    await self._settle_full(reservation)
-            elif output_observed:
-                # A disconnect after output is financially ambiguous. Charge
-                # the admitted ceiling instead of silently releasing spend.
-                await self._settle_full(reservation)
-            else:
-                await self._release(reservation)
+            with anyio.CancelScope(shield=True):
+                try:
+                    usage = parser.final_usage
+                    if finalize is not None:
+                        await finalize(usage)
+                    elif usage is None:
+                        await self._retain_uncertain(reservation, reason="stream_incomplete")
+                    else:
+                        await self._resolve_usage(
+                            reservation,
+                            usage,
+                            price=price,
+                            requested_at=requested_at,
+                        )
+                finally:
+                    if finalize is None:
+                        await self._close_transport(client, upstream)
 
-    async def _settle(
+    async def _resolve_usage(
         self,
         reservation: ModelProviderBudgetReservationView,
-        actual_microusd: int,
-        actual_tokens: int,
+        usage: ModelTokenUsage,
+        *,
+        price: PlatformModelPrice,
+        requested_at: datetime,
     ) -> None:
-        await asyncio.to_thread(
-            self._budgets.settle,
-            reservation_id=reservation.id,
-            actual_microusd=actual_microusd,
-            actual_tokens=actual_tokens,
-        )
+        try:
+            actual = price.cost(usage, at=requested_at)
+            if (
+                actual > reservation.admitted_microusd
+                or usage.total_tokens > reservation.admitted_tokens
+            ):
+                raise ValueError("Usage exceeds admitted budget")
+            await asyncio.to_thread(
+                self._budgets.resolve_attempt,
+                reservation_id=reservation.id,
+                actual_microusd=actual,
+                actual_tokens=usage.total_tokens,
+                evidence_sha256=None,
+                gateway_usage=usage,
+            )
+        except Exception:  # noqa: BLE001 - retain the hold rather than inventing a cost.
+            await self._retain_uncertain(reservation, reason="settlement_unavailable")
 
-    async def _settle_full(self, reservation: ModelProviderBudgetReservationView) -> None:
-        await self._settle(
-            reservation,
-            reservation.admitted_microusd,
-            reservation.admitted_tokens,
-        )
+    async def _retain_uncertain(
+        self,
+        reservation: ModelProviderBudgetReservationView,
+        *,
+        reason: str = "provider_outcome_unknown",
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                self._budgets.mark_uncertain, reservation_id=reservation.id, reason=reason
+            )
+        except Exception:  # noqa: BLE001 - in-flight fences remain held if storage is unavailable.
+            _LOG.warning(
+                "platform_model_budget_reconciliation_required",
+                extra={"reservation_id": str(reservation.id)},
+            )
+
+    @staticmethod
+    async def _close_transport(
+        client: httpx.AsyncClient | None, upstream: httpx.Response | None = None
+    ) -> None:
+        for value in (upstream, client):
+            if value is not None:
+                try:
+                    await value.aclose()
+                except Exception:  # noqa: BLE001 - cleanup cannot override a retained budget outcome.
+                    _LOG.warning("platform_model_transport_cleanup_pending")
 
     async def _release(self, reservation: ModelProviderBudgetReservationView) -> None:
         try:
             await asyncio.to_thread(self._budgets.release, reservation_id=reservation.id)
-        except Exception:  # noqa: BLE001 - expiry recovery is the durable fallback.
-            # Expiry recovery remains the durable fallback. Never mask the
-            # original Provider/configuration error with database detail.
+        except Exception:  # noqa: BLE001 - a possibly committed attempt must never be released.
             return
 
 
+def _chat_usage_has_no_output(value: object) -> bool:
+    if not isinstance(value, list) or len(value) > 1:
+        return False
+    for choice in value:
+        if (
+            not isinstance(choice, dict)
+            or type(choice.get("index", 0)) is not int
+            or choice.get("index", 0) != 0
+            or choice.get("message")
+            or choice.get("finish_reason")
+            not in {None, "stop", "length", "tool_calls", "function_call", "content_filter"}
+        ):
+            return False
+        delta = choice.get("delta", {})
+        if not isinstance(delta, dict) or delta.get("role") not in {None, "assistant"}:
+            return False
+        if any(value not in (None, "", [], {}) for key, value in delta.items() if key != "role"):
+            return False
+    return True
+
+
 class _UsageParser:
-    def __init__(self) -> None:
+    def __init__(self, *, responses: bool = False) -> None:
         self._pending = bytearray()
+        self._responses, self._terminal, self._invalid = responses, False, False
+        self._usage: ModelTokenUsage | None = None
         self.prompt_tokens: int | None = None
         self.prompt_cache_hit_tokens: int | None = None
         self.prompt_cache_miss_tokens: int | None = None
         self.completion_tokens: int | None = None
         self.total_tokens: int | None = None
 
+    @property
+    def final_usage(self) -> ModelTokenUsage | None:
+        return self._usage if self._terminal and not self._invalid else None
+
     def feed(self, chunk: bytes) -> None:
         self._pending.extend(chunk)
         if len(self._pending) > _MAX_SSE_LINE_BYTES and b"\n" not in self._pending:
+            self._invalid = True
             raise ValueError("Provider stream line exceeds the gateway limit")
         while b"\n" in self._pending:
             line, _, remainder = self._pending.partition(b"\n")
@@ -448,54 +687,50 @@ class _UsageParser:
             self._pending.clear()
 
     def _line(self, line: bytes) -> None:
+        if len(line) > _MAX_SSE_LINE_BYTES:
+            self._invalid = True
+            raise ValueError("Provider stream line exceeds the gateway limit")
         if not line.startswith(b"data:"):
             return
         payload = line[5:].strip()
-        if not payload or payload == b"[DONE]":
+        if not payload:
+            return
+        if payload == b"[DONE]":
+            if not self._responses:
+                self._terminal = True
             return
         try:
             document = json.loads(payload)
-            usage = document.get("usage") if isinstance(document, dict) else None
-            if not isinstance(usage, dict) and isinstance(document, dict):
+            if not isinstance(document, dict) or self._terminal or self._usage is not None:
+                raise ValueError("Invalid provider stream ordering")
+            if self._responses:
+                if document.get("type") not in {
+                    "response.completed",
+                    "response.incomplete",
+                    "response.failed",
+                }:
+                    return
+                self._terminal = True
+            usage = document.get("usage")
+            if self._responses:
                 response = document.get("response")
                 usage = response.get("usage") if isinstance(response, dict) else None
-            if not isinstance(usage, dict):
+            if usage is None:
                 return
-            responses_usage = "input_tokens" in usage or "output_tokens" in usage
-            prompt = _usage_integer(
-                usage.get("input_tokens") if responses_usage else usage.get("prompt_tokens")
-            )
-            completion = _usage_integer(
-                usage.get("output_tokens") if responses_usage else usage.get("completion_tokens")
-            )
-            total = _usage_integer(usage.get("total_tokens"))
-            if total != prompt + completion:
-                raise ValueError("Provider usage total is inconsistent")
-            details = usage.get("input_tokens_details")
-            cache_hit_value = (
-                details.get("cached_tokens")
-                if responses_usage and isinstance(details, dict)
-                else usage.get("prompt_cache_hit_tokens")
-            )
-            cache_miss_value = (
-                prompt - cache_hit_value
-                if responses_usage and isinstance(cache_hit_value, int)
-                else usage.get("prompt_cache_miss_tokens")
-            )
-            if cache_hit_value is None and cache_miss_value is None:
-                cache_hit = 0
-                cache_miss = prompt
-            else:
-                cache_hit = _usage_integer(cache_hit_value)
-                cache_miss = _usage_integer(cache_miss_value)
-                if cache_hit + cache_miss != prompt:
-                    raise ValueError("Provider prompt cache usage is inconsistent")
-            self.prompt_tokens = prompt
-            self.prompt_cache_hit_tokens = cache_hit
-            self.prompt_cache_miss_tokens = cache_miss
-            self.completion_tokens = completion
-            self.total_tokens = total
+            # LiteLLM retains an empty choice in the final usage-only chunk.
+            if not self._responses and not _chat_usage_has_no_output(document.get("choices", [])):
+                raise ValueError("Usage must be in the final Chat usage frame")
+            normalized = normalize_model_usage(usage, responses=self._responses)
+            self._usage = normalized
+            self.prompt_tokens = normalized.input_tokens
+            self.prompt_cache_hit_tokens = normalized.input_cache_hit_tokens
+            self.prompt_cache_miss_tokens = normalized.input_cache_miss_tokens
+            self.completion_tokens = normalized.output_tokens
+            self.total_tokens = normalized.total_tokens
         except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+            self._invalid = True
+            self._usage = None
+            self.total_tokens = None
             return
 
 
@@ -543,7 +778,7 @@ def create_platform_model_gateway_app(gateway: PlatformModelGateway) -> FastAPI:
 
 def build_platform_model_gateway(
     environ: Mapping[str, str],
-) -> tuple[FastAPI, tuple[Engine, Engine]]:
+) -> tuple[FastAPI, tuple[Engine, ...]]:
     """Compose the standalone gateway with exact Billing and Secret Broker logins."""
 
     try:
@@ -565,6 +800,7 @@ def build_platform_model_gateway(
         raise ValueError("Platform model gateway database authority is invalid")
     secret_engine = sa.create_engine(secret_url, pool_pre_ping=True)
     billing_engine = sa.create_engine(billing_url, pool_pre_ping=True)
+    engines = [secret_engine, billing_engine]
     try:
         _inspect_service_login(
             secret_engine,
@@ -581,6 +817,41 @@ def build_platform_model_gateway(
             raise ValueError("Platform model gateway cipher is unavailable")
         secret_sessions = sessionmaker(secret_engine, expire_on_commit=False, class_=Session)
         billing_sessions = sessionmaker(billing_engine, expire_on_commit=False, class_=Session)
+        inference = load_litellm_run_inference(environ, billing_sessions)
+        run_credentials = None
+        if inference is not None:
+            factories = {}
+            for service in ("app", "authenticator"):
+                url, parsed, _ = load_production_database_url_file(environ, service)
+                if parsed.username != bindings.login_for(service):
+                    raise ValueError("Platform model gateway database authority is invalid")
+                engine = sa.create_engine(url, pool_pre_ping=True)
+                engines.append(engine)
+                _inspect_service_login(
+                    engine,
+                    expected_login=bindings.login_for(service),
+                    expected_role="saas_" + service,
+                )
+                factories[service] = sessionmaker(engine, expire_on_commit=False, class_=Session)
+            run_credentials = ModelRunCredentialService(
+                app_sessions=factories["app"],
+                authenticator_sessions=factories["authenticator"],
+                compatibility=RuntimeCompatibilityPolicy(
+                    runtime_type="omnigent",
+                    allowed_runtime_versions=frozenset(
+                        {_required(environ, "OMNIGENT_SAAS_RUNTIME_VERSION")}
+                    ),
+                    allowed_source_revisions=frozenset(
+                        {_required(environ, "OMNIGENT_SAAS_UPSTREAM_REVISION")}
+                    ),
+                    allowed_schema_revisions=frozenset(
+                        {_required(environ, "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION")}
+                    ),
+                    adapter_contract_version=_required(
+                        environ, "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION"
+                    ),
+                ),
+            )
         reader = ModelProviderConfigurationReader(secret_sessions, secret_cipher=cipher)
         budgets = ModelProviderBudgetAdmissionService(billing_sessions)
         pricing = load_platform_model_pricing(environ)
@@ -594,10 +865,9 @@ def build_platform_model_gateway(
         )
 
         def readiness() -> None:
-            with secret_engine.connect() as connection:
-                connection.execute(sa.text("SELECT 1"))
-            with billing_engine.connect() as connection:
-                connection.execute(sa.text("SELECT 1"))
+            for engine in engines:
+                with engine.connect() as connection:
+                    connection.execute(sa.text("SELECT 1"))
             configuration = reader.load()
             if configuration is not None:
                 pricing.for_catalog(configuration.allowed_models)
@@ -608,18 +878,20 @@ def build_platform_model_gateway(
             budgets=budgets,
             pricing=pricing,
             readiness_check=readiness,
+            run_credentials=run_credentials,
+            run_inference=inference,
         )
         app = create_platform_model_gateway_app(gateway)
 
         @app.on_event("shutdown")
         def close_engines() -> None:
-            secret_engine.dispose()
-            billing_engine.dispose()
+            for engine in engines:
+                engine.dispose()
 
-        return app, (secret_engine, billing_engine)
+        return app, tuple(engines)
     except Exception:
-        secret_engine.dispose()
-        billing_engine.dispose()
+        for engine in engines:
+            engine.dispose()
         raise
 
 
@@ -729,17 +1001,14 @@ def main() -> None:
 def _request_document(raw: bytes, *, responses: bool = False) -> dict[str, object]:
     if not 0 < len(raw) <= _MAX_REQUEST_BYTES:
         raise ValueError("Platform model request size is invalid")
-    try:
-        document = json.loads(raw)
-    except (UnicodeError, json.JSONDecodeError):
-        raise ValueError("Platform model request is invalid") from None
-    if not isinstance(document, dict):
-        raise ValueError("Platform model request is invalid")
+    document = decode_inference_request(raw, responses=responses)
     model = document.get("model")
     if not isinstance(model, str) or not model or len(model) > 128:
         raise ValueError("Platform model request model is invalid")
     if document.get("stream") is not True:
         raise ValueError("Platform model gateway requires streaming")
+    if "n" in document and (responses or type(document["n"]) is not int or document["n"] != 1):
+        raise ValueError("Platform model gateway requires one completion")
     _output_token_limit(document, responses=responses)
     return document
 
@@ -759,13 +1028,16 @@ def _requested_tokens(
 def _output_token_limit(document: Mapping[str, object], *, responses: bool) -> int:
     """Return the validated reservation limit for either OpenAI wire shape."""
 
+    if not responses and "max_tokens" in document and "max_completion_tokens" in document:
+        first, second = document["max_tokens"], document["max_completion_tokens"]
+        if type(first) is not type(second) or first != second:
+            raise ValueError("Platform model output limits conflict")
     value = (
         document.get("max_output_tokens", 4096)
         if responses
         else document.get("max_tokens", document.get("max_completion_tokens", 4096))
     )
-    # Responses declares max_output_tokens nullable. Treat explicit null like
-    # omission for reservation while preserving the upstream request verbatim.
+    # The same effective default is materialized in the outbound request.
     if value is None:
         return 4096
     if isinstance(value, bool) or not isinstance(value, int):
@@ -775,16 +1047,8 @@ def _output_token_limit(document: Mapping[str, object], *, responses: bool) -> i
     return value
 
 
-def _usage_integer(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("Provider usage value is invalid")
-    return value
-
-
 def _microusd(tokens: int, rate_per_million: int) -> int:
-    if tokens <= 0:
-        return 0
-    return math.ceil(tokens * rate_per_million / 1_000_000)
+    return token_cost_microusd(tokens, rate_per_million)
 
 
 def _error(status: int, code: str) -> JSONResponse:

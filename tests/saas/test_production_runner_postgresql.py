@@ -27,6 +27,7 @@ from saas.control_plane.preview_execution import (
 )
 from saas.control_plane.runner_execution_spec import managed_run_execution_spec
 from saas.control_plane.scheduling import RunnerExecutionEnvelope
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.control_plane.worktrees import WorktreeControlPlane, WorktreeControlPlaneError
 from saas.control_plane.worktrees import _canonical_hash as _worktree_hash
 from saas.production.runner_control import RunnerControlClientLease, RunnerControlError
@@ -440,8 +441,9 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                     "AND acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')"
                 )
             )
-            connection.exec_driver_sql(
-                "UPDATE saas_alembic_version SET version_num = 'p0s000000015'"
+            connection.execute(
+                sa.text("UPDATE saas_alembic_version SET version_num = :revision"),
+                {"revision": CONTROL_PLANE_SCHEMA_REVISION},
             )
         subprocess.run(
             [psql, "-X", "--no-password", "-f", str(wrapper)],
@@ -846,6 +848,23 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                     "'saas_app', 'pg_catalog.pg_advisory_lock(bigint)', 'EXECUTE')"
                 )
             )
+            for role in (
+                "saas_executor",
+                "saas_runner_agent",
+                "saas_app",
+                "saas_authenticator",
+                "saas_dispatcher",
+                "saas_billing",
+            ):
+                assert bool(
+                    connection.scalar(
+                        sa.text(
+                            "SELECT has_function_privilege("
+                            ":role, 'pg_catalog.pg_try_advisory_xact_lock(bigint)', 'EXECUTE')"
+                        ),
+                        {"role": role},
+                    )
+                ) is (role == "saas_executor")
             assert (
                 connection.scalar(
                     sa.text(
@@ -2916,7 +2935,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
                 )
 
         before = current_projection()
-        assert before == ("p0s000000015", 18, 19, 2)
+        assert before == (CONTROL_PLANE_SCHEMA_REVISION, 19, 19, 2)
         with pytest.raises(sa.exc.DBAPIError, match="must be drained before downgrade"):
             with owner_engine.begin() as connection:
                 connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
@@ -3104,7 +3123,7 @@ def test_pg16_runner_direct_authority_is_fail_closed(
                 )
 
         before = mutation_projection()
-        assert before == ("p0s000000015", 0, 0, 0, 0, 0)
+        assert before == (CONTROL_PLANE_SCHEMA_REVISION, 0, 0, 0, 0, 0)
         with pytest.raises(RunnerControlError) as rejected:
             _verify_runner_agent_database_authority(
                 login_engine,

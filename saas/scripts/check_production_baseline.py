@@ -31,9 +31,9 @@ _SLO_IDS = {
 _DATA_CLASSES = {"T0", "T1", "T2"}
 _STRIDE = set("STRIDE")
 _OWNER_PATTERN = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
-_MIGRATION_REVISION = re.compile(r'^revision:\s*str\s*=\s*"([^"]+)"', re.MULTILINE)
+_MIGRATION_REVISION = re.compile(r'^revision(?:\s*:\s*str)?\s*=\s*"([^"]+)"', re.MULTILINE)
 _MIGRATION_PARENT = re.compile(
-    r'^down_revision:\s*str\s*\|\s*None\s*=\s*(?:"([^"]+)"|None)', re.MULTILINE
+    r'^down_revision(?:\s*:\s*str\s*\|\s*None)?\s*=\s*(?:"([^"]+)"|None)', re.MULTILINE
 )
 
 

@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.scripts.check_image_supply_chain import (
+    candidate_schema_revision,
     canonical_release_evidence_sha256,
     load_release_evidence,
     validate_candidate_build_contract,
@@ -42,8 +44,7 @@ def _digest(character: str) -> str:
 def _valid_evidence() -> dict[str, object]:
     policy = _policy()
     upstream = json.loads((_repo() / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
-    baseline = json.loads((_repo() / "saas/production/baseline.json").read_text(encoding="utf-8"))
-    schema_revision = baseline["revision_contract"]["control_plane_schema_revision"]
+    schema_revision = CONTROL_PLANE_SCHEMA_REVISION
     product_revision = "a" * 40
     labels = {
         "org.opencontainers.image.revision": product_revision,
@@ -239,6 +240,7 @@ def _candidate_contract_repo(tmp_path: Path) -> Path:
         ".github/workflows/saas-image-candidate.yml",
         ".github/workflows/saas-n1-compat-image.yml",
         "saas/actions/build-oci-candidate/action.yml",
+        "saas/control_plane/schema_revision.py",
     ):
         target = repo / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1542,6 +1544,139 @@ def test_complete_image_evidence_satisfies_policy() -> None:
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
     assert report["blockers"] == []
+
+
+def test_candidate_schema_matches_packaged_alembic_head() -> None:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(_repo() / "saas/control_plane/alembic.ini"))
+    config.set_main_option("script_location", str(_repo() / "saas/control_plane/migrations"))
+    assert candidate_schema_revision(_repo()) == CONTROL_PLANE_SCHEMA_REVISION
+    assert (
+        candidate_schema_revision(_repo())
+        == ScriptDirectory.from_config(config).get_current_head()
+    )
+
+
+def test_candidate_schema_cli_emits_only_packaged_revision() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "saas.scripts.check_image_supply_chain", "--print-schema-revision"],
+        cwd=_repo(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout == f"{CONTROL_PLANE_SCHEMA_REVISION}\n"
+    assert result.stderr == ""
+
+
+def test_candidate_schema_print_cannot_satisfy_require_ready() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "saas.scripts.check_image_supply_chain",
+            "--print-schema-revision",
+            "--require-ready",
+        ],
+        cwd=_repo(),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "not allowed with argument" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("relative", "expected_installs"),
+    [
+        (".github/workflows/saas-upstream-compat.yml", 1),
+        (".github/workflows/saas-image-candidate.yml", 3),
+    ],
+)
+def test_saas_ci_installs_sdk_for_required_managed_runtime_tests(
+    relative: str, expected_installs: int
+) -> None:
+    installs = [
+        line.strip()
+        for line in (_repo() / relative).read_text().splitlines()
+        if line.strip().startswith("run: uv sync --frozen --extra all --group dev --extra saas")
+    ]
+    assert len(installs) == expected_installs
+    assert all(line.endswith("--extra kubernetes") for line in installs)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "",
+        "CONTROL_PLANE_SCHEMA_REVISION = 42",
+        'CONTROL_PLANE_SCHEMA_REVISION = "../schema"',
+        'CONTROL_PLANE_SCHEMA_REVISION = "r" * 12',
+        'CONTROL_PLANE_SCHEMA_REVISION = "first"\nCONTROL_PLANE_SCHEMA_REVISION = "second"',
+        'import os\nCONTROL_PLANE_SCHEMA_REVISION = "first"',
+        "CONTROL_PLANE_SCHEMA_REVISION =",
+    ],
+)
+def test_candidate_schema_rejects_ambiguous_or_executable_source(
+    tmp_path: Path, source: str
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    (repo / "saas/control_plane/schema_revision.py").write_text(source, encoding="utf-8")
+    with pytest.raises(ValueError, match="schema binding is invalid"):
+        candidate_schema_revision(repo)
+    assert "packaged control-plane schema binding is invalid" in validate_candidate_build_contract(
+        repo
+    )
+
+
+def test_candidate_schema_rejects_missing_or_symlink_source(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    path = repo / "saas/control_plane/schema_revision.py"
+    original = path.read_text()
+    path.unlink()
+    with pytest.raises(ValueError, match="schema binding is invalid"):
+        candidate_schema_revision(repo)
+    outside = tmp_path / "schema.py"
+    outside.write_text(original)
+    path.symlink_to(outside)
+    with pytest.raises(ValueError, match="schema binding is invalid"):
+        candidate_schema_revision(repo)
+
+
+@pytest.mark.parametrize("old_schema", ["p0s000000015", "p0s000000012"])
+def test_image_evidence_cannot_reuse_old_production_schema_binding(old_schema: str) -> None:
+    baseline_path = _repo() / "saas/production/baseline.json"
+    baseline_bytes = baseline_path.read_bytes()
+    assert old_schema != CONTROL_PLANE_SCHEMA_REVISION
+    evidence = _valid_evidence()
+    evidence["control_plane_schema_revision"] = old_schema
+    for image in evidence["images"]:  # type: ignore[union-attr]
+        image["labels"]["ai.omnigent.saas.schema-revision"] = old_schema
+    _resign(evidence)
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+    assert report["production_readiness"] == "blocked"
+    assert "image evidence schema revision does not match packaged source" in report["blockers"]
+    assert baseline_path.read_bytes() == baseline_bytes
+
+
+def test_candidate_workflow_rejects_old_production_schema_label_source(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    path = repo / ".github/workflows/saas-image-candidate.yml"
+    path.write_text(
+        path.read_text().replace(
+            "schema_revision=$(uv run python -m saas.scripts.check_image_supply_chain "
+            "--print-schema-revision)",
+            "schema_revision=$(jq -r .revision_contract.control_plane_schema_revision "
+            "saas/production/baseline.json)",
+        )
+    )
+    assert (
+        "candidate workflow build materials are not source-derived"
+        in validate_candidate_build_contract(repo)
+    )
 
 
 def test_image_evidence_rejects_floating_material_and_lock_drift() -> None:

@@ -70,6 +70,9 @@
           <button id="model-provider-link" data-testid="nav-model-provider" data-permission="platform.model_provider.read" data-view="models" type="button" hidden>
             <span>10</span><strong>MODELS</strong><small>平台托管模型</small>
           </button>
+          <button id="model-connections-link" data-testid="nav-model-connections" data-permission="platform.model_provider.read" data-view="model-connections" type="button" hidden>
+            <span>10</span><strong>MODEL SERVICES</strong><small>连接与候选版本</small>
+          </button>
         </nav>
 
         <div class="boundary-note">
@@ -357,6 +360,100 @@
               <aside class="email-warning"><strong>SMTP IDEMPOTENCY BOUNDARY</strong><p>SMTP 协议没有供应商级幂等键。系统使用稳定 Message-ID 降低重复投递概率，但网络结果不确定时仍按 Outbox 至少一次语义处理。</p></aside>
             </form>
           </div>
+        </section>
+
+        <section class="console-view" data-testid="view-model-connections" data-view-panel="model-connections" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">10 / MODEL SERVICES</p><h1>模型服务</h1><p>在平台统一管理供应商连接。LiteLLM 是内部接入层，不是模型名称；候选配置不会自动改变线上模型或现有会话。</p></div>
+            <button class="quiet-button" id="model-connections-refresh" type="button">刷新连接与操作 ↻</button>
+          </header>
+          <div class="model-connections-boundary"><strong>候选环境 · 生产路由保持关闭</strong><p>密钥只写不回显。已受理不等于投影成功，验证和发布须分别完成。</p></div>
+          <div class="model-connections-layout">
+            <form class="work-panel model-connection-form" id="model-connection-create">
+              <div class="panel-heading"><span>01 / 建立供应商连接</span><small>DEEPSEEK FIRST</small></div>
+              <label><span>连接名称</span><input id="model-connection-name" autocomplete="off" maxlength="128" required placeholder="例如：DeepSeek 主渠道"></label>
+              <label><span>供应商</span><input value="DeepSeek" readonly></label>
+              <label><span>批准的端点</span><input value="https://api.deepseek.com" readonly></label>
+              <label><span>供应商 API Key</span><input id="model-connection-key" autocomplete="new-password" type="password" minlength="16" maxlength="4096" required placeholder="加密保存，不向 Agent 下发"></label>
+              <button class="primary-action" id="model-connection-submit" type="submit">建立连接并受理投影 ↗</button>
+              <p class="model-connection-help">响应丢失时先查询原命令，不重新建连接。页面只保留操作编号，不保存密钥。</p>
+              <button class="quiet-button" id="model-connection-new-command" type="button">开始下一条独立命令</button>
+            </form>
+            <section class="work-panel">
+              <div class="panel-heading"><span>02 / 连接清单</span><small id="model-connection-count">LOADING</small></div>
+              <div class="record-list" id="model-connection-list" aria-live="polite"><p>正在加载连接…</p></div>
+              <button class="load-more" id="model-connections-more" data-testid="model-connections-more" type="button" hidden>继续加载连接 ↓</button>
+              <form class="model-connection-form" id="model-connection-rotate" hidden>
+                <div class="panel-heading"><span>追加密钥版本</span><small id="model-connection-rotation-target">—</small></div>
+                <label><span>新供应商 API Key</span><input id="model-connection-rotation-key" autocomplete="new-password" type="password" minlength="16" maxlength="4096" required></label>
+                <button class="primary-action" id="model-connection-rotation-submit" type="submit">追加版本，不覆盖旧密钥 ↗</button>
+              </form>
+            </section>
+          </div>
+          <section class="work-panel model-connection-operation" aria-live="polite" aria-atomic="true">
+            <div class="panel-heading"><span>03 / 当前命令回执</span><small id="model-connection-operation-status">NO COMMAND</small></div>
+            <code id="model-connection-operation-id">尚无操作</code>
+            <p id="model-connection-operation-detail">先建立连接，再完成投影、模型验证和发布。</p>
+          </section>
+          <section id="model-deployment-panel" hidden>
+            <div class="model-connections-layout">
+              <form class="work-panel model-connection-form" id="model-deployment-create">
+                <div class="panel-heading"><span>04 / 不可变模型草稿</span><small>NOT TESTED / NOT PUBLISHED</small></div>
+                <p class="model-connection-help" id="model-deployment-target">从连接清单选择建立草稿；只有当前且已确认投影的密钥版本可选。</p>
+                <label><span>对外模型 ID</span><input id="model-deployment-model" maxlength="128" required pattern="deepseek-[a-z0-9][a-z0-9_.-]*" placeholder="deepseek-v4-pro"></label>
+                <label><span>展示名称</span><input id="model-deployment-name" maxlength="128" required placeholder="例如：DeepSeek V4 Pro"></label>
+                <label><span>已确认投影的密钥版本</span><select id="model-deployment-credential" required><option value="">先选择连接</option></select></label>
+                <label><span>请求协议</span><select id="model-deployment-protocol"><option value="openai_chat_completions">Chat Completions</option><option value="openai_responses">Responses</option></select></label>
+                <label><span>最大输出 token</span><input id="model-deployment-output" type="number" min="1" max="65536" value="1024" required></label>
+                <button class="primary-action" id="model-deployment-submit" type="submit">保存草稿并受理投影 ↗</button>
+                <p class="model-connection-help">版本追加，不覆盖已保存定义。保存或投影成功均不代表验证通过，不改变用户模型选择器。</p>
+              </form>
+              <section class="work-panel">
+                <div class="panel-heading"><span>05 / 草稿版本</span><small id="model-deployment-count">LOADING</small></div>
+                <div class="record-list" id="model-deployment-list" aria-live="polite"></div>
+                <button class="load-more" id="model-deployments-more" data-testid="model-deployments-more" type="button" hidden>继续加载较早草稿 ↓</button>
+              </section>
+            </div>
+          </section>
+          <section class="work-panel model-connection-form" id="model-test-funding-panel" hidden>
+            <div class="panel-heading"><span>06 / 平台模型测试预算</span><small id="model-test-funding-status" role="status">LOADING</small></div>
+            <p class="model-connection-help">测试由平台承担费用，不进入租户账单。与租户调用共享供应商月度上限；旧版配置并存时取较小上限。未知费用保留占用，不按输出上限冒充实际用量。保存预算不会启用模型。</p>
+            <form class="model-connection-form" id="model-test-funding-form">
+              <label class="model-provider-enable"><input id="model-test-funding-enabled" type="checkbox" disabled><span>允许有预算的模型测试</span></label>
+              <div class="model-test-funding-fields">
+                <label><span>供应商共享月度上限 / USD</span><input id="model-test-funding-monthly" type="number" min="0.000001" max="1000000000" step="0.000001" value="100" required disabled></label>
+                <label><span>平台测试每日金额上限 / USD</span><input id="model-test-funding-daily" type="number" min="0.000001" max="1000000000" step="0.000001" value="1" required disabled></label>
+                <label><span>单次测试金额上限 / USD</span><input id="model-test-funding-per-call" type="number" min="0.000001" max="1000000000" step="0.000001" value="0.01" required disabled></label>
+                <label><span>平台测试每日 token 上限</span><input id="model-test-funding-daily-tokens" type="number" min="1" max="1000000000" step="1" value="10000" required disabled></label>
+                <label><span>单次测试 token 上限</span><input id="model-test-funding-call-tokens" type="number" min="1" max="2048" step="1" value="1056" required disabled></label>
+                <label><span>每日测试预留次数上限</span><input id="model-test-funding-attempts" type="number" min="1" max="1000" step="1" value="10" required disabled></label>
+              </div>
+              <button class="primary-action" id="model-test-funding-save" type="submit" disabled>保存平台测试预算 ↗</button>
+            </form>
+            <button class="quiet-button" id="model-test-funding-refresh" type="button">核对预算策略 ↻</button>
+            <p class="model-connection-help" id="model-test-funding-receipt">尚未配置测试资金，不允许发出测试请求。响应未确认时先核对原策略，不再次提交。</p>
+          </section>
+          <section class="work-panel model-connection-form" id="model-verification-panel" hidden>
+            <div class="panel-heading"><span>07 / 受限验证回执</span><small id="model-verification-status" role="status">NO TEST</small></div>
+            <p class="model-connection-help">在草稿清单明确发起测试。VERIFIED 仅表示有界协议与费用结算通过，不代表完整 Agent 能力验收或发布。可见配置读回不证明隐藏密钥一致；发布前仍须核对可信凭据版本。</p>
+            <dl id="model-verification-detail" aria-live="polite"><div class="empty-record">尚未选择验证回执。测试可能产生真实供应商费用，不会自动重试。</div></dl>
+            <button class="quiet-button" id="model-verification-refresh" type="button">核对验证回执 ↻</button>
+          </section>
+          <section class="work-panel model-connection-form" id="model-publication-panel" hidden>
+            <div class="panel-heading"><span>08 / 租户候选目录</span><small id="model-publication-status" role="status">NO SCOPE</small></div>
+            <p class="model-connection-help">先核对明确的租户范围，再从草稿清单发布已验证版本。可信 Worker 会重新检查权限、费用结算及已知副本路由；目录记录成功不表示运行时已启用。</p>
+            <form id="model-publication-scope" class="model-connection-form">
+              <label><span>目标租户 ID</span><input id="model-publication-tenant" maxlength="36" required placeholder="租户 UUID" autocomplete="off"></label>
+              <button class="quiet-button" type="submit">核对租户候选目录 ↻</button>
+            </form>
+            <div class="record-list" id="model-publication-list" aria-live="polite"><div class="empty-record">尚未核对发布范围。</div></div>
+            <button class="load-more" id="model-publications-more" data-testid="model-publications-more" type="button" hidden>继续读取较早目录 ↓</button>
+            <dl id="model-publication-detail" aria-live="polite"><div class="empty-record">尚无发布回执。运行时保持关闭。</div></dl>
+            <div class="panel-heading"><span>09 / 普通停用回执</span><small id="model-disablement-status" role="status">NO DISABLEMENT</small></div>
+            <p class="model-connection-help">普通停用覆盖已核对租户的指定模型／协议及截止代际，禁止未受理的新推理与旧令牌续签。已受理调用仍可完成和结算；这不是主动中止在途流或物理 Agent 的安全撤销。结果不确定时只核对回执，不自动重发。</p>
+            <dl id="model-disablement-detail" aria-live="polite"><div class="empty-record">尚无停用回执。审计入队不等于实际投递已验收。</div></dl>
+            <button class="quiet-button" id="model-disablement-refresh" type="button" disabled>核对停用回执 ↻</button>
+          </section>
         </section>
 
         <section class="console-view model-provider-view" data-testid="view-model-provider" data-view-panel="models" hidden>

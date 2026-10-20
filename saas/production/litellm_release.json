@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "release": "v1.105.1",
+  "source_repository": "https://github.com/BerriAI/litellm",
+  "source_revision": "d665dc1a6315847fcad6cc2c1264ceb47c06abce",
+  "image": "ghcr.io/berriai/litellm@sha256:b7b9e2c306343721802253d0dd9436b9634a2eb4e14da7c7cf06c5c7b7530802",
+  "platform_manifests": {
+    "linux/amd64": "sha256:b4239fbb9be0d915c312632ccdcccea441db9994a341536fdbf32cae82e15f9c",
+    "linux/arm64": "sha256:9aa3d115784191dcaa36a906339e27d055d3e82a22a02c7ed74309e272bd41cb"
+  },
+  "platform_configs": {
+    "linux/amd64": "sha256:b764a559f0200ed74f4e7c2841df34b26c6f3a402e0e8a4e9a0e3c6eee20d90f",
+    "linux/arm64": "sha256:a62efd42ac1d9d2450b0ad78afe42abcd453fa83c99414d46f566f9180283c68"
+  },
+  "signature_public_key": "https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub",
+  "license": {
+    "upstream_license": "MIT except enterprise/",
+    "runtime_profile": "oss-core",
+    "excluded_distribution": "litellm-enterprise==0.1.73",
+    "excluded_source_directory": "/app/enterprise",
+    "required_enterprise_capabilities": [],
+    "source": "https://github.com/BerriAI/litellm/blob/d665dc1a6315847fcad6cc2c1264ceb47c06abce/LICENSE"
+  },
+  "runtime_patch": {
+    "repository": "https://apk.cgr.dev/chainguard",
+    "openssl_version": "3.6.5-r2",
+    "packages": {
+      "x86_64": {
+        "libcrypto3-3.6.5-r2.apk": "16c94b04de2329a99b873d22f868aa71d1b23a7788d7035b2d528c7cfe5e8940",
+        "libssl3-3.6.5-r2.apk": "4e43402567bfbac732f9eb1005ffa220f41792cf8f9ad6dd576bca44eefef84d"
+      },
+      "aarch64": {
+        "libcrypto3-3.6.5-r2.apk": "2f72673545c7f2c0a17b3d09f1c0c587babe8281e455a40c7c7f85df1802740f",
+        "libssl3-3.6.5-r2.apk": "1907c6283822ea5dde176852ecf5c6efb62f04e027e9dc9376603ff7bd691828"
+      }
+    }
+  },
+  "management_contract": {
+    "create_credential": ["POST", "/credentials"],
+    "list_credentials": ["GET", "/credentials"],
+    "create_model": ["POST", "/model/new"],
+    "list_models": ["GET", "/model/info"],
+    "delete_model": ["POST", "/model/delete"],
+    "create_inference_key": ["POST", "/key/generate"]
+  },
+  "production_enabled_by_default": false
+}

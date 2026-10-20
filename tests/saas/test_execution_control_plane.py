@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -21,6 +21,7 @@ from saas.control_plane import (
     ExecutionRevisionSet,
     ExecutionSessionRecord,
     GlobalUser,
+    ProjectAuthorizationError,
     ProjectMembershipRecord,
     ProjectRecord,
     QuotaReservationRecord,
@@ -60,7 +61,7 @@ def execution_control_plane() -> Iterator[
         engine.dispose()
 
 
-def _execution_fixture(engine: sa.Engine):
+def _execution_fixture(engine: sa.Engine, *, create_schema: bool = True):
 
     def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
@@ -69,7 +70,8 @@ def _execution_fixture(engine: sa.Engine):
 
     if engine.dialect.name == "sqlite":
         sa.event.listen(engine, "connect", _enable_foreign_keys)
-    SaasBase.metadata.create_all(engine)
+    if create_schema:
+        SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     scope = ExecutionScope(uuid4(), uuid4(), uuid4(), uuid4())
     with factory.begin() as db:
@@ -191,6 +193,220 @@ def _admitted_run(
         revisions=_revisions(),
     )
     return admitted.run_id, task_id, session_id
+
+
+def _task_admission(service, scope, request, session_id, **changes):
+    command = {
+        "project_id": scope.project_id,
+        "session_id": session_id,
+        "title": "Build the requested page",
+        "input_payload": {"message": {"stable_id": "a" * 32, "text": "Build a page"}},
+        "quota_resource": "run_units",
+        "quota_units": 1,
+        "idempotency_key": "interactive-message-a",
+        "revisions": _revisions(),
+    }
+    command.update(changes)
+    return service.admit_task_run(request, **command)
+
+
+def _admission_counts(factory):
+    with factory() as db:
+        return {
+            model.__tablename__: db.scalar(sa.select(sa.func.count()).select_from(model))
+            for model in (
+                TaskRecord,
+                SessionTaskRecord,
+                RunRecord,
+                QuotaReservationRecord,
+                RunEventRecord,
+                ControlPlaneOutboxEvent,
+            )
+        }
+
+
+def test_task_run_admission_is_atomic_and_replays_without_creating_another_task(
+    execution_control_plane,
+) -> None:
+    factory, service, scope, request = execution_control_plane
+    service.configure_quota(
+        request, project_id=scope.project_id, resource="run_units", limit_units=1
+    )
+    session_id = service.create_session(request, project_id=scope.project_id)
+    admitted = _task_admission(service, scope, request, session_id)
+    assert admitted.session_id == session_id
+    assert admitted.status == "queued" and not admitted.replayed
+    assert admitted.event_sequence == 2
+    counts = _admission_counts(factory)
+    assert counts == {
+        "saas_tasks": 1,
+        "saas_session_tasks": 1,
+        "saas_runs": 1,
+        "saas_quota_reservations": 1,
+        "saas_run_events": 2,
+        "saas_control_plane_outbox": 2,
+    }
+    replay = _task_admission(service, scope, request, session_id)
+    assert replay == replace(admitted, replayed=True)
+    assert _admission_counts(factory) == counts
+    with factory() as db:
+        run = db.get(RunRecord, admitted.run_id)
+        task = db.get(TaskRecord, admitted.task_id)
+        assert run is not None and task is not None
+        assert task.created_by == request.actor_id
+        assert task.title == "Build the requested page"
+        assert run.input == {"message": {"stable_id": "a" * 32, "text": "Build a page"}}
+        assert run.lease_token is None and run.lease_owner is None and run.fence_token == 0
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"title": "Another task"},
+        {"input_payload": {"message": "A different input"}},
+        {"quota_units": 2},
+        {"queue_class": "batch"},
+        {"priority": 3},
+        {"revisions": ExecutionRevisionSet("new-product", "upstream", "schema", "adapter")},
+    ],
+)
+def test_task_run_admission_rejects_changed_idempotency_facts(
+    execution_control_plane,
+    change,
+) -> None:
+    factory, service, scope, request = execution_control_plane
+    service.configure_quota(
+        request, project_id=scope.project_id, resource="run_units", limit_units=10
+    )
+    session_id = service.create_session(request, project_id=scope.project_id)
+    _task_admission(service, scope, request, session_id)
+    counts = _admission_counts(factory)
+    with pytest.raises(ExecutionControlPlaneError, match="another request") as error:
+        _task_admission(service, scope, request, session_id, **change)
+    assert error.value.code == "idempotency_conflict"
+    assert _admission_counts(factory) == counts
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_quota", "exhausted_quota", "closed_session", "foreign_session"]
+)
+def test_task_run_rejection_leaves_no_orphan_task_link_or_run(
+    execution_control_plane,
+    failure,
+) -> None:
+    factory, service, scope, request = execution_control_plane
+    session_id = service.create_session(request, project_id=scope.project_id)
+    if failure != "missing_quota":
+        service.configure_quota(
+            request, project_id=scope.project_id, resource="run_units", limit_units=1
+        )
+    if failure == "exhausted_quota":
+        _task_admission(service, scope, request, session_id)
+    elif failure == "closed_session":
+        service.close_session(request, project_id=scope.project_id, session_id=session_id)
+    elif failure == "foreign_session":
+        session_id = uuid4()
+    counts = _admission_counts(factory)
+    with pytest.raises(ExecutionControlPlaneError) as error:
+        _task_admission(
+            service, scope, request, session_id, idempotency_key="new-interactive-message"
+        )
+    assert (
+        error.value.code
+        == {
+            "missing_quota": "quota_not_configured",
+            "exhausted_quota": "quota_exceeded",
+            "closed_session": "session_closed",
+            "foreign_session": "session_not_found",
+        }[failure]
+    )
+    assert _admission_counts(factory) == counts
+
+
+@pytest.mark.parametrize("payload", [{}, {"message": float("nan")}, {"message": object()}])
+def test_task_run_rejects_empty_or_non_json_input(execution_control_plane, payload) -> None:
+    factory, service, scope, request = execution_control_plane
+    session_id = service.create_session(request, project_id=scope.project_id)
+    with pytest.raises(ExecutionControlPlaneError) as error:
+        _task_admission(service, scope, request, session_id, input_payload=payload)
+    assert error.value.code == "run_input_invalid"
+    assert all(count == 0 for count in _admission_counts(factory).values())
+
+
+def test_task_run_replay_after_session_close_does_not_reopen_execution(execution_control_plane):
+    factory, service, scope, request = execution_control_plane
+    service.configure_quota(
+        request, project_id=scope.project_id, resource="run_units", limit_units=1
+    )
+    session_id = service.create_session(request, project_id=scope.project_id)
+    admitted = _task_admission(service, scope, request, session_id)
+    counts = _admission_counts(factory)
+    service.close_session(request, project_id=scope.project_id, session_id=session_id)
+    assert _task_admission(service, scope, request, session_id) == replace(admitted, replayed=True)
+    assert _admission_counts(factory) == counts
+    with factory() as db:
+        execution_session = db.get(ExecutionSessionRecord, session_id)
+        assert execution_session is not None and execution_session.status == "closed"
+
+
+@pytest.mark.parametrize("membership_model", [TenantMembership, SpaceMembership])
+def test_task_run_replay_requires_current_authorization(execution_control_plane, membership_model):
+    factory, service, scope, request = execution_control_plane
+    service.configure_quota(
+        request, project_id=scope.project_id, resource="run_units", limit_units=1
+    )
+    session_id = service.create_session(request, project_id=scope.project_id)
+    _task_admission(service, scope, request, session_id)
+    counts = _admission_counts(factory)
+    with factory.begin() as db:
+        membership = db.scalar(sa.select(membership_model))
+        membership.status = "suspended"
+        membership.version += 1
+    with pytest.raises(ProjectAuthorizationError):
+        _task_admission(service, scope, request, session_id)
+    assert _admission_counts(factory) == counts
+
+
+def test_task_run_cannot_attach_a_session_from_another_project(execution_control_plane):
+    factory, service, scope, request = execution_control_plane
+    session_id = service.create_session(request, project_id=scope.project_id)
+    other_project = uuid4()
+    with factory.begin() as db:
+        db.add(
+            ProjectRecord(
+                id=other_project,
+                tenant_id=scope.tenant_id,
+                space_id=scope.space_id,
+                name="Another project",
+                visibility="restricted",
+                created_by=scope.owner_id,
+                status="active",
+                authorization_version=1,
+            )
+        )
+        db.flush()
+        db.add(
+            ProjectMembershipRecord(
+                tenant_id=scope.tenant_id,
+                space_id=scope.space_id,
+                project_id=other_project,
+                subject_type="user",
+                subject_id=scope.owner_id,
+                role="owner",
+                status="active",
+                created_by=scope.owner_id,
+                version=1,
+            )
+        )
+    with pytest.raises(ExecutionControlPlaneError) as denied:
+        _task_admission(
+            service,
+            replace(scope, project_id=other_project),
+            replace(request, project_id=other_project),
+            session_id,
+        )
+    assert denied.value.code == "session_not_found"
+    assert all(count == 0 for count in _admission_counts(factory).values())
 
 
 def test_task_session_and_run_admission_are_durable_atomic_and_idempotent(

@@ -111,7 +111,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked preflight dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra kubernetes
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Set up crane for exact OCI transfer regression
@@ -176,7 +176,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra kubernetes
       - name: Verify full four-authority fresh replay and predecessor upgrade
         run: >-
           uv run pytest tests/saas/test_production_migration_replay.py
@@ -234,7 +234,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra kubernetes
       - name: Configure exact PostgreSQL 18 runner contract
         env:
           PGPASSWORD: postgres
@@ -301,7 +301,7 @@ jobs:
           source_revision="$CANDIDATE_REVISION"
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
-          schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
+          schema_revision=$(uv run python -m saas.scripts.check_image_supply_chain --print-schema-revision)
           echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
           echo "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"
           echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"

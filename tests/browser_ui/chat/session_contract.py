@@ -237,6 +237,7 @@ class ChatSessionContract:
     _items: list[dict[str, Any]] = field(default_factory=list)
     _session_updates: dict[str, Any] = field(default_factory=dict)
     _health_updates: dict[str, Any] = field(default_factory=dict)
+    info_updates: dict[str, Any] = field(default_factory=dict)
     _status: str = "idle"
     _hold_skill_responses: bool = False
     _pending_skill_routes: list[Route] = field(default_factory=list)
@@ -384,7 +385,7 @@ def install_chat_session_routes(handle: ChatSessionContract) -> None:
 
     contract.json(
         "/v1/info",
-        {
+        lambda _request: {
             "accounts_enabled": False,
             "single_user": True,
             "login_url": None,
@@ -410,6 +411,7 @@ def install_chat_session_routes(handle: ChatSessionContract) -> None:
                 "logos": {"main": None, "loading": None, "favicon": None},
                 "powered_by": True,
             },
+            **handle.info_updates,
         },
     )
     contract.json("/v1/me", {"user_id": "local", "is_admin": True})

@@ -209,6 +209,68 @@ class _IdleClient(_Client):
 
 
 @pytest.mark.asyncio
+async def test_pending_recovery_keeps_heartbeat_and_gc_alive_without_new_claims() -> None:
+    stop, barrier_observed, allow_cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class Pending(_Executor):
+        pending = False
+
+        async def prepare_finalization(self, lease, *, result):
+            await super().prepare_finalization(lease, result=result)
+            return "orphaned"
+
+        def assert_claimable(self):
+            super().assert_claimable()
+            if self.pending:
+                barrier_observed.set()
+                raise RunnerControlError("interactive_controller_recovery_pending", "Pending")
+
+        async def finalize(self, lease, *, result):
+            await super().finalize(lease, result=result)
+            self.pending = True
+
+        async def reconcile_physical_gc(self, *, limit):
+            self.gc_limits.append(limit)
+            if self.pending and allow_cleanup.is_set():
+                self.pending = False
+                return 1
+            return 0
+
+    class Client(_Client):
+        claims = 0
+
+        async def claim_run(self):
+            self.claims += 1
+            if self.claims == 1:
+                return LEASE
+            stop.set()
+            return None
+
+        async def release_run(self, lease):
+            self.releases += 1
+            return False
+
+    client, executor = Client(stop), Pending(result="orphaned")
+    agent = ProductionRunnerAgent(
+        client, executor, poll_interval_seconds=0.05, physical_gc_interval_seconds=1
+    )  # type: ignore[arg-type]
+    running = asyncio.create_task(agent.run(stop))
+    try:
+        await asyncio.wait_for(barrier_observed.wait(), 3)
+        before = client.runner_heartbeats
+        await asyncio.sleep(0.2)
+        assert not running.done() and client.claims == 1 and client.releases == 1
+        assert client.runner_heartbeats > before
+        allow_cleanup.set()
+        stats = await asyncio.wait_for(asyncio.shield(running), 3)
+        assert stats.physical_gc_deleted == 1 and client.claims == 2
+        assert executor.calls == [LEASE] and executor.finalized == ["orphaned"]
+    finally:
+        stop.set()
+        await asyncio.gather(running, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_agent_claims_executes_transitions_and_releases_one_terminal_lease() -> None:
     stop = asyncio.Event()
     client = _Client(stop)
@@ -226,6 +288,58 @@ async def test_agent_claims_executes_transitions_and_releases_one_terminal_lease
     assert client.runner_heartbeats == 2
     assert stats.claims == stats.completed == stats.released == 1
     assert stats.failed == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("heartbeat_failure", (False, True))
+async def test_terminal_transition_waits_for_an_inflight_heartbeat_without_hiding_its_error(
+    heartbeat_failure,
+):
+    stop, entered, release, prepared = (asyncio.Event() for _ in range(4))
+
+    class Client(_Client):
+        async def heartbeat_run(self, lease):
+            result = await super().heartbeat_run(lease)
+            if self.run_heartbeats == 2:
+                entered.set()
+                await release.wait()
+                if heartbeat_failure:
+                    raise RunnerControlError("isolated_heartbeat_denied", "Heartbeat unavailable")
+                if "succeeded" in self.transitions:
+                    raise RunnerControlError("capability_fence_stale", "Fence is stale")
+            return result
+
+    class Executor(_Executor):
+        async def prepare_finalization(self, lease, *, result):
+            await asyncio.wait_for(entered.wait(), 1)
+            return await super().prepare_finalization(lease, result=result)
+
+        async def prepare_terminal_transition(self, lease):
+            prepared.set()
+            return await super().prepare_terminal_transition(lease)
+
+    client, executor = Client(stop), Executor()
+    agent = ProductionRunnerAgent(client, executor)
+    agent._heartbeat_interval = 0.01
+    running = asyncio.create_task(agent.run(stop))
+    try:
+        await asyncio.wait_for(prepared.wait(), 2)
+        assert "succeeded" not in client.transitions, "terminal RPC raced an inflight heartbeat"
+    finally:
+        release.set()
+        if heartbeat_failure:
+            with pytest.raises(RunnerControlError) as denied:
+                await asyncio.wait_for(running, 2)
+            assert denied.value.code == "isolated_heartbeat_denied"
+        else:
+            result = await asyncio.wait_for(running, 2)
+    if heartbeat_failure:
+        assert client.transitions == ["starting", "running"]
+        assert client.releases == 0 and not executor.finalized
+        return
+    assert result.completed == result.released == 1
+    assert client.transitions == ["starting", "running", "succeeded"]
+    assert executor.finalized == ["succeeded"] and client.releases == 1
 
 
 @pytest.mark.asyncio
@@ -260,6 +374,104 @@ async def test_run_heartbeat_remains_live_during_terminal_preparation() -> None:
     assert client.run_heartbeats >= 2
     assert executor.prepared == ["succeeded"]
     assert stats.completed == stats.released == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result", ("succeeded", "failed", "timed_out"))
+@pytest.mark.parametrize("cancel_failure", (False, True))
+@pytest.mark.parametrize(
+    "error_code", ("run_transition_invalid", "runner_control_cancellation_required")
+)
+async def test_committed_cancellation_wins_a_known_rejected_terminal_transition(
+    result: str, cancel_failure: bool, error_code: str
+) -> None:
+    stop = asyncio.Event()
+
+    class Client(_Client):
+        rejected = False
+
+        async def heartbeat_run(self, lease):
+            if self.rejected:
+                self.run_heartbeats += 1
+                return {"status": "cancelling"}
+            return await super().heartbeat_run(lease)
+
+        async def transition_run(self, lease, *, target_status):
+            if target_status == result:
+                assert not self.rejected
+                self.rejected = True
+                raise RunnerControlError(error_code, "known nonterminal outcome")
+            return await super().transition_run(lease, target_status=target_status)
+
+    client = Client(stop)
+    executor = _Executor(result=result, cancel_failure=cancel_failure)
+    agent = ProductionRunnerAgent(client, executor)  # type: ignore[arg-type]
+    stats = await asyncio.wait_for(agent.run(stop), timeout=2)
+    expected = "orphaned" if cancel_failure else "cancelled"
+    assert executor.cancelled
+    assert executor.prepared == [result, expected]
+    assert executor.finalized == [expected]
+    assert client.transitions == ["starting", "running", expected]
+    assert client.releases == stats.released == 1
+
+
+@pytest.mark.asyncio
+async def test_cancellation_observed_during_preparation_stops_before_terminal_release() -> None:
+    stop, observed = asyncio.Event(), asyncio.Event()
+
+    class Client(_Client):
+        async def heartbeat_run(self, lease):
+            state = await super().heartbeat_run(lease)
+            if state["status"] == "cancelling":
+                observed.set()
+            return state
+
+    class Executor(_Executor):
+        async def prepare_finalization(self, lease, *, result):
+            if result == "succeeded":
+                await asyncio.wait_for(observed.wait(), 1)
+            else:
+                assert self.cancelled
+            return await super().prepare_finalization(lease, result=result)
+
+    client = Client(stop, cancel_after_heartbeat=True)
+    executor = Executor()
+    agent = ProductionRunnerAgent(client, executor)  # type: ignore[arg-type]
+    agent._heartbeat_interval = 0.01
+    await asyncio.wait_for(agent.run(stop), timeout=2)
+    assert executor.cancelled and executor.prepared == ["succeeded", "cancelled"]
+    assert executor.finalized == ["cancelled"]
+    assert client.transitions == ["starting", "running", "cancelled"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code",
+    (
+        "runner_control_transport_unavailable",
+        "run_transition_invalid",
+        "runner_control_cancellation_required",
+    ),
+)
+async def test_terminal_failure_without_confirmed_cancellation_never_replays(code: str) -> None:
+    stop = asyncio.Event()
+    attempts = []
+
+    class Client(_Client):
+        async def transition_run(self, lease, *, target_status):
+            attempts.append(target_status)
+            if target_status == "succeeded":
+                raise RunnerControlError(code, "terminal result unavailable")
+            return await super().transition_run(lease, target_status=target_status)
+
+    client = Client(stop)
+    executor = _Executor()
+    agent = ProductionRunnerAgent(client, executor)  # type: ignore[arg-type]
+    with pytest.raises(RunnerControlError) as rejected:
+        await asyncio.wait_for(agent.run(stop), timeout=2)
+    assert rejected.value.code == code
+    assert attempts == ["starting", "running", "succeeded"]
+    assert client.releases == 0 and executor.finalized == []
 
 
 @pytest.mark.asyncio
