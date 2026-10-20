@@ -21,6 +21,7 @@ from omnigent.host.identity import HostIdentity
 from saas.control_plane.model_budget import ModelProviderBudgetReservationView
 from saas.control_plane.model_provider import PlatformManagedModelRuntimeConfiguration
 from saas.production.platform_model_gateway import (
+    GatewayTokenVerifier,
     PlatformModelGateway,
     PlatformModelPrice,
     PlatformModelPricingPolicy,
@@ -34,6 +35,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
 )
+from saas.production.tenant_model_keys import TenantModelKeyBinding, TenantModelTokenVerifier
 from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayTokenAuthority
 from saas.runner_adapter.platform_models import (
     PLATFORM_MODEL_CREDENTIAL_ENV,
@@ -118,6 +120,7 @@ def _configuration() -> PlatformManagedModelRuntimeConfiguration:
 def _client(
     handler: httpx.AsyncBaseTransport | httpx.MockTransport,
     *,
+    tokens: GatewayTokenVerifier | None = None,
     configuration: PlatformManagedModelRuntimeConfiguration
     | object
     | None = _DEFAULT_CONFIGURATION,
@@ -128,7 +131,7 @@ def _client(
     )
     budgets = _Budgets()
     gateway = PlatformModelGateway(
-        tokens=authority,
+        tokens=tokens or authority,
         configurations=_ConfigurationReader(
             _configuration()
             if configuration is _DEFAULT_CONFIGURATION
@@ -393,6 +396,55 @@ def test_expiry_classification_never_reaches_budget_or_provider(kind, code):
     assert response.json()["error"]["code"] == code
     assert not budgets.reserved and not budgets.settled and not budgets.released
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_enabled_tenant_stream_is_attributed_and_foreign_key_cannot_reach_provider(tmp_path):
+    tenant = uuid4()
+    key = b"independent-synthetic-tenant-key!!"
+    key_file = tmp_path / "tenant-key"
+    key_file.write_bytes(key)
+    key_file.chmod(0o400)
+    verifier = TenantModelTokenVerifier(
+        PlatformModelGatewayTokenAuthority(signing_key=SIGNING_KEY, tenant_id=TENANT_ID),
+        SIGNING_KEY,
+        (TenantModelKeyBinding(tenant, 91, f"omnigent-sandbox-model-{tenant.hex}", key_file),),
+    )
+    provider_requests = []
+
+    def upstream(request):
+        provider_requests.append(request)
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"type":"response.completed","response":{'
+                b'"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}\n\n'
+            ),
+        )
+
+    client, budgets, _ = _client(httpx.MockTransport(upstream), tokens=verifier)
+    valid = PlatformModelGatewayTokenAuthority(signing_key=key, tenant_id=tenant).issue(
+        session_id=SESSION_ID,
+    )
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {valid}"},
+        json={"model": "deepseek-flash", "input": "synthetic tenant stream", "stream": True},
+    )
+    assert response.status_code == 200 and "response.completed" in response.text
+    assert budgets.reserved[0]["tenant_id"] == tenant
+    assert budgets.reserved[0]["run_id"] == SESSION_ID
+    assert budgets.settled and len(provider_requests) == 1
+    reservation_count = len(budgets.reserved)
+    forged = PlatformModelGatewayTokenAuthority(signing_key=SIGNING_KEY, tenant_id=tenant).issue(
+        session_id=SESSION_ID,
+    )
+    rejected = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {forged}"},
+        json={"model": "deepseek-flash", "input": "must not run", "stream": True},
+    )
+    assert rejected.status_code == 401
+    assert len(provider_requests) == 1 and len(budgets.reserved) == reservation_count
 
 
 def test_relay_expiry_recovery_with_real_gateway_settles_one_model_call(monkeypatch):
