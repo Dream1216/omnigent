@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "0810d7358ad0c9bfdaa22ee572fad129bcadbc824a4c793312469e562779a1fb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "8edfc6ce14782323b1b761bca9658e9a35656a0f79cd13894007b41fc0525f2e",
     # Source-derived terminal physical recovery contract.
     (
         16,
@@ -527,6 +538,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "d5526ab8bc518cfcf0d9e465218e08798fe407a3b5b0f922a60eb93917326a76",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "c256c4d814bf61d790bf4f83be849020f1f305e2e0e53d3e10214b717452311c",
     # Source-derived terminal physical recovery contract.
     (
         16,
@@ -838,6 +860,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "7db87cf4252156e1db86e26f815b7ab642a6ea633389337b52c5ae35d513e1c4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "7656139ebeb7f4fc983aeb9bfa16d4fcbeb5f04eb8ea358840d05e196b9f2880",
     # Source-derived terminal physical recovery contract.
     (
         16,
@@ -1119,6 +1152,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "be3bfb188e54eeed4489b8c28309376ba5423dcb5b5e9c790822997debdb9907",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "436987ca10740a7252d95ab81fa585a42e6c8b4946b7172e2676f4d825d7718b",
     # Source-derived terminal physical recovery contract.
     (
         16,
@@ -1395,6 +1439,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "42ef6ee337e786ceeafde811e00b186c8e75eebba5ae733f316bce99cbdd22e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "94b4e57eb2d84efbda5e1604bdd571e3b17cf6f30c4c58b10423ffca6348eeb4",
     # Source-derived terminal physical recovery contract.
     (
         16,
@@ -1646,6 +1701,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "c24a35c51b1f29a6acf26c94579793e0fee0e0d6d28eaf35dfe05e30b49df1bd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "a50ba2cfa386ae8a40261f77390bb777561b11f41f99abb310fb89b95be54913",
     # Source-derived terminal physical recovery contract.
     (
         16,
@@ -1904,6 +1970,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "bc3f1709d23a6fc81cf98667f58c4589ec23d39745ba6ac7017818c2ace3b133",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "0a511be66f27da20d5040ca25acb88cb159034f50679de953c0bb44ddbdc81bb",
     # Source-derived terminal physical recovery contract.
     (
         16,
@@ -2127,6 +2204,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "7e75a298b2ba3e2c3da62eff9d374d3da0ba3ec8af8d472725326c3505e06120",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "50e82d3a07327fd3c0f6526227b6d8e7fe23a1ae393acb6f066f910778d361f3",
     # Source-derived terminal physical recovery contract.
     (
         16,

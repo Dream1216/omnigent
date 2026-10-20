@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from saas.control_plane.db_models import SaasBase, _hex64
+from saas.control_plane.model_secret_storage import ModelCiphertextStorage
 
 
 class ModelConnectionRecord(SaasBase):
@@ -51,7 +52,7 @@ class ModelCredentialVersionRecord(SaasBase):
     )
     generation: Mapped[int] = mapped_column(nullable=False)
     credential_name: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
-    api_key_ciphertext: Mapped[str] = mapped_column(sa.Text(), nullable=False)
+    api_key_ciphertext: Mapped[str] = mapped_column(ModelCiphertextStorage(), nullable=False)
     created_by_principal_id: Mapped[UUID] = mapped_column(
         sa.ForeignKey("saas_platform_staff_principals.id", ondelete="RESTRICT"), nullable=False
     )
@@ -62,7 +63,7 @@ class ModelCredentialVersionRecord(SaasBase):
         sa.UniqueConstraint("connection_id", "id", name="uq_model_credential_connection"),
         sa.CheckConstraint("generation > 0", name="ck_model_credential_generation"),
         sa.CheckConstraint(
-            "length(api_key_ciphertext) > 0", name="ck_model_credential_ciphertext"
+            "length(api_key_ciphertext) BETWEEN 8 AND 16383", name="ck_model_credential_ciphertext"
         ),
         sa.CheckConstraint(
             "length(credential_name) BETWEEN 1 AND 128", name="ck_model_credential_name"

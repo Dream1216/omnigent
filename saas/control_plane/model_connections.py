@@ -20,6 +20,7 @@ from saas.control_plane.model_routing_models import (
     ModelCredentialVersionRecord,
     ModelProjectionOperationRecord,
 )
+from saas.control_plane.model_secret_storage import encode_model_ciphertext
 from saas.control_plane.platform_security import (
     PlatformAuthorizationService,
     PlatformSecurityError,
@@ -347,8 +348,7 @@ class ModelConnectionService:
                 ciphertext = self._cipher.encrypt(
                     api_key, context=credential_context(connection.id, credential_id)
                 )
-                if not ciphertext:
-                    raise ValueError
+                encode_model_ciphertext(ciphertext)
             except Exception:  # noqa: BLE001 - KMS failures must not disclose secret details.
                 raise PlatformSecurityError(
                     "platform_model_secret_unavailable", "Model secret storage is unavailable"

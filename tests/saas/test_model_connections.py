@@ -267,6 +267,44 @@ def test_secret_backend_failure_is_atomic_and_redacted():
 
 
 @pytest.mark.parametrize(
+    "ciphertext", ["x" * 16384, "密" * 5462], ids=["ascii-overflow", "utf8-overflow"]
+)
+def test_secret_storage_byte_overflow_is_atomic_and_redacted(ciphertext, monkeypatch):
+    _service, factory, _actor, cipher, client, headers = _fixture()
+    monkeypatch.setattr(cipher, "encrypt", lambda *_args, **_kwargs: ciphertext)
+    response = client.post(
+        "/v2/platform-admin/model-connections", headers=headers, json=_payload()
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "platform_model_secret_unavailable"
+    assert _KEY not in response.text and ciphertext not in response.text
+    with factory() as db:
+        for table in (
+            ModelConnectionRecord,
+            ModelCredentialVersionRecord,
+            ModelProjectionOperationRecord,
+            ControlPlaneOutboxEvent,
+        ):
+            assert db.scalar(sa.select(sa.func.count()).select_from(table)) == 0
+
+
+def test_secret_storage_uses_opaque_binary_without_changing_cipher_context():
+    service, factory, actor, cipher, _client, _headers = _fixture()
+    operation = service.create(
+        actor, command=CreateModelConnection("candidate", _KEY), idempotency_key="binary-storage"
+    )
+    with factory() as db:
+        credential = db.get(ModelCredentialVersionRecord, operation.credential_version_id)
+        assert credential is not None and credential.api_key_ciphertext in cipher.values
+        assert service._decrypt(credential) == _KEY
+        raw = db.execute(
+            sa.text("SELECT api_key_ciphertext FROM saas_model_credential_versions")
+        ).scalar_one()
+        assert isinstance(raw, bytes) and len(raw) < 16384
+        assert _KEY.encode() not in raw
+
+
+@pytest.mark.parametrize(
     "headers_to_remove", (("X-CSRF-Token",), ("Origin",), ("Idempotency-Key",))
 )
 def test_http_rejects_missing_boundary_headers(headers_to_remove):

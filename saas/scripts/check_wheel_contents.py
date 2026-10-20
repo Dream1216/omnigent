@@ -128,6 +128,8 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/context_snapshot.py",
     "saas/control_plane/alembic.ini",
     "saas/control_plane/db_models.py",
+    "saas/control_plane/model_secret_storage.py",
+    "saas/control_plane/migrations/versions/lm2p00000001_bounded_model_secret_storage.py",
     "saas/control_plane/execution_models.py",
     "saas/control_plane/execution.py",
     "saas/control_plane/enterprise_access.py",
