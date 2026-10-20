@@ -913,9 +913,14 @@ def test_image_material_lock_rejects_unbounded_gh_module_download(
             "production Dockerfile must pin pnpm 12.10.1",
         ),
         (
-            "ARG CLAUDE_CODE_VERSION=2.1.266",
-            "ARG CLAUDE_CODE_VERSION=2.1.267",
-            "host image must pin @anthropic-ai/claude-code to 2.1.266",
+            "ARG CLAUDE_CODE_VERSION=2.1.283",
+            "ARG CLAUDE_CODE_VERSION=2.1.284",
+            "host image must pin @anthropic-ai/claude-code to 2.1.283",
+        ),
+        (
+            "ARG PI_CODING_AGENT_VERSION=1.0.4",
+            "ARG PI_CODING_AGENT_VERSION=1.0.5",
+            "host image must pin @earendil-works/pi-coding-agent to 1.0.4",
         ),
         (
             "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps",

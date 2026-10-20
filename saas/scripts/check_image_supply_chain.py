@@ -37,8 +37,8 @@ _APPROVED_UV_VERSION = "0.12.1"
 _APPROVED_PNPM_VERSION = "12.10.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.266"),
-    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.283"),
+    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "1.0.4"),
     "@moonshot-ai/kimi-code": ("KIMI_CODE_VERSION", "0.43.1"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),

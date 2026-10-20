@@ -131,11 +131,20 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 155
+    assert budget["max_direct_upstream_files"] == 156
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
     followup = revision["followup"]
+    assert followup["revision"] == "upstream-019-mcp-compat-version-test-budget-v35"
+    assert followup["approved_at"] == "2026-10-21"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 155
+    assert followup["measured_direct_upstream_files"] == 156
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3453
+    assert followup["scoped_paths"] == ["tests/e2e/test_mcp_registry_compat_e2e.py"]
+    followup = followup["previous_revision"]
     assert followup["revision"] == "upstream-019-toast-cleanup-test-budget-v34"
     assert followup["approved_at"] == "2026-10-16"
     assert followup["governance_mode"] == "single_owner_beta"
