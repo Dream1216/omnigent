@@ -193,8 +193,37 @@ original grant after physical stop. All old consumers must stop before v8 is
 written, and rollback must restore matching private-volume and database state.
 
 These paths still require real Kubernetes/Agent Sandbox and PostgreSQL acceptance.
-Dormant resume, cross-generation handoff, cross-Pod recovery and full production
-admission remain separate unfinished gates.
+Dormant resume, cross-Pod recovery and full production admission remain separate
+unfinished gates.
+
+## Fresh generation after complete retirement
+
+A cleared managed Host may receive a new generation only after its canonical
+origin has a complete resource-retirement receipt and the original Run/fence
+passes historical ownership, terminal/released and confirmation checks. The
+driver also reads the old workload and token Secret by name: any remaining
+object blocks a fresh launch. Absence alone is never a stop receipt. The Host
+snapshot, provider, owner/account generation and trusted cluster/namespace must
+match. Current image admission still applies to the fresh image.
+
+Private v9 binds only the predecessor Run UUID and immutable complete-stop
+digest. The fresh Run retains its own grant, nonce, token, resource UIDs and
+channel; it does not borrow the old Run's financial or model authority. The
+Host is re-credentialed in the original lifecycle transaction only while the
+locked retired snapshot and empty resource/token state still match. A pending
+old channel prevents rotation; a closed, physically stopped channel is forgotten
+before the fresh channel is bound. Old secrets cannot authorize the fresh Run.
+
+Only a verified, completely stopped ancestor chain can be excluded from the
+new generation's peer set. Preparing descendants still block cleanup, and a
+foreign, incomplete or ambiguous origin remains unavailable. Historical private
+records must stay with their dependent records. v1-v8 canonical encodings stay
+unchanged, but old readers reject v9: stop all old consumers before cutover and
+retain matching database/private-volume backups for rollback.
+
+This path intentionally creates a new workspace generation after full expiry.
+It is not dormant resume: Agent Sandbox resume must preserve its parent and
+workspace PVC, which remains a separate implementation and acceptance task.
 
 ## Database admission during a leased Run
 

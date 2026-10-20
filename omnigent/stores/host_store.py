@@ -953,12 +953,15 @@ class HostStore:
         provider: str,
         sandbox_id: str,
         token_expires_at: int,
+        expected_retired_host: Host | None = None,
     ) -> Host | None:
         """Replace the sandbox generation backing an existing managed host.
 
         The row lock serializes replacement with :meth:`delete_host`. A missing
         result means full teardown already removed the durable host, so the
         caller must clean up the unregistered sandbox instead of recreating it.
+        An expected retired snapshot additionally rejects heartbeat or credential
+        drift and requires both resource names and the old token to be cleared.
         """
         now = now_epoch()
         token_hash = hash_host_launch_token(token)
@@ -972,6 +975,13 @@ class HostStore:
             if existing is None:
                 return None
             if existing.deleted_at is not None:
+                return None
+            if expected_retired_host is not None and (
+                _row_to_host(existing) != expected_retired_host
+                or existing.token_hash is not None
+                or existing.sandbox_id is not None
+                or existing.terminating_sandbox_id is not None
+            ):
                 return None
             require_active_account(session, user_id, generation=existing.account_generation)
             if existing.user_id != user_id:

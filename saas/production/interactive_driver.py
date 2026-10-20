@@ -21,6 +21,11 @@ from omnigent.server.managed_hosts import ManagedSandboxDeployment, parse_repo_w
 from omnigent.server.routes._sessions import orchestration as official
 from saas.compatibility import OmnigentStoreAdapter
 from saas.production.interactive_controller import _unavailable
+from saas.production.interactive_managed_generation import (
+    ManagedGenerationAdmission,
+    RetiredGenerationHostStore,
+    inspect_retired_generation,
+)
 from saas.production.interactive_preparation import bind_managed_preparation
 from saas.production.interactive_recovery import InteractiveRecoveryRecord
 from saas.production.interactive_runtime import AuthorizedInteractiveInput
@@ -233,6 +238,13 @@ class OfficialInteractiveDriver:
             and row.managed_termination is None
         ]
         if len(candidates) != 1:
+            if previous is None:
+
+                def inspect():
+                    with self._adapter.bind(authorized.runtime):
+                        return inspect_retired_generation(self, authorized, origins, conversation)
+
+                return await asyncio.to_thread(inspect)
             raise _unavailable()
         origin = candidates[0]
         if previous is not None:
@@ -311,6 +323,7 @@ class OfficialInteractiveDriver:
         on_preparation=None,
         on_resources=None,
         on_creation=None,
+        generation: ManagedGenerationAdmission | None = None,
     ):
         key = self._key(authorized)
         if key in self._handles or key in self._preparations:
@@ -324,6 +337,7 @@ class OfficialInteractiveDriver:
                 on_preparation=on_preparation,
                 on_resources=on_resources,
                 on_creation=on_creation,
+                generation=generation,
                 stopping=stopping,
             ),
             name="interactive-physical-preparation",
@@ -355,6 +369,7 @@ class OfficialInteractiveDriver:
         on_resources,
         on_creation,
         stopping,
+        generation,
     ):
         self.assert_production_ready()
         key = self._key(authorized)
@@ -362,6 +377,14 @@ class OfficialInteractiveDriver:
             raise _unavailable()
         tasks = self._launch_tasks.setdefault(key, set())
         state = SimpleNamespace(**self._app.state._state)
+        host_store = self._official.host_store
+        if generation is not None:
+            if previous is not None or authorized.launch["host_type"] != "managed":
+                raise _unavailable()
+            with self._adapter.bind(authorized.runtime):
+                if host_store.get_host(generation.host.host_id) != generation.host:
+                    raise _unavailable()
+            host_store = RetiredGenerationHostStore(host_store, generation.host)
         state.host_registry = _LaunchRegistry(
             state.host_registry, authorized, on_launch, tasks, stopping=stopping
         )
@@ -376,7 +399,7 @@ class OfficialInteractiveDriver:
             state.sandbox_config = bind_managed_preparation(
                 state.sandbox_config,
                 provider=authorized.launch["sandbox_provider"],
-                host_store=self._official.host_store,
+                host_store=host_store,
                 owner=authorized.runtime.runtime_user_key,
                 checkpoint=on_preparation,
                 checkpoint_resources=on_resources,
@@ -398,7 +421,11 @@ class OfficialInteractiveDriver:
                     or connection.account_generation != previous.host_account_generation
                 ):
                     raise _unavailable()
-            if authorized.launch["host_type"] == "managed" and conversation.host_id is None:
+            if generation is not None and conversation.host_id != generation.host.host_id:
+                raise _unavailable()
+            if authorized.launch["host_type"] == "managed" and (
+                conversation.host_id is None or generation is not None
+            ):
                 tracker = state.managed_launches
                 if tracker.get(authorized.session_id) is not None:
                     raise _unavailable()
@@ -410,12 +437,13 @@ class OfficialInteractiveDriver:
                     repos=[parse_repo_workspace(repo) for repo in authorized.launch["workspaces"]],
                     tracker=tracker,
                     conversation_store=store,
-                    host_store=self._official.host_store,
+                    host_store=host_store,
                     host_registry=state.host_registry,
                     tunnel_registry=state.tunnel_registry,
                     provider=authorized.launch["sandbox_provider"],
                     agent_store=self._official.agent_store,
                     agent_id=conversation.agent_id,
+                    relaunch_host=generation.host if generation is not None else None,
                 )
                 conversation = await asyncio.to_thread(
                     store.get_conversation, authorized.session_id

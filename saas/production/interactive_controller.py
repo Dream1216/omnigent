@@ -18,6 +18,7 @@ import httpx
 from omnigent.host.frames import HostLaunchRunnerFrame
 from saas.compatibility import RuntimeContext
 from saas.control_plane.interactive_run_route import interactive_session_identity
+from saas.production.interactive_managed_generation import ManagedGenerationAdmission
 from saas.production.interactive_model_channel import (
     HostModelChannel,
     ModelChannelScope,
@@ -53,7 +54,7 @@ class InteractivePhysicalDriver(Protocol):
 
     async def revalidate_managed(
         self, authorized, origins, *, previous=None
-    ) -> InteractiveRecoveryRecord | None: ...
+    ) -> InteractiveRecoveryRecord | ManagedGenerationAdmission | None: ...
 
     async def prepare(
         self,
@@ -64,6 +65,7 @@ class InteractivePhysicalDriver(Protocol):
         on_preparation: Callable[[ManagedPreparationBinding], Awaitable[None]],
         on_resources: Callable[[ManagedResourceBinding], Awaitable[None]],
         on_creation: Callable[[ManagedCreationIntent], Awaitable[None]],
+        generation: ManagedGenerationAdmission | None = None,
     ) -> object: ...
 
     async def dispatch(self, authorized: AuthorizedInteractiveInput, handle: object) -> None: ...
@@ -304,6 +306,7 @@ class ProductionInteractiveExecutor:
             active.executing = True
         authorized, scope = active.authorized, active.record.scope
         managed_origin: InteractiveRecoveryRecord | None = None
+        generation: ManagedGenerationAdmission | None = None
         preflight_complete = False
 
         async def launch(frame: HostLaunchRunnerFrame, connection) -> HostLaunchRunnerFrame:
@@ -391,9 +394,7 @@ class ProductionInteractiveExecutor:
                     and row.managed_preparation is not None
                     and row.managed_creation is not None
                     and row.managed_resources is not None
-                    and row.host_id == row.managed_preparation.host_id
-                    and row.host_owner is not None
-                    and row.official_runner_id is not None
+                    and row.host_id in (None, row.managed_preparation.host_id)
                 )
                 if previous is not None:
                     origins = tuple(
@@ -408,9 +409,32 @@ class ProductionInteractiveExecutor:
                     )
                     if len(origins) != 1 or origins[0].managed_termination is not None:
                         raise _unavailable()
-                managed_origin = await self._driver.revalidate_managed(
+                admission = await self._driver.revalidate_managed(
                     authorized, origins, previous=previous
                 )
+                if isinstance(admission, ManagedGenerationAdmission):
+                    generation = admission
+                    source = generation.origin
+                    if (
+                        source not in origins
+                        or previous is not None
+                        or self._verify_released is None
+                    ):
+                        raise _unavailable()
+                    members = (
+                        source,
+                        *self._managed_peers(source),
+                        *self._managed_ancestors(source),
+                    )
+                    for member in dict.fromkeys(row.run_id for row in members):
+                        row = self._journal.read(member)
+                        if row.phase != "terminal" or not row.process_stopped:
+                            raise _unavailable()
+                        await self._verify_recovery(row)
+                        await self._verify_released(row)
+                        await self._confirm_recovery(row)
+                else:
+                    managed_origin = admission
                 if managed_origin is not None:
                     if managed_origin not in origins or self._verify_released is None:
                         raise _unavailable()
@@ -436,6 +460,16 @@ class ProductionInteractiveExecutor:
                     ):
                         raise _unavailable()
                     self._put(active, managed_origin_run_id=managed_origin.run_id)
+                if generation is not None:
+                    source = generation.origin
+                    if self._journal.read(source.run_id) != source:
+                        raise _unavailable()
+                    await self._channels.forget(scope.session_id)
+                    self._put(
+                        active,
+                        managed_predecessor_run_id=source.run_id,
+                        managed_predecessor_stop_sha256=managed_retirement_proof_sha256(source),
+                    )
                 preflight_complete = True
                 if previous is not None:
                     assert previous.channel_value is not None
@@ -464,6 +498,7 @@ class ProductionInteractiveExecutor:
                         on_preparation=preparing,
                         on_resources=resources,
                         on_creation=creation,
+                        **({"generation": generation} if generation is not None else {}),
                     ),
                     name="interactive-prepare",
                 )
@@ -775,6 +810,29 @@ class ProductionInteractiveExecutor:
             del self._active[record.run_id]
             return True
 
+    def _managed_ancestors(self, record):
+        origin = (
+            self._journal.read(record.managed_origin_run_id)
+            if record.managed_origin_run_id
+            else record
+        )
+        ancestors = set()
+        while origin.managed_predecessor_run_id is not None:
+            identifier = origin.managed_predecessor_run_id
+            if identifier in ancestors:
+                raise _unavailable()
+            ancestors.add(identifier)
+            origin = self._journal.read(identifier)
+            managed_retirement_proof_sha256(origin)
+        rows = [
+            row
+            for row in self._journal.records()
+            if row.run_id in ancestors or row.managed_origin_run_id in ancestors
+        ]
+        if any(row.phase != "terminal" or not row.process_stopped for row in rows):
+            raise _unavailable()
+        return rows
+
     def _managed_peers(self, record):
         origin = (
             self._journal.read(record.managed_origin_run_id)
@@ -786,13 +844,16 @@ class ProductionInteractiveExecutor:
         if origin.managed_preparation is None:
             return []
         host = origin.managed_preparation.host_id
+        historical = {row.run_id for row in self._managed_ancestors(origin)}
         return [
             row
             for row in self._journal.records()
             if row.run_id != record.run_id
+            and row.run_id not in historical
             and (
                 row.run_id == origin.run_id
                 or row.managed_origin_run_id == origin.run_id
+                or row.managed_predecessor_run_id == origin.run_id
                 or row.host_id == host
                 or (
                     row.managed_preparation is not None and row.managed_preparation.host_id == host
@@ -883,7 +944,7 @@ class ProductionInteractiveExecutor:
         )
         if host is None:
             return False
-        for row in (origin, *peers):
+        for row in (origin, *peers, *self._managed_ancestors(origin)):
             await self._verify_recovery(row)
             await self._verify_released(row)
 

@@ -49,6 +49,13 @@ profiles on external hosts. The Controller additionally pins the exact Run's
 publication, session, Host and workspace; `tests/saas/test_interactive_host_admission.py`
 covers drift and refusal, alongside the original Host-store/binding regressions.
 
+The same Host-store patch adds an optional retired-snapshot predicate to managed
+generation replacement. It runs under the existing lifecycle row lock and
+requires empty resource names and credentials; ordinary callers keep the prior
+semantics. Downstream generation tests cover heartbeat, active-generation,
+tombstone and pending-cleanup refusal. This is not a name-only resume or a
+source-budget increase, and it does not add another patch slot.
+
 The 2026-09-13 external Host registration correction is carried by patch 0005.
 The token resolver and atomic registration both reject `expires_at <= now`.
 Registration accepts either a provider plus live sandbox id (including a
@@ -250,7 +257,7 @@ nine-patch ceiling and existing source-delta ceilings remain unchanged.
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `825f8500` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
-| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry/revocation, trusted tombstone lookup and credential-fenced managed detachment | External Host and managed retirement lifecycle proposals pending | `825f8500` | Remove when upstream exposes equivalent external Host and managed retirement lifecycle semantics |
+| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry/revocation, trusted tombstone lookup, credential-fenced managed detachment and retired-snapshot replacement | External Host and managed lifecycle proposals pending | `825f8500` | Remove when upstream exposes equivalent external Host and managed lifecycle semantics |
 | `0004-agent-cache-legacy-recovery.patch` | Runtime Compatibility | `omnigent/onboarding/harness_install.py` | Harness install and managed-image version contracts | Harness fleet proposal pending | `825f8500` | Remove when upstream ships the managed fleet versions and install behavior |
 | `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/host/identity_env.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/server/routes/host_tunnel.py` | owner-only rotatable token file; workspace propagation; revocation heartbeat; Kubernetes proc binding | External Host bridge proposal pending | `825f8500` | Remove when upstream supports the complete managed Host credential and workspace route |
 | `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/bridge.py`; `omnigent/onboarding/provider_config.py` | Platform gateway catalog and delegated workspace callback routing | Gateway catalog proposal pending | `825f8500` | Remove when upstream publishes configured gateway models and managed callback routing |

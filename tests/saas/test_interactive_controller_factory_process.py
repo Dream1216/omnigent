@@ -80,6 +80,7 @@ from saas.production.interactive_controller_adapter import ProductionInteractive
 from saas.production.interactive_execution import InteractiveConversationStore
 from saas.production.interactive_recovery import (
     InteractiveRecoveryRecord,
+    managed_retirement_proof_sha256,
     physical_recovery_proof_sha256,
 )
 from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
@@ -634,6 +635,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                     if scenario in {"tools_cross_run", "controller_crash_recovery"}
                     else 2
                     if scenario == "cancel_unknown_stream"
+                    or (cluster is not None and cluster.get("managed_generation") is True)
                     else 1
                 )
                 if scenario == "tools_cross_run":
@@ -953,6 +955,9 @@ def _serve_controller(
     cluster=None,
 ):
     retire_managed = cluster is not None and cluster.get("managed_retirement") is True
+    generation_managed = cluster is not None and cluster.get("managed_generation") is True
+    if generation_managed:
+        assert retire_managed and scenario == "single"
     if retire_managed:
         assert cluster is not None and scenario in {"single", "tools_cross_run"}
     cancelling = scenario in {
@@ -1174,7 +1179,9 @@ def _serve_controller(
                 )
                 path = adapter._journal.root / f"{row.run_id}.json"
                 assert path.stat().st_mode & 0o777 == 0o600
-                assert json.loads(path.read_bytes())["schema_version"] == 5
+                assert json.loads(path.read_bytes())["schema_version"] == (
+                    9 if generation_managed and row.managed_predecessor_run_id is not None else 5
+                )
                 assert row.managed_creation is not None
                 assert not row.managed_creation.secret_submitted
                 assert not row.managed_creation.workload_submitted
@@ -1198,7 +1205,9 @@ def _serve_controller(
                 assert row.phase == "preparing" and row.official_runner_id is None
                 assert row.managed_resources is not None and not row.process_stopped
                 path = adapter._journal.root / f"{row.run_id}.json"
-                assert json.loads(path.read_bytes())["schema_version"] == 5
+                assert json.loads(path.read_bytes())["schema_version"] == (
+                    9 if generation_managed and row.managed_predecessor_run_id is not None else 5
+                )
                 assert row.managed_creation is not None and row.managed_creation.workload_submitted
                 assert row.managed_creation.secret_uid == row.managed_resources.token_secret_uid
                 assert path.stat().st_mode & 0o777 == 0o600
@@ -1296,7 +1305,7 @@ def _serve_controller(
             official=SimpleNamespace(**{**dependencies, "host_store": host_store}),
             auth_provider=app.state.saas_http_integration.auth_provider,
         )
-        managed_reuse_reads = []
+        managed_reuse_reads, managed_generation_reads = [], []
         if cluster is not None:
 
             def record_reuse_failure(stage, error, *, name="managed-reuse-failure.json"):
@@ -1323,12 +1332,20 @@ def _serve_controller(
             revalidate_managed = adapter._executor._driver.revalidate_managed
 
             async def observe_managed_reuse(authorized, origins, *, previous=None):
+                from saas.production.interactive_managed_generation import (
+                    ManagedGenerationAdmission,
+                )
+
                 try:
-                    origin = await revalidate_managed(authorized, origins, previous=previous)
+                    admission = await revalidate_managed(authorized, origins, previous=previous)
                 except Exception as error:
                     record_reuse_failure("resource_revalidation", error)
                     raise
-                if origin is not None:
+                if admission is not None:
+                    if isinstance(admission, ManagedGenerationAdmission):
+                        origin, checkpoints = admission.origin, managed_generation_reads
+                    else:
+                        origin, checkpoints = admission, managed_reuse_reads
                     (current,) = [
                         value
                         for value in adapter._executor._active.values()
@@ -1336,7 +1353,7 @@ def _serve_controller(
                     ]
                     assert current.record.phase == "prepared" and not current.bound
                     assert current.preparation is None
-                    managed_reuse_reads.append(
+                    checkpoints.append(
                         {
                             "run_id": str(current.record.run_id),
                             "origin_run_id": str(origin.run_id),
@@ -1344,7 +1361,7 @@ def _serve_controller(
                             "before_model_binding": True,
                         }
                     )
-                return origin
+                return admission
 
             adapter._executor._driver.revalidate_managed = observe_managed_reuse
             verify_origin, verify_origin_release = (
@@ -1460,7 +1477,7 @@ def _serve_controller(
         gateway_app = create_platform_model_gateway_app(gateway)
         observed, private_bearers = [], []
         request_waiting, admission_released = threading.Event(), threading.Event()
-        if scenario != "single":
+        if scenario != "single" or generation_managed:
 
             @gateway_app.middleware("http")
             async def observe_model_request(request, call_next):
@@ -3009,7 +3026,7 @@ def _serve_controller(
                         inspect_managed_resources(app.state.sandbox_config, record)
                         == record.managed_resources
                     )
-            retirement_evidence = None
+            retirement_evidence, generation_history = None, []
             if retire_managed:
                 from saas.production.interactive_managed_retirement import (
                     ControllerManagedSandboxReaper,
@@ -3018,58 +3035,200 @@ def _serve_controller(
                 reaper = app.state.managed_sandbox_reaper
                 assert isinstance(reaper, ControllerManagedSandboxReaper)
                 assert reaper._sandbox_config.reaper.terminate_after_offline_days == 7
-                (origin,) = [
-                    row for row in adapter._journal.records() if row.managed_creation is not None
-                ]
-                assert not origin.process_stopped
-                future = int(time.time()) + 8 * 86400
 
-                def retired():
-                    asyncio.run_coroutine_threadsafe(
-                        reaper.sweep_once(now=future), app_loop
-                    ).result(45)
-                    source = adapter._journal.read(origin.run_id)
-                    if (
-                        source.managed_termination is None
-                        or not source.managed_termination.complete
-                    ):
-                        return False
-                    with OmnigentStoreAdapter("0.2.0").bind(runtime):
-                        host = host_store.get_host(origin.managed_preparation.host_id)
-                        return host.sandbox_id is host.terminating_sandbox_id is None
+                def retire_generation(current, completed):
+                    origin = adapter._journal.read(current.managed_origin_run_id or current.run_id)
+                    assert not origin.process_stopped
+                    future = int(time.time()) + 8 * 86400
 
-                _wait(retired, "Controller-owned resource retirement", timeout=150)
-                origin = adapter._journal.read(origin.run_id)
-                for completed_run in runs:
-                    stopped = adapter._journal.read(completed_run.id)
-                    assert stopped.process_stopped and stopped.phase == "terminal"
-                    with factory() as db:
-                        assert (
-                            db.get(RunDispatchRecord, completed_run.id).physical_recovery_fence
-                            == completed_run.fence_token
+                    def retired():
+                        asyncio.run_coroutine_threadsafe(
+                            reaper.sweep_once(now=future), app_loop
+                        ).result(45)
+                        source = adapter._journal.read(origin.run_id)
+                        if (
+                            source.managed_termination is None
+                            or not source.managed_termination.complete
+                        ):
+                            return False
+                        with OmnigentStoreAdapter("0.2.0").bind(runtime):
+                            host = host_store.get_host(origin.managed_preparation.host_id)
+                            return host.sandbox_id is host.terminating_sandbox_id is None
+
+                    _wait(retired, "Controller-owned resource retirement", timeout=150)
+                    origin = adapter._journal.read(origin.run_id)
+                    for completed_run in completed:
+                        stopped = adapter._journal.read(completed_run.id)
+                        assert stopped.process_stopped and stopped.phase == "terminal"
+                        with factory() as db:
+                            assert (
+                                db.get(RunDispatchRecord, completed_run.id).physical_recovery_fence
+                                == completed_run.fence_token
+                            )
+                            (recovered,) = db.scalars(
+                                sa.select(RunEventRecord).where(
+                                    RunEventRecord.run_id == completed_run.id,
+                                    RunEventRecord.event_type
+                                    == "run.interactive_physical_recovered",
+                                )
+                            ).all()
+                            assert recovered.payload[
+                                "proof_sha256"
+                            ] == physical_recovery_proof_sha256(stopped)
+                    assert terminal_pod_facts
+                    evidence = {
+                        "controller_owned_reaper": True,
+                        "controlled_offline_age_seconds": 8 * 86400,
+                        "configured_offline_days": 7,
+                        "origin_run_id": str(origin.run_id),
+                        "termination_receipt": asdict(origin.managed_termination),
+                        "peer_stop_kinds": {
+                            str(row.id): adapter._journal.read(row.id).stop_kind
+                            for row in completed
+                        },
+                        "all_original_fences_confirmed": True,
+                        "host_pending_cleared_after_receipt": True,
+                    }
+                    if generation_managed:
+                        generation_history.append(
+                            {
+                                "run_id": str(origin.run_id),
+                                "preparation": asdict(origin.managed_preparation),
+                                "resources": asdict(origin.managed_resources),
+                                "creation_nonce": origin.managed_creation.nonce,
+                                "official_runner_id": origin.official_runner_id,
+                                "channel_sha256": sha256(
+                                    origin.channel_value.encode()
+                                ).hexdigest(),
+                                "stop_sha256": managed_retirement_proof_sha256(origin),
+                                "predecessor_run_id": str(origin.managed_predecessor_run_id)
+                                if origin.managed_predecessor_run_id
+                                else None,
+                                "predecessor_stop_sha256": origin.managed_predecessor_stop_sha256,
+                                "retirement": evidence,
+                            }
                         )
-                        (recovered,) = db.scalars(
-                            sa.select(RunEventRecord).where(
-                                RunEventRecord.run_id == completed_run.id,
-                                RunEventRecord.event_type == "run.interactive_physical_recovered",
+                    return evidence, origin
+
+                retirement_evidence, origin = retire_generation(record, runs)
+                if generation_managed:
+                    first_origin, first_channel = origin, origin.channel_value
+                    first_id, first_runner = run.id, origin.official_runner_id
+                    expected_runs = 2
+                    with httpx.Client(
+                        base_url=ORIGIN,
+                        trust_env=False,
+                        verify=ssl.create_default_context(cafile=str(certificate)),
+                        cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                        timeout=60,
+                    ) as client:
+                        for _ in range(2):
+                            response = client.post(
+                                f"/v1/sessions/{conversation.id}/events",
+                                json=_message(
+                                    "e" * 32,
+                                    "Start a distinct input after full environment retirement",
+                                ),
+                                headers={"Origin": ORIGIN, "X-CSRF-Token": issued.csrf_token},
+                            )
+                            assert response.status_code in {200, 202}, response.text
+                    assert (
+                        _queued_worker(workers["dispatcher"], workers["executor"])
+                        .dispatch_once()
+                        .published
+                        == 1
+                    )
+                    _wait(released, "fresh generation after complete retirement", timeout=180)
+                    with factory() as db:
+                        runs = db.scalars(sa.select(RunRecord)).all()
+                        assert len(runs) == 2 and {row.status for row in runs} == {"succeeded"}
+                        run = next(row for row in runs if row.id != first_id)
+                        assert (
+                            db.get(RunnerRegistrationRecord, case.member.runner_id).active_leases
+                            == 0
+                        )
+                        for model, count in (
+                            (TaskRecord, 2),
+                            (ModelRunTokenRecord, 2),
+                            (UsageEventRecord, 4),
+                            (BillingMeteringReceiptRecord, 4),
+                        ):
+                            assert (
+                                db.scalar(sa.select(sa.func.count()).select_from(model)) == count
+                            )
+                        assert (
+                            db.scalar(
+                                sa.select(sa.func.sum(UsageEventRecord.customer_charge_minor))
+                            )
+                            == 4
+                        )
+                        settled = db.scalars(
+                            sa.select(ModelProviderBudgetReservationRecord).where(
+                                ModelProviderBudgetReservationRecord.purpose == "tenant_run"
                             )
                         ).all()
-                        assert recovered.payload["proof_sha256"] == physical_recovery_proof_sha256(
-                            stopped
+                        assert len(settled) == 2 and all(
+                            row.status == "settled" and row.settled_tokens == 22 for row in settled
                         )
-                assert terminal_pod_facts
-                retirement_evidence = {
-                    "controller_owned_reaper": True,
-                    "controlled_offline_age_seconds": 8 * 86400,
-                    "configured_offline_days": 7,
-                    "origin_run_id": str(origin.run_id),
-                    "termination_receipt": asdict(origin.managed_termination),
-                    "peer_stop_kinds": {
-                        str(row.id): adapter._journal.read(row.id).stop_kind for row in runs
-                    },
-                    "all_original_fences_confirmed": True,
-                    "host_pending_cleared_after_receipt": True,
-                }
+                    record = adapter._journal.read(run.id)
+                    assert record.managed_predecessor_run_id == first_origin.run_id
+                    assert (
+                        record.managed_predecessor_stop_sha256
+                        == managed_retirement_proof_sha256(first_origin)
+                    )
+                    assert record.grant.run_id == run.id != first_origin.grant.run_id
+                    assert record.managed_origin_run_id is None
+                    assert record.official_runner_id != first_runner
+                    assert (
+                        record.managed_resources.workload_uid
+                        != first_origin.managed_resources.workload_uid
+                    )
+                    assert (
+                        record.managed_resources.token_secret_uid
+                        != first_origin.managed_resources.token_secret_uid
+                    )
+                    assert record.managed_creation.nonce != first_origin.managed_creation.nonce
+                    assert (
+                        record.managed_resources.host_token_sha256
+                        != first_origin.managed_resources.host_token_sha256
+                    )
+                    assert record.channel_value != first_channel
+                    assert len(creation_checkpoints) == len(resource_checkpoints) == 2
+                    with httpx.Client(
+                        trust_env=False,
+                        verify=ssl.create_default_context(cafile=str(certificate)),
+                        timeout=20,
+                    ) as client:
+                        from saas.production.interactive_model_channel import channel_url
+
+                        denied = client.post(
+                            channel_url(ORIGIN, record.scope.session_id) + "/responses",
+                            headers={"Authorization": "Bearer " + first_channel},
+                            json={},
+                        )
+                    assert (
+                        denied.status_code == 403
+                        and denied.json()["error"]["code"]
+                        == "interactive_model_channel_unavailable"
+                    )
+                    denied = httpx.post(
+                        "http://127.0.0.1:8090/v1/chat/completions",
+                        trust_env=False,
+                        headers={"Authorization": "Bearer " + private_bearers[0]},
+                        json=_document(conversation.model_override, limit=32),
+                    )
+                    assert (
+                        denied.status_code == 403
+                        and denied.json()["error"]["code"]
+                        == "platform_model_run_authority_unavailable"
+                    )
+                    assert [row["status"] for row in observed] == [200, 200, 403]
+                    assert len(managed_generation_reads) == 1 and not managed_reuse_reads
+                    assert adapter._journal.read(first_origin.run_id) == first_origin
+                    # Simulate re-opening the retired-origin scan without operator cleanup.
+                    adapter._executor._completed_retirements.clear()
+                    retirement_evidence, origin = retire_generation(record, runs)
+                    calls = 2
                 record = adapter._journal.read(run.id)
             elif scenario in {"public_stop", "public_archive"}:
                 with httpx.Client(
@@ -3154,6 +3313,10 @@ def _serve_controller(
                         "resource_binding_revalidated": cluster is not None
                         and (scenario == "single" or bool(managed_reuse_reads)),
                         "managed_reuse_checkpoints": managed_reuse_reads,
+                        "managed_generation_checkpoints": managed_generation_reads,
+                        "managed_generations": generation_history,
+                        "fresh_runner_after_retirement": generation_managed,
+                        "old_channel_and_mrt_rejected": generation_managed,
                         "managed_origin_links": {
                             str(run.id): str(row.managed_origin_run_id)
                             for run in runs

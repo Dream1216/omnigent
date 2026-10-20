@@ -1,5 +1,5 @@
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 9b3cde274..63215a7a7 100644
+index 9b3cde274..6010f3764 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
 @@ -21 +21 @@ from typing import cast
@@ -36,15 +36,28 @@ index 9b3cde274..63215a7a7 100644
 @@ -867 +880 @@ class HostStore:
 -                    SqlHost.deleted_at.is_(None),
 +                    SqlHost.deleted_at.is_(None) if not include_deleted else true(),
-@@ -1077 +1090 @@ class HostStore:
+@@ -942,0 +956 @@ class HostStore:
++        expected_retired_host: Host | None = None,
+@@ -948,0 +963,2 @@ class HostStore:
++        An expected retired snapshot additionally rejects heartbeat or credential
++        drift and requires both resource names and the old token to be cleared.
+@@ -962,0 +979,7 @@ class HostStore:
++            if expected_retired_host is not None and (
++                _row_to_host(existing) != expected_retired_host
++                or existing.token_hash is not None
++                or existing.sandbox_id is not None
++                or existing.terminating_sandbox_id is not None
++            ):
++                return None
+@@ -1077 +1100 @@ class HostStore:
 -            if row.token_expires_at < now_epoch():
 +            if row.token_expires_at <= now_epoch():
-@@ -1090,0 +1104 @@ class HostStore:
+@@ -1090,0 +1114 @@ class HostStore:
 +        expected_external_inference_snapshot: dict | None = None,
-@@ -1097,0 +1112,2 @@ class HostStore:
+@@ -1097,0 +1122,2 @@ class HostStore:
 +        A trusted controller may pin an external inference snapshot; the locked
 +        stored value must still match, and public launch routes never supply it.
-@@ -1154 +1170,8 @@ class HostStore:
+@@ -1154 +1180,8 @@ class HostStore:
 -            if meta.inference_snapshot is not None and host.sandbox_provider is None:
 +            if (
 +                meta.inference_snapshot is not None
@@ -54,11 +67,11 @@ index 9b3cde274..63215a7a7 100644
 +                    or json.loads(meta.inference_snapshot) != expected_external_inference_snapshot
 +                )
 +            ):
-@@ -1197,0 +1221 @@ class HostStore:
+@@ -1197,0 +1231 @@ class HostStore:
 +        expected_token_hash: str | None = None,
-@@ -1208,0 +1233 @@ class HostStore:
+@@ -1208,0 +1243 @@ class HostStore:
 +        :param expected_token_hash: Optional credential-generation fence for a trusted owner.
-@@ -1223,0 +1249,3 @@ class HostStore:
+@@ -1223,0 +1259,3 @@ class HostStore:
 +                        SqlHost.token_hash == expected_token_hash
 +                        if expected_token_hash is not None
 +                        else true(),

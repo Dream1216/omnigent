@@ -211,6 +211,8 @@ class InteractiveRecoveryRecord:
     managed_termination: ManagedTerminationReceipt | None = None
     managed_origin_run_id: UUID | None = None
     managed_origin_stop_sha256: str | None = None
+    managed_predecessor_run_id: UUID | None = None
+    managed_predecessor_stop_sha256: str | None = None
 
     def __post_init__(self):
         if (
@@ -233,6 +235,21 @@ class InteractiveRecoveryRecord:
             or not isinstance(self.certificate_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", self.certificate_sha256) is None
             or type(self.process_stopped) is not bool
+            or (
+                (self.managed_predecessor_run_id is None)
+                != (self.managed_predecessor_stop_sha256 is None)
+            )
+            or (
+                self.managed_predecessor_run_id is not None
+                and (
+                    not isinstance(self.managed_predecessor_run_id, UUID)
+                    or not self.managed_predecessor_run_id.int
+                    or self.managed_predecessor_run_id == self.run_id
+                    or self.managed_origin_run_id is not None
+                    or not isinstance(self.managed_predecessor_stop_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", self.managed_predecessor_stop_sha256) is None
+                )
+            )
             or self.outcome not in {None, "succeeded", "failed", "cancelled", "orphaned"}
             or self.stop_kind not in {None, "never_started", "managed_container", "managed_origin"}
             or (
@@ -501,6 +518,7 @@ def physical_recovery_proof_sha256(record: InteractiveCleanupRecord) -> str:
                     if record.managed_resources
                     else None,
                     "termination": asdict(record.managed_termination),
+                    **_predecessor_values(record),
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -532,6 +550,7 @@ def physical_recovery_proof_sha256(record: InteractiveCleanupRecord) -> str:
                 "host_owner": record.host_owner,
                 "host_account_generation": record.host_account_generation,
                 "certificate_sha256": record.certificate_sha256,
+                **_predecessor_values(record),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -568,6 +587,7 @@ def managed_retirement_proof_sha256(origin: InteractiveRecoveryRecord) -> str:
                 "resources": asdict(origin.managed_resources),
                 "creation": asdict(origin.managed_creation),
                 "termination": asdict(origin.managed_termination),
+                **_predecessor_values(origin),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -608,44 +628,96 @@ def certificate_sha256(grant: ManagedMeteringGrant) -> str:
     return sha256(grant.client_certificate_path.read_bytes()).hexdigest()
 
 
+def _predecessor_values(record: InteractiveRecoveryRecord) -> dict[str, str]:
+    if record.managed_predecessor_run_id is None:
+        return {}
+    return {
+        "predecessor_run_id": str(record.managed_predecessor_run_id),
+        "predecessor_stop_sha256": str(record.managed_predecessor_stop_sha256),
+    }
+
+
+def _check_predecessor(record, origin):
+    if (
+        not isinstance(origin, InteractiveRecoveryRecord)
+        or origin.run_id != record.managed_predecessor_run_id
+        or replace(origin.scope, actor_id=record.scope.actor_id) != record.scope
+        or origin.runtime.physical_workspace_id != record.runtime.physical_workspace_id
+        or origin.runtime.runtime_user_key != record.runtime.runtime_user_key
+        or origin.managed_preparation is None
+        or record.host_id not in (None, origin.managed_preparation.host_id)
+        or (
+            record.managed_preparation is not None
+            and (
+                record.managed_preparation.host_id != origin.managed_preparation.host_id
+                or record.managed_preparation.provider != origin.managed_preparation.provider
+                or record.managed_preparation.namespace != origin.managed_preparation.namespace
+                or record.managed_preparation.cluster_sha256
+                != origin.managed_preparation.cluster_sha256
+                or record.managed_preparation.resource_name
+                == origin.managed_preparation.resource_name
+            )
+        )
+        or (
+            record.managed_resources is not None
+            and origin.managed_resources is not None
+            and (
+                record.managed_resources.workload_uid == origin.managed_resources.workload_uid
+                or record.managed_resources.token_secret_uid
+                == origin.managed_resources.token_secret_uid
+            )
+        )
+        or record.managed_predecessor_stop_sha256 != managed_retirement_proof_sha256(origin)
+    ):
+        raise InteractiveRecoveryError()
+
+
+def _interactive_document(value):
+    if value["managed_predecessor_run_id"] is not None:
+        return {"schema_version": 9, "record_type": "interactive", "record": value}
+    value.pop("managed_predecessor_run_id")
+    value.pop("managed_predecessor_stop_sha256")
+    document: dict[str, object] = {"schema_version": 1, "record": value}
+    if value["managed_origin_stop_sha256"] is not None:
+        document = {"schema_version": 8, "record_type": "interactive", "record": value}
+    elif value["managed_origin_run_id"] is not None:
+        value.pop("managed_origin_stop_sha256")
+        document = {"schema_version": 7, "record_type": "interactive", "record": value}
+    elif value["managed_creation"] is not None:
+        value.pop("managed_origin_stop_sha256")
+        value.pop("managed_origin_run_id")
+        document = {"schema_version": 5, "record_type": "interactive", "record": value}
+        if value["managed_termination"] is not None:
+            if value["managed_termination"]["quiescence_sha256"] is not None:
+                document["schema_version"] = 6
+            else:
+                value["managed_termination"].pop("quiescence_sha256")
+    else:
+        value.pop("managed_origin_stop_sha256")
+        value.pop("managed_origin_run_id")
+        value.pop("managed_creation")
+        value.pop("managed_termination")
+        if value["managed_resources"] is not None:
+            document = {"schema_version": 4, "record_type": "interactive", "record": value}
+        elif value["managed_preparation"] is not None:
+            value.pop("managed_resources")
+            document = {"schema_version": 3, "record_type": "interactive", "record": value}
+        else:
+            value.pop("managed_resources")
+            value.pop("managed_preparation")
+            if value["stop_kind"] is not None:
+                document = {"schema_version": 2, "record_type": "interactive", "record": value}
+            else:
+                value.pop("stop_kind")
+                document["record"] = value
+    return document
+
+
 def _encode(record: InteractiveCleanupRecord) -> bytes:
-    document: dict[str, object] = {"schema_version": 1, "record": asdict(record)}
     if isinstance(record, UnstartedInteractiveRecoveryRecord):
         document = {"schema_version": 2, "record_type": "unstarted", "record": asdict(record)}
     else:
-        value = asdict(record)
-        if record.managed_origin_stop_sha256 is not None:
-            document = {"schema_version": 8, "record_type": "interactive", "record": value}
-        elif record.managed_origin_run_id is not None:
-            value.pop("managed_origin_stop_sha256")
-            document = {"schema_version": 7, "record_type": "interactive", "record": value}
-        elif record.managed_creation is not None:
-            value.pop("managed_origin_stop_sha256")
-            value.pop("managed_origin_run_id")
-            document = {"schema_version": 5, "record_type": "interactive", "record": value}
-            if record.managed_termination is not None:
-                if record.managed_termination.quiescence_sha256 is not None:
-                    document["schema_version"] = 6
-                else:
-                    value["managed_termination"].pop("quiescence_sha256")
-        else:
-            value.pop("managed_origin_stop_sha256")
-            value.pop("managed_origin_run_id")
-            value.pop("managed_creation")
-            value.pop("managed_termination")
-            if record.managed_resources is not None:
-                document = {"schema_version": 4, "record_type": "interactive", "record": value}
-            elif record.managed_preparation is not None:
-                value.pop("managed_resources")
-                document = {"schema_version": 3, "record_type": "interactive", "record": value}
-            else:
-                value.pop("managed_resources")
-                value.pop("managed_preparation")
-                if record.stop_kind is not None:
-                    document = {"schema_version": 2, "record_type": "interactive", "record": value}
-                else:
-                    value.pop("stop_kind")
-                    document["record"] = value
+        document = _interactive_document(asdict(record))
     raw = json.dumps(
         document,
         sort_keys=True,
@@ -676,6 +748,39 @@ def _uuid(value):
 def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 9
+        ):
+            if (
+                set(document) != {"schema_version", "record_type", "record"}
+                or document["record_type"] != "interactive"
+                or document["record"]["managed_origin_run_id"] is not None
+                or document["record"]["managed_origin_stop_sha256"] is not None
+            ):
+                raise ValueError
+            value = document["record"]
+            predecessor = _uuid(value["managed_predecessor_run_id"])
+            digest = value["managed_predecessor_stop_sha256"]
+            value["managed_predecessor_run_id"] = value["managed_predecessor_stop_sha256"] = None
+            decoded = _decode(json.dumps(_interactive_document(value)).encode())
+            if not isinstance(decoded, InteractiveRecoveryRecord):
+                raise ValueError
+            return replace(
+                decoded,
+                managed_predecessor_run_id=predecessor,
+                managed_predecessor_stop_sha256=digest,
+            )
+        if (
+            isinstance(document, dict)
+            and isinstance(document.get("record"), dict)
+            and any(
+                name in document["record"]
+                for name in ("managed_predecessor_run_id", "managed_predecessor_stop_sha256")
+            )
+        ):
+            raise ValueError
         if (
             isinstance(document, dict)
             and type(document.get("schema_version")) is int
@@ -1024,6 +1129,22 @@ class InteractiveRecoveryJournal:
             previous = self._read(record.run_id)
         except FileNotFoundError:
             previous = None
+        if record.managed_predecessor_run_id is not None:
+            if previous is None and record.phase != "prepared":
+                raise InteractiveRecoveryError()
+            self._verify_predecessor(record)
+        if isinstance(previous, InteractiveRecoveryRecord) and (
+            previous.managed_predecessor_run_id != record.managed_predecessor_run_id
+            or previous.managed_predecessor_stop_sha256 != record.managed_predecessor_stop_sha256
+        ):
+            if (
+                previous.managed_predecessor_run_id is not None
+                or previous.phase != "prepared"
+                or record.phase != "prepared"
+                or previous.process_stopped
+                or record.process_stopped
+            ):
+                raise InteractiveRecoveryError()
         if record.managed_origin_stop_sha256 is not None:
             origin_id = record.managed_origin_run_id
             if (
@@ -1178,7 +1299,25 @@ class InteractiveRecoveryJournal:
             raise InteractiveRecoveryError() from None
         _check_origin_stop(record, origin)
 
-    def _read(self, run_id: UUID, *, validate_origin: bool = True) -> InteractiveCleanupRecord:
+    def _verify_predecessor(self, record: InteractiveRecoveryRecord) -> None:
+        seen = {record.run_id}
+        while record.managed_predecessor_run_id is not None:
+            identifier = record.managed_predecessor_run_id
+            if identifier in seen:
+                raise InteractiveRecoveryError()
+            seen.add(identifier)
+            try:
+                origin = self._read(identifier, validate_origin=False, validate_predecessor=False)
+            except FileNotFoundError:
+                raise InteractiveRecoveryError() from None
+            if not isinstance(origin, InteractiveRecoveryRecord):
+                raise InteractiveRecoveryError()
+            _check_predecessor(record, origin)
+            record = origin
+
+    def _read(
+        self, run_id: UUID, *, validate_origin: bool = True, validate_predecessor: bool = True
+    ) -> InteractiveCleanupRecord:
         self._check()
         descriptor = os.open(f"{run_id}.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self._directory)
         try:
@@ -1201,6 +1340,8 @@ class InteractiveRecoveryJournal:
             record = _decode(raw)
             if record.run_id != run_id:
                 raise InteractiveRecoveryError()
+            if validate_predecessor and isinstance(record, InteractiveRecoveryRecord):
+                self._verify_predecessor(record)
             if (
                 validate_origin
                 and isinstance(record, InteractiveRecoveryRecord)
