@@ -16,9 +16,11 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from psycopg import sql
 
 from saas.control_plane import SaasBase
+from saas.control_plane.migrations.schema_metadata import control_plane_migration_metadata
 from saas.scripts.build_n1_compat import materialize_n1_compat
 
 _P0S11_SOURCE_ROLES = (
@@ -66,6 +68,15 @@ def _migration_config(connection: sa.Connection) -> Config:
     )
     config.attributes["connection"] = connection
     return config
+
+
+def _migration_head() -> str:
+    root = Path(__file__).resolve().parents[2]
+    head = ScriptDirectory.from_config(
+        Config(root / "saas/control_plane/alembic.ini")
+    ).get_current_head()
+    assert head is not None
+    return head
 
 
 def _p0s11_policy_projection(connection: sa.Connection) -> dict[tuple[str, str], tuple]:
@@ -167,6 +178,67 @@ def _insert_egress_policy(
     )
 
 
+def _insert_execution_profile_scope(
+    connection: sa.Connection,
+    *,
+    tenant_id: UUID,
+    space_id: UUID,
+    project_id: UUID,
+    egress_policy_id: UUID,
+    actor_id: UUID,
+) -> None:
+    rows = (
+        ("saas_global_users", {"id": actor_id.hex, "status": "active", "security_version": 1}),
+        (
+            "saas_tenants",
+            {
+                "id": tenant_id.hex,
+                "slug": f"profiles-{tenant_id.hex}",
+                "name": "Profile tenant",
+                "status": "active",
+                "plan": "team",
+                "home_region": "cn-east-1",
+                "lifecycle_version": 1,
+            },
+        ),
+        (
+            "saas_spaces",
+            {
+                "id": space_id.hex,
+                "tenant_id": tenant_id.hex,
+                "slug": "default",
+                "name": "Default",
+                "status": "active",
+            },
+        ),
+        (
+            "saas_projects",
+            {
+                "id": project_id.hex,
+                "tenant_id": tenant_id.hex,
+                "space_id": space_id.hex,
+                "name": "Profile project",
+                "created_by": actor_id.hex,
+                "visibility": "restricted",
+                "status": "active",
+                "authorization_version": 1,
+            },
+        ),
+    )
+    for name, values in rows:
+        table = sa.Table(name, sa.MetaData(), autoload_with=connection)
+        if connection.scalar(sa.select(table.c.id).where(table.c.id == values["id"])) is None:
+            connection.execute(table.insert(), values)
+    _insert_egress_policy(
+        connection,
+        policy_id=egress_policy_id,
+        tenant_id=tenant_id,
+        space_id=space_id,
+        project_id=project_id,
+        actor_id=actor_id,
+    )
+
+
 def _render_static_sql(node: ast.AST) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
@@ -231,15 +303,16 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
 
         inspector = sa.inspect(connection)
         application_tables = set(inspector.get_table_names()) - {"saas_alembic_version"}
-        assert application_tables == set(SaasBase.metadata.tables)
-        for table_name, table in SaasBase.metadata.tables.items():
+        metadata = control_plane_migration_metadata(SaasBase.metadata)
+        assert application_tables == set(metadata.tables)
+        for table_name, table in metadata.tables.items():
             migrated_columns = {column["name"] for column in inspector.get_columns(table_name)}
             assert migrated_columns == set(table.columns.keys())
 
         revision = connection.execute(
             sa.text("SELECT version_num FROM saas_alembic_version")
         ).scalar_one()
-        assert revision == "p0s000000015"
+        assert revision == _migration_head()
         assert {
             "saas_model_provider_configurations",
             "saas_model_provider_configuration_receipts",
@@ -720,6 +793,14 @@ def test_dispatch_profile_binding_migration_rejects_ambiguous_active_profiles() 
         actor_id = uuid4()
         first_profile_id = uuid4()
         second_profile_id = uuid4()
+        _insert_execution_profile_scope(
+            connection,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=project_id,
+            egress_policy_id=egress_policy_id,
+            actor_id=actor_id,
+        )
         _insert_execution_profile(
             connection,
             profile_id=first_profile_id,
@@ -790,18 +871,28 @@ def test_dispatch_profile_binding_migration_rejects_ambiguous_active_profiles() 
             status="retired",
             version=4,
         )
+        other_project_id, other_egress_policy_id = uuid4(), uuid4()
+        _insert_execution_profile_scope(
+            connection,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            project_id=other_project_id,
+            egress_policy_id=other_egress_policy_id,
+            actor_id=actor_id,
+        )
         _insert_execution_profile(
             connection,
             profile_id=uuid4(),
             tenant_id=tenant_id,
             space_id=space_id,
-            project_id=uuid4(),
-            egress_policy_id=egress_policy_id,
+            project_id=other_project_id,
+            egress_policy_id=other_egress_policy_id,
             actor_id=actor_id,
             name="other-project-active",
             status="active",
             version=1,
         )
+        assert not connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(1)
     engine.dispose()
 
 
@@ -1867,7 +1958,7 @@ def test_real_postgresql_nocreaterole_schema_owner_migrates_to_head(
             command.upgrade(_migration_config(connection), "head")
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == "p0s000000015"
+                == _migration_head()
             )
             assert connection.scalar(sa.text("SELECT current_user")) == schema_owner
 
@@ -3909,7 +4000,9 @@ def test_onboarding_vertical_migration_ensures_nonterminal_recovery_wake(
                 "duplicate_outbox_b",
             )
         }
-        values = {name: str(value) for name, value in identifiers.items()}
+        # Relation UUIDs use the ORM's SQLite encoding; the raw outbox ID stays legacy text.
+        values = {name: value.hex for name, value in identifiers.items()}
+        values["old_outbox_id"] = str(identifiers["old_outbox_id"])
         connection.execute(
             sa.text(
                 "INSERT INTO saas_global_users (id, status, security_version) "
@@ -4036,7 +4129,9 @@ def test_onboarding_vertical_migration_ensures_nonterminal_recovery_wake(
                     },
                 )
 
+        assert not connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(1)
         command.upgrade(config, "p0s000000002")
+        assert not connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(1)
 
         saga = connection.execute(
             sa.text(
@@ -4337,7 +4432,7 @@ def test_real_postgresql_p0s11_policy_role_scope_round_trip(
             command.upgrade(config, "head")
             assert _p0s11_policy_projection(connection) == successor
             assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-                "p0s000000015"
+                _migration_head()
             )
     finally:
         engine.dispose()

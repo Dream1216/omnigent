@@ -11,6 +11,7 @@ from saas.production.recovery import (
     load_recovery_evidence,
     validate_recovery_readiness,
 )
+from saas.runtime_rls import load_runtime_rls_contract
 
 _NOW = datetime(2026, 8, 5, 12, tzinfo=UTC)
 _PRODUCT_REVISION = "a" * 40
@@ -136,6 +137,20 @@ def test_recovery_policy_tracks_the_forced_rls_inventory_size() -> None:
         )
         == 1
     )
+    expected_runtime = f"forced_rls_runtime_{len(load_runtime_rls_contract())}"
+    assert expected_runtime in required_checks  # type: ignore[operator]
+    assert sum(check.startswith("forced_rls_runtime_") for check in required_checks) == 1  # type: ignore[union-attr]
+
+
+def test_recovery_policy_rejects_an_incomplete_runtime_rls_inventory() -> None:
+    policy = _policy()
+    policy["required_checks"] = [
+        "forced_rls_runtime_17" if check.startswith("forced_rls_runtime_") else check
+        for check in policy["required_checks"]  # type: ignore[union-attr]
+    ]
+    report = validate_recovery_readiness(_repo(), policy, [], now=_NOW)
+    assert report["status"] == "fail"
+    assert "required_checks must match the complete recovery safety matrix" in report["violations"]
 
 
 def test_exact_tenant_and_cluster_drills_satisfy_the_contract() -> None:
