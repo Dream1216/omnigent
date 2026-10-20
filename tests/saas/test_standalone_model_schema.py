@@ -1,4 +1,4 @@
-"""Exercise the schema delivery without importing unshipped model services."""
+"""Exercise schema delivery with legacy and complete application packages."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
@@ -30,6 +31,13 @@ from tests.saas.test_production_migration_replay import production_replay as pro
 
 @pytest.fixture
 def standalone_replay(production_replay, tmp_path):
+    existing = production_replay.model_projection_service_role_bindings
+    if existing is not None:
+        assert {row.service: row.base_role for row in existing.bindings} == (
+            EXPECTED_MODEL_PROJECTION_SERVICE_ROLES
+        )
+        assert len(production_replay.service_role_graph.bindings) == 19
+        return production_replay
     known = production_replay.service_role_graph.by_service
     rows = tuple(
         known[service]
@@ -65,6 +73,45 @@ def standalone_replay(production_replay, tmp_path):
     return plan
 
 
+def test_complete_replay_plan_reuses_immutable_projection_manifest(tmp_path):
+    rows = tuple(
+        ProductionServiceRoleBinding(
+            service=service, login="replay_model_projection", base_role=role
+        )
+        for service, role in sorted(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES.items())
+    )
+    document = render_production_service_role_bindings(rows)
+    path = tmp_path / "model-projection-bindings.json"
+    path.write_text(document)
+    path.chmod(0o400)
+    profile = ProductionServiceRoleBindings(
+        path, hashlib.sha256(document.encode()).hexdigest(), rows
+    )
+    plan = SimpleNamespace(
+        model_projection_service_role_bindings=profile,
+        service_role_graph=SimpleNamespace(bindings=tuple(range(19))),
+    )
+    assert standalone_replay.__wrapped__(plan, tmp_path) is plan
+    assert path.read_text() == document
+    assert path.stat().st_mode & 0o777 == 0o400
+
+
+def _assert_packaged_model_service_boundary() -> str:
+    package = Path(__file__).resolve().parents[2] / "saas/control_plane"
+    model_source = package / "model_routing_models.py"
+    imported = "saas.control_plane.model_routing_models" in sys.modules
+    if not (package / "schema_revision.py").is_file():
+        assert not model_source.exists()
+        assert not imported
+        return "schema-only-legacy-application"
+    from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+
+    assert CONTROL_PLANE_SCHEMA_REVISION == "lm2s00000001"
+    assert model_source.is_file()
+    assert imported
+    return "complete-application"
+
+
 def test_standalone_model_schema_replays_and_matches_the_pinned_r_catalog(
     standalone_replay, monkeypatch, record_property
 ):
@@ -74,7 +121,7 @@ def test_standalone_model_schema_replays_and_matches_the_pinned_r_catalog(
     receipt = migration.run_production_postgresql_migration(plan)
     assert receipt.saas_head == "lm2s00000001"
     assert receipt.runtime_rls_table_count == 19
-    assert "saas.control_plane.model_routing_models" not in sys.modules
+    record_property("source_distribution", _assert_packaged_model_service_boundary())
     engine = sa.create_engine(plan.saas_owner.url)
     try:
         with engine.connect() as connection:
@@ -154,7 +201,9 @@ def _produce_r_predecessor(plan):
     assert receipt.status == "pass" and receipt.saas_head == "lm2r00000001"
 
 
-def test_forward_price_reference_retirement_retains_old_app_execution(standalone_replay):
+def test_forward_price_reference_retirement_retains_old_app_execution(
+    standalone_replay, record_property
+):
     plan = standalone_replay
     _produce_r_predecessor(plan)
     admin_url = sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"])
@@ -226,7 +275,7 @@ def test_forward_price_reference_retirement_retains_old_app_execution(standalone
             ).one() == (True, True, False, False)
         assert service.task_state(request, project_id=scope.project_id, task_id=task) == "queued"
         assert service.replay_events(request, project_id=scope.project_id, run_id=run, limit=3)
-        assert "saas.control_plane.model_routing_models" not in sys.modules
+        record_property("source_distribution", _assert_packaged_model_service_boundary())
         with factory() as db:
             assert (
                 db.scalar(sa.text("SELECT session_id FROM saas_runs WHERE id=:id"), {"id": run})
