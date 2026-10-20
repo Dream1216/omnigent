@@ -20,9 +20,10 @@ and steers messages while the agent is busy.
   model, and keeps the selection. States: catalog loading, delayed catalog,
   alias vs. full model ID.
 - `managed-model-candidates`: in the SaaS realm, both model menus show the
-  tenant's managed candidates with their channel and transport. They remain
-  disabled with a visible runtime-unavailable reason, independent of the
-  existing host model selection.
+  tenant's managed models with their channel, transport and availability reason.
+  Eligible models can be selected for a new session; existing sessions remain
+  read-only. Changing the project, Agent or execution target clears the selection.
+  The server independently validates authorization and the immutable revision.
 - `effort-picker`: reasoning effort for harnesses that support it (Codex, Claude,
   Pi). States: available, unavailable placeholder, max/ultra levels.
 - `effort-terminal-mirror`: an effort change typed in the Codex terminal shows
@@ -109,7 +110,7 @@ Tests under `tests/browser_ui/` stub every backend call and need no instance:
   `tests/e2e_ui/start_session/test_model_flows_prelaunch.py::test_claude_default_entry_names_the_true_default`,
   `tests/e2e_ui/start_session/test_composer_transition.py::test_selected_model_survives_delayed_create`
 - **`managed-model-candidates`, existing and new-session composer, desktop and mobile:**
-  `tests/browser_ui/chat/test_tenant_model_candidates.py::test_customer_can_inspect_model_candidates_but_cannot_select_them`
+  `tests/browser_ui/chat/test_tenant_model_candidates.py::test_customer_model_availability_and_selection`
   uses only the built SPA and explicit synthetic backend contracts; it does
   not provision a Runner or prove runtime access.
 - **`effort-picker`, new-session composer:**

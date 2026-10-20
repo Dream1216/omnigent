@@ -30,6 +30,10 @@ def run_cold_controller(root: Path, monkeypatch) -> None:
         raise ValueError("invalid cold fixture checkpoint")
     for name, value in state["runtime_environment"].items():
         monkeypatch.setenv(name, value)
+    monkeypatch.setenv(
+        "OMNIGENT_SAAS_TEST_GC_INTERVAL_SECONDS",
+        state["source"]["OMNIGENT_SAAS_RUNNER_PHYSICAL_GC_INTERVAL_SECONDS"],
+    )
     cluster = dict(state["cluster"])
     cluster["bind_host"] = os.environ["POD_IP"]
     physical.ORIGIN = cluster["sandbox"]["server_url"].rstrip("/")
@@ -76,6 +80,26 @@ def run_cold_controller(root: Path, monkeypatch) -> None:
     authentication = sessionmaker(applications["authenticator"], expire_on_commit=False)
     billing = sessionmaker(engine(state["billing_url"]), expire_on_commit=False)
     metering = sessionmaker(engine(state["metering_url"]), expire_on_commit=False)
+    active_restore = state.get("checkpoint_kind") == "active"
+    if active_restore:
+        from datetime import datetime, timezone
+
+        with factory() as database:
+            original = database.get(physical.RunRecord, old.run_id)
+            assert original.status == "running"
+            expiry = original.lease_expires_at
+        physical._wait(
+            lambda: datetime.now(timezone.utc) > expiry,
+            "original crashed controller lease expires naturally",
+            timeout=90,
+        )
+        assert (
+            old.run_id
+            in physical.SchedulingControlPlane(workers["executor"]).recover_expired_dispatches()
+        )
+        with factory() as database:
+            assert database.get(physical.RunRecord, old.run_id).status == "orphaned"
+            assert database.get(physical.RunDispatchRecord, old.run_id).status == "released"
     compatibility = physical.load_runtime_compatibility_policy(
         case.root / "saas/upstream-baseline.json"
     )
@@ -220,12 +244,78 @@ def run_cold_controller(root: Path, monkeypatch) -> None:
             ),
             ready_material=(ready, root / "readiness.pem"),
             cluster=cluster,
-            cold_restore=state,
+            scenario=state.get("scenario", "single"),
+            restarted=active_restore,
+            crash_state=root / "crash-state.json" if active_restore else None,
+            cold_restore=None if active_restore else state,
         )
+        if active_restore:
+            _record_active_cold_result(root, state)
     finally:
         metering_thread.close()
         for value in engines:
             value.dispose()
+
+
+def _record_active_cold_result(root, state):
+    from dataclasses import asdict
+
+    from saas.production.interactive_recovery import (
+        InteractiveRecoveryJournal,
+        physical_recovery_proof_sha256,
+    )
+
+    path = Path("/exchange/result.json")
+    result = json.loads(path.read_text())
+    assert result["passed"] and result["unknown_usage_hold_and_reference_retained"]
+    journal = InteractiveRecoveryJournal(root / "controller-journal")
+    try:
+        records = journal.records()
+        assert len(records) == 2
+        old = journal.read(UUID(state["run_id"]))
+        assert old.outcome == "orphaned"
+        assert len(list(old.grant.spool_directory.glob("*.pending.json"))) == 1
+        generations = []
+        for record in records:
+            assert record.phase == "terminal" and record.process_stopped
+            if record.managed_termination is None:
+                assert record.run_id == old.run_id
+                assert record.managed_suspension is not None and record.managed_suspension.complete
+            else:
+                assert record.managed_termination.complete
+            generations.append(
+                {
+                    "run_id": str(record.run_id),
+                    "outcome": record.outcome,
+                    "creation": asdict(record.managed_creation),
+                    "resources": asdict(record.managed_resources),
+                    "termination": asdict(record.managed_termination)
+                    if record.managed_termination
+                    else None,
+                    "suspension": asdict(record.managed_suspension)
+                    if record.managed_suspension
+                    else None,
+                    "managed_resume": record.managed_resume,
+                    "predecessor_run_id": str(record.managed_predecessor_run_id)
+                    if record.managed_predecessor_run_id
+                    else None,
+                    "stop_sha256": physical_recovery_proof_sha256(record),
+                }
+            )
+        assert {item["outcome"] for item in generations} == {"orphaned", "succeeded"}
+    finally:
+        journal.close()
+    result.update(
+        cold_controller_process=True,
+        cold_checkpoint_kind="active",
+        original_credentials_reused=True,
+        existing_database_identities_reused=True,
+        retired_generations=generations,
+        original_pending_reference_count=1,
+        production_ready=False,
+        actual_pod_replacement_verified_by_outer_driver=False,
+    )
+    path.write_text(json.dumps(result))
 
 
 def assert_restored_dormant(

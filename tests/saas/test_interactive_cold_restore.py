@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -15,6 +17,99 @@ from tests.saas.interactive_cold_restore import (
     write_cold_checkpoint,
 )
 from tests.saas.test_interactive_controller_factory_process import _private
+
+
+@pytest.fixture
+def active_checkpoint(tmp_path, monkeypatch):
+    from tests.saas import interactive_cold_restore as cold
+
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    spool = root / "pending"
+    spool.mkdir(mode=0o700)
+    _private(spool / "original.pending.json", "unconfirmed reference")
+    run_id = UUID(int=1)
+    bearer = "isolated-fixture-material"
+    _private(root / "crash-state.json", json.dumps({"run_id": str(run_id), "old_bearer": bearer}))
+    record = SimpleNamespace(
+        run_id=run_id,
+        phase="dispatching",
+        process_stopped=False,
+        outcome=None,
+        managed_resources=object(),
+        managed_creation=SimpleNamespace(pod_uid=str(UUID(int=2))),
+        grant=SimpleNamespace(spool_directory=spool),
+    )
+    values = {
+        "root": root,
+        "bootstrap": {},
+        "source": {},
+        "record": record,
+        "old_bearer": bearer,
+        "cluster": {
+            "managed_cold_restore": True,
+            "managed_cold_active": True,
+            "provider": "agent_sandbox",
+            "scenario": "controller_crash_recovery",
+        },
+    }
+    monkeypatch.setattr(cold, "_checkpoint_fixture", lambda **kwargs: kwargs)
+    return cold.checkpoint_active_fixture, values
+
+
+def test_active_checkpoint_preserves_unknown_reference_without_inventing_stop(active_checkpoint):
+    checkpoint, values = active_checkpoint
+    result = checkpoint(**values)
+    assert result["details"]["checkpoint_kind"] == "active"
+    assert result["evidence"] == {
+        "original_phase": "dispatching",
+        "original_pending_references": 1,
+    }
+    assert result["extra_paths"] == [values["root"] / "crash-state.json"]
+    assert "old_physical_stop_sha256" not in result["details"]
+
+
+@pytest.mark.parametrize("drift", ["phase", "process_stopped", "outcome", "resources", "pod"])
+def test_active_checkpoint_rejects_wrong_lifecycle(active_checkpoint, drift):
+    checkpoint, values = active_checkpoint
+    record = values["record"]
+    if drift == "phase":
+        record.phase = "terminal"
+    elif drift == "process_stopped":
+        record.process_stopped = True
+    elif drift == "outcome":
+        record.outcome = "orphaned"
+    elif drift == "resources":
+        record.managed_resources = None
+    else:
+        record.managed_creation.pod_uid = None
+    with pytest.raises(ValueError, match="active cold fixture"):
+        checkpoint(**values)
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_active_checkpoint_rejects_missing_or_ambiguous_pending(active_checkpoint, count):
+    checkpoint, values = active_checkpoint
+    spool = values["record"].grant.spool_directory
+    if count == 0:
+        (spool / "original.pending.json").rename(spool / "not-pending.json")
+    else:
+        _private(spool / "different.pending.json", "different reference")
+    with pytest.raises(ValueError, match="active cold fixture"):
+        checkpoint(**values)
+
+
+@pytest.mark.parametrize("changed", ["run_id", "old_bearer"])
+def test_active_checkpoint_rejects_other_run_or_credential(active_checkpoint, changed):
+    checkpoint, values = active_checkpoint
+    path = values["root"] / "crash-state.json"
+    content = json.loads(path.read_text())
+    content[changed] = "different"
+    path.chmod(0o600)
+    path.write_text(json.dumps(content))
+    path.chmod(0o400)
+    with pytest.raises(ValueError, match="active cold fixture"):
+        checkpoint(**values)
 
 
 def test_cold_fixture_reuses_identical_private_material_without_rewriting(tmp_path):

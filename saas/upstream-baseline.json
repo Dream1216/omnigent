@@ -49,11 +49,26 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 166,
-    "max_upstream_net_added_loc": 4576,
+    "max_upstream_net_added_loc": 5000,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "followup": {
+      "revision": "litellm-customer-model-picker-budget-v32",
+      "approved_at": "2026-10-20",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 166,
+      "previous_max_upstream_net_added_loc": 4576,
+      "approved_max_upstream_net_added_loc": 5000,
+      "scoped_paths": [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "web/src/components/composer/ComposerConfigSections.tsx",
+        "web/src/shell/NewChatDialog.tsx",
+        "web/src/shell/NewChatDialog.test.tsx"
+      ],
+      "reason": "The account owner explicitly approved raising only the LiteLLM upstream net-added-line ceiling from 4,576 to 5,000 to integrate the customer model picker. The pre-integration measurement is 4,574 plus a 355-net-line draft, an estimated 4,929 that must be remeasured after integration. Retain the 166-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production acceptance gate. This scope approval does not imply independent review, CI success, image admission or production acceptance.",
+      "previous_revision": {
       "revision": "litellm-interactive-admission-budget-v31",
       "approved_at": "2026-10-17",
       "governance_mode": "single_owner_beta",
@@ -117,6 +132,7 @@
           "scoped_delta": {"omnigent/server/routes/_sessions/orchestration.py": 8},
           "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
         }
+      }
       }
       }
     },

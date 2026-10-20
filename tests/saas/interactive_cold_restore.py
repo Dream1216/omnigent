@@ -173,6 +173,65 @@ def checkpoint_suspended_fixture(
         or not record.managed_suspension.complete
     ):
         raise ValueError("invalid cold fixture checkpoint")
+    evidence = {
+        "old_suspension_sha256": managed_suspension_proof_sha256(record),
+        "old_physical_stop_sha256": physical_recovery_proof_sha256(record),
+        "old_suspension": asdict(record.managed_suspension),
+    }
+    return _checkpoint_fixture(
+        root=root,
+        bootstrap=bootstrap,
+        source=source,
+        record=record,
+        old_bearer=old_bearer,
+        cluster=cluster,
+        details={"checkpoint_kind": "suspended", **evidence},
+        evidence=evidence,
+    )
+
+
+def checkpoint_active_fixture(
+    *, root: Path, bootstrap: dict, source: dict, record, old_bearer: str, cluster: dict
+) -> dict:
+    if (
+        cluster.get("managed_cold_restore") is not True
+        or cluster.get("managed_cold_active") is not True
+        or cluster.get("scenario") != "controller_crash_recovery"
+        or cluster.get("provider") != "agent_sandbox"
+        or record.phase != "dispatching"
+        or record.process_stopped
+        or record.outcome is not None
+        or record.managed_resources is None
+        or record.managed_creation is None
+        or record.managed_creation.pod_uid is None
+    ):
+        raise ValueError("invalid active cold fixture checkpoint")
+    pending = sorted(record.grant.spool_directory.glob("*.pending.json"))
+    if len(pending) != 1:
+        raise ValueError("invalid active cold fixture checkpoint")
+    raw, _ = _read_material(root / "crash-state.json", modes=(0o400,))
+    state = json.loads(raw)
+    if state["run_id"] != str(record.run_id) or state["old_bearer"] != old_bearer:
+        raise ValueError("invalid active cold fixture checkpoint")
+    evidence = {"original_phase": record.phase, "original_pending_references": len(pending)}
+    return _checkpoint_fixture(
+        root=root,
+        bootstrap=bootstrap,
+        source=source,
+        record=record,
+        old_bearer=old_bearer,
+        cluster=cluster,
+        details={"checkpoint_kind": "active", **evidence},
+        evidence=evidence,
+        extra_paths=[root / "crash-state.json"],
+    )
+
+
+def _checkpoint_fixture(
+    *, root, bootstrap, source, record, old_bearer, cluster, details, evidence, extra_paths=()
+):
+    from dataclasses import asdict
+
     payload = {
         **bootstrap,
         "must_not_reseed": True,
@@ -181,9 +240,8 @@ def checkpoint_suspended_fixture(
         "cluster": cluster,
         "run_id": str(record.run_id),
         "old_bearer": old_bearer,
-        "old_suspension_sha256": managed_suspension_proof_sha256(record),
-        "old_physical_stop_sha256": physical_recovery_proof_sha256(record),
         "old_resources": asdict(record.managed_resources),
+        **details,
         "runtime_environment": {
             key: value
             for key, value in os.environ.items()
@@ -217,6 +275,7 @@ def checkpoint_suspended_fixture(
                 if path.is_absolute() and path.is_relative_to(root) and path.is_file():
                     paths.add(path)
     paths.update((root / "readiness.pem", root / "readiness-key.pem"))
+    paths.update(extra_paths)
     path = write_cold_checkpoint(root, payload, sorted(paths))
     loaded = load_cold_checkpoint(root)
     if loaded["payload"] != json.loads(json.dumps(payload, default=str)):
@@ -225,10 +284,8 @@ def checkpoint_suspended_fixture(
         "run_id": payload["run_id"],
         "checkpoint_sha256": sha256(path.read_bytes()).hexdigest(),
         "retained_files": len(loaded["files"]),
-        "old_suspension_sha256": payload["old_suspension_sha256"],
-        "old_physical_stop_sha256": payload["old_physical_stop_sha256"],
         "old_resources": asdict(record.managed_resources),
         "old_creation_pod_uid": record.managed_creation.pod_uid,
-        "old_suspension": asdict(record.managed_suspension),
+        **evidence,
         "bootstrap_contains_existing_identities_not_seeds": True,
     }

@@ -99,7 +99,10 @@ def test_managed_sandbox_controller_litellm_and_pg18_billing(
         monkeypatch.setenv(
             "OMNIGENT_SAAS_TEST_GC_INTERVAL_SECONDS", str(profile.get("gc_interval_seconds", 30))
         )
-        assert case.scenario != "controller_crash_recovery"
+        assert case.scenario != "controller_crash_recovery" or (
+            profile.get("managed_cold_restore") is True
+            and profile.get("managed_cold_active") is True
+        )
         if profile.get("official_postgresql", False):
             from tests.saas.interactive_official_postgresql import official_runtime_database
 

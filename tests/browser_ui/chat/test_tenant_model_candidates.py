@@ -12,8 +12,9 @@ from playwright.sync_api import Page, expect
 
 @pytest.mark.parametrize("surface", ["session", "landing"])
 @pytest.mark.parametrize("mobile", [False, True], ids=["desktop", "mobile"])
-def test_customer_can_inspect_model_candidates_but_cannot_select_them(
-    page: Page, chat_session_contract, surface: str, mobile: bool
+@pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "available"])
+def test_customer_model_availability_and_selection(
+    page: Page, chat_session_contract, surface: str, mobile: bool, enabled: bool
 ) -> None:
     handle = chat_session_contract
     handle.info_updates.update(login_url="/saas/login", single_user=False)
@@ -38,7 +39,7 @@ def test_customer_can_inspect_model_candidates_but_cannot_select_them(
     def catalog(request):
         reads.append(request.method)
         return {
-            "runtime_enabled": False,
+            "runtime_enabled": enabled,
             "models": [
                 {
                     "model_id": "deepseek-isolated-contract",
@@ -48,8 +49,9 @@ def test_customer_can_inspect_model_candidates_but_cannot_select_them(
                     "transport": "litellm",
                     "wire_api": "openai_responses",
                     "generation": 1,
-                    "available": False,
-                    "unavailable_reason": "runtime_not_enabled",
+                    "configuration_revision": f"managed-model:openai_responses:1:{'a' * 64}",
+                    "available": enabled,
+                    "unavailable_reason": None if enabled else "runtime_not_enabled",
                 }
             ],
         }
@@ -74,14 +76,21 @@ def test_customer_can_inspect_model_candidates_but_cannot_select_them(
     section = page.get_by_test_id("tenant-managed-model-candidates")
     expect(section).to_be_visible()
     expect(section).to_contain_text("DeepSeek · via LiteLLM · Responses")
-    expect(section).to_contain_text("Candidates only. Runtime access is not enabled.")
+    if not enabled:
+        expect(section).to_contain_text("Candidates only. Runtime access is not enabled.")
+    elif surface == "session":
+        expect(section).to_contain_text("Start a new session to select this model")
     candidate = section.get_by_role(
         "menuitemcheckbox", name=re.compile("DeepSeek customer candidate")
     )
-    expect(candidate).to_have_attribute("aria-disabled", "true")
+    selectable = enabled and surface == "landing"
+    if selectable:
+        expect(candidate).not_to_have_attribute("aria-disabled", "true")
+    else:
+        expect(candidate).to_have_attribute("aria-disabled", "true")
     before = list(handle.session_patches)
     candidate.click(force=True)
-    expect(candidate).to_have_attribute("aria-checked", "false")
+    expect(candidate).to_have_attribute("aria-checked", "true" if selectable else "false")
     assert handle.session_patches == before
     assert reads and set(reads) == {"GET"}
     assert not handle.event_posts
@@ -97,6 +106,7 @@ def test_customer_can_inspect_model_candidates_but_cannot_select_them(
         target.mkdir(parents=True, exist_ok=True)
         page.screenshot(
             path=str(
-                target / f"tenant-candidates-{surface}-{'mobile' if mobile else 'desktop'}.png"
+                target
+                / f"tenant-candidates-{surface}-{'mobile' if mobile else 'desktop'}-{enabled}.png"
             )
         )

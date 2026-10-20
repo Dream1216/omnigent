@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { authenticatedFetch } from "@/lib/identity";
 import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
 import { ComposerConfigSections } from "./ComposerConfigSections";
+import type { ManagedModelSelection } from "./TenantModelCandidatesSection";
 
 let user: string | null = "tenant-user";
 let saas = true;
@@ -23,16 +24,19 @@ const candidate = {
   transport: "litellm",
   wire_api: "openai_responses",
   generation: 1,
+  configuration_revision: `managed-model:openai_responses:1:${"a".repeat(64)}`,
   available: false,
   unavailable_reason: "runtime_not_enabled",
 };
-function mount() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function mount(selection?: ManagedModelSelection) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <DropdownMenu open>
         <DropdownMenuContent>
-          <ComposerConfigSections managedCandidates />
+          <ComposerConfigSections managedCandidates managedSelection={selection} />
         </DropdownMenuContent>
       </DropdownMenu>
     </QueryClientProvider>,
@@ -116,4 +120,113 @@ describe("TenantModelCandidatesSection", () => {
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("selects only an available immutable model reference for the current target", async () => {
+    const available = {
+      ...candidate,
+      available: true,
+      unavailable_reason: null,
+    };
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ models: [available], runtime_enabled: true })),
+    );
+    const onSelect = vi.fn();
+    mount({ target: "project_id=project-one&harness=codex-native", onSelect });
+    const row = await screen.findByRole("menuitemcheckbox", {
+      name: /DeepSeek V4 Pro/,
+    });
+    expect(row).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(row);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(available);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/managed-model-catalog?project_id=project-one&harness=codex-native",
+    );
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ cache: "no-store" });
+  });
+
+  it("keeps existing sessions read-only even when new-session execution is available", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          models: [{ ...candidate, available: true, unavailable_reason: null }],
+          runtime_enabled: true,
+        }),
+      ),
+    );
+    mount();
+    expect(
+      await screen.findByRole("menuitemcheckbox", { name: /DeepSeek V4 Pro/ }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Start a new session to select this model")).toBeVisible();
+  });
+
+  it("allows clearing an explicitly selected platform model without sending inference", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          models: [{ ...candidate, available: true, unavailable_reason: null }],
+          runtime_enabled: true,
+        }),
+      ),
+    );
+    const onSelect = vi.fn(),
+      onClear = vi.fn();
+    mount({
+      target: "project_id=current",
+      selectedRevision: candidate.configuration_revision,
+      onSelect,
+      onClear,
+    });
+    const row = await screen.findByRole("menuitemcheckbox", { name: /DeepSeek V4 Pro/ });
+    expect(row).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(row);
+    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "runtime_unavailable",
+    "project_required",
+    "model_harness_unsupported",
+    "host_unavailable",
+    "sandbox_unavailable",
+    "pricing_unavailable",
+  ])("does not select a model denied with %s", async (unavailable_reason) => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          models: [{ ...candidate, unavailable_reason }],
+          runtime_enabled: true,
+        }),
+      ),
+    );
+    const onSelect = vi.fn();
+    mount({ target: "project_id=current", onSelect });
+    const row = await screen.findByRole("menuitemcheckbox", {
+      name: /DeepSeek V4 Pro/,
+    });
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(row);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it.each(["managed-model:openai_responses:2:" + "a".repeat(64), "invalid-reference"])(
+    "rejects a mismatched reference %s",
+    async (configuration_revision) => {
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            models: [{ ...candidate, configuration_revision }],
+            runtime_enabled: false,
+          }),
+        ),
+      );
+      mount();
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Platform model catalog is temporarily unavailable.",
+      );
+      expect(screen.queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
+    },
+  );
 });

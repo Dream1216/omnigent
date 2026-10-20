@@ -368,6 +368,9 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
     scenario = getattr(case, "scenario", "single")
     dormant_managed = cluster is not None and cluster.get("managed_dormant") is True
     failed_resume = cluster is not None and cluster.get("managed_failed_resume") is True
+    workspace_managed = dormant_managed or (
+        cluster is not None and cluster.get("managed_cold_active") is True
+    )
     if failed_resume:
         assert dormant_managed
     assert scenario in {
@@ -398,7 +401,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
             credential_init(self, **kwargs, ttl=timedelta(seconds=90))
 
         monkeypatch.setattr(ModelRunCredentialService, "__init__", short_lived_credentials)
-    elif dormant_managed:
+    elif workspace_managed:
         command = test_model_deployments._command
         monkeypatch.setattr(
             test_model_deployments, "_command", lambda: replace(command(), max_output_tokens=256)
@@ -480,7 +483,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
             dependencies["artifact_store"].put(
                 "controller/bundle",
                 _controller_agent_bundle(
-                    workspace=dormant_managed,
+                    workspace=workspace_managed,
                     name="controller-agent",
                     executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
                     include_llm=False,
@@ -494,7 +497,7 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                             "args": ["--noprofile", "--norc"],
                             "os_env": {
                                 "type": "caller_process",
-                                "cwd": "." if dormant_managed else "/workspace",
+                                "cwd": "." if workspace_managed else "/workspace",
                                 "sandbox": {"type": "none"},
                             },
                         }
@@ -637,8 +640,13 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                 expected_host="localhost",
             )
             if cluster is not None and cluster.get("managed_cold_restore") is True:
-                assert dormant_managed and not failed_resume
+                assert not failed_resume
+                assert dormant_managed or (
+                    cluster.get("managed_cold_active") is True
+                    and scenario == "controller_crash_recovery"
+                )
                 case.cold_restore_bootstrap = {
+                    "scenario": scenario,
                     "case": {
                         "source": case.source,
                         "product_revision": case.product_revision,
@@ -710,7 +718,13 @@ def _physical_controller(case, db_uri, tmp_path, monkeypatch, *, cluster=None):
                     metering_thread.close()
 
             try:
-                if scenario == "controller_crash_recovery":
+                if (
+                    scenario == "controller_crash_recovery"
+                    and cluster is not None
+                    and cluster.get("managed_cold_active") is True
+                ):
+                    drive(crash_state=tmp_path / "crash-state.json")
+                elif scenario == "controller_crash_recovery":
                     _supervise_controller_crash(
                         drive,
                         factory=factory,
@@ -787,6 +801,7 @@ def _assert_crash_restart(
     meter_certificates,
     control_certificates,
     app_sessions,
+    managed_cold=False,
 ):
     old_id = UUID(state["run_id"])
     assert (
@@ -986,9 +1001,52 @@ def _assert_crash_restart(
         assert daily.reserved_tokens == hold.admitted_tokens and daily.settled_tokens == 66
     record = adapter._journal.read(fresh_run.id)
     assert record.phase == "terminal" and record.outcome == "succeeded"
-    assert asyncio.run_coroutine_threadsafe(
-        adapter._executor._driver.stop(record), app_loop
-    ).result(20)
+    restored_workspace = None
+    if managed_cold:
+        with httpx.Client(
+            base_url=ORIGIN,
+            trust_env=False,
+            verify=ssl.create_default_context(cafile=str(certificate)),
+            cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+            timeout=30,
+        ) as client:
+            response = client.get(
+                f"/v1/sessions/{conversation.id}/resources/environments/default/"
+                "filesystem/litellm-pvc-once.txt"
+            )
+            assert response.status_code == 200, response.text
+            file = response.json()
+            assert file["encoding"] == "utf-8" and not file["truncated"]
+            assert file["content"] == "LITELLM_PVC_ONCE\n"
+            restored_workspace = {
+                "sha256": sha256(file["content"].encode()).hexdigest(),
+                "lines": 1,
+            }
+        reaper = app.state.managed_sandbox_reaper
+
+        def managed_stopped():
+            import time
+
+            asyncio.run_coroutine_threadsafe(
+                reaper.sweep_once(now=int(time.time()) + 8 * 86400), app_loop
+            ).result(45)
+            record = adapter._journal.read(fresh_run.id)
+            return (
+                record.process_stopped
+                and record.managed_termination is not None
+                and record.managed_termination.complete
+            )
+
+        _wait(managed_stopped, "cold replacement completes actual managed retirement", timeout=150)
+        record = adapter._journal.read(fresh_run.id)
+        assert record.process_stopped and record.managed_termination.complete
+        assert physical_recovery_proof_sha256(adapter._journal.read(old_id)) == (
+            physical_recovery_proof_sha256(old)
+        )
+    else:
+        assert asyncio.run_coroutine_threadsafe(
+            adapter._executor._driver.stop(record), app_loop
+        ).result(20)
     assert [r["status"] for r in observed] == [403, 200, 403]
     adapter.assert_production_ready()
     (exchange / "result.json").write_text(
@@ -1021,6 +1079,8 @@ def _assert_crash_restart(
                 "cross_pod_volume_remount_tested": False,
                 "unknown_usage_hold_and_reference_retained": True,
                 "pending_provider_budget": {"status": hold.status, "not_auto_expired": True},
+                "restored_workspace": restored_workspace,
+                "managed_final_retirement_by_product_reaper": managed_cold,
                 "host_stop_acknowledged": True,
                 "manual_run_heartbeat": False,
             }
@@ -1069,7 +1129,13 @@ def _serve_controller(
     if generation_managed:
         assert retire_managed and scenario == "single"
     if retire_managed:
-        assert cluster is not None and scenario in {"single", "tools_cross_run"}
+        assert cluster is not None and (
+            scenario in {"single", "tools_cross_run"}
+            or (
+                scenario == "controller_crash_recovery"
+                and cluster.get("managed_cold_active") is True
+            )
+        )
     cancelling = scenario in {
         "cancel_before_admission",
         "cancel_unknown_stream",
@@ -1085,6 +1151,8 @@ def _serve_controller(
     }.get(scenario, "Build the requested page")
     if dormant_managed:
         initial_text = "P0_MANAGED_TOOL P0_PVC_WRITE: write one persistent marker exactly once"
+    elif cluster is not None and cluster.get("managed_cold_active") is True:
+        initial_text += " P0_PVC_WRITE"
 
     class ObservedAuthority(ProductionRunnerMachineAuthority):
         def _observe(self, operation, values):
@@ -1774,6 +1842,8 @@ def _serve_controller(
                     meter_certificates=meter_certificates,
                     control_certificates=control_certificates,
                     app_sessions=runtime_factory._app_sessions,
+                    managed_cold=cluster is not None
+                    and cluster.get("managed_cold_active") is True,
                 )
                 return
             adapter.assert_production_ready()
@@ -2288,6 +2358,37 @@ def _serve_controller(
                     os.fsync(directory)
                 finally:
                     os.close(directory)
+                if cluster is not None and cluster.get("managed_cold_active") is True:
+                    from tests.saas.interactive_cold_restore import checkpoint_active_fixture
+
+                    with httpx.Client(
+                        base_url=ORIGIN,
+                        trust_env=False,
+                        verify=ssl.create_default_context(cafile=str(certificate)),
+                        cookies={app.state.saas_http_integration.cookie_config.name: issued.token},
+                        timeout=30,
+                    ) as client:
+                        response = client.get(
+                            f"/v1/sessions/{conversation.id}/resources/environments/default/"
+                            "filesystem/litellm-pvc-once.txt"
+                        )
+                        assert response.status_code == 200, response.text
+                        content = response.json()
+                        assert content["encoding"] == "utf-8" and not content["truncated"]
+                        assert content["content"] == "LITELLM_PVC_ONCE\n"
+                    evidence = checkpoint_active_fixture(
+                        root=tmp_path,
+                        bootstrap=case.cold_restore_bootstrap,
+                        source=source,
+                        record=adapter._journal.read(run_id),
+                        old_bearer=private_bearers[-1],
+                        cluster=cluster,
+                    )
+                    evidence["original_workspace_sha256"] = sha256(
+                        content["content"].encode()
+                    ).hexdigest()
+                    evidence["original_workspace_lines"] = 1
+                    (exchange / "cold-ready.json").write_text(json.dumps(evidence))
                 (exchange / "crash-ready.json").write_text('{"ready": true}')
                 assert not threading.Event().wait(240), "supervisor did not SIGKILL owned Server"
                 pytest.fail("owned Server was not killed")

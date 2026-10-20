@@ -18,7 +18,7 @@ The independent Staff console manages encrypted connections, immutable model dra
 - `security-revocation-intent`: a fresh Staff API operator can escalate a retained cutoff to a distinct stop intent; its admission receipt is not physical completion.
 - `staff-authority`: a current fresh Staff operator can mutate; a security auditor can read but cannot edit.
 - `small-screen`: the same console entry remains usable on a narrow viewport without horizontal overflow.
-- `tenant-candidate-discovery`: customers can inspect their scoped candidate metadata in existing-session and landing model menus, including mobile; candidates remain disabled until runtime authorization is implemented.
+- `tenant-candidate-discovery`: customers inspect scoped model metadata on desktop and mobile; eligible new-session models are selectable, while existing sessions and unavailable models remain read-only.
 
 ## How to get to it (user POV)
 
@@ -27,7 +27,7 @@ The independent Staff console manages encrypted connections, immutable model dra
 - In the checked tenant catalog, use Ordinary disablement, confirm or cancel, and inspect the cutoff receipt. A readonly auditor can inspect but cannot stop models. Editing the tenant invalidates the old scope, including late responses.
 - Staff API clients may escalate that receipt with `POST /v2/platform-admin/model-publication-disablements/{disablement_id}/revoke`, the exact generation and an opaque idempotency key; no browser control or physical-completion projection is available yet.
 - Use either route on desktop or mobile. The Tenant Owner Beta model-provider console is a separate legacy entry, not an alternative Staff login.
-- As a customer in the SaaS app, open an existing conversation's model pill, then its configuration submenu; or open New session, choose a harness, then Edit. The Platform models section shows tenant candidate names, DeepSeek as the channel, LiteLLM as the transport, and the unavailable reason. A candidate cannot be selected. Ordinary OSS servers retain their host-owned catalogs without probing the SaaS API.
+- As a customer in the SaaS app, open an existing conversation's model pill, then its configuration submenu; or open New session, choose a harness, then Edit. Platform models shows concrete model names, DeepSeek as the channel, LiteLLM as transport, and any unavailable reason. Select an eligible new-session model; changing its target clears that selection. Existing sessions remain read-only. Ordinary OSS servers retain host-owned catalogs without probing the SaaS API.
 
 ## Driving it with the repro environment
 
@@ -44,7 +44,7 @@ Preconditions: these Staff console tests own their HTTPS server, disposable SQLi
 
 Run the selected test directly with `.venv/bin/pytest -q`. Each journey drives the visible controls and cross-checks the control-plane API. Real PostgreSQL budget/role checks and real LiteLLM/provider protocol checks are separate acceptance lanes, not supplied by these browser tests.
 
-Customer menu discovery uses the separately built SPA and explicit browser-only backend contracts: `tests/browser_ui/chat/test_tenant_model_candidates.py::test_customer_can_inspect_model_candidates_but_cannot_select_them`. Run it through the browser-only command in Composer, with recording and an evidence output directory. It covers both entry points on desktop and mobile, verifies the disabled state and no model mutation, and makes no real supplier calls. Tenant authentication/API behavior and actual App-login RLS are checked separately in the tenant catalog SaaS tests.
+Customer menus use the separately built SPA and explicit browser-only contracts: `tests/browser_ui/chat/test_tenant_model_candidates.py::test_customer_model_availability_and_selection`. Run the browser-only command in Composer with recording and an evidence directory. It covers both entry points on desktop/mobile, available selection and disabled states without inference or existing-session mutation. Tenant authentication/API behavior and App-login RLS are separate SaaS tests; these UI fixtures do not attest real routing.
 
 ## Gotchas
 
