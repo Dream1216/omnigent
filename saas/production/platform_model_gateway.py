@@ -47,6 +47,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
     load_platform_model_service_role_bindings,
 )
+from saas.production.tenant_model_keys import TenantModelTokenVerifier, load_tenant_model_bindings
 from saas.runner_adapter.platform_model_gateway import (
     PlatformModelGatewayClaims,
     PlatformModelGatewayTokenAuthority,
@@ -194,13 +195,17 @@ class BudgetAuthority(Protocol):
     ) -> ModelProviderBudgetReservationView: ...
 
 
+class GatewayTokenVerifier(Protocol):
+    def validate(self, token: str, *, now: int | None = None) -> PlatformModelGatewayClaims: ...
+
+
 class PlatformModelGateway:
     """Authenticate, admit, proxy and settle one OpenAI-compatible stream."""
 
     def __init__(
         self,
         *,
-        tokens: PlatformModelGatewayTokenAuthority,
+        tokens: GatewayTokenVerifier,
         configurations: ConfigurationReader,
         budgets: BudgetAuthority,
         pricing: PlatformModelPricingPolicy,
@@ -579,9 +584,13 @@ def build_platform_model_gateway(
         reader = ModelProviderConfigurationReader(secret_sessions, secret_cipher=cipher)
         budgets = ModelProviderBudgetAdmissionService(billing_sessions)
         pricing = load_platform_model_pricing(environ)
-        tokens = PlatformModelGatewayTokenAuthority(
-            signing_key=_owner_secret(environ, _TOKEN_KEY_FILE_ENV),
+        legacy_key = _owner_secret(environ, _TOKEN_KEY_FILE_ENV)
+        legacy_tokens = PlatformModelGatewayTokenAuthority(
+            signing_key=legacy_key,
             tenant_id=tenant_id,
+        )
+        tokens = TenantModelTokenVerifier(
+            legacy_tokens, legacy_key, load_tenant_model_bindings(environ)
         )
 
         def readiness() -> None:

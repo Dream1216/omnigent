@@ -38,7 +38,7 @@ dependencies = [
     # >=14: the `e2b` extra's SDK (>=2.26) needs rich>=14 (was >=13,<14).
     "rich>=14,<15",
     "prompt_toolkit>=3.0,<4",
-    "mcp>=1.0,<2",
+    "mcp>=1.30.0,<2",
     "starlette>=1.0.1,<2",
     "uvicorn[standard]>=0.30,<1",
     # websockets >=15 asyncio client hangs on macOS before emitting any handshake
@@ -96,7 +96,7 @@ dependencies = [
     # baseline install — every CUJ command in the README depends on at
     # least one of them, so making them optional just forces every user
     # to remember `--extra all`. Issue #406.
-    "claude-agent-sdk>=0.1.62",
+    "claude-agent-sdk>=0.2.121",
     "openai-agents>=0.0.17",
     # 2.15 fixes the 2026 JWK/JWKS and HMAC verification advisories,
     # including CVE-2026-102268 (critical).
@@ -148,6 +148,7 @@ cockroachdb = [
 # `all` carries dependencies moved out of the default install that internal
 # CI / dev workflows still exercise.
 all = [
+    "aiohttp>=3.14.4,<4",
     "databricks-sdk>=0.56.0,<1",
     "opentelemetry-sdk>=1.20,<2",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20,<2",
@@ -357,6 +358,7 @@ test = [
     # These clients are optional product capabilities, but their tests import
     # and execute the real packages against mocks.
     "hindsight-client>=0.4.0",
+    "kubernetes>=36,<37",
     "nimble-python>=1.2.0,<2",
     "pytest-asyncio>=0.21",
     "pytest-xdist>=3.6",
