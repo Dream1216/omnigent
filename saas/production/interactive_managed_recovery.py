@@ -16,6 +16,7 @@ from saas.production.interactive_pod_binding import owned_pod
 from saas.production.interactive_recovery import (
     ManagedPodTermination,
     ManagedResourceBinding,
+    ManagedSuspensionReceipt,
     ManagedTerminationReceipt,
 )
 from saas.production.interactive_resources import (
@@ -117,8 +118,9 @@ def _terminal_digest(pod):
 
 
 class _Recovery:
-    def __init__(self, launcher, record, checkpoint, loop):
+    def __init__(self, launcher, record, checkpoint, loop, *, retaining=False):
         self.launcher, self.record = launcher, record
+        self.retaining = retaining
         self.checkpoint, self.loop = checkpoint, loop
         self.stage = "binding"
         self.http_status: int | None = None
@@ -133,7 +135,26 @@ class _Recovery:
             self.preparation.resource_name
         )
 
+    @property
+    def receipt(self) -> ManagedTerminationReceipt:
+        if self.retaining:
+            suspension = self.record.managed_suspension
+            receipt = suspension.termination if suspension is not None else None
+        else:
+            receipt = self.record.managed_termination
+        if not isinstance(receipt, ManagedTerminationReceipt):
+            raise _unavailable()
+        return receipt
+
     def persist(self, **changes):
+        if self.retaining and "managed_termination" in changes:
+            termination = changes.pop("managed_termination")
+            previous = self.record.managed_suspension
+            changes["managed_suspension"] = (
+                replace(previous, termination=termination)
+                if previous is not None
+                else ManagedSuspensionReceipt(termination)
+            )
         future = asyncio.run_coroutine_threadsafe(self.checkpoint(**changes), self.loop)
         try:
             self.record = future.result(timeout=10)
@@ -250,7 +271,7 @@ class _Recovery:
             raise _unavailable()
         if (
             TERMINATION_FINALIZER not in document["metadata"].get("finalizers", [])
-            and self.record.managed_termination.quiescence_sha256 is None
+            and self.receipt.quiescence_sha256 is None
         ):
             raise _unavailable()
         resources = ManagedResourceBinding(
@@ -318,7 +339,7 @@ class _Recovery:
         if type(generation) is not int or generation < 1:
             raise _unavailable()
         deleting = metadata.get("deletionTimestamp") is not None
-        receipt = self.record.managed_termination
+        receipt = self.receipt
         digest = _digest(
             {
                 "uid": metadata["uid"],
@@ -361,19 +382,30 @@ class _Recovery:
         return True
 
     def step(self):
-        receipt = self.record.managed_termination
+        from saas.production.interactive_suspension import observe_retained_workspace
+
+        suspension = getattr(self.record, "managed_suspension", None)
+        receipt = (
+            (suspension.termination if suspension is not None else None)
+            if self.retaining
+            else self.record.managed_termination
+        )
         if receipt is None:
             self.persist(
-                managed_termination=ManagedTerminationReceipt(secret_uid=self.creation.secret_uid)
+                managed_termination=suspension.termination
+                if suspension is not None
+                else ManagedTerminationReceipt(secret_uid=self.creation.secret_uid)
             )
-        if self.record.managed_termination.complete:
+        if self.receipt.complete or (self.retaining and self.record.managed_suspension.complete):
             return self.record
         if self.creation.workload_submitted:
             parent = self.parent()
-            if parent is None and self.record.managed_termination.quiescence_sha256 is None:
+            if parent is None and self.receipt.quiescence_sha256 is None:
                 return self.record
             pods = self.pods()
-            known = {row.uid: row for row in self.record.managed_termination.pods}
+            if self.retaining:
+                observe_retained_workspace(self, parent, pods)
+            known = {row.uid: row for row in self.receipt.pods}
             for uid, pod in pods.items():
                 if uid not in known:
                     if (
@@ -384,7 +416,7 @@ class _Recovery:
                     known[uid] = ManagedPodTermination(uid, pod["metadata"]["name"])
             self.persist(
                 managed_termination=replace(
-                    self.record.managed_termination,
+                    self.receipt,
                     pods=tuple(known[key] for key in sorted(known)),
                 )
             )
@@ -429,7 +461,7 @@ class _Recovery:
                     known[uid] = replace(known[uid], containers_sha256=digest)
                     self.persist(
                         managed_termination=replace(
-                            self.record.managed_termination,
+                            self.receipt,
                             pods=tuple(known[key] for key in sorted(known)),
                         )
                     )
@@ -440,15 +472,15 @@ class _Recovery:
                 return self.record
             if self.preparation.provider == "agent_sandbox" and not known:
                 return self.record
-            if parent is not None:
+            if parent is not None and not self.retaining:
                 if not parent["metadata"].get("deletionTimestamp"):
                     self.delete(self.parent_path, parent)
                     return self.record
                 self.release_finalizer(self.parent_path, parent)
                 return self.record
-        if self.creation.secret_submitted and not self.record.managed_termination.secret_gone:
+        if self.creation.secret_submitted and not self.receipt.secret_gone:
             secret = self.api(self.secret_path)
-            receipt = self.record.managed_termination
+            receipt = self.receipt
             if secret is None:
                 if receipt.secret_uid is None:
                     return self.record
@@ -464,7 +496,12 @@ class _Recovery:
                     raise _unavailable()
                 self.delete(self.secret_path, secret)
                 return self.record
-        self.persist(managed_termination=replace(self.record.managed_termination, complete=True))
+        if self.retaining:
+            # Re-read after the last Secret/Pod observation; retained identity is not a delete ACK.
+            observe_retained_workspace(self, self.parent(), self.pods())
+            self.persist(managed_suspension=replace(self.record.managed_suspension, complete=True))
+        else:
+            self.persist(managed_termination=replace(self.receipt, complete=True))
         return self.record
 
 
@@ -487,7 +524,22 @@ async def retire_managed_resources(deployment, record, checkpoint):
     return await _recover_resources(deployment, record, checkpoint)
 
 
-async def _recover_resources(deployment, record, checkpoint):
+async def suspend_managed_resources(deployment, record, checkpoint):
+    if (
+        record.managed_preparation is None
+        or record.managed_preparation.provider != "agent_sandbox"
+        or record.managed_creation is None
+        or record.managed_creation.pod_uid is None
+        or record.managed_resources is None
+        or record.managed_origin_run_id is not None
+        or record.managed_termination is not None
+        or record.phase not in {"draining", "terminal"}
+    ):
+        raise _unavailable()
+    return await _recover_resources(deployment, record, checkpoint, retaining=True)
+
+
+async def _recover_resources(deployment, record, checkpoint, *, retaining=False):
     from saas.production.interactive_preparation import _binding, _direct_launcher
 
     preparation = record.managed_preparation
@@ -499,7 +551,7 @@ async def _recover_resources(deployment, record, checkpoint):
     loop = asyncio.get_running_loop()
 
     def run():
-        recovery = _Recovery(delegate, record, checkpoint, loop)
+        recovery = _Recovery(delegate, record, checkpoint, loop, retaining=retaining)
         try:
             if _binding(delegate, preparation.resource_name, preparation.host_id) != preparation:
                 raise _unavailable()

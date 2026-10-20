@@ -67,7 +67,10 @@ async def _fixture(tmp_path, monkeypatch, provider="kubernetes"):
         managed_creation=c.intents[-1],
         managed_resources=c.resources[0],
         managed_termination=None,
+        managed_suspension=None,
+        managed_origin_run_id=None,
         official_runner_id=None,
+        phase="terminal",
     )
 
     async def checkpoint(**changes):
@@ -89,7 +92,14 @@ async def _fixture(tmp_path, monkeypatch, provider="kubernetes"):
             }
         is_pod = "/pods/" in path
         document = (
-            state.pods.get(str(UUID(int=3)))
+            next(
+                (
+                    pod
+                    for pod in state.pods.values()
+                    if pod["metadata"]["name"] == path.rsplit("/", 1)[1]
+                ),
+                None,
+            )
             if is_pod
             else state.secret
             if "/secrets/" in path
@@ -101,7 +111,10 @@ async def _fixture(tmp_path, monkeypatch, provider="kubernetes"):
             if values["response_types_map"][200] == "V1Job":
                 return serializer._ApiClient__deserialize(copy.deepcopy(document), "V1Job")
             return copy.deepcopy(document)
-        assert state.record.managed_termination is not None
+        receipt = state.record.managed_termination
+        if receipt is None and state.record.managed_suspension is not None:
+            receipt = state.record.managed_suspension.termination
+        assert receipt is not None
         assert values["_request_timeout"] == 10
         body = values["body"]
         metadata = document["metadata"]
@@ -149,11 +162,11 @@ async def _fixture(tmp_path, monkeypatch, provider="kubernetes"):
             else:
                 assert operation["path"] == "/metadata/finalizers"
                 if is_pod and TERMINATION_FINALIZER not in operation["value"]:
-                    receipts = state.record.managed_termination.pods
+                    receipts = receipt.pods
                     assert len(receipts) == 1 and receipts[0].containers_sha256
                 if TERMINATION_FINALIZER in operation["value"]:
                     assert provider == "agent_sandbox" and not metadata.get("deletionTimestamp")
-                    assert state.record.managed_termination.pods[0].uid == metadata["uid"]
+                    assert receipt.pods[0].uid == metadata["uid"]
                 metadata["finalizers"] = operation["value"]
                 if not metadata["finalizers"]:
                     if is_pod:

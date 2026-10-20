@@ -33,10 +33,12 @@ from saas.production.interactive_recovery import (
     ManagedCreationIntent,
     ManagedPreparationBinding,
     ManagedResourceBinding,
+    ManagedSuspensionReceipt,
     ManagedTerminationReceipt,
     UnstartedInteractiveRecoveryRecord,
     certificate_sha256,
     managed_retirement_proof_sha256,
+    managed_suspension_proof_sha256,
 )
 from saas.production.interactive_runtime import AuthorizedInteractiveInput
 from saas.production.model_run_credentials import IssuedModelRunCredential
@@ -76,11 +78,15 @@ class InteractivePhysicalDriver(Protocol):
 
     async def recover_managed(self, record, checkpoint) -> InteractiveRecoveryRecord: ...
 
-    async def inspect_managed_retirement(self, record, *, cutoff, now, force=False): ...
+    async def inspect_managed_retirement(
+        self, record, *, cutoff, now, force=False, retaining=False
+    ): ...
 
     async def detach_managed_retirement(self, record, host) -> bool: ...
 
     async def retire_managed(self, record, checkpoint) -> InteractiveRecoveryRecord: ...
+
+    async def suspend_managed(self, record, checkpoint) -> InteractiveRecoveryRecord: ...
 
     async def finish_managed_retirement(self, record) -> bool: ...
 
@@ -297,6 +303,11 @@ class ProductionInteractiveExecutor:
     async def execute(
         self, lease: RunnerControlClientLease, *, cancellation: asyncio.Event
     ) -> str:
+        try:
+            await self._settle_dormant(lease, cancellation)
+        except (Exception, asyncio.CancelledError):
+            self._retain_unstarted(lease)
+            raise
         async with self._lifecycle:
             try:
                 active, previous = await self._prepare_active(lease, cancellation=cancellation)
@@ -468,7 +479,10 @@ class ProductionInteractiveExecutor:
                     self._put(
                         active,
                         managed_predecessor_run_id=source.run_id,
-                        managed_predecessor_stop_sha256=managed_retirement_proof_sha256(source),
+                        managed_predecessor_stop_sha256=managed_suspension_proof_sha256(source)
+                        if generation.resuming
+                        else managed_retirement_proof_sha256(source),
+                        managed_resume=generation.resuming,
                     )
                 preflight_complete = True
                 if previous is not None:
@@ -819,11 +833,14 @@ class ProductionInteractiveExecutor:
         ancestors = set()
         while origin.managed_predecessor_run_id is not None:
             identifier = origin.managed_predecessor_run_id
+            resuming = origin.managed_resume
             if identifier in ancestors:
                 raise _unavailable()
             ancestors.add(identifier)
             origin = self._journal.read(identifier)
-            managed_retirement_proof_sha256(origin)
+            (managed_suspension_proof_sha256 if resuming else managed_retirement_proof_sha256)(
+                origin
+            )
         rows = [
             row
             for row in self._journal.records()
@@ -867,7 +884,7 @@ class ProductionInteractiveExecutor:
         ]
 
     async def retire_managed_origin(
-        self, run_id: UUID, *, cutoff: int, now: int, force: bool = False
+        self, run_id: UUID, *, cutoff: int, now: int, force: bool = False, retaining: bool = False
     ) -> bool:
         async with self._lifecycle:
             if self._closing or run_id in self._completed_retirements:
@@ -875,7 +892,9 @@ class ProductionInteractiveExecutor:
             operation = self._retirements.get(run_id)
             if operation is None:
                 operation = asyncio.create_task(
-                    self._retire_managed_origin(run_id, cutoff=cutoff, now=now, force=force),
+                    self._retire_managed_origin(
+                        run_id, cutoff=cutoff, now=now, force=force, retaining=retaining
+                    ),
                     name="interactive-managed-retirement",
                 )
                 self._retirements[run_id] = operation
@@ -894,13 +913,13 @@ class ProductionInteractiveExecutor:
         except Exception:  # noqa: BLE001 - redact database and provider diagnostics.
             raise _unavailable() from None
 
-    async def _retire_managed_origin(self, run_id, *, cutoff, now, force):
+    async def _retire_managed_origin(self, run_id, *, cutoff, now, force, retaining=False):
         async with self._recovering:
             return await self._retire_managed_origin_locked(
-                run_id, cutoff=cutoff, now=now, force=force
+                run_id, cutoff=cutoff, now=now, force=force, retaining=retaining
             )
 
-    async def _retire_managed_origin_locked(self, run_id, *, cutoff, now, force):
+    async def _retire_managed_origin_locked(self, run_id, *, cutoff, now, force, retaining=False):
         if self._verify_released is None:
             return False
         origin = self._journal.read(run_id)
@@ -912,6 +931,14 @@ class ProductionInteractiveExecutor:
         ):
             return False
         creation = origin.managed_creation
+        if any(row.managed_predecessor_run_id == origin.run_id for row in self._journal.records()):
+            return False
+        if retaining and (
+            origin.managed_preparation.provider != "agent_sandbox"
+            or creation.pod_uid is None
+            or origin.managed_termination is not None
+        ):
+            return False
         peers = tuple(self._managed_peers(origin))
 
         def parked(row):
@@ -941,6 +968,7 @@ class ProductionInteractiveExecutor:
             cutoff=cutoff,
             now=now,
             force=force or any(row.outcome == "orphaned" for row in (origin, *peers)),
+            **({"retaining": True} if retaining else {}),
         )
         if host is None:
             return False
@@ -968,17 +996,34 @@ class ProductionInteractiveExecutor:
                     await self._driver.quiesce_preparation(active.authorized)
             if not unchanged():
                 return False
-            # Hold admission through the credential-generation CAS. A stale
-            # heartbeat loser must not leave an irreversible private stop intent.
+            if retaining and expected.managed_suspension is None:
+                # Persist the retention mode before detachment; a crash must not become a delete.
+                expected = replace(
+                    expected,
+                    phase=expected.phase if expected.phase == "terminal" else "draining",
+                    outcome=expected.outcome if expected.phase == "terminal" else "orphaned",
+                    managed_suspension=ManagedSuspensionReceipt(
+                        ManagedTerminationReceipt(secret_uid=creation.secret_uid)
+                    ),
+                )
+                self._journal.put(expected)
+                if run_id in self._active:
+                    self._active[run_id].record = expected
             if not await self._driver.detach_managed_retirement(expected, host):
                 return False
-            if expected.managed_termination is None or expected.phase != "terminal":
+            if not retaining and (
+                expected.managed_termination is None or expected.phase != "terminal"
+            ):
                 expected = replace(
                     expected,
                     phase=expected.phase if expected.phase == "terminal" else "draining",
                     outcome=expected.outcome if expected.phase == "terminal" else "orphaned",
                     managed_termination=expected.managed_termination
-                    or ManagedTerminationReceipt(secret_uid=creation.secret_uid),
+                    or (
+                        expected.managed_suspension.termination
+                        if expected.managed_suspension is not None
+                        else ManagedTerminationReceipt(secret_uid=creation.secret_uid)
+                    ),
                 )
                 self._journal.put(expected)
                 if run_id in self._active:
@@ -987,7 +1032,11 @@ class ProductionInteractiveExecutor:
         async def checkpoint(**changes):
             nonlocal expected
             async with self._lifecycle:
-                if not unchanged() or set(changes) - {"managed_resources", "managed_termination"}:
+                if not unchanged() or set(changes) - {
+                    "managed_resources",
+                    "managed_termination",
+                    "managed_suspension",
+                }:
                     raise _unavailable()
                 updated = replace(expected, **changes)
                 if updated != expected:
@@ -997,14 +1046,16 @@ class ProductionInteractiveExecutor:
                         self._active[run_id].record = expected
                 return expected
 
-        if expected.managed_termination is None or not expected.managed_termination.complete:
-            await self._driver.retire_managed(expected, checkpoint)
+        def complete():
+            receipt = expected.managed_suspension if retaining else expected.managed_termination
+            return receipt is not None and receipt.complete
+
+        if not complete():
+            await (self._driver.suspend_managed if retaining else self._driver.retire_managed)(
+                expected, checkpoint
+            )
         async with self._lifecycle:
-            if (
-                not unchanged()
-                or expected.managed_termination is None
-                or not expected.managed_termination.complete
-            ):
+            if not unchanged() or not complete():
                 return False
             if not expected.process_stopped or expected.phase != "terminal":
                 expected = replace(
@@ -1014,13 +1065,17 @@ class ProductionInteractiveExecutor:
                     outcome=expected.outcome or "orphaned",
                     stop_kind=expected.stop_kind
                     if expected.process_stopped
+                    else "managed_suspend"
+                    if retaining
                     else "managed_container",
                 )
                 self._journal.put(expected)
                 if run_id in self._active:
                     self._active[run_id].record = expected
                     self._active[run_id].stopped = True
-            digest = managed_retirement_proof_sha256(expected)
+            digest = (
+                managed_suspension_proof_sha256 if retaining else managed_retirement_proof_sha256
+            )(expected)
             stopped = []
             for peer in peers:
                 if not peer.process_stopped:
@@ -1045,12 +1100,67 @@ class ProductionInteractiveExecutor:
                 self._confirmed_recoveries.add(row.run_id)
         if self._closing or not await self._driver.finish_managed_retirement(expected):
             return False
-        self._completed_retirements.add(run_id)
+        if not retaining:
+            self._completed_retirements.add(run_id)
         return True
+
+    async def _settle_dormant(self, lease, cancellation):
+        authorized, _ = await self._authorize(lease)
+        if (
+            authorized.launch["host_type"] != "managed"
+            or authorized.launch["sandbox_provider"] != "agent_sandbox"
+        ):
+            return
+        roots = [
+            row
+            for row in self._journal.records()
+            if row.scope.official_session_id == authorized.session_id
+            and replace(row.runtime, actor_id=authorized.runtime.actor_id) == authorized.runtime
+            and row.managed_origin_run_id is None
+            and row.managed_preparation is not None
+            and row.managed_creation is not None
+            and row.managed_creation.pod_uid is not None
+            and row.managed_resources is not None
+        ]
+        ancestors = {row.managed_predecessor_run_id for row in roots}
+        leaves = [row for row in roots if row.run_id not in ancestors]
+        if len(leaves) > 1:
+            raise _unavailable()
+        if not leaves or leaves[0].managed_termination is not None:
+            return
+        identifier = leaves[0].run_id
+        deadline = asyncio.get_running_loop().time() + 30
+        while not cancellation.is_set():
+            await self.retire_managed_origin(
+                identifier,
+                cutoff=0,
+                now=int(datetime.now(timezone.utc).timestamp()),
+                retaining=True,
+            )
+            current = self._journal.read(identifier)
+            if current.managed_suspension is None or current.managed_suspension.complete:
+                return
+            if asyncio.get_running_loop().time() >= deadline:
+                raise _unavailable()
+            await asyncio.sleep(0.5)
 
     async def _recover_unknown_managed(self, record):
         if self._verify_released is None or self._closing:
             return False
+        if record.managed_resume:
+            if (
+                record.managed_resources is None
+                or record.managed_creation is None
+                or record.managed_creation.pod_uid is None
+            ):
+                return False
+            return await self._retire_managed_origin_locked(
+                record.run_id,
+                cutoff=0,
+                now=int(datetime.now(timezone.utc).timestamp()),
+                force=True,
+                retaining=True,
+            )
         try:
             await self._verify_released(record)
             for peer in self._managed_peers(record):
@@ -1143,11 +1253,23 @@ class ProductionInteractiveExecutor:
                 origins.add(row.run_id)
         for run_id in sorted(origins, key=str)[:limit]:
             try:
+                current = self._journal.read(run_id)
                 retirement_completed += await self.retire_managed_origin(
                     run_id,
                     cutoff=0,
                     now=int(datetime.now(timezone.utc).timestamp()),
                     force=True,
+                    retaining=(
+                        current.managed_suspension is not None
+                        or current.managed_resume
+                        or (
+                            current.managed_preparation is not None
+                            and current.managed_preparation.provider == "agent_sandbox"
+                            and current.managed_creation is not None
+                            and current.managed_creation.pod_uid is not None
+                        )
+                    )
+                    and current.managed_termination is None,
                 )
             except RunnerControlError as error:
                 if error.code != "interactive_controller_unavailable":

@@ -53,7 +53,11 @@ class ControlledManagedLauncher:
                 and row.managed_preparation.provider == delegate.provider
                 and row.managed_preparation.resource_name == sandbox_id
             ]
+            predecessors = {row.managed_predecessor_run_id for row in rows}
+            rows = [row for row in rows if row.run_id not in predecessors]
             if not rows or any(row.managed_termination is not None for row in rows):
+                raise _unavailable()
+            if any(row.managed_suspension is not None for row in rows):
                 raise _unavailable()
             records = [
                 row

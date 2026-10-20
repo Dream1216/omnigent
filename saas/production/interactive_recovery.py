@@ -195,6 +195,62 @@ class ManagedTerminationReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedVolumeBinding:
+    name: str
+    uid: str
+
+    def __post_init__(self):
+        _checked_uid(self.uid)
+        if (
+            not isinstance(self.name, str)
+            or re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", self.name) is None
+        ):
+            raise InteractiveRecoveryError()
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedSuspensionReceipt:
+    """Stopped Pod/Secret generation, explicitly not deletion of its retained parent."""
+
+    termination: ManagedTerminationReceipt
+    volume_templates_sha256: str | None = None
+    volumes: tuple[ManagedVolumeBinding, ...] = ()
+    complete: bool = False
+
+    def __post_init__(self):
+        if (
+            not isinstance(self.termination, ManagedTerminationReceipt)
+            or self.termination.complete
+            or type(self.complete) is not bool
+            or type(self.volumes) is not tuple
+            or len(self.volumes) > 8
+            or any(not isinstance(volume, ManagedVolumeBinding) for volume in self.volumes)
+            or tuple(sorted(self.volumes, key=lambda volume: volume.name)) != self.volumes
+            or len({volume.name for volume in self.volumes}) != len(self.volumes)
+            or len({volume.uid for volume in self.volumes}) != len(self.volumes)
+            or (
+                self.volume_templates_sha256 is not None
+                and (
+                    not isinstance(self.volume_templates_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", self.volume_templates_sha256) is None
+                )
+            )
+            or (self.volumes and self.volume_templates_sha256 is None)
+            or (
+                self.complete
+                and (
+                    self.volume_templates_sha256 is None
+                    or not self.termination.secret_gone
+                    or self.termination.quiescence_sha256 is None
+                    or len(self.termination.pods) != 1
+                    or self.termination.pods[0].containers_sha256 is None
+                )
+            )
+        ):
+            raise InteractiveRecoveryError()
+
+
+@dataclass(frozen=True, slots=True)
 class InteractiveRecoveryRecord:
     run_id: UUID
     fence_token: int
@@ -223,6 +279,8 @@ class InteractiveRecoveryRecord:
     managed_origin_stop_sha256: str | None = None
     managed_predecessor_run_id: UUID | None = None
     managed_predecessor_stop_sha256: str | None = None
+    managed_suspension: ManagedSuspensionReceipt | None = None
+    managed_resume: bool = False
 
     def __post_init__(self):
         if (
@@ -245,6 +303,17 @@ class InteractiveRecoveryRecord:
             or not isinstance(self.certificate_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", self.certificate_sha256) is None
             or type(self.process_stopped) is not bool
+            or type(self.managed_resume) is not bool
+            or (
+                self.managed_resume
+                and (
+                    self.managed_predecessor_run_id is None
+                    or (
+                        self.managed_preparation is not None
+                        and self.managed_preparation.provider != "agent_sandbox"
+                    )
+                )
+            )
             or (
                 (self.managed_predecessor_run_id is None)
                 != (self.managed_predecessor_stop_sha256 is None)
@@ -261,7 +330,42 @@ class InteractiveRecoveryRecord:
                 )
             )
             or self.outcome not in {None, "succeeded", "failed", "cancelled", "orphaned"}
-            or self.stop_kind not in {None, "never_started", "managed_container", "managed_origin"}
+            or self.stop_kind
+            not in {
+                None,
+                "never_started",
+                "managed_container",
+                "managed_origin",
+                "managed_suspend",
+            }
+            or (
+                self.managed_suspension is not None
+                and (
+                    not isinstance(self.managed_suspension, ManagedSuspensionReceipt)
+                    or self.managed_origin_run_id is not None
+                    or self.managed_preparation is None
+                    or self.managed_preparation.provider != "agent_sandbox"
+                    or self.managed_resources is None
+                    or self.managed_creation is None
+                    or self.managed_creation.pod_uid is None
+                    or self.managed_suspension.termination.secret_uid
+                    != self.managed_creation.secret_uid
+                    or any(
+                        (pod.uid, pod.name)
+                        != (self.managed_creation.pod_uid, self.managed_creation.pod_name)
+                        for pod in self.managed_suspension.termination.pods
+                    )
+                )
+            )
+            or (
+                self.stop_kind == "managed_suspend"
+                and (
+                    not self.process_stopped
+                    or self.phase != "terminal"
+                    or self.managed_suspension is None
+                    or not self.managed_suspension.complete
+                )
+            )
             or (
                 (self.managed_origin_stop_sha256 is not None)
                 != (self.stop_kind == "managed_origin")
@@ -503,6 +607,8 @@ def physical_recovery_proof_sha256(record: InteractiveCleanupRecord) -> str:
                 separators=(",", ":"),
             ).encode()
         ).hexdigest()
+    if record.stop_kind == "managed_suspend":
+        return managed_suspension_proof_sha256(record)
     if record.stop_kind == "managed_origin":
         if (
             not record.process_stopped
@@ -597,6 +703,42 @@ def physical_recovery_proof_sha256(record: InteractiveCleanupRecord) -> str:
     ).hexdigest()
 
 
+def managed_suspension_proof_sha256(origin: InteractiveRecoveryRecord) -> str:
+    if (
+        origin.phase != "terminal"
+        or not origin.process_stopped
+        or origin.managed_suspension is None
+        or not origin.managed_suspension.complete
+        or origin.managed_preparation is None
+        or origin.managed_resources is None
+        or origin.managed_creation is None
+    ):
+        raise InteractiveRecoveryError()
+    return sha256(
+        json.dumps(
+            {
+                "cleanup_kind": "managed_resource_suspension",
+                "run_id": str(origin.run_id),
+                "fence_token": origin.fence_token,
+                "connection_generation": origin.connection_generation,
+                "product_revision": origin.product_revision,
+                "image_digest": origin.image_digest,
+                "scope": asdict(origin.scope),
+                "runtime_user_key": origin.runtime.runtime_user_key,
+                "certificate_sha256": origin.certificate_sha256,
+                "preparation": asdict(origin.managed_preparation),
+                "resources": asdict(origin.managed_resources),
+                "creation": _creation_values(origin.managed_creation),
+                "suspension": asdict(origin.managed_suspension),
+                **_predecessor_values(origin),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode()
+    ).hexdigest()
+
+
 def managed_retirement_proof_sha256(origin: InteractiveRecoveryRecord) -> str:
     """Seal actual complete resource facts, separately from a previous Runner ACK."""
     if (
@@ -657,7 +799,19 @@ def _check_origin_stop(record, origin):
             record.host_account_generation is not None
             and record.host_account_generation != origin.host_account_generation
         )
-        or record.managed_origin_stop_sha256 != managed_retirement_proof_sha256(origin)
+        or record.managed_origin_stop_sha256
+        not in (
+            (
+                [managed_retirement_proof_sha256(origin)]
+                if origin.managed_termination is not None and origin.managed_termination.complete
+                else []
+            )
+            + (
+                [managed_suspension_proof_sha256(origin)]
+                if origin.managed_suspension is not None and origin.managed_suspension.complete
+                else []
+            )
+        )
     ):
         raise InteractiveRecoveryError()
 
@@ -673,6 +827,7 @@ def _predecessor_values(record: InteractiveRecoveryRecord) -> dict[str, str]:
     return {
         "predecessor_run_id": str(record.managed_predecessor_run_id),
         "predecessor_stop_sha256": str(record.managed_predecessor_stop_sha256),
+        **({"predecessor_kind": "managed_suspend"} if record.managed_resume else {}),
     }
 
 
@@ -693,20 +848,50 @@ def _check_predecessor(record, origin):
                 or record.managed_preparation.namespace != origin.managed_preparation.namespace
                 or record.managed_preparation.cluster_sha256
                 != origin.managed_preparation.cluster_sha256
-                or record.managed_preparation.resource_name
-                == origin.managed_preparation.resource_name
+                or (
+                    (
+                        record.managed_preparation.resource_name
+                        == origin.managed_preparation.resource_name
+                    )
+                    != record.managed_resume
+                )
             )
         )
         or (
             record.managed_resources is not None
             and origin.managed_resources is not None
             and (
-                record.managed_resources.workload_uid == origin.managed_resources.workload_uid
+                (
+                    (
+                        record.managed_resources.workload_uid
+                        == origin.managed_resources.workload_uid
+                    )
+                    != record.managed_resume
+                )
                 or record.managed_resources.token_secret_uid
                 == origin.managed_resources.token_secret_uid
             )
         )
-        or record.managed_predecessor_stop_sha256 != managed_retirement_proof_sha256(origin)
+        or (
+            record.managed_resume
+            and record.managed_creation is not None
+            and origin.managed_creation is not None
+            and (
+                record.managed_creation.nonce == origin.managed_creation.nonce
+                or record.managed_creation.host_token_sha256
+                == origin.managed_creation.host_token_sha256
+                or (
+                    record.managed_creation.pod_uid is not None
+                    and record.managed_creation.pod_uid == origin.managed_creation.pod_uid
+                )
+            )
+        )
+        or record.managed_predecessor_stop_sha256
+        != (
+            managed_suspension_proof_sha256(origin)
+            if record.managed_resume
+            else managed_retirement_proof_sha256(origin)
+        )
     ):
         raise InteractiveRecoveryError()
 
@@ -720,6 +905,10 @@ def _creation_values(creation):
 
 
 def _interactive_document(value):
+    if value.get("managed_suspension") is not None or value.get("managed_resume", False):
+        return {"schema_version": 11, "record_type": "interactive", "record": value}
+    value.pop("managed_suspension", None)
+    value.pop("managed_resume", None)
     creation = value.get("managed_creation")
     if creation is not None:
         if creation.get("pod_uid") is not None:
@@ -801,6 +990,50 @@ def _uuid(value):
 def _decode(raw: bytes) -> InteractiveCleanupRecord:
     try:
         document = json.loads(raw, object_pairs_hook=_object)
+        if (
+            isinstance(document, dict)
+            and type(document.get("schema_version")) is int
+            and document["schema_version"] == 11
+        ):
+            if (
+                set(document) != {"schema_version", "record_type", "record"}
+                or document["record_type"] != "interactive"
+            ):
+                raise ValueError
+            value = document["record"]
+            suspension = value.pop("managed_suspension")
+            resuming = value.pop("managed_resume")
+            if type(resuming) is not bool or (suspension is None and not resuming):
+                raise ValueError
+            if suspension is not None:
+                term = suspension["termination"]
+                term["pods"] = tuple(ManagedPodTermination(**pod) for pod in term["pods"])
+                suspension["termination"] = ManagedTerminationReceipt(**term)
+                suspension["volumes"] = tuple(
+                    ManagedVolumeBinding(**volume) for volume in suspension["volumes"]
+                )
+            kind = value["stop_kind"]
+            if kind == "managed_suspend":
+                value["stop_kind"] = None
+            decoded = _decode(json.dumps(_interactive_document(value)).encode())
+            if not isinstance(decoded, InteractiveRecoveryRecord):
+                raise ValueError
+            return replace(
+                decoded,
+                managed_suspension=ManagedSuspensionReceipt(**suspension)
+                if suspension is not None
+                else None,
+                managed_resume=resuming,
+                stop_kind=kind,
+            )
+        if (
+            isinstance(document, dict)
+            and isinstance(document.get("record"), dict)
+            and any(
+                name in document["record"] for name in ("managed_suspension", "managed_resume")
+            )
+        ):
+            raise ValueError
         if (
             isinstance(document, dict)
             and type(document.get("schema_version")) is int
@@ -1146,6 +1379,34 @@ def _check_managed_progress(previous, record):
                 raise InteractiveRecoveryError()
 
 
+def _check_suspension_progress(previous, record):
+    before = previous.managed_suspension if previous is not None else None
+    after = record.managed_suspension
+    if before == after:
+        return
+    if (
+        previous is None
+        or after is None
+        or record.phase not in {"draining", "terminal"}
+        or (
+            before is not None
+            and (
+                before.complete
+                or (
+                    before.volume_templates_sha256 is not None
+                    and (before.volume_templates_sha256, before.volumes)
+                    != (after.volume_templates_sha256, after.volumes)
+                )
+            )
+        )
+    ):
+        raise InteractiveRecoveryError()
+    _check_managed_progress(
+        replace(previous, managed_termination=before.termination if before else None),
+        replace(record, managed_termination=after.termination),
+    )
+
+
 class InteractiveRecoveryJournal:
     """One locked, owner-only Controller volume, never mounted into a workload."""
 
@@ -1232,6 +1493,7 @@ class InteractiveRecoveryJournal:
         if isinstance(previous, InteractiveRecoveryRecord) and (
             previous.managed_predecessor_run_id != record.managed_predecessor_run_id
             or previous.managed_predecessor_stop_sha256 != record.managed_predecessor_stop_sha256
+            or previous.managed_resume != record.managed_resume
         ):
             if (
                 previous.managed_predecessor_run_id is not None
@@ -1291,6 +1553,7 @@ class InteractiveRecoveryJournal:
         ):
             raise InteractiveRecoveryError()
         _check_managed_progress(previous, record)
+        _check_suspension_progress(previous, record)
         if record.managed_resources is not None and (
             previous is None
             or (

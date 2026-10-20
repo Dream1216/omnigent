@@ -115,6 +115,7 @@ class _CheckpointedLauncher:
         checkpoint_creation,
         stopping,
         loop,
+        resume=None,
     ):
         self._delegate, self._host_store, self._owner = delegate, host_store, owner
         self._checkpoint, self._stopping, self._loop = checkpoint, stopping, loop
@@ -122,6 +123,7 @@ class _CheckpointedLauncher:
         self._checkpoint_creation = checkpoint_creation
         self._intent = None
         self._resources = None
+        self._resume = resume
         self._start_lock = Lock()
         self._started = self._submitted = False
 
@@ -135,6 +137,19 @@ class _CheckpointedLauncher:
     def resume(self, sandbox_id):
         del sandbox_id
         raise _unavailable()
+
+    def provision(self, *args, **kwargs):
+        if self._resume is None:
+            return self._delegate.provision(*args, **kwargs)
+        from saas.production.interactive_suspension import read_suspended_resources
+
+        try:
+            if self._stopping.is_set():
+                raise _unavailable()
+            read_suspended_resources(self._delegate, self._resume)
+            return self._resume.managed_preparation.resource_name
+        finally:
+            self._delegate._close_clients()
 
     def _persist(self, callback, value):
         async def persist():
@@ -245,7 +260,11 @@ class _CheckpointedLauncher:
             # Retain unknown effects for UID-bound recovery; a name is not cleanup authority.
             self._delegate._best_effort_delete = lambda *_: None
             if custom is not None:
-                self._delegate._load_custom = lambda: _CreateOnlyCustom(custom())
+                self._delegate._load_custom = lambda: (
+                    _ResumeCustom(custom(), self, binding)
+                    if self._resume is not None
+                    else _CreateOnlyCustom(custom())
+                )
 
                 def protect_ready(namespace, resource):
                     if (namespace, resource) != (binding.namespace, binding.resource_name):
@@ -339,6 +358,67 @@ class _CreateOnlyCustom:
         raise ApiException(status=409, reason="Managed workload already exists")
 
 
+class _ResumeCustom(_CreateOnlyCustom):
+    def __init__(self, delegate, owner, binding):
+        super().__init__(delegate)
+        self.owner, self.binding = owner, binding
+
+    def create_namespaced_custom_object(self, group, version, namespace, plural, body, **kwargs):
+        from omnigent.onboarding.sandboxes.agent_sandbox import (
+            API_GROUP,
+            API_VERSION,
+            SANDBOX_PLURAL,
+        )
+        from saas.production.interactive_managed_recovery import _digest, _tests
+        from saas.production.interactive_suspension import read_suspended_resources
+
+        owner, binding = self.owner, self.binding
+        if (
+            (group, version, namespace, plural)
+            != (API_GROUP, API_VERSION, binding.namespace, SANDBOX_PLURAL)
+            or body["metadata"]["name"] != binding.resource_name
+            or kwargs != {"_request_timeout": 10}
+            or owner._intent is None
+            or owner._intent.secret_uid is None
+            or owner._stopping.is_set()
+        ):
+            raise _unavailable()
+        parent = read_suspended_resources(
+            owner._delegate, owner._resume, new_creation=owner._intent
+        )
+        if (
+            _digest(body["spec"].get("volumeClaimTemplates", []))
+            != owner._resume.managed_suspension.volume_templates_sha256
+        ):
+            raise _unavailable()
+        annotations = {
+            **parent["metadata"].get("annotations", {}),
+            **body["metadata"].get("annotations", {}),
+        }
+        # Fence the stop proof; keep immutable PVC templates and all finalizers intact.
+        return owner._delegate._api_client.call_api(
+            f"/apis/{group}/{version}/namespaces/{namespace}/{plural}/{binding.resource_name}",
+            "PATCH",
+            header_params={
+                "Accept": "application/json",
+                "Content-Type": "application/json-patch+json",
+            },
+            body=[
+                *_tests(parent),
+                {"op": "add", "path": "/metadata/annotations", "value": annotations},
+                *(
+                    {"op": "add", "path": "/spec/" + key, "value": value}
+                    for key, value in body["spec"].items()
+                    if key != "volumeClaimTemplates"
+                ),
+            ],
+            response_types_map={200: "object", 201: "object", 202: "object"},
+            auth_settings=["BearerToken"],
+            _return_http_data_only=True,
+            _request_timeout=10,
+        )
+
+
 def bind_managed_preparation(
     deployment: ManagedSandboxDeployment,
     *,
@@ -350,6 +430,7 @@ def bind_managed_preparation(
     checkpoint_creation: Callable[[ManagedCreationIntent], Awaitable[None]],
     stopping: Event,
     loop: asyncio.AbstractEventLoop,
+    resume: InteractiveRecoveryRecord | None = None,
 ) -> ManagedSandboxDeployment:
     selected = deployment.for_provider(provider)
     if selected is None or not selected.managed_launch_supported:
@@ -368,6 +449,7 @@ def bind_managed_preparation(
                 checkpoint_creation=checkpoint_creation,
                 stopping=stopping,
                 loop=loop,
+                resume=resume,
             ),
         )
 

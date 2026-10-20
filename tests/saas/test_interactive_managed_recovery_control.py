@@ -147,6 +147,8 @@ async def test_keepalive_is_uid_bound_and_cannot_race_a_recorded_stop(tmp_path, 
         managed_creation=c.intents[-1],
         managed_resources=c.resources[0],
         managed_termination=None,
+        managed_suspension=None,
+        managed_predecessor_run_id=None,
     )
     journal = SimpleNamespace(records=lambda: [record], read=lambda _id: record)
     c.workload["metadata"]["resourceVersion"] = "opaque-keepalive-rv"
@@ -171,7 +173,7 @@ async def test_cancelled_observer_retains_one_cleanup_task_without_replaying(
 
     started, release = asyncio.Event(), asyncio.Event()
     calls = []
-    record = SimpleNamespace(run_id=uuid4(), runtime=controller_case.context)
+    record = SimpleNamespace(run_id=uuid4(), runtime=controller_case.context, managed_resume=False)
 
     async def recover(*args):
         calls.append(args)

@@ -263,6 +263,37 @@ issue a model credential. Catalog checks retain the same signed Fleet and
 exact function, policy, ownership and ACL validation; a foreign incarnation,
 offline Runner, expanded capacity or unexpected grant is not admitted.
 
+## Retained Agent Sandbox suspension and wake
+
+The Controller has a distinct `managed_suspend` receipt. It revokes the old Host
+credential with the existing HostStore CAS, records kubelet termination before
+releasing its Pod marker, waits for the old Pod and token Secret to disappear,
+and retains the same non-deleting Sandbox UID. Configured workspace claims must
+remain Bound with the same UIDs, owner and immutable claim templates. An emptyDir
+configuration does not gain durable storage. A suspension is not a complete
+resource-retirement receipt.
+
+A new input may use this stopped generation only after all original fences are
+released and confirmed. The original HostStore locked, detached-row transaction
+issues a new token; the scoped launcher preserves the resource name and uses a
+UID/resourceVersion-tested PATCH instead of the legacy name-conflict wake. It
+does not replace claim templates or finalizers. The new Run has its own grant,
+model channel, Secret, nonce, Pod and Runner, with an immutable suspension link
+to its predecessor. It never replays the old input. Ambiguous, changed or
+incomplete history stays unavailable. A failed wake must not delete a retained
+workspace; unresolved effects remain a recovery barrier.
+
+Private v11 distinguishes these facts from v1-v10. Old canonical bytes and stop
+proofs remain unchanged; old readers must stop before v11 is written. Rollback
+requires the matching database, private volume, keys and runtime versions, not
+an old binary against new private records. The serving SDK needs runner-namespace
+PVC `get` permission only; PVC writes, server-namespace access, `pods/exec`, and
+Secret list/watch are not required.
+
+Component tests do not prove actual workspace contents across suspension,
+replacement-Pod restoration, real suppliers or production readiness. Those
+physical and release gates remain required before enabling this feature.
+
 ## Verification boundaries
 
 An orphaned Run can finish logically and release its dispatch while its physical

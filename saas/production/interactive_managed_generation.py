@@ -8,6 +8,7 @@ from omnigent.stores.host_store import Host, HostStore
 from saas.production.interactive_recovery import (
     InteractiveRecoveryRecord,
     managed_retirement_proof_sha256,
+    managed_suspension_proof_sha256,
 )
 
 
@@ -15,6 +16,7 @@ from saas.production.interactive_recovery import (
 class ManagedGenerationAdmission:
     origin: InteractiveRecoveryRecord
     host: Host
+    resuming: bool = False
 
 
 def inspect_retired_generation(driver, authorized, origins, conversation):
@@ -46,8 +48,12 @@ def inspect_retired_generation(driver, authorized, origins, conversation):
     if len(leaves) != 1:
         raise _unavailable()
     origin = leaves[0]
+    resuming = origin.managed_suspension is not None and origin.managed_termination is None
     for row in matching:
-        managed_retirement_proof_sha256(row)
+        if row.managed_suspension is not None and row.managed_termination is None:
+            managed_suspension_proof_sha256(row)
+        else:
+            managed_retirement_proof_sha256(row)
     preparation = origin.managed_preparation
     if preparation is None:
         raise _unavailable()
@@ -73,6 +79,13 @@ def inspect_retired_generation(driver, authorized, origins, conversation):
     )
     try:
         actual = _binding(delegate, preparation.resource_name, preparation.host_id)
+        if resuming:
+            from saas.production.interactive_suspension import read_suspended_resources
+
+            if actual != preparation:
+                raise _unavailable()
+            read_suspended_resources(delegate, origin)
+            return ManagedGenerationAdmission(origin, host, resuming=True)
         if (
             replace(actual, image_reference_sha256=preparation.image_reference_sha256)
             != preparation
