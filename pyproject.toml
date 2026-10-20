@@ -357,6 +357,7 @@ test = [
     # These clients are optional product capabilities, but their tests import
     # and execute the real packages against mocks.
     "hindsight-client>=0.4.0",
+    "kubernetes>=36,<37",
     "nimble-python>=1.2.0,<2",
     "pytest-asyncio>=0.21",
     "pytest-xdist>=3.6",
