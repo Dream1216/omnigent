@@ -547,6 +547,7 @@ RUN export HOME=/tmp/npm-version-home \
 WORKDIR /opt/omnigent-host-cli
 ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY patches/ ./patches/
 COPY saas/scripts/normalize_host_cli_tree.py /tmp/normalize_host_cli_tree.py
 # npm/pnpm installers and CLI probes may write wall-clock or reify metadata.
 # Keep all installer state under one disposable prefix, retain only the pinned
