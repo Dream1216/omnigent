@@ -71,7 +71,7 @@ _PRIVATE_CONTRACT_HASHES = MappingProxyType(
             "a2da0dc05ff42f8e36c5d9ecd289ed14a0e618004cd424b268b810821f0c216a"
         ),
         "_handle_tunnel_frame": (
-            "44a02ca4c1545716965f776898ebddb1c183e2f1c4de2358c84e13b7f554c16a"
+            "6978a7e047c7e9efc7417e25e571edb678f283d3d6d8bec4115f5fd8f3541de1"
         ),
         "_send_hello": ("d70fbef46d6ebf63552459c6fe05e24ab615b330b84c77285dd8a2ed550735ee"),
     }
