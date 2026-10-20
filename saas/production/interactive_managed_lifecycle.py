@@ -76,6 +76,12 @@ class ControlledManagedLauncher:
                 != record.managed_resources
             ):
                 raise _unavailable()
+            if record.managed_creation.pod_uid is not None:
+                from saas.production.interactive_pod_binding import read_running_pod
+
+                read_running_pod(
+                    delegate, preparation, record.managed_creation, record.managed_resources
+                )
             if delegate.provider == "kubernetes":
                 return True
             parent = delegate._load_custom().get_namespaced_custom_object(

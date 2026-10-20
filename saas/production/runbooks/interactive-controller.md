@@ -225,6 +225,28 @@ This path intentionally creates a new workspace generation after full expiry.
 It is not dormant resume: Agent Sandbox resume must preserve its parent and
 workspace PVC, which remains a separate implementation and acceptance task.
 
+## Creation-time Agent Sandbox Pod binding
+
+After the SDK observes readiness, a direct Agent Sandbox launch revalidates the
+parent, Secret, nonce, template, owner reference and actual running Pod. Before
+any Pod mutation it durably records that Pod's UID and name in creation intent.
+The finalizer update uses UID/resourceVersion tests and retains other markers;
+the same live Pod and marker are read back before startup returns. A failed or
+unknown checkpoint/PATCH ACK does not permit a Runner/model launch.
+
+Private v10 carries this immutable Pod observation. v1-v9 records keep their
+canonical encodings and old stop-proof bytes; old readers reject v10. All old
+consumers must stop before cutover, with matching private-volume/database state
+retained for rollback. A Pod UID alone is not a process-stop proof. Recovery
+still requires current kubelet terminal facts, quiescence, original fences and
+complete resource receipts. New-format cleanup cannot substitute another Pod.
+
+Warm admission and keepalive reject a replaced/deleting Pod or a removed marker.
+Legacy records without an initial Pod observation retain their existing guarded
+recovery behavior; do not invent a historical UID for them. The retained Pod
+object makes later expiry observations possible, but does not itself implement
+preserving-parent/PVC suspend/resume, prove workspace contents or admit production.
+
 ## Database admission during a leased Run
 
 Fleet bootstrap and the default direct Runner admission still require the

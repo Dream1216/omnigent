@@ -121,6 +121,7 @@ class _CheckpointedLauncher:
         self._checkpoint_resources = checkpoint_resources
         self._checkpoint_creation = checkpoint_creation
         self._intent = None
+        self._resources = None
         self._start_lock = Lock()
         self._started = self._submitted = False
 
@@ -180,6 +181,7 @@ class _CheckpointedLauncher:
             create = self._delegate._create_workload
             cleanup = self._delegate._best_effort_delete
             core = self._delegate._load_core
+            wait = self._delegate._wait_for_pod_running
             custom = self._delegate._load_custom if binding.provider == "agent_sandbox" else None
 
             def observe_resources(namespace, manifest):
@@ -228,6 +230,7 @@ class _CheckpointedLauncher:
                         creation=self._intent,
                     )
                     self._persist(self._checkpoint_resources, actual)
+                    self._resources = actual
 
                 try:
                     create(namespace, manifest)
@@ -243,12 +246,23 @@ class _CheckpointedLauncher:
             self._delegate._best_effort_delete = lambda *_: None
             if custom is not None:
                 self._delegate._load_custom = lambda: _CreateOnlyCustom(custom())
+
+                def protect_ready(namespace, resource):
+                    if (namespace, resource) != (binding.namespace, binding.resource_name):
+                        raise _unavailable()
+                    wait(namespace, resource)
+                    from saas.production.interactive_pod_binding import protect_created_pod
+
+                    protect_created_pod(self, binding)
+
+                self._delegate._wait_for_pod_running = protect_ready
             try:
                 return self._delegate.start_host(sandbox_id, host_id=host_id, **kwargs)
             finally:
                 self._delegate._create_workload = create
                 self._delegate._best_effort_delete = cleanup
                 self._delegate._load_core = core
+                self._delegate._wait_for_pod_running = wait
                 if custom is not None:
                     self._delegate._load_custom = custom
         finally:

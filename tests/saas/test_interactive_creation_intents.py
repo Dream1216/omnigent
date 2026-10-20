@@ -19,7 +19,9 @@ from tests.saas.test_interactive_managed_resources import _case
 
 def _stage(intent):
     return (
-        "workload"
+        "pod"
+        if intent.pod_uid is not None
+        else "workload"
         if intent.workload_submitted
         else "secret_uid"
         if intent.secret_uid
@@ -32,7 +34,12 @@ def _stage(intent):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["kubernetes", "agent_sandbox"])
 async def test_actual_sdk_has_durable_barriers_before_each_create(tmp_path, monkeypatch, provider):
-    c = _case(tmp_path, monkeypatch, provider)
+    if provider == "agent_sandbox":
+        from tests.saas.test_interactive_pod_binding import _pod_case
+
+        c = _pod_case(tmp_path, monkeypatch).c
+    else:
+        c = _case(tmp_path, monkeypatch, provider)
     monkeypatch.setattr(
         c.p.delegate, "start_host", KubernetesSandboxLauncher.start_host.__get__(c.p.delegate)
     )
@@ -45,7 +52,13 @@ async def test_actual_sdk_has_durable_barriers_before_each_create(tmp_path, monk
         host_name="owned-host",
         server_url="https://next.test",
     )
-    assert [_stage(row) for row in c.intents] == ["reserve", "secret", "secret_uid", "workload"]
+    assert [_stage(row) for row in c.intents] == [
+        "reserve",
+        "secret",
+        "secret_uid",
+        "workload",
+        *(["pod"] if provider == "agent_sandbox" else []),
+    ]
     intent = c.intents[-1]
     assert intent.secret_uid == c.secret["metadata"]["uid"]
     assert c.workload["metadata"]["annotations"][CREATION_ANNOTATION] == intent.nonce

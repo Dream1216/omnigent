@@ -12,6 +12,7 @@ from hashlib import sha256
 from omnigent.onboarding.sandboxes.agent_sandbox import API_GROUP, API_VERSION, SANDBOX_PLURAL
 from omnigent.onboarding.sandboxes.kubernetes import _token_secret_name
 from saas.production.interactive_controller import _unavailable
+from saas.production.interactive_pod_binding import owned_pod
 from saas.production.interactive_recovery import (
     ManagedPodTermination,
     ManagedResourceBinding,
@@ -280,29 +281,7 @@ class _Recovery:
                 refs = pod["metadata"].get("ownerReferences", [])
                 if not any(ref.get("uid") == parent.workload_uid for ref in refs):
                     continue
-                expected = {
-                    "apiVersion": "batch/v1"
-                    if self.preparation.provider == "kubernetes"
-                    else API_GROUP + "/" + API_VERSION,
-                    "kind": "Job" if self.preparation.provider == "kubernetes" else "Sandbox",
-                    "name": self.preparation.resource_name,
-                    "uid": parent.workload_uid,
-                    "controller": True,
-                    "blockOwnerDeletion": True,
-                }
-                if (
-                    len(refs) != 1
-                    or refs[0] != expected
-                    or pod["metadata"]["namespace"] != self.namespace
-                    or pod.get("kind", "Pod") != "Pod"
-                    or pod.get("apiVersion", "v1") != "v1"
-                ):
-                    raise _unavailable()
-                _creation_metadata(pod, self.creation, template=True)
-                _template(
-                    {"spec": {"template": pod}}, replace(self.preparation, provider="kubernetes")
-                )
-                identity = ManagedPodTermination(pod["metadata"]["uid"], pod["metadata"]["name"])
+                identity = owned_pod(pod, self.preparation, self.creation, parent)
                 if identity.uid in indexed or len(indexed) >= 64:
                     raise _unavailable()
                 indexed[identity.uid] = pod

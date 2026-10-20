@@ -308,6 +308,10 @@ class OfficialInteractiveDriver:
                         != resource
                     ):
                         raise _unavailable()
+                if origin.managed_creation.pod_uid is not None:
+                    from saas.production.interactive_pod_binding import read_running_pod
+
+                    read_running_pod(delegate, preparation, origin.managed_creation, resource)
             finally:
                 delegate._close_clients()
 

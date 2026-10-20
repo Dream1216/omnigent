@@ -1088,6 +1088,7 @@ def _serve_controller(
         adapter_contract_version="0.2.0",
     )
     creation_checkpoints, resource_checkpoints = [], []
+    pod_binding_checkpoints = []
     secret_submission_checkpoints, workload_submission_checkpoints = [], []
     adapter = None
     try:
@@ -1099,6 +1100,7 @@ def _serve_controller(
             from saas.production.interactive_resources import (
                 CREATION_ANNOTATION,
                 INPUT_TEMPLATE_ANNOTATION,
+                TERMINATION_FINALIZER,
             )
 
             create_secret = CoreV1Api.create_namespaced_secret
@@ -1186,7 +1188,31 @@ def _serve_controller(
                 assert not row.managed_creation.secret_submitted
                 assert not row.managed_creation.workload_submitted
                 creation_checkpoints.append(binding)
-                return start_host(launcher, sandbox_id, host_id=host_id, **values)
+                workspace = start_host(launcher, sandbox_id, host_id=host_id, **values)
+                if cluster["provider"] == "agent_sandbox":
+                    current = adapter._journal.read(row.run_id)
+                    assert current.official_runner_id is None
+                    assert current.managed_creation.pod_name == sandbox_id
+                    assert json.loads(path.read_bytes())["schema_version"] == 10
+                    pod = launcher._load_core().read_namespaced_pod(
+                        sandbox_id, binding.namespace, _request_timeout=10
+                    )
+                    actual = launcher._api_client.sanitize_for_serialization(pod)
+                    assert actual["metadata"]["uid"] == current.managed_creation.pod_uid
+                    assert (
+                        actual["metadata"]["ownerReferences"][0]["uid"]
+                        == current.managed_resources.workload_uid
+                    )
+                    assert TERMINATION_FINALIZER in actual["metadata"].get("finalizers", [])
+                    pod_binding_checkpoints.append(
+                        {
+                            "run_id": str(row.run_id),
+                            "pod_uid": current.managed_creation.pod_uid,
+                            "pod_name": sandbox_id,
+                            "before_runner_launch": True,
+                        }
+                    )
+                return workspace
 
             monkeypatch.setattr(KubernetesSandboxLauncher, "start_host", observe_creation)
             wait_running = KubernetesSandboxLauncher._wait_for_pod_running
@@ -3096,6 +3122,8 @@ def _serve_controller(
                                 "preparation": asdict(origin.managed_preparation),
                                 "resources": asdict(origin.managed_resources),
                                 "creation_nonce": origin.managed_creation.nonce,
+                                "creation_pod_uid": origin.managed_creation.pod_uid,
+                                "creation_pod_name": origin.managed_creation.pod_name,
                                 "official_runner_id": origin.official_runner_id,
                                 "channel_sha256": sha256(
                                     origin.channel_value.encode()
@@ -3314,6 +3342,12 @@ def _serve_controller(
                         and (scenario == "single" or bool(managed_reuse_reads)),
                         "managed_reuse_checkpoints": managed_reuse_reads,
                         "managed_generation_checkpoints": managed_generation_reads,
+                        "pod_binding_checkpoints": pod_binding_checkpoints,
+                        "created_pod_bound_before_runner_launch": (
+                            len(pod_binding_checkpoints) == len(owned_creation_run_ids)
+                            if cluster is not None and cluster["provider"] == "agent_sandbox"
+                            else None
+                        ),
                         "managed_generations": generation_history,
                         "fresh_runner_after_retirement": generation_managed,
                         "old_channel_and_mrt_rejected": generation_managed,
