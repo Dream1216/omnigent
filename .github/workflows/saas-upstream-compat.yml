@@ -48,7 +48,7 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas --extra kubernetes
+        run: uv sync --frozen --extra all --group dev --extra saas
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Configure exact PostgreSQL 18 runner contract
