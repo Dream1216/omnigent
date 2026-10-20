@@ -10,6 +10,7 @@ import sqlalchemy as sa
 
 from omnigent.db.utils import make_named_managed_session_maker
 from saas.control_plane.model_budget import (
+    MAX_DAILY_PLATFORM_TEST_ATTEMPTS,
     _request_hash,
     latest_model_test_funding_policy,
     lock_model_provider_budget,
@@ -51,7 +52,7 @@ class ModelTestFundingPolicy:
             <= 10**15
             or not self.max_test_tokens <= self.daily_test_token_limit <= 10**9
             or self.max_test_tokens > 2048
-            or self.daily_test_attempt_limit > 1000
+            or self.daily_test_attempt_limit > MAX_DAILY_PLATFORM_TEST_ATTEMPTS
         ):
             raise PlatformSecurityError(
                 "platform_model_test_funding_invalid", "Model test funding limits are invalid"

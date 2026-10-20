@@ -32,15 +32,20 @@ function mount(selection?: ManagedModelSelection) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const content = (nextSelection?: ManagedModelSelection) => (
     <QueryClientProvider client={client}>
       <DropdownMenu open>
         <DropdownMenuContent>
-          <ComposerConfigSections managedCandidates managedSelection={selection} />
+          <ComposerConfigSections managedCandidates managedSelection={nextSelection} />
         </DropdownMenuContent>
       </DropdownMenu>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(content(selection));
+  return {
+    ...view,
+    changeSelection: (next: ManagedModelSelection) => view.rerender(content(next)),
+  };
 }
 
 afterEach(() => {
@@ -48,6 +53,154 @@ afterEach(() => {
   fetchMock.mockReset();
   user = "tenant-user";
   saas = true;
+});
+
+const pageCursor = "00000000-0000-0000-0000-000000000025";
+
+it("keeps loaded candidates after a failed next-page read and retries only that GET", async () => {
+  const first = { ...candidate, available: true, unavailable_reason: null };
+  const second = { ...first, model_id: "deepseek-page-two", display_name: "Page two model" };
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          models: [first],
+          runtime_enabled: true,
+          next_cursor: pageCursor,
+        }),
+      ),
+    )
+    .mockRejectedValueOnce(new Error("synthetic read failure"))
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          models: [second],
+          runtime_enabled: true,
+          next_cursor: null,
+        }),
+      ),
+    );
+  const onSelect = vi.fn();
+  mount({ target: "project_id=current", onSelect });
+  await screen.findByText(first.display_name);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Load more models" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
+  expect(screen.getByText(first.display_name)).toBeVisible();
+  expect(onSelect).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Retry model catalog" }));
+  await screen.findByText(second.display_name);
+  expect(screen.getByText(first.display_name)).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Load more models" })).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock.mock.calls[1][0]).toBe(
+    `/v1/managed-model-catalog?project_id=current&cursor=${pageCursor}`,
+  );
+  expect(fetchMock.mock.calls[2][0]).toBe(fetchMock.mock.calls[1][0]);
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Page two model/ }));
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith(second);
+});
+
+it("exposes an empty source-page continuation without fetching the history automatically", async () => {
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          models: [],
+          runtime_enabled: false,
+          next_cursor: pageCursor,
+        }),
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          models: [candidate],
+          runtime_enabled: false,
+          next_cursor: null,
+        }),
+      ),
+    );
+  mount();
+  const more = await screen.findByRole("menuitem", { name: "Load more models" });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("menuitemcheckbox")).toBeNull();
+  fireEvent.click(more);
+  expect(await screen.findByRole("menuitemcheckbox")).toHaveAttribute("aria-disabled", "true");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("menuitem", { name: "Load more models" })).toBeNull();
+});
+
+it("cancels a late former-target page and does not merge it into the new target", async () => {
+  let finish: (response: Response) => void = () => {};
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const view = mount({ target: "project_id=former" });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  const signal = fetchMock.mock.calls[0][1]?.signal;
+  const current = { ...candidate, model_id: "current-target", display_name: "Current target" };
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        models: [current],
+        runtime_enabled: false,
+        next_cursor: null,
+      }),
+    ),
+  );
+  view.changeSelection({ target: "project_id=current" });
+  await screen.findByText(current.display_name);
+  expect(signal?.aborted).toBe(true);
+  finish(
+    new Response(
+      JSON.stringify({
+        models: [candidate],
+        runtime_enabled: false,
+        next_cursor: pageCursor,
+      }),
+    ),
+  );
+  await waitFor(() => expect(screen.queryByText(candidate.display_name)).toBeNull());
+  expect(screen.queryByRole("menuitem", { name: "Load more models" })).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, 31, "not-a-cursor"])("rejects an invalid continuation %s", async (next_cursor) => {
+  fetchMock.mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        models: [candidate],
+        runtime_enabled: false,
+        next_cursor,
+      }),
+    ),
+  );
+  mount();
+  expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
+  expect(screen.queryByRole("menuitemcheckbox")).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("rejects a continuation that would repeat the same source page", async () => {
+  const available = { ...candidate, available: true, unavailable_reason: null };
+  fetchMock.mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        models: [available],
+        runtime_enabled: true,
+        next_cursor: pageCursor,
+      }),
+    ),
+  );
+  mount();
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Load more models" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
+  expect(screen.getByText(candidate.display_name)).toBeVisible();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
 describe("TenantModelCandidatesSection", () => {

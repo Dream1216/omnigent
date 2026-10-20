@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from saas.compatibility import current_runtime_context
 from saas.control_plane.http_auth import SaasAuthProvider, _require_principal
-from saas.control_plane.tenant_model_catalog import TenantModelCatalog
+from saas.control_plane.tenant_model_catalog import TenantModelCatalog, TenantModelPageError
 from saas.production.model_run_inference import require_current_customer_pricing
 
 
@@ -37,6 +38,11 @@ class ModelSelectionTarget(BaseModel):
         return self
 
 
+class ModelCatalogPage(BaseModel):
+    limit: int = Field(default=25, ge=1, le=100)
+    cursor: UUID | None = None
+
+
 def create_tenant_model_catalog_router(
     *,
     auth_provider: SaasAuthProvider,
@@ -54,17 +60,24 @@ def create_tenant_model_catalog_router(
         if runtime != principal.runtime_context:
             raise HTTPException(status_code=400, detail={"code": "model_catalog_request_invalid"})
         target = None
-        if request.query_params:
-            try:
-                if len(request.query_params.multi_items()) != len(request.query_params):
-                    raise ValueError("duplicate target parameters")
-                target = ModelSelectionTarget.model_validate(dict(request.query_params))
-            except (ValidationError, ValueError):
-                raise HTTPException(
-                    status_code=400, detail={"code": "model_catalog_request_invalid"}
-                ) from None
         try:
-            models = await asyncio.to_thread(catalog.list, runtime)
+            if len(request.query_params.multi_items()) != len(request.query_params):
+                raise ValueError("duplicate catalog parameters")
+            params = dict(request.query_params)
+            page = ModelCatalogPage.model_validate(
+                {key: params.pop(key) for key in ("limit", "cursor") if key in params}
+            )
+            if params:
+                target = ModelSelectionTarget.model_validate(params)
+        except (ValidationError, ValueError):
+            raise HTTPException(
+                status_code=400, detail={"code": "model_catalog_request_invalid"}
+            ) from None
+        try:
+            result = await asyncio.to_thread(
+                catalog.page, runtime, limit=page.limit, cursor=page.cursor
+            )
+            models = list(result.items)
             runtime_enabled = False
             store = getattr(request.app.state, "production_interactive_conversation_store", None)
             if target is not None and store is not None:
@@ -76,11 +89,19 @@ def create_tenant_model_catalog_router(
                     if billing_sessions is not None
                     else None,
                 )
+        except TenantModelPageError:
+            raise HTTPException(
+                status_code=400, detail={"code": "model_catalog_request_invalid"}
+            ) from None
         except Exception:  # noqa: BLE001 - no database/configuration details in a customer error.
             raise HTTPException(
                 status_code=503, detail={"code": "managed_model_catalog_unavailable"}
             ) from None
         response.headers["Cache-Control"] = "private, no-store"
-        return {"models": models, "runtime_enabled": runtime_enabled}
+        return {
+            "models": models,
+            "runtime_enabled": runtime_enabled,
+            "next_cursor": result.next_cursor,
+        }
 
     return router

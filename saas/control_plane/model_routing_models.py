@@ -27,6 +27,7 @@ class ModelConnectionRecord(SaasBase):
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        sa.Index("ix_model_connection_page", "created_at", "id"),
         sa.CheckConstraint("provider_id = 'deepseek'", name="ck_model_connection_provider"),
         sa.CheckConstraint(
             "base_url = 'https://api.deepseek.com'", name="ck_model_connection_url"
@@ -110,7 +111,20 @@ class ModelProjectionOperationRecord(SaasBase):
             "length(idempotency_key) BETWEEN 1 AND 128", name="ck_model_projection_idempotency"
         ),
         sa.CheckConstraint("version > 0", name="ck_model_projection_version"),
-        sa.Index("ix_model_projection_status", "status", "created_at"),
+        sa.Index(
+            "ix_model_projection_deployment_page",
+            "deployment_version_id",
+            "action",
+            "created_at",
+            "id",
+        ),
+        sa.Index(
+            "ix_model_projection_credential_state",
+            "credential_version_id",
+            "status",
+            "action",
+            "id",
+        ),
     )
 
 
@@ -166,6 +180,7 @@ class ModelDeploymentVersionRecord(SaasBase):
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        sa.Index("ix_model_deployment_page", "created_at", "id"),
         sa.UniqueConstraint(
             "public_model_id", "generation", name="uq_model_deployment_generation"
         ),
@@ -383,6 +398,8 @@ class ModelPublicationVersionRecord(SaasBase):
         ),
         *model_document_format("ck_model_publication_snapshot_format", "canonical_snapshot"),
         *model_document_format("ck_model_publication_readiness_format", "canonical_readiness"),
+        sa.Index("ix_model_publication_page", "created_at", "id"),
+        sa.Index("ix_model_publication_tenant_page", "tenant_id", "created_at", "id"),
     )
 
 
@@ -490,5 +507,4 @@ class ModelRunTokenRecord(SaasBase):
         sa.UniqueConstraint(
             "run_id", "fence_token", "generation", name="uq_model_run_token_generation"
         ),
-        sa.Index("ix_model_run_token_run", "run_id", "fence_token"),
     )

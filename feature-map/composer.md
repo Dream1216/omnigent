@@ -24,6 +24,7 @@ and steers messages while the agent is busy.
   Eligible models can be selected for a new session; existing sessions remain
   read-only. Changing the project, Agent or execution target clears the selection.
   The server independently validates authorization and the immutable revision.
+  Use Load more models for further catalog pages; a failed read retains loaded models and offers a read-only retry.
 - `effort-picker`: reasoning effort for harnesses that support it (Codex, Claude,
   Pi). States: available, unavailable placeholder, max/ultra levels.
 - `effort-terminal-mirror`: an effort change typed in the Codex terminal shows

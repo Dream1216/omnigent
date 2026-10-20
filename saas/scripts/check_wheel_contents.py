@@ -132,6 +132,8 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/migrations/versions/lm2p00000001_bounded_model_secret_storage.py",
     "saas/control_plane/model_document_storage.py",
     "saas/control_plane/migrations/versions/lm2q00000001_bounded_model_documents.py",
+    "saas/control_plane/model_paging.py",
+    "saas/control_plane/migrations/versions/lm2r00000001_model_page_indexes.py",
     "saas/control_plane/execution_models.py",
     "saas/control_plane/execution.py",
     "saas/control_plane/enterprise_access.py",

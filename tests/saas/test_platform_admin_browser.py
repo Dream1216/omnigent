@@ -74,6 +74,7 @@ from saas.production.model_protocol_probe import (
 )
 from saas.production.model_publication import ModelPublicationPublisher
 from saas.production.model_verification import ModelVerificationPublisher
+from tests.saas.model_page_fixtures import seed_model_pages
 from tests.saas.test_model_protocol_probe import _body, _events
 from tests.saas.test_model_verifications import _pricing
 
@@ -108,6 +109,7 @@ class PlatformAdminFixture:
     project_models: Callable[[], None]
     model_projection_calls: list[str]
     model_inference_status: list[int]
+    seed_model_pages: Callable[[], None]
 
 
 class _BrowserSecretCipher:
@@ -620,6 +622,7 @@ def platform_admin_server(
             project_models=project_models,
             model_projection_calls=model_projection_calls,
             model_inference_status=model_inference_status,
+            seed_model_pages=lambda: seed_model_pages(factory, principals["operator"], tenant_id),
         )
     finally:
         server.should_exit = True
@@ -1130,6 +1133,150 @@ def test_real_chromium_model_connections_and_lost_receipt_recovery(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _model_connection_journey)
+
+
+def _model_pagination_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    fixture.seed_model_pages()
+    for mobile in (False, True):
+        context = _context(browser, fixture, fixture.operator)
+        try:
+            page = _open_console(context, fixture, fragment="#model-connections")
+            if mobile:
+                page.set_viewport_size({"width": 390, "height": 844})
+            mutations = []
+            page.on(
+                "request",
+                lambda request, mutations=mutations: (
+                    mutations.append(request.url)
+                    if request.method == "POST" and "/v2/platform-admin/model-" in request.url
+                    else None
+                ),
+            )
+            expect(page.locator("#model-connection-list article")).to_have_count(25)
+            if evidence := os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR"):
+                page.get_by_test_id("model-connections-more").scroll_into_view_if_needed()
+                page.screenshot(path=str(Path(evidence) / f"model-pagination-{mobile}-before.png"))
+            failures = []
+
+            def fail_first_continuation(route, _request, failures=failures):
+                if "cursor=" in route.request.url and not failures:
+                    failures.append(route.request.url)
+                    route.fulfill(
+                        status=503,
+                        content_type="application/json",
+                        body=json.dumps(
+                            {
+                                "error": {
+                                    "code": "synthetic_pagination_unavailable",
+                                    "message": "Retry read",
+                                }
+                            }
+                        ),
+                    )
+                else:
+                    route.continue_()
+
+            context.route("**/v2/platform-admin/model-connections?*", fail_first_continuation)
+            with page.expect_response(
+                lambda response: (
+                    response.status == 503
+                    and "/v2/platform-admin/model-connections?" in response.url
+                )
+            ):
+                page.get_by_test_id("model-connections-more").click()
+            assert len(failures) == 1
+            expect(page.locator("#toast-stack")).to_contain_text(
+                "synthetic_pagination_unavailable"
+            )
+            expect(page.locator("#model-connection-list article")).to_have_count(25)
+            expect(page.get_by_test_id("model-connections-more")).to_be_enabled()
+            page.get_by_test_id("model-connections-more").click()
+            expect(page.locator("#model-connection-list article")).to_have_count(31)
+            expect(page.get_by_test_id("model-connections-more")).to_be_hidden()
+            context.unroute("**/v2/platform-admin/model-connections?*", fail_first_continuation)
+            expect(page.locator("#model-deployment-list article")).to_have_count(25)
+            page.get_by_test_id("model-deployments-more").click()
+            expect(page.locator("#model-deployment-list article")).to_have_count(32)
+            expect(page.get_by_test_id("model-deployments-more")).to_be_hidden()
+            page.locator("#model-publication-tenant").fill(str(fixture.tenant_id))
+            page.locator("#model-publication-scope").get_by_role("button").click()
+            expect(page.locator("#model-publication-list article")).to_have_count(25)
+            page.get_by_test_id("model-publications-more").click()
+            expect(page.locator("#model-publication-list article")).to_have_count(31)
+            expect(page.get_by_test_id("model-publications-more")).to_be_hidden()
+            crosscheck = page.request.get(
+                f"{fixture.origin}/v2/platform-admin/model-connections?limit=25"
+            )
+            assert crosscheck.status == 200
+            assert len(crosscheck.json()["items"]) == 25 and crosscheck.json()["next_cursor"]
+            assert mutations == [] and fixture.model_projection_calls == []
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            if evidence := os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR"):
+                for label, selector in (
+                    ("connections", "#model-connection-count"),
+                    ("drafts", "#model-deployment-count"),
+                    ("catalog", "#model-publication-status"),
+                ):
+                    page.locator(selector).scroll_into_view_if_needed()
+                    page.screenshot(
+                        path=str(Path(evidence) / f"model-pagination-{mobile}-{label}.png")
+                    )
+            page.get_by_test_id("nav-overview").click()
+            page.get_by_test_id("nav-model-connections").click()
+            expect(page.locator("#model-connection-list article")).to_have_count(31)
+        finally:
+            context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        page.get_by_test_id("model-connections-more").click()
+        expect(page.locator("#model-connection-list article")).to_have_count(31)
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["publication"], indirect=True)
+def test_real_chromium_model_pagination_retry_readonly_and_mobile(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_pagination_journey)
+
+
+def _model_off_page_generation_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    fixture.seed_model_pages()
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.locator("#model-deployment-list article")).to_have_count(25)
+        expect(page.locator("#model-deployment-list")).not_to_contain_text("deepseek-off-page")
+        page.locator("#model-connection-list article").first.get_by_role(
+            "button", name="建立模型草稿"
+        ).click()
+        expect(page.locator("#model-deployment-credential")).not_to_have_value("")
+        page.locator("#model-deployment-model").fill("deepseek-off-page")
+        page.locator("#model-deployment-name").fill("Off-page next version")
+        with page.expect_request(
+            lambda request: (
+                request.method == "POST"
+                and request.url.endswith("/v2/platform-admin/model-deployments")
+            )
+        ) as sent:
+            page.locator("#model-deployment-submit").click()
+        assert sent.value.post_data_json["expected_generation"] == 13
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-deployment-list")).to_contain_text("Off-page next version")
+        assert fixture.model_projection_calls == []
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["publication"], indirect=True)
+def test_real_chromium_model_draft_reads_a_generation_outside_the_visible_page(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_off_page_generation_journey)
 
 
 def _model_deployment_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:

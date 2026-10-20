@@ -49,10 +49,26 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 166,
-    "max_upstream_net_added_loc": 5000,
+    "max_upstream_net_added_loc": 5300,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "pagination_test_followup": {
+      "revision": "litellm-customer-pagination-tests-budget-v33",
+      "approved_at": "2026-10-20",
+      "governance_mode": "single_owner_beta",
+      "previous_max_upstream_net_added_loc": 5000,
+      "approved_max_upstream_net_added_loc": 5300,
+      "measured_before_integration": 4990,
+      "scoped_paths": [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "tests/browser_ui/chat/test_tenant_model_candidates.py",
+        "feature-map/composer.md",
+        "feature-map/platform-managed-models.md"
+      ],
+      "reason": "The account owner explicitly approved raising only the net-added-line ceiling to 5,300 for maintained customer catalog pagination, GET retry, target-switch and desktop/mobile regression coverage. No new feature scope. Preserve the 166-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production gate. This approval is not CI, independent review, image or production admission."
+    },
     "followup": {
       "revision": "litellm-customer-model-picker-budget-v32",
       "approved_at": "2026-10-20",

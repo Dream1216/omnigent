@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.orm import Session
 
 from saas.control_plane.db_models import SpaceMembership, TenantMembership
 from saas.control_plane.model_routing_models import ModelPublicationVersionRecord
+from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.tenant_model_catalog import TenantModelCatalog, TenantModelCatalogError
 from tests.saas import test_model_projection
 from tests.saas.test_agent_catalog import _runtime
@@ -113,3 +116,128 @@ def test_actual_app_catalog_rechecks_customer_membership_each_read(
             model_id=rows[0]["model_id"],
             configuration_revision=rows[0]["configuration_revision"],
         )
+
+
+@pytest.mark.parametrize("active", (False, True))
+def test_actual_customer_page_plan_bounds_history_with_live_or_suspended_membership(
+    priced_execution, monkeypatch, record_property, active
+):
+    f = priced_execution
+    monkeypatch.setattr(
+        test_model_projection, "_fixture", lambda: _connections_fixture(engine=f.engine)
+    )
+    service, worker, factory, actor, request, calls = _fixture()
+    request["tenant_id"] = f.scope.tenant_id
+    before = list(calls)
+    for generation in range(129):
+        operation = service.admit(
+            actor,
+            **{
+                **request,
+                "expected_generation": generation,
+                "idempotency_key": f"catalog-page-plan-{generation:03}",
+            },
+        )
+        worker.publish(**_envelope(factory, operation.id))
+    assert calls == before
+    runtime = replace(
+        _runtime(),
+        actor_id=f.scope.owner_id,
+        tenant_id=f.scope.tenant_id,
+        space_id=f.scope.space_id,
+        project_id=f.scope.project_id,
+    )
+    if not active:
+        with f.factory.begin() as db:
+            db.execute(
+                sa.update(TenantMembership)
+                .where(
+                    TenantMembership.tenant_id == runtime.tenant_id,
+                    TenantMembership.user_id == runtime.actor_id,
+                )
+                .values(status="suspended")
+            )
+    with f.engine.begin() as connection:
+        connection.exec_driver_sql("ANALYZE public.saas_model_publication_versions")
+    captured = []
+
+    def capture(_connection, _cursor, statement, parameters, _context, _many):
+        if "FROM saas_model_publication_versions" in statement:
+            captured.append((statement, parameters))
+
+    sa.event.listen(f.app, "before_cursor_execute", capture)
+    try:
+        page = TenantModelCatalog(f.app).page(runtime, limit=1)
+    finally:
+        sa.event.remove(f.app, "before_cursor_execute", capture)
+    assert bool(page.items) is active
+    if active:
+        assert page.items[0]["generation"] == 129 and page.next_cursor is not None
+    assert len(captured) == (2 if active else 1)
+
+    def nodes(plan):
+        yield plan
+        for child in plan.get("Plans", []):
+            yield from nodes(child)
+
+    for number, (statement, parameters) in enumerate(captured):
+        with Session(f.app) as db:
+            apply_rls_context(
+                db,
+                RlsContext(
+                    actor_id=runtime.actor_id,
+                    tenant_id=runtime.tenant_id,
+                    space_id=runtime.space_id,
+                    project_id=runtime.project_id,
+                ),
+            )
+            plan = (
+                db.connection()
+                .exec_driver_sql("EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) " + statement, parameters)
+                .scalar_one()[0]["Plan"]
+            )
+        scans = [
+            node
+            for node in nodes(plan)
+            if node.get("Relation Name") == "saas_model_publication_versions"
+        ]
+        assert scans
+        record_property(
+            f"publication_scan_{number}",
+            json.dumps(
+                [
+                    {
+                        key: node.get(key)
+                        for key in (
+                            "Node Type",
+                            "Index Name",
+                            "Actual Rows",
+                            "Actual Loops",
+                            "Rows Removed by Filter",
+                            "Rows Removed by Index Recheck",
+                        )
+                    }
+                    for node in scans
+                ],
+                sort_keys=True,
+            ),
+        )
+        for scan in scans:
+            if not scan["Actual Loops"]:
+                continue
+            examined = (
+                sum(
+                    scan.get(key, 0)
+                    for key in (
+                        "Actual Rows",
+                        "Rows Removed by Filter",
+                        "Rows Removed by Index Recheck",
+                    )
+                )
+                * scan["Actual Loops"]
+            )
+            assert examined <= 2
+            assert scan.get("Index Name") in {
+                "ix_model_publication_tenant_page",
+                "uq_model_publication_generation",
+            }

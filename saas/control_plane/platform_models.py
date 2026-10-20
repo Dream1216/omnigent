@@ -725,7 +725,15 @@ class ModelProviderBudgetReservationRecord(SaasBase):
             "expires_at",
             "id",
         ),
-        sa.Index("ix_model_budget_test_day", "provider_id", "purpose", "usage_date"),
+        sa.Index(
+            "ix_model_budget_admitted_test_day",
+            "provider_id",
+            "purpose",
+            "usage_date",
+            "id",
+            postgresql_where=sa.text("admitted_microusd > 0"),
+            sqlite_where=sa.text("admitted_microusd > 0"),
+        ),
         sa.Index(
             "ix_model_provider_budget_reservation_run",
             "tenant_id",
@@ -765,7 +773,6 @@ class ModelGatewayEvidenceRecord(SaasBase):
             name="ck_model_gateway_evidence_bound",
         ),
         *model_document_format("ck_model_gateway_evidence_format", "canonical_evidence"),
-        sa.Index("ix_model_gateway_evidence_scope", "tenant_id", "reservation_id", "created_at"),
     )
 
 

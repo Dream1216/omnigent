@@ -382,6 +382,7 @@
             <section class="work-panel">
               <div class="panel-heading"><span>02 / 连接清单</span><small id="model-connection-count">LOADING</small></div>
               <div class="record-list" id="model-connection-list" aria-live="polite"><p>正在加载连接…</p></div>
+              <button class="load-more" id="model-connections-more" data-testid="model-connections-more" type="button" hidden>继续加载连接 ↓</button>
               <form class="model-connection-form" id="model-connection-rotate" hidden>
                 <div class="panel-heading"><span>追加密钥版本</span><small id="model-connection-rotation-target">—</small></div>
                 <label><span>新供应商 API Key</span><input id="model-connection-rotation-key" autocomplete="new-password" type="password" minlength="16" maxlength="4096" required></label>
@@ -410,6 +411,7 @@
               <section class="work-panel">
                 <div class="panel-heading"><span>05 / 草稿版本</span><small id="model-deployment-count">LOADING</small></div>
                 <div class="record-list" id="model-deployment-list" aria-live="polite"></div>
+                <button class="load-more" id="model-deployments-more" data-testid="model-deployments-more" type="button" hidden>继续加载较早草稿 ↓</button>
               </section>
             </div>
           </section>
@@ -445,6 +447,7 @@
               <button class="quiet-button" type="submit">核对租户候选目录 ↻</button>
             </form>
             <div class="record-list" id="model-publication-list" aria-live="polite"><div class="empty-record">尚未核对发布范围。</div></div>
+            <button class="load-more" id="model-publications-more" data-testid="model-publications-more" type="button" hidden>继续读取较早目录 ↓</button>
             <dl id="model-publication-detail" aria-live="polite"><div class="empty-record">尚无发布回执。运行时保持关闭。</div></dl>
             <div class="panel-heading"><span>09 / 普通停用回执</span><small id="model-disablement-status" role="status">NO DISABLEMENT</small></div>
             <p class="model-connection-help">普通停用覆盖已核对租户的指定模型／协议及截止代际，禁止未受理的新推理与旧令牌续签。已受理调用仍可完成和结算；这不是主动中止在途流或物理 Agent 的安全撤销。结果不确定时只核对回执，不自动重发。</p>

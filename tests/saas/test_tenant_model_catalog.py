@@ -87,7 +87,7 @@ def test_catalog_route_requires_live_runtime_auth_and_does_not_accept_scope_from
         _login(client)
         result = client.get("/v1/managed-model-catalog")
         assert result.status_code == 200
-        assert result.json() == {"models": [], "runtime_enabled": False}
+        assert result.json() == {"models": [], "runtime_enabled": False, "next_cursor": None}
         assert result.headers["cache-control"] == "private, no-store"
         assert (
             client.get(

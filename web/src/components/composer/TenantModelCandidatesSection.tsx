@@ -1,7 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { authenticatedFetch, getCurrentUserId } from "@/lib/identity";
 import { getCachedServerInfo } from "@/lib/capabilities";
-import { DropdownMenuCheckboxItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenuCheckboxItem,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { PickerSectionHeader } from "./HarnessMenuRow";
 
 export interface TenantModelCandidate {
@@ -38,9 +42,12 @@ const unavailableReasons = {
 async function loadCandidates(
   signal: AbortSignal,
   target?: string,
-): Promise<TenantModelCandidate[] | null> {
+  cursor?: string | null,
+): Promise<{ models: TenantModelCandidate[]; nextCursor: string | null } | null> {
+  const params = new URLSearchParams(target);
+  if (cursor) params.set("cursor", cursor);
   const response = await authenticatedFetch(
-    `/v1/managed-model-catalog${target ? `?${target}` : ""}`,
+    `/v1/managed-model-catalog${params.size ? `?${params}` : ""}`,
     {
       signal,
       cache: "no-store",
@@ -57,7 +64,12 @@ async function loadCandidates(
     typeof body.runtime_enabled !== "boolean" ||
     !("models" in body) ||
     !Array.isArray(body.models) ||
-    body.models.length > 100
+    body.models.length > 100 ||
+    ("next_cursor" in body &&
+      body.next_cursor !== null &&
+      (typeof body.next_cursor !== "string" ||
+        !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(body.next_cursor) ||
+        body.next_cursor === cursor))
   )
     throw new Error("Platform model catalog is temporarily unavailable.");
   for (const item of body.models) {
@@ -84,7 +96,10 @@ async function loadCandidates(
     )
       throw new Error("Platform model catalog is temporarily unavailable.");
   }
-  return body.models as TenantModelCandidate[];
+  return {
+    models: body.models as TenantModelCandidate[],
+    nextCursor: "next_cursor" in body ? (body.next_cursor as string | null) : null,
+  };
 }
 
 /** Candidate discovery never installs a model or makes a runtime authorization decision. */
@@ -92,17 +107,30 @@ export function TenantModelCandidatesSection({ selection }: { selection?: Manage
   const user = getCurrentUserId();
   // The downstream auth provider advertises this realm; OSS catalogs stay host-owned.
   const saas = getCachedServerInfo()?.login_url === "/saas/login";
-  const catalog = useQuery({
+  const catalog = useInfiniteQuery({
     queryKey: ["tenant-managed-model-candidates", user, selection?.target],
-    queryFn: ({ signal }) => loadCandidates(signal, selection?.target),
+    queryFn: ({ signal, pageParam }) => loadCandidates(signal, selection?.target, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page?.nextCursor ?? undefined,
     enabled: saas && user !== null && user !== "local",
     gcTime: 0,
     staleTime: 0,
     retry: false,
     refetchOnWindowFocus: false,
   });
+  const models = Array.from(
+    new Map(
+      catalog.data?.pages
+        .flatMap((page) => page?.models ?? [])
+        .map((model) => [`${model.model_id}:${model.wire_api}`, model]),
+    ).values(),
+  );
   // Do not show a former observer's cached catalog while a fresh read is pending.
-  if (!saas || !catalog.isFetchedAfterMount || (catalog.isSuccess && !catalog.data?.length))
+  if (
+    !saas ||
+    !catalog.isFetchedAfterMount ||
+    (catalog.isSuccess && !models.length && !catalog.hasNextPage)
+  )
     return null;
   return (
     <div data-testid="tenant-managed-model-candidates">
@@ -115,48 +143,63 @@ export function TenantModelCandidatesSection({ selection }: { selection?: Manage
         >
           Platform model catalog is temporarily unavailable.
         </div>
-      ) : (
-        <>
-          {catalog.data?.every((model) => model.unavailable_reason === "runtime_not_enabled") ? (
-            <div
-              className="px-2 py-1 text-xs break-words whitespace-normal text-muted-foreground"
-              role="status"
-            >
-              Candidates only. Runtime access is not enabled.
-            </div>
-          ) : null}
-          {catalog.data?.map((model) => (
-            <DropdownMenuCheckboxItem
-              key={`${model.model_id}:${model.wire_api}`}
-              checked={selection?.selectedRevision === model.configuration_revision}
-              disabled={!model.available || !selection?.onSelect}
-              onSelect={(event) => event.preventDefault()}
-              onCheckedChange={(checked) => {
-                if (!model.available) return;
-                if (!checked && selection?.onClear) selection.onClear();
-                else selection?.onSelect?.(model);
-              }}
-              className="whitespace-normal break-words"
-              data-model-id={model.model_id}
-            >
-              <span className="flex min-w-0 flex-col">
-                <span>{model.display_name}</span>
-                <span className="text-xs text-muted-foreground">
-                  DeepSeek · via LiteLLM ·{" "}
-                  {model.wire_api === "openai_responses" ? "Responses" : "Chat"}
-                </span>
-                {!model.available || !selection?.onSelect ? (
-                  <span className="text-xs text-muted-foreground">
-                    {model.unavailable_reason
-                      ? unavailableReasons[model.unavailable_reason]
-                      : "Start a new session to select this model"}
-                  </span>
-                ) : null}
+      ) : null}
+      {models.length > 0 &&
+      models.every((model) => model.unavailable_reason === "runtime_not_enabled") ? (
+        <div
+          className="px-2 py-1 text-xs break-words whitespace-normal text-muted-foreground"
+          role="status"
+        >
+          Candidates only. Runtime access is not enabled.
+        </div>
+      ) : null}
+      {models.map((model) => (
+        <DropdownMenuCheckboxItem
+          key={`${model.model_id}:${model.wire_api}`}
+          checked={selection?.selectedRevision === model.configuration_revision}
+          disabled={!model.available || !selection?.onSelect}
+          onSelect={(event) => event.preventDefault()}
+          onCheckedChange={(checked) => {
+            if (!model.available) return;
+            if (!checked && selection?.onClear) selection.onClear();
+            else selection?.onSelect?.(model);
+          }}
+          className="whitespace-normal break-words"
+          data-model-id={model.model_id}
+        >
+          <span className="flex min-w-0 flex-col">
+            <span>{model.display_name}</span>
+            <span className="text-xs text-muted-foreground">
+              DeepSeek · via LiteLLM ·{" "}
+              {model.wire_api === "openai_responses" ? "Responses" : "Chat"}
+            </span>
+            {!model.available || !selection?.onSelect ? (
+              <span className="text-xs text-muted-foreground">
+                {model.unavailable_reason
+                  ? unavailableReasons[model.unavailable_reason]
+                  : "Start a new session to select this model"}
               </span>
-            </DropdownMenuCheckboxItem>
-          ))}
-        </>
-      )}
+            ) : null}
+          </span>
+        </DropdownMenuCheckboxItem>
+      ))}
+      {catalog.hasNextPage || catalog.isError ? (
+        <DropdownMenuItem
+          disabled={catalog.isFetching}
+          onSelect={(event) => {
+            event.preventDefault();
+            if (catalog.isFetching) return;
+            if (catalog.hasNextPage) void catalog.fetchNextPage();
+            else void catalog.refetch();
+          }}
+        >
+          {catalog.isFetching
+            ? "Loading models…"
+            : catalog.isError
+              ? "Retry model catalog"
+              : "Load more models"}
+        </DropdownMenuItem>
+      ) : null}
     </div>
   );
 }

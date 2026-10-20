@@ -20,6 +20,12 @@ from saas.control_plane.model_connections import (
     authorize_platform_model_operation,
     lock_model_operation_idempotency,
 )
+from saas.control_plane.model_paging import (
+    ModelPage,
+    invalid_model_page,
+    model_page_cursor,
+    validate_model_page,
+)
 from saas.control_plane.model_provider import _MODEL_ID
 from saas.control_plane.model_routing_models import (
     ModelConnectionRecord,
@@ -220,6 +226,17 @@ class ModelDeploymentService:
     def credential_versions(
         self, actor: ValidatedPlatformPrincipal, connection_id: UUID
     ) -> tuple[ModelCredentialVersionMetadata, ...]:
+        return self.credential_page(actor, connection_id).items
+
+    def credential_page(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        connection_id: UUID,
+        *,
+        limit: int = 100,
+        cursor: UUID | None = None,
+    ) -> ModelPage[ModelCredentialVersionMetadata]:
+        validate_model_page(limit, cursor)
         with self._session("list_credential_version_metadata") as db:
             authorize_platform_model_operation(
                 db,
@@ -228,35 +245,74 @@ class ModelDeploymentService:
                 "platform.model_provider.manage",
                 datetime.now(timezone.utc),
             )
+            projected = sa.exists().where(
+                ModelProjectionOperationRecord.credential_version_id
+                == ModelCredentialVersionRecord.id,
+                ModelProjectionOperationRecord.status == "applied",
+                ModelProjectionOperationRecord.action.in_(
+                    ("create_connection", "rotate_credential")
+                ),
+            )
+            statement = sa.select(
+                ModelCredentialVersionRecord.id,
+                ModelCredentialVersionRecord.generation,
+                projected.label("projected"),
+            ).where(ModelCredentialVersionRecord.connection_id == connection_id)
+            if cursor is not None:
+                anchor = db.execute(
+                    sa.select(
+                        ModelCredentialVersionRecord.connection_id,
+                        ModelCredentialVersionRecord.generation,
+                    ).where(ModelCredentialVersionRecord.id == cursor)
+                ).one_or_none()
+                if anchor is None or anchor.connection_id != connection_id:
+                    raise invalid_model_page()
+                statement = statement.where(
+                    ModelCredentialVersionRecord.generation < anchor.generation
+                )
             rows = db.execute(
-                sa.select(
-                    ModelCredentialVersionRecord.id,
-                    ModelCredentialVersionRecord.generation,
-                    sa.func.max(
-                        sa.case((ModelProjectionOperationRecord.status == "applied", 1), else_=0)
-                    ),
-                )
-                .join(
-                    ModelProjectionOperationRecord,
-                    sa.and_(
-                        ModelProjectionOperationRecord.credential_version_id
-                        == ModelCredentialVersionRecord.id,
-                        ModelProjectionOperationRecord.action.in_(
-                            ("create_connection", "rotate_credential")
-                        ),
-                    ),
-                )
-                .where(ModelCredentialVersionRecord.connection_id == connection_id)
-                .group_by(ModelCredentialVersionRecord.id, ModelCredentialVersionRecord.generation)
-                .order_by(ModelCredentialVersionRecord.generation.desc())
-                .limit(100)
+                statement.order_by(ModelCredentialVersionRecord.generation.desc()).limit(limit + 1)
             ).all()
-            return tuple(
-                ModelCredentialVersionMetadata(identifier, generation, bool(applied))
-                for identifier, generation, applied in rows
+            return ModelPage(
+                tuple(
+                    ModelCredentialVersionMetadata(identifier, generation, bool(applied))
+                    for identifier, generation, applied in rows[:limit]
+                ),
+                model_page_cursor([row.id for row in rows], limit),
             )
 
     def list(self, actor: ValidatedPlatformPrincipal) -> tuple[ModelDeploymentVersionView, ...]:
+        return self.page(actor).items
+
+    def current_generation(self, actor: ValidatedPlatformPrincipal, public_model_id: str) -> int:
+        if not isinstance(public_model_id, str) or _MODEL_ID.fullmatch(public_model_id) is None:
+            raise invalid_model_page()
+        with self._session("read_current_model_deployment_generation") as db:
+            authorize_platform_model_operation(
+                db,
+                self._authorization,
+                actor,
+                "platform.model_provider.read",
+                datetime.now(timezone.utc),
+            )
+            return (
+                db.scalar(
+                    sa.select(ModelDeploymentVersionRecord.generation)
+                    .where(ModelDeploymentVersionRecord.public_model_id == public_model_id)
+                    .order_by(ModelDeploymentVersionRecord.generation.desc())
+                    .limit(1)
+                )
+                or 0
+            )
+
+    def page(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        limit: int = 100,
+        cursor: UUID | None = None,
+    ) -> ModelPage[ModelDeploymentVersionView]:
+        validate_model_page(limit, cursor)
         with self._session("list_deployment_drafts") as db:
             authorize_platform_model_operation(
                 db,
@@ -265,60 +321,66 @@ class ModelDeploymentService:
                 "platform.model_provider.read",
                 datetime.now(timezone.utc),
             )
-            rows = db.execute(
-                sa.select(ModelDeploymentVersionRecord, ModelProjectionOperationRecord)
-                .join(
-                    ModelProjectionOperationRecord,
-                    sa.and_(
-                        ModelProjectionOperationRecord.deployment_version_id
-                        == ModelDeploymentVersionRecord.id,
-                        ModelProjectionOperationRecord.action == "create_deployment",
-                    ),
+            statement = sa.select(ModelDeploymentVersionRecord)
+            if cursor is not None:
+                anchor = db.get(ModelDeploymentVersionRecord, cursor)
+                if anchor is None:
+                    raise invalid_model_page()
+                statement = statement.where(
+                    sa.tuple_(
+                        ModelDeploymentVersionRecord.created_at, ModelDeploymentVersionRecord.id
+                    )
+                    < (anchor.created_at, anchor.id)
                 )
-                .order_by(
-                    ModelDeploymentVersionRecord.created_at.desc(), ModelDeploymentVersionRecord.id
-                )
-                .limit(100)
+            rows = db.scalars(
+                statement.order_by(
+                    ModelDeploymentVersionRecord.created_at.desc(),
+                    ModelDeploymentVersionRecord.id.desc(),
+                ).limit(limit + 1)
             ).all()
-            verification_rows = db.scalars(
-                sa.select(ModelProjectionOperationRecord)
-                .where(
-                    ModelProjectionOperationRecord.action == "verify_deployment",
-                    ModelProjectionOperationRecord.deployment_version_id.in_(
-                        [record.id for record, _operation in rows]
-                    ),
+
+            def latest_operation(identifier: UUID, action: str):
+                return db.scalar(
+                    sa.select(ModelProjectionOperationRecord)
+                    .where(
+                        ModelProjectionOperationRecord.deployment_version_id == identifier,
+                        ModelProjectionOperationRecord.action == action,
+                    )
+                    .order_by(
+                        ModelProjectionOperationRecord.created_at.desc(),
+                        ModelProjectionOperationRecord.id.desc(),
+                    )
+                    .limit(1)
                 )
-                .order_by(
-                    ModelProjectionOperationRecord.created_at.desc(),
-                    ModelProjectionOperationRecord.id.desc(),
+
+            items = []
+            for record in rows[:limit]:
+                operation = latest_operation(record.id, "create_deployment")
+                if operation is None:
+                    continue
+                verification = latest_operation(record.id, "verify_deployment")
+                items.append(
+                    ModelDeploymentVersionView(
+                        record.id,
+                        record.public_model_id,
+                        record.display_name,
+                        record.connection_id,
+                        record.credential_version_id,
+                        record.generation,
+                        record.wire_api,
+                        record.max_output_tokens,
+                        record.configuration_sha256,
+                        operation.id,
+                        operation.status,
+                        verification_status=verification.status
+                        if verification is not None
+                        else "not_tested",
+                        verification_operation_id=verification.id
+                        if verification is not None
+                        else None,
+                    )
                 )
-            ).all()
-            latest: dict[UUID, ModelProjectionOperationRecord] = {}
-            for verification in verification_rows:
-                if verification.deployment_version_id is not None:
-                    latest.setdefault(verification.deployment_version_id, verification)
-            return tuple(
-                ModelDeploymentVersionView(
-                    record.id,
-                    record.public_model_id,
-                    record.display_name,
-                    record.connection_id,
-                    record.credential_version_id,
-                    record.generation,
-                    record.wire_api,
-                    record.max_output_tokens,
-                    record.configuration_sha256,
-                    operation.id,
-                    operation.status,
-                    verification_status=latest[record.id].status
-                    if record.id in latest
-                    else "not_tested",
-                    verification_operation_id=latest[record.id].id
-                    if record.id in latest
-                    else None,
-                )
-                for record, operation in rows
-            )
+            return ModelPage(tuple(items), model_page_cursor([row.id for row in rows], limit))
 
     def create(
         self,

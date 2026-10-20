@@ -896,12 +896,18 @@ def create_platform_admin_app(
         }
 
     @app.get("/v2/platform-admin/model-connections")
-    def list_model_connections(request: Request) -> dict[str, object]:
+    def list_model_connections(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ) -> dict[str, object]:
         principal, _token = authenticate(request)
+        page = model_connection_service().page(principal, limit=limit, cursor=cursor)
         return {
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
-            "items": [asdict(value) for value in model_connection_service().list(principal)],
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
         }
 
     @app.post("/v2/platform-admin/model-connections", status_code=202)
@@ -966,26 +972,49 @@ def create_platform_admin_app(
         }
 
     @app.get("/v2/platform-admin/model-connections/{connection_id}/credential-versions")
-    def list_model_credential_versions(request: Request, connection_id: UUID) -> dict[str, object]:
+    def list_model_credential_versions(
+        request: Request,
+        connection_id: UUID,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ) -> dict[str, object]:
         principal, _token = authenticate(request)
+        page = model_deployment_service().credential_page(
+            principal, connection_id, limit=limit, cursor=cursor
+        )
         return {
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
-            "items": [
-                asdict(value)
-                for value in model_deployment_service().credential_versions(
-                    principal, connection_id
-                )
-            ],
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
         }
 
     @app.get("/v2/platform-admin/model-deployments")
-    def list_model_deployments(request: Request) -> dict[str, object]:
+    def list_model_deployments(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ) -> dict[str, object]:
+        principal, _token = authenticate(request)
+        page = model_deployment_service().page(principal, limit=limit, cursor=cursor)
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
+        }
+
+    @app.get("/v2/platform-admin/model-deployments/current-generation")
+    def current_model_deployment_generation(
+        request: Request, public_model_id: str = Query(min_length=1, max_length=128)
+    ) -> dict[str, object]:
         principal, _token = authenticate(request)
         return {
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
-            "items": [asdict(value) for value in model_deployment_service().list(principal)],
+            "generation": model_deployment_service().current_generation(
+                principal, public_model_id
+            ),
         }
 
     @app.post("/v2/platform-admin/model-deployments", status_code=202)
@@ -1010,16 +1039,38 @@ def create_platform_admin_app(
         }
 
     @app.get("/v2/platform-admin/model-publications")
-    def list_model_publications(request: Request, tenant_id: UUID | None = None):
+    def list_model_publications(
+        request: Request,
+        tenant_id: UUID | None = None,
+        limit: int = Query(default=100, ge=1, le=100),
+        cursor: UUID | None = None,
+    ):
+        principal, _token = authenticate(request)
+        page = model_publication_service().page(
+            principal, tenant_id=tenant_id, limit=limit, cursor=cursor
+        )
+        return {
+            "request_id": _request_id(request),
+            "policy_version": POLICY_VERSION,
+            "items": [asdict(value) for value in page.items],
+            "next_cursor": page.next_cursor,
+            "runtime_enabled": False,
+        }
+
+    @app.get("/v2/platform-admin/model-publications/current-generation")
+    def current_model_publication_generation(
+        request: Request,
+        tenant_id: UUID,
+        public_model_id: str = Query(min_length=1, max_length=128),
+        wire_api: str = Query(min_length=1, max_length=32),
+    ) -> dict[str, object]:
         principal, _token = authenticate(request)
         return {
             "request_id": _request_id(request),
             "policy_version": POLICY_VERSION,
-            "items": [
-                asdict(value)
-                for value in model_publication_service().list(principal, tenant_id=tenant_id)
-            ],
-            "runtime_enabled": False,
+            "generation": model_publication_service().current_generation(
+                principal, tenant_id=tenant_id, public_model_id=public_model_id, wire_api=wire_api
+            ),
         }
 
     @app.get("/v2/platform-admin/model-publication-disablements")

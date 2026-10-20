@@ -7,14 +7,18 @@ import re
 from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any
+from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine, RowMapping
 
 from omnigent.db.utils import make_named_managed_session_maker
 from saas.compatibility import RuntimeContext
-from saas.control_plane.model_disablement import disabled_publication, publication_is_disabled
+from saas.control_plane.db_models import SpaceMembership, TenantMembership
+from saas.control_plane.model_disablement import publication_is_disabled
+from saas.control_plane.model_paging import ModelPage, model_page_cursor, validate_model_page
 from saas.control_plane.model_routing_models import ModelPublicationVersionRecord as Publication
+from saas.control_plane.platform_security import PlatformSecurityError
 from saas.control_plane.rls import RlsContext, apply_rls_context
 
 
@@ -22,10 +26,39 @@ class TenantModelCatalogError(RuntimeError):
     """A catalog cannot safely be shown; never render stored raw metadata."""
 
 
+class TenantModelPageError(TenantModelCatalogError):
+    """An unknown, invalid or differently scoped continuation is not usable."""
+
+
 class TenantModelCatalog:
     def __init__(self, engine: Engine) -> None:
+        self._postgresql_rls = engine.dialect.name == "postgresql"
         self._session = make_named_managed_session_maker(
             engine, query_name_prefix="saas.tenant_model_catalog"
+        )
+
+    def _membership_scope(self, runtime: RuntimeContext) -> sa.ColumnElement[bool]:
+        """Bind membership checks once per statement before traversing RLS history."""
+        if not self._postgresql_rls:
+            return sa.true()
+        return sa.and_(
+            sa.select(sa.literal(1))
+            .select_from(TenantMembership)
+            .where(
+                TenantMembership.tenant_id == runtime.tenant_id,
+                TenantMembership.user_id == runtime.actor_id,
+                TenantMembership.status == "active",
+            )
+            .exists(),
+            sa.select(sa.literal(1))
+            .select_from(SpaceMembership)
+            .where(
+                SpaceMembership.tenant_id == runtime.tenant_id,
+                SpaceMembership.space_id == runtime.space_id,
+                SpaceMembership.user_id == runtime.actor_id,
+                SpaceMembership.status == "active",
+            )
+            .exists(),
         )
 
     @staticmethod
@@ -135,12 +168,7 @@ class TenantModelCatalog:
                         Publication.tenant_id == runtime.tenant_id,
                         Publication.public_model_id == model_id,
                         Publication.wire_api == wire_api,
-                        ~disabled_publication(
-                            runtime.tenant_id,
-                            Publication.public_model_id,
-                            Publication.wire_api,
-                            Publication.generation,
-                        ),
+                        self._membership_scope(runtime),
                     )
                     .order_by(Publication.generation.desc())
                     .limit(1)
@@ -152,6 +180,13 @@ class TenantModelCatalog:
                 row is None
                 or row["generation"] != int(generation)
                 or row["snapshot_sha256"] != digest
+                or publication_is_disabled(
+                    db,
+                    tenant_id=runtime.tenant_id,
+                    public_model_id=row["public_model_id"],
+                    wire_api=row["wire_api"],
+                    generation=row["generation"],
+                )
             ):
                 raise TenantModelCatalogError("managed model selection changed")
             self._snapshot(row, runtime)
@@ -165,7 +200,15 @@ class TenantModelCatalog:
 
     def list(self, runtime: RuntimeContext) -> list[dict[str, object]]:
         """Read candidate metadata without authorizing inference or customer charges."""
+        return list(self.page(runtime).items)
 
+    def page(
+        self, runtime: RuntimeContext, *, limit: int = 100, cursor: UUID | None = None
+    ) -> ModelPage[dict[str, object]]:
+        try:
+            validate_model_page(limit, cursor)
+        except PlatformSecurityError:
+            raise TenantModelPageError("managed model page invalid") from None
         with self._session("read_current_candidates") as db:
             apply_rls_context(
                 db,
@@ -176,47 +219,59 @@ class TenantModelCatalog:
                     project_id=runtime.project_id,
                 ),
             )
-            latest = (
-                sa.select(
-                    Publication.public_model_id,
-                    Publication.wire_api,
-                    sa.func.max(Publication.generation).label("generation"),
+            query = sa.select(
+                Publication.id,
+                Publication.created_at,
+                Publication.tenant_id,
+                Publication.public_model_id,
+                Publication.wire_api,
+                Publication.generation,
+                Publication.canonical_snapshot,
+                Publication.snapshot_sha256,
+            ).where(Publication.tenant_id == runtime.tenant_id, self._membership_scope(runtime))
+            if cursor is not None:
+                anchor = db.execute(
+                    sa.select(Publication.created_at, Publication.id).where(
+                        Publication.id == cursor, Publication.tenant_id == runtime.tenant_id
+                    )
+                ).one_or_none()
+                if anchor is None:
+                    raise TenantModelPageError("managed model page invalid")
+                query = query.where(
+                    sa.tuple_(Publication.created_at, Publication.id) < tuple(anchor)
                 )
-                .where(
-                    Publication.tenant_id == runtime.tenant_id,
-                    ~disabled_publication(
-                        runtime.tenant_id,
-                        Publication.public_model_id,
-                        Publication.wire_api,
-                        Publication.generation,
-                    ),
+            rows = (
+                db.execute(
+                    query.order_by(Publication.created_at.desc(), Publication.id.desc()).limit(
+                        limit + 1
+                    )
                 )
-                .group_by(Publication.public_model_id, Publication.wire_api)
-                .subquery()
+                .mappings()
+                .all()
             )
-            rows = db.execute(
-                sa.select(
-                    Publication.tenant_id,
-                    Publication.public_model_id,
-                    Publication.wire_api,
-                    Publication.generation,
-                    Publication.canonical_snapshot,
-                    Publication.snapshot_sha256,
-                )
-                .join(
-                    latest,
-                    sa.and_(
-                        Publication.public_model_id == latest.c.public_model_id,
-                        Publication.wire_api == latest.c.wire_api,
-                        Publication.generation == latest.c.generation,
-                    ),
-                )
-                .where(Publication.tenant_id == runtime.tenant_id)
-                .order_by(Publication.public_model_id, Publication.wire_api)
-                .limit(100)
-            ).mappings()
             result: list[dict[str, object]] = []
-            for row in rows:
+            for row in rows[:limit]:
+                latest = db.scalar(
+                    sa.select(
+                        Publication.generation,
+                    )
+                    .where(
+                        Publication.tenant_id == runtime.tenant_id,
+                        Publication.public_model_id == row["public_model_id"],
+                        Publication.wire_api == row["wire_api"],
+                        self._membership_scope(runtime),
+                    )
+                    .order_by(Publication.generation.desc())
+                    .limit(1)
+                )
+                if row["generation"] != latest or publication_is_disabled(
+                    db,
+                    tenant_id=runtime.tenant_id,
+                    public_model_id=row["public_model_id"],
+                    wire_api=row["wire_api"],
+                    generation=row["generation"],
+                ):
+                    continue
                 snapshot = self._snapshot(row, runtime)
                 result.append(
                     {
@@ -235,4 +290,4 @@ class TenantModelCatalog:
                         "unavailable_reason": "runtime_not_enabled",
                     }
                 )
-            return result
+            return ModelPage(tuple(result), model_page_cursor([row["id"] for row in rows], limit))

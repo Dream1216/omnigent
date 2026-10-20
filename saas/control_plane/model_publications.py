@@ -25,7 +25,14 @@ from saas.control_plane.model_deployments import (
     compile_stored_model_deployment,
 )
 from saas.control_plane.model_disablement import DISABLEMENT_EVENT, publication_is_disabled
+from saas.control_plane.model_paging import (
+    ModelPage,
+    invalid_model_page,
+    model_page_cursor,
+    validate_model_page,
+)
 from saas.control_plane.model_pricing import PlatformModelPricingPolicy
+from saas.control_plane.model_provider import _MODEL_ID
 from saas.control_plane.model_revocations import ModelSecurityRevocationService
 from saas.control_plane.model_routing_models import (
     ModelConnectionRecord,
@@ -67,11 +74,14 @@ def current_publication_generation(
 ) -> int:
     return (
         db.scalar(
-            sa.select(sa.func.max(ModelPublicationVersionRecord.generation)).where(
+            sa.select(ModelPublicationVersionRecord.generation)
+            .where(
                 ModelPublicationVersionRecord.tenant_id == tenant_id,
                 ModelPublicationVersionRecord.public_model_id == draft.public_model_id,
                 ModelPublicationVersionRecord.wire_api == draft.wire_api,
             )
+            .order_by(ModelPublicationVersionRecord.generation.desc())
+            .limit(1)
         )
         or 0
     )
@@ -544,6 +554,53 @@ class ModelPublicationService:
             return self._disablement_view(row)
 
     def list(self, actor: ValidatedPlatformPrincipal, *, tenant_id: UUID | None = None):
+        return self.page(actor, tenant_id=tenant_id).items
+
+    def current_generation(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        tenant_id: UUID,
+        public_model_id: str,
+        wire_api: str,
+    ) -> int:
+        if (
+            not isinstance(public_model_id, str)
+            or _MODEL_ID.fullmatch(public_model_id) is None
+            or wire_api not in ("openai_chat_completions", "openai_responses")
+        ):
+            raise invalid_model_page()
+        with self._session("read_current_model_publication_generation") as db:
+            authorize_platform_model_operation(
+                db,
+                self._authorization,
+                actor,
+                "platform.model_provider.read",
+                datetime.now(timezone.utc),
+            )
+            return (
+                db.scalar(
+                    sa.select(ModelPublicationVersionRecord.generation)
+                    .where(
+                        ModelPublicationVersionRecord.tenant_id == tenant_id,
+                        ModelPublicationVersionRecord.public_model_id == public_model_id,
+                        ModelPublicationVersionRecord.wire_api == wire_api,
+                    )
+                    .order_by(ModelPublicationVersionRecord.generation.desc())
+                    .limit(1)
+                )
+                or 0
+            )
+
+    def page(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        tenant_id: UUID | None = None,
+        limit: int = 100,
+        cursor: UUID | None = None,
+    ):
+        validate_model_page(limit, cursor)
         with self._session("list_tenant_model_publications") as db:
             authorize_platform_model_operation(
                 db,
@@ -552,52 +609,53 @@ class ModelPublicationService:
                 "platform.model_provider.read",
                 datetime.now(timezone.utc),
             )
-            latest = (
-                sa.select(
-                    ModelPublicationVersionRecord.tenant_id,
-                    ModelPublicationVersionRecord.public_model_id,
-                    ModelPublicationVersionRecord.wire_api,
-                    sa.func.max(ModelPublicationVersionRecord.generation).label("generation"),
-                )
-                .group_by(
-                    ModelPublicationVersionRecord.tenant_id,
-                    ModelPublicationVersionRecord.public_model_id,
-                    ModelPublicationVersionRecord.wire_api,
-                )
-                .subquery()
-            )
-            query = (
-                sa.select(ModelPublicationVersionRecord, ModelPublicationDisablementRecord)
-                .join(
-                    latest,
-                    sa.and_(
-                        *(
-                            getattr(ModelPublicationVersionRecord, name) == getattr(latest.c, name)
-                            for name in ("tenant_id", "public_model_id", "wire_api", "generation")
-                        )
-                    ),
-                )
-                .outerjoin(
-                    ModelPublicationDisablementRecord,
-                    sa.and_(
-                        *(
-                            getattr(ModelPublicationDisablementRecord, name)
-                            == getattr(ModelPublicationVersionRecord, name)
-                            for name in ("tenant_id", "public_model_id", "wire_api")
-                        ),
-                        ModelPublicationDisablementRecord.through_generation
-                        == ModelPublicationVersionRecord.generation,
-                    ),
-                )
-            )
+            query = sa.select(ModelPublicationVersionRecord)
             if tenant_id is not None:
                 query = query.where(ModelPublicationVersionRecord.tenant_id == tenant_id)
-            return tuple(
-                publication_view(row, cutoff)
-                for row, cutoff in db.execute(
-                    query.order_by(ModelPublicationVersionRecord.created_at.desc()).limit(100)
+            if cursor is not None:
+                anchor = db.get(ModelPublicationVersionRecord, cursor)
+                if anchor is None or (tenant_id is not None and anchor.tenant_id != tenant_id):
+                    raise invalid_model_page()
+                query = query.where(
+                    sa.tuple_(
+                        ModelPublicationVersionRecord.created_at, ModelPublicationVersionRecord.id
+                    )
+                    < (anchor.created_at, anchor.id)
                 )
-            )
+            rows = db.scalars(
+                query.order_by(
+                    ModelPublicationVersionRecord.created_at.desc(),
+                    ModelPublicationVersionRecord.id.desc(),
+                ).limit(limit + 1)
+            ).all()
+            items = []
+            for row in rows[:limit]:
+                scope = tuple(
+                    getattr(ModelPublicationVersionRecord, name) == getattr(row, name)
+                    for name in ("tenant_id", "public_model_id", "wire_api")
+                )
+                latest = db.scalar(
+                    sa.select(ModelPublicationVersionRecord.generation)
+                    .where(*scope)
+                    .order_by(ModelPublicationVersionRecord.generation.desc())
+                    .limit(1)
+                )
+                if row.generation != latest:
+                    continue
+                cutoff = db.scalar(
+                    sa.select(ModelPublicationDisablementRecord)
+                    .where(
+                        *(
+                            getattr(ModelPublicationDisablementRecord, name) == getattr(row, name)
+                            for name in ("tenant_id", "public_model_id", "wire_api")
+                        ),
+                        ModelPublicationDisablementRecord.through_generation >= row.generation,
+                    )
+                    .order_by(ModelPublicationDisablementRecord.through_generation.desc())
+                    .limit(1)
+                )
+                items.append(publication_view(row, cutoff))
+            return ModelPage(tuple(items), model_page_cursor([row.id for row in rows], limit))
 
     def receipt(self, actor: ValidatedPlatformPrincipal, operation_id: UUID):
         with self._session("read_model_publication_receipt") as db:

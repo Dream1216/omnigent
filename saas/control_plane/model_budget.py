@@ -37,6 +37,7 @@ from saas.control_plane.platform_models import (
 
 _PROVIDER_ID = "deepseek"
 _MAX_RESERVATION_TTL = timedelta(hours=24)
+MAX_DAILY_PLATFORM_TEST_ATTEMPTS = 1000
 
 
 class ModelProviderBudgetError(RuntimeError):
@@ -372,28 +373,28 @@ class ModelProviderBudgetAdmissionService:
             assert monthly is not None
             row = ModelProviderBudgetReservationRecord
             pending = row.status.in_(("reserved", "in_flight", "uncertain"))
-            spent, tokens, attempts = db.execute(
+            daily = db.execute(
                 sa.select(
-                    sa.func.coalesce(
-                        sa.func.sum(
-                            sa.case((pending, row.admitted_microusd), else_=row.settled_microusd)
-                        ),
-                        0,
-                    ),
-                    sa.func.coalesce(
-                        sa.func.sum(
-                            sa.case((pending, row.admitted_tokens), else_=row.settled_tokens)
-                        ),
-                        0,
-                    ),
-                    sa.func.count(row.id),
-                ).where(
+                    sa.case((pending, row.admitted_microusd), else_=row.settled_microusd),
+                    sa.case((pending, row.admitted_tokens), else_=row.settled_tokens),
+                )
+                .where(
                     row.provider_id == _PROVIDER_ID,
                     row.purpose == "platform_test",
                     row.usage_date == usage_date,
                     row.admitted_microusd > 0,
                 )
-            ).one()
+                .order_by(row.id)
+                .limit(MAX_DAILY_PLATFORM_TEST_ATTEMPTS + 1)
+            ).all()
+            if len(daily) > MAX_DAILY_PLATFORM_TEST_ATTEMPTS:
+                raise ModelProviderBudgetError(
+                    "platform_model_test_history_inconsistent",
+                    "Platform test funding history requires reconciliation",
+                )
+            spent = sum(item[0] for item in daily)
+            tokens = sum(item[1] for item in daily)
+            attempts = len(daily)
             legacy_limit = db.scalar(
                 sa.select(ModelProviderConfigurationRecord.monthly_budget_microusd).where(
                     ModelProviderConfigurationRecord.provider_id == _PROVIDER_ID

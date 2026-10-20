@@ -15,6 +15,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.stores.credential_store.secret_cipher import SecretCipher, SecretContext
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
+from saas.control_plane.model_paging import (
+    ModelPage,
+    invalid_model_page,
+    model_page_cursor,
+    validate_model_page,
+)
 from saas.control_plane.model_routing_models import (
     ModelConnectionRecord,
     ModelCredentialVersionRecord,
@@ -169,14 +175,38 @@ class ModelConnectionService:
         authorize_platform_model_operation(db, self._authorization, actor, permission, now)
 
     def list(self, actor: ValidatedPlatformPrincipal) -> tuple[ModelConnectionView, ...]:
+        return self.page(actor).items
+
+    def page(
+        self,
+        actor: ValidatedPlatformPrincipal,
+        *,
+        limit: int = 100,
+        cursor: UUID | None = None,
+    ) -> ModelPage[ModelConnectionView]:
+        validate_model_page(limit, cursor)
         with self._sessions.begin() as db:
             self._authorize(db, actor, "platform.model_provider.read", datetime.now(timezone.utc))
-            rows = db.scalars(
-                sa.select(ModelConnectionRecord)
-                .order_by(ModelConnectionRecord.created_at, ModelConnectionRecord.id)
-                .limit(100)
+            statement = sa.select(ModelConnectionRecord)
+            if cursor is not None:
+                anchor = db.get(ModelConnectionRecord, cursor)
+                if anchor is None:
+                    raise invalid_model_page()
+                statement = statement.where(
+                    sa.tuple_(ModelConnectionRecord.created_at, ModelConnectionRecord.id)
+                    > (anchor.created_at, anchor.id)
+                )
+            rows = list(
+                db.scalars(
+                    statement.order_by(
+                        ModelConnectionRecord.created_at, ModelConnectionRecord.id
+                    ).limit(limit + 1)
+                )
             )
-            return tuple(_connection_view(record) for record in rows)
+            return ModelPage(
+                tuple(_connection_view(record) for record in rows[:limit]),
+                model_page_cursor([row.id for row in rows], limit),
+            )
 
     def operation(
         self, actor: ValidatedPlatformPrincipal, operation_id: UUID

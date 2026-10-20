@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "e0ecc75076d58adce3ec4312303356d893e84bca47a41cd2910b87534aa3dda2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "0110e2d2e92d0a1f2c64f8b5aa28949d3ec41f7f98151c3faafec907f951e3a8",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,
@@ -549,6 +560,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "76a686b46f0fbedbb7e3446be772355cb39278def422e48cb6f22e60d8399156",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "a8ad3fd952ee6c16d1e4d614cfd7917043633c51a03d38acaffbd6aa42a5bd67",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,
@@ -882,6 +904,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "dfe1c2fd54ce5d441ea30a8cc75b008901aaed9bf2edae5a3932bb34f9461b4f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "3e0e54603d3ad981029610379f515f442f7c9a37f270ec20512f47f5f6594dd8",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,
@@ -1185,6 +1218,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "4dd64908632aa4276a3eb5d1a149f742492554160af1284f789ad50a20d8a19d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "b7e6d167aa1723483919be96e907e969537945e6f7b3295ac14090e29fb002bf",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,
@@ -1483,6 +1527,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "852f3319efb1b0e9a0129d6ff41dc1c4119aaa098729a08b17e13c54a3ceff53",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "9dfb2655bee0b6b163ca7be5b4df254eaaf7867c388105c0e8d6fec776f14f5f",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,
@@ -1756,6 +1811,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "3c094954f4e1e7c4c35960b36d2b07924a7c3356babc3656cde79046fda36b1c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "be93c2919ab89a2d28111895d9648631287be75086c4b5e8b984b7d2d326a9fb",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,
@@ -2036,6 +2102,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "77dc5d57dac1c9800c3c01d4abf05d3682ff02adcfe32f801b0404f1da4c99df",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "eaaf6720d185bc759c6e309806e4b87888348b206d1a0018a55103c6a151ad13",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,
@@ -2281,6 +2358,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "2fee127251da10ed856dbed2b3bd7622349f98a2f4133037c55bc82573d0ce4e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "e6d1d4d7a4ec54142267de86a64bee225bc9ff1ecba24ab347f7af49bb59086f",
     # Source-derived bounded model documents and explicit relationships.
     (
         16,

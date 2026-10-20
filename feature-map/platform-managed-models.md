@@ -18,7 +18,9 @@ The independent Staff console manages encrypted connections, immutable model dra
 - `security-revocation-intent`: a fresh Staff API operator can escalate a retained cutoff to a distinct stop intent; its admission receipt is not physical completion.
 - `staff-authority`: a current fresh Staff operator can mutate; a security auditor can read but cannot edit.
 - `small-screen`: the same console entry remains usable on a narrow viewport without horizontal overflow.
-- `tenant-candidate-discovery`: customers inspect scoped model metadata on desktop and mobile; eligible new-session models are selectable, while existing sessions and unavailable models remain read-only.
+- `model-pagination`: load further connection, draft, and tenant-catalog pages with explicit read-only actions; a failed read preserves already loaded records and never repeats a command.
+- `current-generation`: draft and publication admission check the authoritative generation, not just the records currently loaded in the browser.
+- `tenant-candidate-discovery`: customers inspect scoped model metadata on desktop and mobile, load further pages and retry failed reads without repeating a command; eligible new-session models are selectable, while existing sessions and unavailable models remain read-only.
 
 ## How to get to it (user POV)
 
@@ -41,6 +43,8 @@ Preconditions: these Staff console tests own their HTTPS server, disposable SQLi
 - Ordinary disablement, tenant-scope race, cancellation, lost response/reload with one write, readonly receipts and desktop/mobile: `tests/saas/test_model_disablement_browser.py::test_real_chromium_model_disablement_scope_recovery_readonly_and_mobile`.
 - Security intent admission, exact cutoff, recovery and no inference: `tests/saas/test_model_revocations.py::test_staff_can_escalate_a_cutoff_to_a_distinct_durable_security_intent`. This is an isolated API test, not a browser or physical Agent drive.
 - Independent realm, navigation, and role/page/action boundaries: `tests/saas/test_platform_admin_browser.py::test_real_chromium_platform_console_role_page_and_action_matrix`.
+- Direct links, navigation, read retry, readonly paging, and mobile: `tests/saas/test_platform_admin_browser.py::test_real_chromium_model_pagination_retry_readonly_and_mobile`.
+- Creating a draft whose prior generation is outside the loaded page: `tests/saas/test_platform_admin_browser.py::test_real_chromium_model_draft_reads_a_generation_outside_the_visible_page`.
 
 Run the selected test directly with `.venv/bin/pytest -q`. Each journey drives the visible controls and cross-checks the control-plane API. Real PostgreSQL budget/role checks and real LiteLLM/provider protocol checks are separate acceptance lanes, not supplied by these browser tests.
 
@@ -54,4 +58,5 @@ Customer menus use the separately built SPA and explicit browser-only contracts:
 - A disabled capability, unavailable Staff identity, stale authentication, or missing real runtime prerequisite is unavailable, not a passed acceptance check.
 - Ordinary disablement blocks unstarted calls and old authorization/renewal, not accepted streams or physical Agents. Audit intent being queued is not proof of delivery; production security revocation remains a separate gate.
 - Browser projection calls use a synthetic management endpoint. Never present these screenshots as proof of real supplier billing, OIDC signing, production rollout, or end-to-end Agent availability.
+- Pagination counts are loaded records, not global totals. An API page may contain no current versions while retaining a continuation cursor; an empty page alone is not end-of-catalog proof.
 - VERIFIED on the bounded test means protocol and budget settlement, not full capability acceptance, masked-credential attestation, or runtime publication. A visible configuration readback cannot attest a hidden provider key.

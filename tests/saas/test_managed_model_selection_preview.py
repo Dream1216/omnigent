@@ -96,6 +96,13 @@ def test_read_only_target_preview_does_not_admit_or_infer(interactive_http):
     _assert_preview(f, {}, reason="runtime_not_enabled", enabled=False)
 
 
+def test_target_preview_accepts_catalog_page_parameters_without_new_authority(interactive_http):
+    f = interactive_http
+    target, _ = _setup(f)
+    result = _assert_preview(f, {**target, "limit": "1"})
+    assert result["next_cursor"] is None
+
+
 @pytest.mark.parametrize("provider", ["kubernetes", "agent_sandbox", "external"])
 def test_preview_uses_actual_target_owner_connection_and_harness_readiness(
     interactive_http, provider

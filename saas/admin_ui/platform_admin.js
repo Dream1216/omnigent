@@ -31,7 +31,13 @@
     modelDisablementReceipt: null,
     modelDisablementChecked: false,
     modelRotation: null,
-    cursors: { users: null, tenants: null, support: null, audit: null, operations: null },
+    modelPages: {
+      modelConnections: { epoch: 0, busy: false },
+      modelDeployments: { epoch: 0, busy: false },
+      modelPublications: { busy: false },
+    },
+    cursors: { users: null, tenants: null, support: null, audit: null, operations: null,
+      modelConnections: null, modelDeployments: null, modelPublications: null },
     loaded: new Set(),
     view: "overview",
     dialogResolver: null,
@@ -447,6 +453,17 @@
     $("#model-connection-new-command").disabled = state.modelCommandBusy ||
       (state.modelCommand?.kind === "disable_publication" && !state.modelDisablementChecked);
     $("#model-connections-refresh").disabled = state.modelCommandBusy;
+    for (const [kind, selector, label] of [
+      ["modelConnections", "#model-connections-more", "继续加载连接 ↓"],
+      ["modelDeployments", "#model-deployments-more", "继续加载较早草稿 ↓"],
+      ["modelPublications", "#model-publications-more", "继续读取较早目录 ↓"],
+    ]) {
+      const page = state.modelPages[kind];
+      $(selector).hidden = !state.cursors[kind];
+      $(selector).disabled = page.busy || state.modelCommandBusy ||
+        (kind === "modelPublications" && !state.modelPublicationTenant);
+      $(selector).textContent = page.busy ? "正在加载…" : label;
+    }
     document.querySelectorAll('[data-testid="model-draft-select"]').forEach((button) => {
       button.disabled = !mutationReady("platform.model_provider.manage") || state.modelCommandBusy;
     });
@@ -559,7 +576,7 @@
     }
     const list = $("#model-connection-list");
     list.replaceChildren();
-    $("#model-connection-count").textContent = `${state.modelConnections.length} CONNECTIONS / FIRST 100`;
+    $("#model-connection-count").textContent = `${state.modelConnections.length} CONNECTIONS LOADED`;
     if (!state.modelConnections.length) list.append(emptyRecord("尚无连接。先建立候选连接，再验证模型并发布。"));
     for (const item of state.modelConnections) {
       list.append(recordRow({
@@ -581,17 +598,52 @@
     configureModelConnectionButtons();
   }
 
+  async function loadModelList(kind, more = false) {
+    const config = kind === "modelConnections" ? {
+      path: "/v2/platform-admin/model-connections", list: "#model-connection-list", render: renderModelConnections,
+    } : {
+      path: "/v2/platform-admin/model-deployments", list: "#model-deployment-list", render: renderModelDeployments,
+    };
+    const page = state.modelPages[kind];
+    if (more && (page.busy || !state.cursors[kind])) return;
+    const cursor = more ? state.cursors[kind] : null;
+    const epoch = ++page.epoch;
+    const context = state.context;
+    page.busy = true;
+    $(config.list).setAttribute("aria-busy", "true");
+    configureModelConnectionButtons();
+    try {
+      const response = await api(`${config.path}?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      if (epoch !== page.epoch || state.context !== context) return;
+      const previous = more ? state[kind] : [];
+      const identifiers = new Set(previous.map((item) => item.id));
+      state[kind] = [...previous, ...response.items.filter((item) => !identifiers.has(item.id))];
+      state.cursors[kind] = response.next_cursor || null;
+      config.render();
+    } finally {
+      if (epoch === page.epoch) {
+        page.busy = false;
+        $(config.list).setAttribute("aria-busy", "false");
+        configureModelConnectionButtons();
+      }
+    }
+  }
+
+  async function currentModelGeneration(path) {
+    const value = await api(path);
+    if (!Number.isSafeInteger(value.generation) || value.generation < 0) {
+      throw new Error("无法核对当前模型代次，请刷新后重试。");
+    }
+    return value.generation;
+  }
+
   async function loadModelConnections() {
     $("#model-connection-list").setAttribute("aria-busy", "true");
     try {
-      const response = await api("/v2/platform-admin/model-connections");
-      state.modelConnections = response.items;
-      renderModelConnections();
+      await loadModelList("modelConnections");
       $("#model-deployment-panel").hidden = !state.context.capabilities.model_deployments_enabled;
       if (state.context.capabilities.model_deployments_enabled) {
-        const drafts = await api("/v2/platform-admin/model-deployments");
-        state.modelDeployments = drafts.items;
-        renderModelDeployments();
+        await loadModelList("modelDeployments");
       }
       $("#model-test-funding-panel").hidden = !state.context.capabilities.model_test_funding_enabled;
       $("#model-verification-panel").hidden = !state.context.capabilities.model_verification_enabled;
@@ -684,8 +736,10 @@
   function renderModelDeployments() {
     const list = $("#model-deployment-list");
     list.replaceChildren();
-    $("#model-deployment-count").textContent = `${state.modelDeployments.length} VERSIONS / FIRST 100`;
-    if (!state.modelDeployments.length) list.append(emptyRecord("尚无草稿。连接投影确认后可建立候选模型。"));
+    $("#model-deployment-count").textContent = `${state.modelDeployments.length} VERSIONS LOADED`;
+    if (!state.modelDeployments.length) list.append(emptyRecord(state.cursors.modelDeployments
+      ? "本页暂无可展示的草稿，可继续读取历史。"
+      : "尚无草稿。连接投影确认后可建立候选模型。"));
     for (const item of state.modelDeployments) {
       list.append(recordRow({
         title: item.display_name, identifier: item.public_model_id, status: item.projection_status,
@@ -715,11 +769,18 @@
     configureModelConnectionButtons();
   }
 
-  async function loadModelPublicationCatalog(tenantId) {
+  async function loadModelPublicationCatalog(tenantId, more = false) {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(tenantId)) {
       throw new Error("请输入有效的租户 UUID");
     }
+    const page = state.modelPages.modelPublications;
+    if (more && (page.busy || !state.cursors.modelPublications || state.modelPublicationTenant !== tenantId)) return false;
+    const cursor = more ? state.cursors.modelPublications : null;
+    const previous = more ? state.modelPublications : [];
     const epoch = ++state.modelPublicationEpoch;
+    const context = state.context;
+    page.busy = true;
+    if (!more) state.cursors.modelPublications = null;
     state.modelPublicationTenant = null;
     state.modelPublications = [];
     $("#model-publication-tenant").value = tenantId;
@@ -727,14 +788,17 @@
     configureModelConnectionButtons();
     $("#model-publication-status").textContent = "LOADING";
     try {
-      const value = await api(`/v2/platform-admin/model-publications?tenant_id=${encodeURIComponent(tenantId)}`);
-      if (epoch !== state.modelPublicationEpoch) return false;
-      state.modelPublications = value.items;
+      const value = await api(`/v2/platform-admin/model-publications?tenant_id=${encodeURIComponent(tenantId)}&limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      if (epoch !== state.modelPublicationEpoch || state.context !== context) return false;
+      const current = new Map(previous.map((item) => [`${item.public_model_id}:${item.wire_api}`, item]));
+      for (const item of value.items) current.set(`${item.public_model_id}:${item.wire_api}`, item);
+      state.modelPublications = [...current.values()];
+      state.cursors.modelPublications = value.next_cursor || null;
       state.modelPublicationTenant = tenantId;
       $("#model-publication-tenant").value = tenantId;
       $("#model-publication-status").textContent = "SCOPE CHECKED";
       const list = $("#model-publication-list");
-      list.replaceChildren(...(value.items.length ? value.items.map((item) => {
+      list.replaceChildren(...(state.modelPublications.length ? state.modelPublications.map((item) => {
         const disable = actionButton("普通停用", () => runModelCommand(() => startModelDisablement(item)), {
           danger: true, testId: "model-publication-disable",
         });
@@ -747,7 +811,9 @@
             testId: "model-disablement-read",
           })] : [])],
         });
-      }) : [emptyRecord("该租户尚无候选目录版本。运行时未启用。") ]));
+      }) : [emptyRecord(state.cursors.modelPublications
+        ? "本页仅含较早版本，可继续读取目录。运行时未启用。"
+        : "该租户尚无候选目录版本。运行时未启用。") ]));
       return true;
     } catch (error) {
       if (epoch !== state.modelPublicationEpoch) return false;
@@ -755,6 +821,7 @@
       $("#model-publication-list").replaceChildren(emptyRecord("目录查询失败，发布保持禁用。"));
       throw error;
     } finally {
+      if (epoch === state.modelPublicationEpoch) page.busy = false;
       configureModelConnectionButtons();
     }
   }
@@ -862,14 +929,22 @@
     if (state.modelCommandBusy || state.modelCommand || !state.modelPublicationTenant ||
       !mutationReady("platform.model_provider.publish")) return;
     const tenantId = state.modelPublicationTenant;
-    const generation = state.modelPublications.find((row) =>
-      row.public_model_id === item.public_model_id && row.wire_api === item.wire_api)?.generation || 0;
+    let generation;
+    state.modelCommandBusy = true;
+    configureModelConnectionButtons();
+    try {
+      generation = await currentModelGeneration(`/v2/platform-admin/model-publications/current-generation?tenant_id=${encodeURIComponent(tenantId)}&public_model_id=${encodeURIComponent(item.public_model_id)}&wire_api=${encodeURIComponent(item.wire_api)}`);
+    } finally {
+      state.modelCommandBusy = false;
+      configureModelConnectionButtons();
+    }
+    if (state.modelPublicationTenant !== tenantId || state.modelCommand) return;
     const approved = await openAction({
       title: "记录租户候选发布版本",
       summary: `${item.display_name} · ${item.wire_api} → 租户 ${tenantId}，目录 V${generation} → V${generation + 1}。引用已结算验证，由可信 Worker 重新核对权限和副本；不额外执行付费推理，运行时仍关闭。`,
       risk: "CRITICAL", confirm: "PUBLISH", fields: [],
     });
-    if (!approved || state.modelCommandBusy || state.modelCommand) return;
+    if (!approved || state.modelCommandBusy || state.modelCommand || state.modelPublicationTenant !== tenantId) return;
     state.modelCommandBusy = true;
     state.modelCommand = { idempotencyKey: idempotency("model-publish"), operationId: null,
       kind: "publish_deployment", deploymentId: item.id };
@@ -995,7 +1070,7 @@
     $("#model-deployment-target").textContent = `${item.display_name} / 当前密钥 V${item.credential_generation}`;
     $("#model-deployment-credential").replaceChildren(new Option("正在核对当前凭据投影…", ""));
     configureModelConnectionButtons();
-    const response = await api(`/v2/platform-admin/model-connections/${encodeURIComponent(item.id)}/credential-versions`);
+    const response = await api(`/v2/platform-admin/model-connections/${encodeURIComponent(item.id)}/credential-versions?limit=1`);
     if (state.modelDraftConnection?.id !== item.id) return;
     const current = response.items.filter((value) => value.generation === item.credential_generation && value.projected);
     $("#model-deployment-credential").replaceChildren(...(current.length
@@ -1017,8 +1092,7 @@
       }
       if (!state.modelDraftConnection) throw new Error("请先选择连接");
       const publicModelId = $("#model-deployment-model").value.trim();
-      const expectedGeneration = Math.max(0, ...state.modelDeployments
-        .filter((item) => item.public_model_id === publicModelId).map((item) => item.generation));
+      const expectedGeneration = await currentModelGeneration(`/v2/platform-admin/model-deployments/current-generation?public_model_id=${encodeURIComponent(publicModelId)}`);
       const operation = await api("/v2/platform-admin/model-deployments", {
         method: "POST", headers: { "Idempotency-Key": state.modelCommand.idempotencyKey },
         body: {
@@ -1818,6 +1892,11 @@
   $("#model-connection-rotate").addEventListener("submit", (event) => void runModelCommand(() => submitModelConnection(event, true)));
   $("#model-deployment-create").addEventListener("submit", (event) => void runModelCommand(() => submitModelDeployment(event)));
   $("#model-connections-refresh").addEventListener("click", () => void runModelCommand(loadModelConnections));
+  $("#model-connections-more").addEventListener("click", () => void runModelCommand(() => loadModelList("modelConnections", true)));
+  $("#model-deployments-more").addEventListener("click", () => void runModelCommand(() => loadModelList("modelDeployments", true)));
+  $("#model-publications-more").addEventListener("click", () => {
+    if (state.modelPublicationTenant) void runModelCommand(() => loadModelPublicationCatalog(state.modelPublicationTenant, true));
+  });
   $("#model-test-funding-form").addEventListener("submit", (event) => void runModelCommand(() => submitModelTestFunding(event)));
   $("#model-test-funding-refresh").addEventListener("click", () => void runModelCommand(loadModelTestFunding));
   $("#model-verification-refresh").addEventListener("click", () => {
@@ -1831,6 +1910,8 @@
     state.modelPublicationEpoch += 1;
     state.modelPublicationTenant = null;
     state.modelPublications = [];
+    state.cursors.modelPublications = null;
+    state.modelPages.modelPublications.busy = false;
     $("#model-publication-status").textContent = "NEEDS CHECK";
     $("#model-publication-list").replaceChildren(emptyRecord("范围已更改，请重新核对目录。"));
     configureModelConnectionButtons();
