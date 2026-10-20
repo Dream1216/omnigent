@@ -29,6 +29,11 @@ from uuid import UUID
 
 import yaml
 
+from saas.production.postgresql_migration import (
+    PostgreSqlMigrationError,
+    _expected_head,
+    _runtime_saas_head,
+)
 from saas.production.service_bindings import (
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
@@ -55,7 +60,9 @@ _TEMPLATE_RELEASE_INCARNATION = "0" * 32
 _TEMPLATE_ARTIFACT_STORE_URI = "s3://replace-with-production-bucket/omnigent"
 _TEMPLATE_ARTIFACT_ENDPOINT = "https://replace-artifact-endpoint.example.invalid"
 _TEMPLATE_ARTIFACT_REGION = "replace-with-artifact-region"
-_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000015"
+_TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000015"
+_MIGRATION_COMMAND = ["python", "-m", "saas.scripts.run_postgresql_migration"]
+_MIGRATION_ARGS = ["--product-revision", "$(OMNIGENT_SAAS_SOURCE_SHA)"]
 _TEMPLATE_SERVICE_LOGINS: Final = {
     service: "replace_runtime_login" if service == "runtime" else f"replace_{service}_login"
     for service in EXPECTED_PRODUCTION_SERVICE_ROLES
@@ -837,10 +844,12 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
     artifact = _parse_artifact(document.get("artifact"), mode=mode)
     preview = _parse_preview(document.get("preview"))
     control_plane_schema_revision = _string(document, "control_plane_schema_revision")
-    if control_plane_schema_revision != _CONTROL_PLANE_SCHEMA_REVISION:
+    try:
+        _runtime_saas_head(control_plane_schema_revision)
+    except PostgreSqlMigrationError:
         raise ReleaseRenderError(
-            "control_plane_schema_revision must equal the packaged p0s14 Alembic head"
-        )
+            "control_plane_schema_revision is not supported by the packaged application"
+        ) from None
     runner_fleet = _parse_runner_fleet(
         document.get("runner_fleet"),
         mode=mode,
@@ -1163,6 +1172,18 @@ def _template_service_bindings_text() -> str:
     )
 
 
+def _migration_args(spec: KubernetesReleaseSpec) -> list[str]:
+    if spec.control_plane_schema_revision == _expected_head("saas"):
+        return list(_MIGRATION_ARGS)
+    _runtime_saas_head(spec.control_plane_schema_revision)
+    return [
+        *_MIGRATION_ARGS,
+        "--verify-only",
+        "--verification-saas-head",
+        spec.control_plane_schema_revision,
+    ]
+
+
 def _render_release_documents(
     sources: Mapping[str, _SourceManifest], spec: KubernetesReleaseSpec
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
@@ -1171,6 +1192,18 @@ def _render_release_documents(
     artifact_admission = documents["kubernetes.artifact-admission.yaml"]
     production = documents["kubernetes.production.yaml"]
     network = documents["kubernetes.network-policy.yaml"]
+    migration_job = _resource(migration, kind="Job", name="omnigent-saas-postgresql-migration")
+    migration_pod = _nested_mapping(migration_job, "spec", "template", "spec")
+    migrate = _named_row(migration_pod.get("containers"), name="migrate", row_type="container")
+    if migrate.get("command") != _MIGRATION_COMMAND:
+        raise ReleaseRenderError("migration Job command source projection is invalid")
+    _set_exact(
+        migrate,
+        "args",
+        _migration_args(spec),
+        expected=_MIGRATION_ARGS,
+        name="migration Job argument",
+    )
 
     migration_release = _resource(
         migration, kind="ConfigMap", data_key="OMNIGENT_SAAS_PRODUCT_REVISION"
@@ -1980,6 +2013,8 @@ def _scalar_changes(
     name: str,
     path: tuple[str | int, ...] = (),
 ) -> list[tuple[tuple[str | int, ...], Any, Any]]:
+    if name == "kubernetes.migration.yaml" and path and path[-1] == "args":
+        return [] if source == rendered else [(path, source, rendered)]
     if isinstance(source, dict):
         if not isinstance(rendered, dict) or set(rendered) - set(source):
             raise ReleaseRenderError(f"{name}: renderer changed mapping structure")
@@ -2033,6 +2068,23 @@ def _authorized_release_change(
     resource_name = metadata.get("name")
     if not isinstance(resource_name, str):
         return False
+
+    if (
+        manifest_name == "kubernetes.migration.yaml"
+        and kind == "Job"
+        and resource_name == "omnigent-saas-postgresql-migration"
+        and relative_path[:4] == ("spec", "template", "spec", "containers")
+        and len(relative_path) == 6
+        and relative_path[-1] == "args"
+    ):
+        container = _value_at_path(source_item, relative_path[:-1])
+        return (
+            isinstance(container, dict)
+            and container.get("name") == "migrate"
+            and container.get("command") == _MIGRATION_COMMAND
+            and before == _MIGRATION_ARGS
+            and after == _migration_args(spec)
+        )
 
     final_image = f"{_IMAGE_REPOSITORY}@{spec.image_digest}"
     if relative_path and relative_path[-1] == "image":
@@ -2189,7 +2241,7 @@ def _authorized_release_change(
                     spec.official_schema_revision,
                 ),
                 "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": (
-                    _CONTROL_PLANE_SCHEMA_REVISION,
+                    _TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION,
                     spec.control_plane_schema_revision,
                 ),
                 "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": (

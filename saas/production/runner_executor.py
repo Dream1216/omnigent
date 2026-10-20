@@ -349,6 +349,38 @@ _RUNNER_AGENT_CONTRACT_FUNCTION_NAMES = tuple(
 )
 
 
+def _runner_agent_schema_contract(
+    schema_revision: str | None,
+) -> tuple[str, tuple[tuple[str, str], ...], dict[int, str]]:
+    from saas.production.postgresql_migration import (
+        PostgreSqlMigrationError,
+        _expected_head,
+        _runtime_saas_head,
+    )
+
+    try:
+        selected = _runtime_saas_head(
+            _expected_head("saas") if schema_revision is None else schema_revision
+        )
+    except PostgreSqlMigrationError:
+        raise RunnerControlError(
+            "runner_executor_not_ready", "Runner database schema is unavailable"
+        ) from None
+    if selected == "lm2r00000001":
+        return (
+            selected,
+            (
+                *_RUNNER_AGENT_API_FUNCTION_SIGNATURES,
+                ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb"),
+            ),
+            {
+                16: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
+                18: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
+            },
+        )
+    return selected, _RUNNER_AGENT_API_FUNCTION_SIGNATURES, _RUNNER_AGENT_FUNCTION_SHA256_BY_MAJOR
+
+
 class RunnerExecutorConfig(Protocol):
     @property
     def product_revision(self) -> str: ...
@@ -625,9 +657,20 @@ def _verify_runner_agent_database_authority(
     connection_generation: int,
     fleet_members: tuple[tuple[UUID, int], tuple[UUID, int]] | None = None,
     required_registration_status: str = "online",
+    control_plane_schema_revision: str | None = None,
 ) -> str:
     """Admit only one direct, non-escalatable Runner-incarnation login."""
 
+    schema_revision, api_function_signatures, function_hashes = _runner_agent_schema_contract(
+        control_plane_schema_revision
+    )
+    contract_function_names = tuple(
+        name
+        for name, _arguments in (
+            *api_function_signatures,
+            *_RUNNER_AGENT_OWNER_ONLY_FUNCTION_SIGNATURES,
+        )
+    )
     expected_login = _runner_agent_database_login(runner_id, connection_generation)
     if engine.dialect.name != "postgresql":
         raise RunnerControlError(
@@ -742,7 +785,7 @@ def _verify_runner_agent_database_authority(
             ).one()
             if (
                 required_registration_status not in {"draining", "online"}
-                or revision != "p0s000000015"
+                or revision != schema_revision
                 or tuple(identity_matches)
                 != (
                     True,
@@ -854,9 +897,9 @@ def _verify_runner_agent_database_authority(
                     "WHERE namespace.nspname = 'public' "
                     "AND procedure.proname = ANY(CAST(:function_names AS text[]))"
                 ),
-                {"function_names": list(_RUNNER_AGENT_CONTRACT_FUNCTION_NAMES)},
+                {"function_names": list(contract_function_names)},
             )
-            if function_hash != _RUNNER_AGENT_FUNCTION_SHA256_BY_MAJOR[server_major]:
+            if function_hash != function_hashes[server_major]:
                 raise ValueError("runner function contract")
 
             memberships = [
@@ -1139,12 +1182,12 @@ def _verify_runner_agent_database_authority(
                         "AND procedure.proname = ANY(CAST(:function_names AS text[])) "
                         "ORDER BY procedure.proname"
                     ),
-                    {"function_names": list(_RUNNER_AGENT_CONTRACT_FUNCTION_NAMES)},
+                    {"function_names": list(contract_function_names)},
                 ).all()
             ]
             expected_function_acls = []
             for function_name, arguments in (
-                *_RUNNER_AGENT_API_FUNCTION_SIGNATURES,
+                *api_function_signatures,
                 *_RUNNER_AGENT_OWNER_ONLY_FUNCTION_SIGNATURES,
             ):
                 owner = next(row[6] for row in function_acls if row[0] == function_name)
@@ -1159,7 +1202,7 @@ def _verify_runner_agent_database_authority(
                         owner,
                     )
                 )
-                if (function_name, arguments) in _RUNNER_AGENT_API_FUNCTION_SIGNATURES:
+                if (function_name, arguments) in api_function_signatures:
                     expected_function_acls.append(
                         (
                             function_name,
@@ -1199,7 +1242,7 @@ def _verify_runner_agent_database_authority(
                         False,
                         True,
                     )
-                    for function_name, arguments in _RUNNER_AGENT_API_FUNCTION_SIGNATURES
+                    for function_name, arguments in api_function_signatures
                 }
             ):
                 raise ValueError("runner base function ACL")
@@ -1644,7 +1687,7 @@ def _verify_runner_agent_database_authority(
                 for function_name, arguments, extension_name, extension_version in (
                     *(
                         (function_name, arguments, "", "")
-                        for function_name, arguments in _RUNNER_AGENT_API_FUNCTION_SIGNATURES
+                        for function_name, arguments in api_function_signatures
                     ),
                     *(
                         (function_name, arguments, "pg_trgm", "1.6")
@@ -1667,7 +1710,9 @@ def _verify_runner_agent_database_authority(
             )
             if unsafe_default_acls != 0:
                 raise ValueError("runner default ACL")
-            return runner_agent_database_authority_contract_sha256(server_major=server_major)
+            return runner_agent_database_authority_contract_sha256(
+                server_major=server_major, control_plane_schema_revision=schema_revision
+            )
     except RunnerControlError:
         raise
     except Exception:  # noqa: BLE001 - database details and DSN stay private.
@@ -1677,25 +1722,30 @@ def _verify_runner_agent_database_authority(
         ) from None
 
 
-def runner_agent_database_authority_contract_sha256(*, server_major: int = 18) -> str:
+def runner_agent_database_authority_contract_sha256(
+    *, server_major: int = 18, control_plane_schema_revision: str | None = None
+) -> str:
     """Hash every accepted runtime catalog constant; live values are exact-checked above."""
 
     if server_major != 18:
         raise RunnerControlError(
             "runner_executor_not_ready", "Runner database authority is unavailable"
         )
+    schema_revision, api_function_signatures, function_hashes = _runner_agent_schema_contract(
+        control_plane_schema_revision
+    )
     document = {
-        "api_function_signatures": sorted(_RUNNER_AGENT_API_FUNCTION_SIGNATURES),
+        "api_function_signatures": sorted(api_function_signatures),
         "connection_limit": _RUNNER_AGENT_DATABASE_CONNECTION_LIMIT,
         "denied_pg_catalog_functions": sorted(_RUNNER_AGENT_DENIED_PG_CATALOG_FUNCTIONS),
-        "function_sha256": _RUNNER_AGENT_FUNCTION_SHA256_BY_MAJOR[server_major],
+        "function_sha256": function_hashes[server_major],
         "owner_only_function_signatures": sorted(_RUNNER_AGENT_OWNER_ONLY_FUNCTION_SIGNATURES),
         "pg_trgm_functions": sorted(_RUNNER_AGENT_PG_TRGM_FUNCTIONS),
         "policy_count": _RUNNER_AGENT_POLICY_COUNT,
         "policy_relation_count": _RUNNER_AGENT_POLICY_RELATION_COUNT,
         "policy_sha256s": sorted(_RUNNER_AGENT_POLICY_SHA256S_BY_MAJOR[server_major]),
         "role": _RUNNER_AGENT_DATABASE_ROLE,
-        "schema_revision": "p0s000000015",
+        "schema_revision": schema_revision,
         "select_columns": sorted(_RUNNER_AGENT_SELECT_COLUMNS),
         "select_tables": sorted(_RUNNER_AGENT_SELECT_TABLES),
         "server_major": server_major,
@@ -2187,6 +2237,14 @@ class ProductionHostIsolationExecutor:
     def _allocate_execution(
         self, lease: RunnerControlClientLease
     ) -> tuple[_ActiveExecution, tuple[str, ...]]:
+        if (
+            lease.execution_envelope is not None
+            and lease.execution_envelope.execution_kind == "omnigent.interactive.v1"
+        ):
+            raise RunnerControlError(
+                "runner_execution_kind_unsupported",
+                "Interactive execution requires a Runtime controller",
+            )
         _run, execution_spec = self._load_run(lease)
         envelope = lease.execution_envelope
         assert envelope is not None
@@ -3044,6 +3102,9 @@ def build_production_host_isolation_executor(
                     runner_id=config.runner_id,
                     connection_generation=config.connection_generation,
                     fleet_members=members,
+                    control_plane_schema_revision=source[
+                        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"
+                    ],
                 )
                 verify_runner_database_fleet_runtime_catalog_binding(
                     admission,

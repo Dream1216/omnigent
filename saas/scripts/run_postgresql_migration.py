@@ -19,6 +19,7 @@ from saas.production.postgresql_migration import (
 )
 from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
+    load_model_projection_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
@@ -114,8 +115,11 @@ def main() -> int:
         default=30.0,
     )
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--verification-saas-head")
     parser.add_argument("--output")
     args = parser.parse_args()
+    if args.verification_saas_head is not None and not args.verify_only:
+        parser.error("--verification-saas-head requires --verify-only")
     if not args.product_revision:
         parser.error("--product-revision or OMNIGENT_SAAS_SOURCE_SHA is required")
     product_environment = os.environ.get("OMNIGENT_SAAS_PRODUCT_REVISION")
@@ -154,6 +158,11 @@ def main() -> int:
             if "OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE" in os.environ
             else None
         )
+        model_projection_service_role_bindings = (
+            load_model_projection_service_role_bindings(os.environ)
+            if "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE" in os.environ
+            else None
+        )
     except ProductionServiceRoleBindingsError as error:
         parser.error(str(error))
     try:
@@ -167,6 +176,8 @@ def main() -> int:
             service_role_bindings=service_role_bindings,
             platform_model_service_role_bindings=platform_model_service_role_bindings,
             platform_admin_service_role_bindings=platform_admin_service_role_bindings,
+            model_projection_service_role_bindings=model_projection_service_role_bindings,
+            verification_saas_head=args.verification_saas_head,
         )
         receipt = run_production_postgresql_migration(plan, verify_only=args.verify_only)
         rendered = json.dumps(receipt.to_dict(), indent=2, sort_keys=True) + "\n"

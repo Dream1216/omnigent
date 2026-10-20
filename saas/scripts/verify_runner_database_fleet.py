@@ -46,7 +46,7 @@ def admit_runner_database_fleet(
 
     fleet = load_runner_database_fleet(source)
     context = load_runner_database_fleet_evidence_context(source, fleet=fleet)
-    verify_runner_database_fleet_release_facts(source, context)
+    control_plane_schema_revision = verify_runner_database_fleet_release_facts(source, context)
     verify_installed_runner_database_fleet_lineage(context)
     trust_pins = load_runner_database_fleet_trust_pins(
         source,
@@ -75,6 +75,7 @@ def admit_runner_database_fleet(
             trust_pins=trust_pins,
             environment_attestation=environment_attestation,
             source_sha256s=source_sha256s,
+            control_plane_schema_revision=control_plane_schema_revision,
         )
         signed = sign_runner_database_fleet_admission_receipt(
             source,
