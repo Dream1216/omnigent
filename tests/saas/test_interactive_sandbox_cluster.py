@@ -46,7 +46,14 @@ def _assert_cluster_authority(profile):
             ("", "pods", "exec", "create", runners, False),
             ("batch", "jobs", None, "create", namespace, False),
             ("batch", "jobs", None, "patch", runners, recovery_enabled),
-            ("", "pods", None, "patch", runners, recovery_enabled),
+            (
+                "",
+                "pods",
+                None,
+                "patch",
+                runners,
+                recovery_enabled or profile["provider"] == "agent_sandbox",
+            ),
             ("batch", "jobs", None, "patch", namespace, False),
             ("", "pods", None, "patch", namespace, False),
         ):
@@ -80,6 +87,83 @@ def test_fixture_operator_can_replace_owner_only_pins_without_root(tmp_path):
     _write_0400(path, "replacement-public-pins")
     assert path.read_text() == "replacement-public-pins"
     assert stat.S_IMODE(path.stat().st_mode) == 0o400
+
+
+@pytest.mark.parametrize("provider", ["kubernetes", "agent_sandbox"])
+@pytest.mark.parametrize("retirement", [False, True])
+def test_creation_pod_binding_requires_only_scoped_pod_patch(monkeypatch, provider, retirement):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from kubernetes import client, config
+
+    from tests.saas import test_interactive_sandbox_cluster as cluster
+
+    namespace, runners, captured = "owned-controller", "owned-runners", {}
+
+    class FixturePath:
+        def __init__(self, value):
+            self.value = value
+
+        def read_text(self):
+            assert self.value.endswith("/serviceaccount/namespace")
+            return namespace
+
+        def write_text(self, value):
+            assert self.value == "/exchange/cluster-authority.json"
+            captured.update(json.loads(value))
+
+    def review(document, **kwargs):
+        attributes = document["spec"]["resourceAttributes"]
+        resource, verb = attributes["resource"], attributes["verb"]
+        allowed = attributes["namespace"] == runners and (
+            (resource == "jobs" and (verb == "create" or (verb == "patch" and retirement)))
+            or (resource == "sandboxes" and verb == "create")
+            or (resource == "secrets" and verb in {"create", "get"})
+            or (
+                resource == "pods"
+                and not attributes.get("subresource")
+                and (
+                    verb == "list"
+                    or (verb == "patch" and (retirement or provider == "agent_sandbox"))
+                )
+            )
+        )
+        return SimpleNamespace(status=SimpleNamespace(allowed=allowed))
+
+    monkeypatch.setattr(cluster, "Path", FixturePath)
+    monkeypatch.setattr(config, "load_incluster_config", lambda **kwargs: None)
+    monkeypatch.setattr(client, "ApiClient", lambda *args, **kwargs: nullcontext(object()))
+    monkeypatch.setattr(
+        client,
+        "AuthenticationV1Api",
+        lambda api: SimpleNamespace(
+            create_self_subject_review=lambda *args, **kwargs: SimpleNamespace(
+                status=SimpleNamespace(
+                    user_info=SimpleNamespace(
+                        username=f"system:serviceaccount:{namespace}:controller"
+                    )
+                )
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        client,
+        "AuthorizationV1Api",
+        lambda api: SimpleNamespace(create_self_subject_access_review=review),
+    )
+    cluster._assert_cluster_authority(
+        {
+            "provider": provider,
+            "managed_retirement": retirement,
+            "sandbox": {"kubernetes": {"namespace": runners}},
+        }
+    )
+    assert captured["passed"] and len(captured["checks"]) == 14
+    assert captured["checks"][f"{runners}:patch:/pods/"] is (
+        retirement or provider == "agent_sandbox"
+    )
+    assert captured["checks"][f"{runners}:patch:batch/jobs/"] is retirement
 
 
 def test_managed_sandbox_controller_litellm_and_pg18_billing(
