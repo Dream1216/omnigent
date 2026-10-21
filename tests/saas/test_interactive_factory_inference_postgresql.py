@@ -77,6 +77,7 @@ def test_signed_fleet_factory_actual_litellm_and_existing_machine_billing(
     _signed_fleet(
         isolated_postgres_url,
         tmp_path,
+        monkeypatch,
         runtime_probe=lambda case: _factory_run(
             case,
             db_uri=db_uri,

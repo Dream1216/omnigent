@@ -120,6 +120,7 @@ def test_managed_sandbox_controller_litellm_and_pg18_billing(
     physical._signed_fleet(
         isolated_postgres_url,
         tmp_path,
+        monkeypatch,
         runtime_probe=probe,
     )
 

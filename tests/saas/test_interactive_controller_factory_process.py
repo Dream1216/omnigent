@@ -4027,6 +4027,7 @@ def test_actual_controller_factory_host_litellm_and_pg18_billing(
         _signed_fleet(
             request.getfixturevalue("isolated_postgres_url"),
             tmp_path,
+            monkeypatch,
             runtime_probe=lambda case: _delegate(case, tmp_path),
         )
     else:
