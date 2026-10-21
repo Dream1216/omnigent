@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from saas.production.review_exception import apply_review_exception, review_verification_scope
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _RECORD_FIELDS = {
@@ -429,6 +431,7 @@ def _validate_record(
     *,
     now: datetime,
     expected_product_revision: str | None,
+    repo: Path | None = None,
 ) -> tuple[list[str], list[str], bool]:
     violations: list[str] = []
     blockers: list[str] = []
@@ -543,6 +546,16 @@ def _validate_record(
 
     required_roles = _string_set(policy.get("required_attestation_roles"))
     attestations = record.get("attestations")
+    review = apply_review_exception(
+        repo,
+        attestations,
+        domain="deployment",
+        required_roles=required_roles,
+        product_revision=revision,
+        now=now,
+    )
+    violations.extend(review.violations)
+    required_roles, attestations = review.required_roles, review.attestations
     roles: set[str] = set()
     actors: set[str] = set()
     if not isinstance(attestations, list):
@@ -587,6 +600,7 @@ def _validate_record(
     return violations, blockers, qualifies
 
 
+@review_verification_scope
 def validate_deployment_readiness(
     repo: Path,
     policy: Mapping[str, Any],
@@ -618,6 +632,7 @@ def validate_deployment_readiness(
             policy,
             now=current,
             expected_product_revision=expected_product_revision,
+            repo=repo,
         )
         violations.extend(record_violations)
         blockers.extend(record_blockers)
