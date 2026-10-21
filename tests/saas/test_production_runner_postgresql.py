@@ -27,9 +27,9 @@ from saas.control_plane.preview_execution import (
 )
 from saas.control_plane.runner_execution_spec import managed_run_execution_spec
 from saas.control_plane.scheduling import RunnerExecutionEnvelope
-from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.control_plane.worktrees import WorktreeControlPlane, WorktreeControlPlaneError
 from saas.control_plane.worktrees import _canonical_hash as _worktree_hash
+from saas.production.postgresql_migration import _expected_head
 from saas.production.runner_control import RunnerControlClientLease, RunnerControlError
 from saas.production.runner_executor import (
     _RUNNER_AGENT_CONTRACT_FUNCTION_NAMES,
@@ -443,7 +443,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
             )
             connection.execute(
                 sa.text("UPDATE saas_alembic_version SET version_num = :revision"),
-                {"revision": CONTROL_PLANE_SCHEMA_REVISION},
+                {"revision": _expected_head("saas")},
             )
         subprocess.run(
             [psql, "-X", "--no-password", "-f", str(wrapper)],
@@ -2936,7 +2936,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
 
         before = current_projection()
         assert before == (
-            CONTROL_PLANE_SCHEMA_REVISION,
+            _expected_head("saas"),
             len(_RUNNER_AGENT_CONTRACT_FUNCTION_NAMES),
             19,
             2,
@@ -3128,7 +3128,7 @@ def test_pg16_runner_direct_authority_is_fail_closed(
                 )
 
         before = mutation_projection()
-        assert before == (CONTROL_PLANE_SCHEMA_REVISION, 0, 0, 0, 0, 0)
+        assert before == (_expected_head("saas"), 0, 0, 0, 0, 0)
         with pytest.raises(RunnerControlError) as rejected:
             _verify_runner_agent_database_authority(
                 login_engine,

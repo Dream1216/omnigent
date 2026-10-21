@@ -101,16 +101,20 @@ def test_fresh_schema_matches_the_ordinary_unfiltered_alembic_check(schema_datab
     assert _foreign_keys(schema_database) == set()
 
 
-def test_complete_application_metadata_is_not_overridden_or_hidden(schema_database):
+def test_complete_application_metadata_is_not_overridden_or_hidden(schema_database, monkeypatch):
     _upgrade(schema_database)
     application = control_plane_migration_metadata(SaasBase.metadata)
     assert control_plane_migration_metadata(application) is application
-    application.tables["saas_model_connections"].c.display_name.type = sa.String(12)
-    with schema_database.connect() as connection:
-        context = MigrationContext.configure(
-            connection, opts={"version_table": "saas_alembic_version", "compare_type": True}
-        )
-        assert compare_metadata(context, control_plane_migration_metadata(application))
+    column = application.tables["saas_model_connections"].c.display_name
+    original_type = column.type
+    with monkeypatch.context() as mutation:
+        mutation.setattr(column, "type", sa.String(12))
+        with schema_database.connect() as connection:
+            context = MigrationContext.configure(
+                connection, opts={"version_table": "saas_alembic_version", "compare_type": True}
+            )
+            assert compare_metadata(context, control_plane_migration_metadata(application))
+    assert column.type is original_type
 
 
 def test_nonempty_p0_execution_survives_schema_upgrade_with_foreign_keys_enabled(
