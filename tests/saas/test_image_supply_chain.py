@@ -1503,6 +1503,225 @@ def test_candidate_contract_rejects_missing_published_host_harness_check(
     )
 
 
+def _publication_platform_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, str]]:
+    """Execute real workflow shell against offline CLI doubles, not real scanners."""
+    runtime = tmp_path / "runtime"
+    tools = runtime / "supply-chain-tools"
+    tools.mkdir(parents=True)
+    fixture = {
+        f"registry.invalid/{name}@{_digest(parent)}": {
+            f"linux/{arch}": f"registry.invalid/{name}@{_digest(child)}"
+            for arch, child in zip(("amd64", "arm64"), children, strict=True)
+        }
+        for name, parent, children in (
+            ("server", "a", "de"),
+            ("host", "b", "f1"),
+            ("litellm", "c", "23"),
+        )
+    }
+    monkeypatch.setenv("PLATFORM_FIXTURE", json.dumps(fixture))
+    monkeypatch.setenv("PLATFORM_CALLS", str(tmp_path / "calls.jsonl"))
+    monkeypatch.setenv("PLATFORM_CACHE", str(tmp_path / "cache.json"))
+    monkeypatch.setenv("RUNNER_TEMP", str(runtime))
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    program = tools / "platform-tool"
+    program.write_text(
+        f"#!{sys.executable}\n"
+        + r"""
+import hashlib,json,os,sys
+from pathlib import Path
+tool,args=Path(sys.argv[0]).name,sys.argv[1:]
+fixture=json.loads(os.environ["PLATFORM_FIXTURE"])
+with Path(os.environ["PLATFORM_CALLS"]).open("a") as output:
+    output.write(json.dumps({"tool":tool,"args":args})+"\n")
+def platform():
+    return args[args.index("--platform")+1]
+def reference():
+    return next(value for value in args if value.startswith("registry.invalid/"))
+if tool=="crane":
+    if os.environ.get("PLATFORM_RESOLUTION_FAIL"): sys.exit(42)
+    print(fixture[args[-1]][platform()].split("@",1)[1])
+elif tool=="docker":
+    image=reference()
+    cache_file=Path(os.environ["PLATFORM_CACHE"])
+    cache=json.loads(cache_file.read_text()) if cache_file.exists() else {}
+    if image in cache and cache[image]!=platform():
+        print("cannot overwrite digest",file=sys.stderr)
+        sys.exit(125)
+    cache[image]=platform()
+    cache_file.write_text(json.dumps(cache))
+elif tool=="syft":
+    for index,value in enumerate(args):
+        if value=="-o":
+            output=Path(args[index+1].split("=",1)[1])
+            output.parent.mkdir(parents=True,exist_ok=True)
+            output.write_text(json.dumps({"fixture_source":reference()}))
+elif tool=="grype":
+    if args[:2]==["db","status"]:
+        print(json.dumps({"fixture":True}))
+    else:
+        severity=os.environ.get("PLATFORM_FINDING","")
+        rows=[{"vulnerability":{"severity":severity}}] if severity in ("Critical","High") else []
+        print(json.dumps({"matches":rows,
+            "ignoredMatches":[{}] if severity=="Ignored" else []}))
+elif tool=="sha256sum":
+    for value in args:
+        print(hashlib.sha256(Path(value).read_bytes()).hexdigest()+"  "+value)
+else:
+    sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    program.chmod(0o755)
+    for name in ("crane", "docker", "syft", "grype", "sha256sum"):
+        (tools / name).symlink_to(program)
+    release = tmp_path / "saas/production/litellm_release.json"
+    release.parent.mkdir(parents=True)
+    release.write_bytes((_repo() / "saas/production/litellm_release.json").read_bytes())
+    scans = tmp_path / "artifacts/litellm-current-scans/grype"
+    scans.mkdir(parents=True)
+    for arch in ("amd64", "arm64"):
+        (scans / f"litellm-{arch}-grype.json").write_text('{"matches":[],"ignoredMatches":[]}')
+    references = {
+        name.upper() + "_IMAGE": next(
+            ref for ref in fixture if ref.startswith(f"registry.invalid/{name}@")
+        )
+        for name in ("server", "host", "litellm")
+    }
+    return tmp_path, references
+
+
+def _execute_publication_step(
+    name: str, root: Path, references: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    workflow = (_repo() / ".github/workflows/saas-image-candidate.yml").read_text()
+    step = workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - name:", 1)[0]
+    body = step.split("        run: |\n", 1)[1]
+    shell = "\n".join(line[10:] for line in body.splitlines())
+    return subprocess.run(
+        ["bash", "-c", shell],
+        cwd=root,
+        env={**os.environ, **references},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_published_architecture_steps_use_platform_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, references = _publication_platform_fixture(tmp_path, monkeypatch)
+    for name in (
+        "Generate per-architecture SBOMs and check raw findings",
+        "Verify published LiteLLM runtime on both architectures",
+        "Generate LiteLLM per-architecture SBOMs and check raw findings",
+    ):
+        result = _execute_publication_step(name, root, references)
+        assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+    fixture = json.loads(os.environ["PLATFORM_FIXTURE"])
+    children = {image for platforms in fixture.values() for image in platforms.values()}
+    observed = []
+    for call in calls:
+        if call["tool"] not in {"docker", "syft", "grype"} or call["args"][:2] == ["db", "status"]:
+            continue
+        image = next(value for value in call["args"] if value.startswith("registry.invalid/"))
+        platform = call["args"][call["args"].index("--platform") + 1]
+        assert image in children and any(
+            images.get(platform) == image for images in fixture.values()
+        )
+        observed.append(image)
+    assert set(observed) == children
+    assert sum(call["tool"] == "docker" for call in calls) == 10
+    assert sum(call["tool"] == "syft" for call in calls) == 6
+    bindings = list(root.glob("artifacts/**/*.image-binding.json"))
+    assert len(bindings) == 6
+    for path in bindings:
+        binding = json.loads(path.read_text())
+        assert fixture[binding["index"]][binding["platform"]] == binding["manifest"]
+
+
+@pytest.mark.parametrize(
+    ("step_name", "fragment", "fallback"),
+    [
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            '--entrypoint /usr/local/bin/python "$arch_image"',
+            "$image",
+        ),
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            '--entrypoint /bin/sh "$arch_image"',
+            "$image",
+        ),
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            'supply-chain-tools/syft" "$arch_image"',
+            "$image",
+        ),
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            'supply-chain-tools/grype" "$arch_image"',
+            "$image",
+        ),
+        (
+            "Verify published LiteLLM runtime on both architectures",
+            '"$arch_image" -B -I -c',
+            "$LITELLM_IMAGE",
+        ),
+        (
+            "Generate LiteLLM per-architecture SBOMs and check raw findings",
+            'supply-chain-tools/syft" "$arch_image"',
+            "$LITELLM_IMAGE",
+        ),
+    ],
+)
+def test_candidate_contract_rejects_platform_manifest_probe_drift(
+    tmp_path: Path, step_name: str, fragment: str, fallback: str
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text()
+    marker = f"      - name: {step_name}\n"
+    before, remainder = source.split(marker, 1)
+    step, separator, after = remainder.partition("\n      - name:")
+    assert step.count(fragment) == 1
+    step = step.replace(fragment, fragment.replace("$arch_image", fallback))
+    workflow.write_text(before + marker + step + separator + after)
+    assert (
+        "published probes and scanners must bind platform manifest digests"
+        in validate_candidate_build_contract(repo)
+    )
+
+
+@pytest.mark.parametrize("finding", ["Critical", "High", "Ignored"])
+def test_published_platform_scan_still_rejects_raw_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finding: str
+) -> None:
+    root, references = _publication_platform_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("PLATFORM_FINDING", finding)
+    result = _execute_publication_step(
+        "Generate per-architecture SBOMs and check raw findings", root, references
+    )
+    assert result.returncode != 0
+
+
+def test_published_platform_resolution_failure_cannot_fall_back_to_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, references = _publication_platform_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("PLATFORM_RESOLUTION_FAIL", "1")
+    result = _execute_publication_step(
+        "Generate per-architecture SBOMs and check raw findings", root, references
+    )
+    assert result.returncode == 42
+    calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+    assert not any(call["tool"] == "docker" for call in calls)
+
+
 def test_candidate_composite_build_contract_rejects_missing_and_symlink(
     tmp_path: Path,
 ) -> None:

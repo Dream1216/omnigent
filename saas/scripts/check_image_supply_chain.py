@@ -643,6 +643,33 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     }
     if any(fragment not in workflow for fragment in protected_release_fragments):
         violations.append("protected signed release workflow contract is incomplete")
+    platform_steps = {
+        "Generate per-architecture SBOMs and check raw findings": {
+            'arch_image="${image%@*}@$(crane digest --platform "linux/${arch}" "$image")"',
+            '--entrypoint /usr/local/bin/python "$arch_image"',
+            '--entrypoint /bin/sh "$arch_image"',
+            'supply-chain-tools/syft" "$arch_image"',
+            'supply-chain-tools/grype" "$arch_image"',
+            '--arg index "$image" --arg manifest "$arch_image"',
+        },
+        "Verify published LiteLLM runtime on both architectures": {
+            'arch_image="${LITELLM_IMAGE%@*}@$(crane digest '
+            '--platform "linux/$arch" "$LITELLM_IMAGE")"',
+            '"$arch_image" -B -I -c',
+        },
+        "Generate LiteLLM per-architecture SBOMs and check raw findings": {
+            'arch_image="${LITELLM_IMAGE%@*}@$(crane digest '
+            '--platform "linux/$arch" "$LITELLM_IMAGE")"',
+            'supply-chain-tools/syft" "$arch_image"',
+            '--arg index "$LITELLM_IMAGE" --arg manifest "$arch_image"',
+        },
+    }
+    if any(
+        (step := _named_workflow_step(workflow, name)) is None
+        or any(fragment not in step for fragment in fragments)
+        for name, fragments in platform_steps.items()
+    ):
+        violations.append("published probes and scanners must bind platform manifest digests")
     if workflow.count(f"uses: {_ATTEST_ACTION}") != 4:
         violations.append("protected release must sign the wheel and all three OCI images")
     if workflow.count("push-to-registry: true") != 3 or workflow.count("crane push ") != 3:
