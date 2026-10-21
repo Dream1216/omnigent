@@ -645,17 +645,19 @@ jobs:
             esac
             for arch in amd64 arm64; do
               prefix="artifacts/supply-chain/${artifact}-${arch}"
+              arch_image="${image%@*}@$(crane digest --platform "linux/${arch}" "$image")"
+              jq -n --arg index "$image" --arg manifest "$arch_image" --arg platform "linux/${arch}" '{index: $index, manifest: $manifest, platform: $platform}' > "${prefix}.image-binding.json"
               docker run --rm --pull always --platform "linux/${arch}" --network none \
-                --entrypoint /usr/local/bin/python "$image" -B -I -c \
+                --entrypoint /usr/local/bin/python "$arch_image" -B -I -c \
                 'import pyexpat, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION'
               docker run --rm --pull always --platform "linux/${arch}" --network none \
-                --entrypoint /bin/sh "$image" -ec \
+                --entrypoint /bin/sh "$arch_image" -ec \
                 'test ! -e /usr/bin/perl && test ! -e /usr/local/bin/perl'
-              "${RUNNER_TEMP}/supply-chain-tools/syft" "$image" \
+              "${RUNNER_TEMP}/supply-chain-tools/syft" "$arch_image" \
                 --platform "linux/${arch}" \
                 -o "spdx-json=${prefix}.spdx.json" \
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
-              "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
+              "${RUNNER_TEMP}/supply-chain-tools/grype" "$arch_image" \
                 --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
               jq -e '
                 ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
