@@ -175,6 +175,10 @@ def predicate(
                     "uri": "installed:" + recipe.MODULE,
                     "digest": {"sha256": manifest["materials"]["patched_module_sha256"]},
                 },
+                {
+                    "uri": "installed:" + recipe.METADATA,
+                    "digest": {"sha256": manifest["materials"]["patched_metadata_sha256"]},
+                },
             ],
         },
         "runDetails": {

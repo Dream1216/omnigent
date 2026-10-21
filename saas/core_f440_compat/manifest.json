@@ -12,5 +12,7 @@
   "required_schema_revision": "p0s000000015",
   "database_mutation": false,
   "runner_permissions_changed": false,
-  "production_authority": false
+  "production_authority": false,
+  "original_metadata_sha256": "48a47815a46d713c7863d6bc42719cd2ea6fb36407df557777291e2d39f2d91a",
+  "patched_metadata_sha256": "9c969e4783b96e80480dba5927e636a8c5b4e0457867f46409f392c0a5a48759"
 }
