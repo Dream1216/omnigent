@@ -29,7 +29,10 @@ _RPC = "public.saas_apply_model_provider_budget_usage(uuid,uuid,uuid,bigint,bigi
 
 
 def test_non_bypass_budget_owner_settlement_is_exact_and_bounded(standalone_replay):
-    plan = standalone_replay
+    verify_non_bypass_budget_owner_settlement(standalone_replay)
+
+
+def verify_non_bypass_budget_owner_settlement(plan):
     receipt = migration.run_production_postgresql_migration(plan)
     assert receipt.saas_head == "lm2t00000001"
     admin_url = sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"])
