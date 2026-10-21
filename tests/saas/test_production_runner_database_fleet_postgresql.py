@@ -71,6 +71,7 @@ from saas.production.runner_database_fleet import (
 from saas.production.runner_executor import (
     ProductionHostIsolationExecutor,
     _verify_runner_agent_database_authority,
+    runner_agent_database_authority_contract_sha256,
 )
 from saas.runner_adapter import RunnerIsolationAdapter, RunnerWorktreeAdapter
 from tests.saas.test_production_runner_postgresql import (
@@ -78,6 +79,7 @@ from tests.saas.test_production_runner_postgresql import (
     _public_database_privileges,
     _restore_external_public_database_privileges,
 )
+from tests.saas.test_release_schema_replay import _upgrade_runner_schema_if_requested
 from tests.saas.test_scheduling_postgresql import _migrate
 
 
@@ -128,6 +130,7 @@ def _run_cluster_wrapper(owner_engine: sa.Engine, root: Path) -> None:
 def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
     isolated_postgres_url: str,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     owner_engine = sa.create_engine(isolated_postgres_url, pool_pre_ping=True)
@@ -140,6 +143,9 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
         owner_engine.dispose()
         pytest.skip("exact fleet admission requires a TLS PostgreSQL 18 acceptance cluster")
 
+    if os.environ.get("OMNIGENT_SAAS_RUNNER_SCHEMA_REPLAY") in {"p0", "r"}:
+        # Cross-checkout source tests are not compiled-image lineage acceptance.
+        monkeypatch.setattr(_build_info, "COMMIT_SHA", "d" * 40)
     product_revision = _build_info.COMMIT_SHA
     assert len(product_revision) == 40
     image_digest = "sha256:" + "b" * 64
@@ -175,6 +181,9 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
             )
             connection.exec_driver_sql("RESET ROLE")
+        control_plane_schema_revision = _upgrade_runner_schema_if_requested(
+            owner_engine, schema_owner=schema_owner
+        )
         _run_cluster_wrapper(owner_engine, root)
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(
@@ -475,6 +484,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 trust_pins=loaded_admission_pins,
                 environment_attestation=attestation,
                 source_sha256s=runner_database_fleet_source_sha256s(),
+                control_plane_schema_revision=control_plane_schema_revision,
                 now=lambda: issued_at,
             )
         with owner_engine.begin() as connection:
@@ -487,6 +497,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
             trust_pins=loaded_admission_pins,
             environment_attestation=attestation,
             source_sha256s=runner_database_fleet_source_sha256s(),
+            control_plane_schema_revision=control_plane_schema_revision,
             now=lambda: issued_at,
         )
         signed = sign_runner_database_fleet_admission_receipt(
@@ -519,7 +530,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 "OMNIGENT_SAAS_IMAGE_DIGEST": context.image_digest,
                 "OMNIGENT_SAAS_RELEASE_INCARNATION": context.release_incarnation,
                 "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": context.schema_revision,
-                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": "p0s000000016",
+                "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": control_plane_schema_revision,
                 RUNNER_DATABASE_FLEET_NAMESPACE_ENV: context.namespace,
             }
         )
@@ -559,11 +570,78 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 runner_id=member.runner_id,
                 connection_generation=member.connection_generation,
                 fleet_members=members,
+                control_plane_schema_revision=control_plane_schema_revision,
             )
             verify_runner_database_fleet_runtime_catalog_binding(
                 admission,
                 runtime_authority_contract_sha256=contract_sha256,
             )
+            other_schema = (
+                "p0s000000015"
+                if control_plane_schema_revision == "lm2r00000001"
+                else "lm2r00000001"
+            )
+            if os.environ.get("OMNIGENT_SAAS_RUNNER_SCHEMA_REPLAY"):
+                with pytest.raises(RunnerDatabaseFleetError):
+                    verify_runner_database_fleet_runtime_catalog_binding(
+                        admission,
+                        runtime_authority_contract_sha256=(
+                            runner_agent_database_authority_contract_sha256(
+                                control_plane_schema_revision=other_schema
+                            )
+                        ),
+                    )
+
+        if control_plane_schema_revision == "lm2r00000001":
+            function = (
+                "public.saas_interactive_recovery_owner_v1(uuid, bigint, uuid, bigint, jsonb)"
+            )
+            with owner_engine.begin() as connection:
+                original = connection.scalar(
+                    sa.text("SELECT pg_get_functiondef(CAST(:function AS regprocedure))"),
+                    {"function": function},
+                )
+                assert isinstance(original, str)
+                connection.exec_driver_sql(
+                    f"ALTER FUNCTION {function} SET statement_timeout='1100ms'"
+                )
+                assert (
+                    connection.scalar(
+                        sa.text("SELECT pg_get_functiondef(CAST(:function AS regprocedure))"),
+                        {"function": function},
+                    )
+                    != original
+                )
+            try:
+                with pytest.raises(RunnerControlError):
+                    _verify_runner_agent_database_authority(
+                        login_engines[0],
+                        runner_id=fleet.runners[0].runner_id,
+                        connection_generation=fleet.runners[0].connection_generation,
+                        fleet_members=runtime_members,
+                        control_plane_schema_revision=control_plane_schema_revision,
+                    )
+            finally:
+                with owner_engine.begin() as connection:
+                    connection.exec_driver_sql(original)
+            with owner_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"REVOKE EXECUTE ON FUNCTION {function} FROM saas_runner_agent"
+                )
+            try:
+                with pytest.raises(RunnerControlError):
+                    _verify_runner_agent_database_authority(
+                        login_engines[0],
+                        runner_id=fleet.runners[0].runner_id,
+                        connection_generation=fleet.runners[0].connection_generation,
+                        fleet_members=runtime_members,
+                        control_plane_schema_revision=control_plane_schema_revision,
+                    )
+            finally:
+                with owner_engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"GRANT EXECUTE ON FUNCTION {function} TO saas_runner_agent"
+                    )
 
         first_member = fleet.runners[0]
 
@@ -580,6 +658,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     runner_id=first_member.runner_id,
                     connection_generation=first_member.connection_generation,
                     fleet_members=members,
+                    control_plane_schema_revision=control_plane_schema_revision,
                 )
                 verify_runner_database_fleet_runtime_catalog_binding(
                     admission,
@@ -622,6 +701,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     runner_id=member.runner_id,
                     connection_generation=member.connection_generation,
                     fleet_members=runtime_members,
+                    control_plane_schema_revision=control_plane_schema_revision,
                 )
             assert rejected.value.code == "runner_executor_not_ready"
         with pytest.raises(RunnerControlError) as drifted:

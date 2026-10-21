@@ -34,6 +34,7 @@ from omnigent.db import ConversationBase, OmnigentBase
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 from .service_bindings import (
+    EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
@@ -214,6 +215,280 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source replay: retained price references without new foreign keys.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "bc09b9d52eeeab220fcc8a783cb66a1b9ea52c675ffb355deed3fe9148f634bb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "e38f5e3a4e92d089a4e4d2dd243b858a3b0a12900c2c13ef92492178fadb948a",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "e0ecc75076d58adce3ec4312303356d893e84bca47a41cd2910b87534aa3dda2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "0110e2d2e92d0a1f2c64f8b5aa28949d3ec41f7f98151c3faafec907f951e3a8",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "6e7784894d1c5b11ea8e0afc22654920035bd1dd73d810cafb93369a30423e87",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "737b23fafb52a9399226e077adae985d5de08cac7244bcea7394e662659acbc8",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "0810d7358ad0c9bfdaa22ee572fad129bcadbc824a4c793312469e562779a1fb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "8edfc6ce14782323b1b761bca9658e9a35656a0f79cd13894007b41fc0525f2e",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "0810d7358ad0c9bfdaa22ee572fad129bcadbc824a4c793312469e562779a1fb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "8edfc6ce14782323b1b761bca9658e9a35656a0f79cd13894007b41fc0525f2e",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "0810d7358ad0c9bfdaa22ee572fad129bcadbc824a4c793312469e562779a1fb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "8edfc6ce14782323b1b761bca9658e9a35656a0f79cd13894007b41fc0525f2e",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "9a314621db760a5a4baebe196279d4cdff342487f1b5f3d31afce1ab5070375f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "92f43e3925208a144e917e3339f4fe88d885f09990aa110fb706eebbdc908e06",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "08f1821ffaf7fcf2b908b3931e6dc265ed97daf7d9a7d35e62c33ce295c790e2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "e70aabdaeba80706f198962945c968e56e76b805fc2766f756e48ae800eaac91",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "edf3d5f1b3e00dada1ea8d56b579b9336ef4e7d694548bea8c8784d8e9e7f8cc",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "d0b213c617dadebc5a23861bb66f414b9e3931f43dfbf9fcf33bba8cdbbdd865",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "b6177c7f36b9fee29752645c7f50ed3f7de4c81b7d8d06de7ed3eff19c2c4b1d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "fa4ff004257e6a48e58abb964cda5b0c4536cb1ad23ced3d8f813c01118a03ee",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "f3807527ee100cb185b84b2ace0aa18cedeb289c87954d51b1cece7422d22f93",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "851062ab220e1ef6ebe99d4d5d8492afcfda5868da4a97c18ef050a27bc4f099",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "d16fbc8570fa94113b9d4fb83ca0550f5995ada79c033b9b7f05e6835f007406",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "7b9e7cee18e9fb34d4318ea8a1a544cad5e363382174e2f9809b6be7c24723d6",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "77c8d086691f98fa4090c57801e53938d347d84ff7727ca0dc2c54ee9a16da29",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "c726e3919bdad6ac9a52fa050dc98281dfe7e38821d988546fa00aa020acac88",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "e9de5e2e33125a6f2119427571c1b74805c1a576d825a1d7648f03e4c8dae2f7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "ad8a8c8b3b8a5626d2d517c6161d8ec8446e22003c56316bd6ed0b3e7d26d027",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "f82346dfffbd263065be83a4d094c0f9f8286d8d6c4e5169d1cfc25452d83b31",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "524da8b85b6146339c1baf7688fea8fb37f566c9b4210ea75ddc229b47009f7d",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "99902979b536b51454c6f3c9704e7a7dca8ed772c8fb9e60c69e006651a1e81f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "782e0072d141d8936814994a8a7794afd4a066078e5afbc4ceaf71270261b9f9",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "0d7fd85a98d6ccbb90c1d5d38c768d616f75dc5fda4637a6ad07def460e0534e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "8cf7deb85a90d6102c2f9339aabadc0defd0adb02836e21222c8cd5f628e94b4",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "e592868bb88080fbf9f071d293359f34e3a08f57e7b0b43bafa0f922246f47af",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "e3d0f903ef1792d2cfb8c8af5e20b198bf53604c27a727309182627c295214ba",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "0ecc902489def4d0151d7647463176ee96665beb2217d91a047e19462cca8bc4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "5faefd9f138f7b8d3b1e11b07dcd39bd9dac7fb645a5b5f4e0cc39db46d580f5",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "ca594c4036914447b9be6d30f7aa1c1f4b2181a5bf669656d8ddd4c5782af4d6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "9b78e955515d42d55cb2d21690335fe53f9d3dec0277507ff3d86ee0270829a3",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "08215d64d8d70615d1a10bf355708534f1f60684dcf3b14a27ccd3a77180a6a4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "893d03b8e1bf05d740358c54ee7fec4c933f909f3af3e8685c66bacd3f885530",
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "3f056feec34a5f87d73700e3bafe8ab51797aabc27b4dc6be0b3d1b0fc901ceb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "cd78fdb34b71f91b0947958f7032b1ed42698b2f105e12ee4fe839bc4ce6812b",
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "78a572b84059c07a5f612ce0f5648acfe954af5837b66f7e666da5979c249c68",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "7396e0d0e5b992c8af4aa2c14cb30c379dcd33a98829e4f797b53054e8dda548",
+    # PG16/18 four-authority replay source 0c88bfbf, including the projection receipt.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "561c4f917b9f6c4452ef3b21e7407f205d2439ac5e0cfa69a228e2b098210dea",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "9f29baaae9fc589622089831a668a89c5354d0f857f4df8b8f616f51e04bf9af",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "73f27f7154831640b5959eb5cde053bbdf104112d37937dff24b6d2e8c3d739b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "65f5ec6d09613562d255304cadb522d03b6eff2041e91932408683b2ff9b556b",
     (
         16,
         "nf12ab34cd56",
@@ -339,6 +614,278 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "4f0d8bd7370bf80a5d761a7bfb82614ab94fc917eafd5dfd1610c75f69aa93ad",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "a8748fd25525d1536bd7b017f30c9468dab5b643d5239969553c037aae51548f",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "76a686b46f0fbedbb7e3446be772355cb39278def422e48cb6f22e60d8399156",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "a8ad3fd952ee6c16d1e4d614cfd7917043633c51a03d38acaffbd6aa42a5bd67",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "f6fe967523a03b0349b97001337af93441ca4f372ef08a0acfc98af876301467",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "f5cd0a5e622231e382a4ce43868423075b7e3e5867e8496d24b7feafc1110fef",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "d5526ab8bc518cfcf0d9e465218e08798fe407a3b5b0f922a60eb93917326a76",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "c256c4d814bf61d790bf4f83be849020f1f305e2e0e53d3e10214b717452311c",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "81e5e4b15bd2715c9404979f9ad5f35dd4578e1f97fa5263e4334cb11f53acc9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "9b23549145153bc9a193c578174882b6aa47731dd97177410008bb17221f5fd9",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "d54fc63b0ff55986500c4e2d97e1aea573eb3d09a72eccbec8e2adf0ce0749e4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "55d3c600baa9783cd1edf464bbd847009becb38207833c080cf70c4c9688a670",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "156fe167a016c4c31b862535827b8695e9cfd6d651e4cfae51efbed9817d0785",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "c05da6ac5669c11ec01b7d66942791d4f66f3efa666cb9a6bf746d0c43ddd78a",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "1d648b6318e09ada40220b69a077f71939bc1bb162ec6f0b3f59e164667cae17",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "5b42d57b26e593ab2f7eb93bb30f84569dea2c71d34a0c21d3c33e345638954d",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "4507cad425cfef496af26f52edd9081733a786cdff284c3f0038ebe17b80856e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "d84022fbf8b4a07e04f7e871617d1cfe5c35b2320de28edddc4d5987469e8b61",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "8a3d0d539947e7ab4ef179197bcfac7bb19158878cb54b7bce979632163f7ccd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "619b3d66c53cbe04b2e2f098cf12a9489ab3478efdb50a7e8d6891e52460fc25",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "6de163caf24361d0982efeff06de7a0a0f02e74acc6d1015b829de6f0761b79a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "a59cd0cffd487aa8c986e049ca2bf6148e84b94c6dbed391ab611f4b1992f30f",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "1f97515b335376ee9079f72dafe0f07b19e11b3ec05c323c0a80d634ff2d6168",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "f6609b9bfd3f8837c4a12c229bcd2935f458fc4d5c4131410074f048df33ee84",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "62c4fa24a02174947ad21c4c92e75d5a5dd7a52880d591317e6007d4c6625caf",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "9fa0d8f075fd8d185e878ad3480d1ba895eb41d61aeb6c79a88abaf17e6e81e9",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "18270f45a8c64fce0cdd6c276c10cf01b2476fad219a12931329cc1bd85d83d4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "7aa2d3c3f995e047638bba61a1d4f6319847c042fa9056375368bf599bae72bf",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "66a9b2290d9236d2d4dec7a08c14447a68dbb1bd95b707d19ee72b4fbc38e843",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "e64cf676bb68d26fe8430bfcd20222d0ad9a71e6e5d52a1eecf81566f1c7207f",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "fc5b065cc923f6330ea1a4aa750d1c722e685484d80cf99e93b0d5110320c050",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "9dd07462838951ec84ad01948d5033e1612be8071f65d37833667be8286dbd9a",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "8dd1e3fe78cbd83bb20d1672ef30bddad5048b40c67eb02b59041d11db6c0a40",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "07deca6e9766ebd561ef7210536b62805993b2473e49789af576357e1db4b0bb",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "46b1e0ca4cb7e296d4e7e3838d4da36db5194d900e9b11f1e9cf5b151cdf1bd5",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "c3cb9f1fc36f6ce21652a35121c9fdd73b0739a1cc3dc5a19b1e1e7b00ec3a3f",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "dbfc959e1d6bf64d1730b6f2422d9c7d7ebf4230245b7748d65be9440273295a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "85e10e44347b1f89160696695c60153f0a35ed464d99cf1658ed8009d962f514",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "3e1874ab8c2d9642be859fa2106ed08789a950e37eda6eef4c3ec94417daf46a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "45bdb5562069d1557b17671632c75ae71cffea99a566f775abc5c8e91258c99d",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "f2d2221c2204ea2b331d2debdd002a9baeae92a343d82ae6510d1c85b0892c9c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "a77b2ca511cda787935f7837141544ef57e843db7d1f71fb7c5b81451f66c094",
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "643d6bf9e81a9b3b98cba4c0f1f394ce04012f068f3e8d225a74e2134bb754cd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "034e94372746d9a7b529bdbda11b1696f0e2158680d55e615ccbd9a3327248c2",
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "e523b42a7dccc3ce3b9730859b1f570a42d7eb66478941aab380727986d1da26",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "61d3fc2f85fa3a7e832b6be9a00998a3b7af9796916cc5b82c2dd75dab6922ff",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "852647e15383916271ec758c48d79988be55f94fb98ce0d9cbe0e3bc734989c4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "793c86853718d18e8dc3a6ffe0ceed96f1f914088972d53b660bbead3eccbecd",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "1db51154613388ab5f620d768c83e4a0b6684664646dc233a07a762931b42e1f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "4c0be04405439e86e581ca4e48d913dfcc4c01708d32719e4e9c70baa44f93c6",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "9033a4d3e71a7745753e75dfb065f02812cb7a84cf2c551b74338ea38e18a663",
     (
@@ -441,6 +988,278 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "cd54976f8773fb4c1be9bb5468ed8cba753ead55158a12a60635613df3ac2e45",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "2f2ba2c0ccb607376179e00283f92a4078a0bd514d387b5f13c30289723e63a0",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "dfe1c2fd54ce5d441ea30a8cc75b008901aaed9bf2edae5a3932bb34f9461b4f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "3e0e54603d3ad981029610379f515f442f7c9a37f270ec20512f47f5f6594dd8",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "506df36f17d146865892e7c310d3cab672f069c152e61135c7288a114c39d8b2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "3b87d64ff6b7f98de1bca90e641fdb133c3c2f7f88a25f5f58fa0f1023514047",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "7db87cf4252156e1db86e26f815b7ab642a6ea633389337b52c5ae35d513e1c4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "7656139ebeb7f4fc983aeb9bfa16d4fcbeb5f04eb8ea358840d05e196b9f2880",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "5113ce2e378b8c3ed6c9a6b64a023ebae367e6adc3b0127fc7921ca02f505a42",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "d0b3a1cb56a00dc84868b5fe7a3d677302cdb9c13fe7058170db9e8828ad1fc7",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "6cbaa3b75a172cb303adb91c65c97e9276831a669baa1971c4d7f36ce4864d4d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "464cf062888b04dda00fc1a7013f6fbe9b19963ee07493509e4ff7640b2d7db8",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "87bf6dd2bc0eae1d68761318ba4d2bd947362de3df175cae42948003955b2e42",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "2bc9b34fd510e09198744ec33b6be4cbb963cc569f8d436986ecaf1f48a08f98",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "5ce7f73cf1a8e3d94cf63b1ffb9494a392d971b798c795d31c4d047e71559555",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "92f9824717abbcec82932613f4705e5f9590456883d876feaff64b96642eeaa7",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "63a65e1739f8a2592b2de88de397121af1216d78103dea137abf4efaf1a20c67",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "f91fdf3caaf052637d1d0c6e67f5150bf7e73463a93b7157d450815e9b4d0e23",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "237f203f10a28a9dbbcd4c5b365a2d69e1d7eeaff65f7b31cfc07b805caa619a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "66f80962b9555b3582c4e597c3219944415f58f384fd8fa12a9c8f249254f7bf",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "cb6004e75af03b926828d82263d55fe3f0dccc325b03e5f91ac0619e1dd2bfb8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "4d08f476bc6c9bbd9febf909e77a0b254edc25f5aebfd89c6699c38ce62f33bb",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "26678caecb76d880350641e11e1aa4ba2962e4543b1360826e8f831bcf725adb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "93afcdb479ba73e828f6d1ce7bd03edb1adc068c52fc51bbd6711e657c7f5689",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "b5a31ab1e58390fe1be2b12a93ea9fd68105aeca9d04a60a2ddb45be67e23b68",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "4846b59cb193524a4f8f9321d6983192d649e8cea19c770768c4ba0fe16b8298",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "af415dce8b8f6faa023a53189d35636c4a2ee43466bb0b7069cc0e20f35074bd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "978e7bef544fba72e155cc9291c5ddb15431e2fe385a0ca45f78c63b2750ea92",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "e606146da4d7950f1e5a30450a3032c966edc72868aa6c2d76dfba7869b4c1e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "6db83f8196c5b04d20e792f1e21145965c83ddcbc938c23f49e12a52cdc86a46",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "fb8a0d57b5a5a9d3401a29dc46b6a830d0d8c34235ef12320072e28bc1b69c5d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "d79d2e7484d0d3d00fadd7c1e7dbc41bffba357727ca0bbba0b6b419632d43f7",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "8053df3700ad175de0eb1af9c5adddb5d611668865d45d196e33d2e7a6bf81b6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "c8a61f0a085f55bc861a9a08e78ff5c0df2c2dd06a5e24b977b2f2871d09038f",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "fc0dfd301fcd842d066a4601b24620155765159ba55508a7f247f2313344aac3",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "e72c9d007416d75654c729ad838eab8e1a69eb635738cfe1d22f2313229badce",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "2d43590b944a71c3b827c0ff74d6cb6555055f0f45ed5f94b8dcaf7951d46490",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "8f047164618ed8e073b28936432b41166ca511ec6078c0d580aa79b47f0f633b",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "da225bb7f037ce85d64a7e287162bce6f55e19533c2af4c70d9c9ca04f863c21",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "f0be2eeff7a572d2813e135f5681d496136588c2f9f76e003c3f026aeba13c36",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "9307e3089fc0c64a64f3f495bf6dc5311c3589c95ebd439624f0cccb0391ded2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "e25720d7385832419a94584888334c14983e6a8a9cf24de6c2b1f7af666468f7",
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "5605e9414c13aaeb57b7b1695fa4c110da13d6389361a3e083e8826383786260",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "ab166706b45c91c0d7937849d7ca4e7a474739019e6077ded008aa62df622a28",
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "87238927cb7e203bd12128a7904c9e3e9b3fbccfa681f2e3cbfcf24374861e4e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "ca849a685569696117b3172733ca78d6761dac547e67eb910a4587c35df9a2fe",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "db382ec680257bf24c46afbdadef564e6fef178bd3dc88ba39432c47e8cb032a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "64ce3621f3d15dd1430b2ca030ab6adb6cab80c4fa35887ed6f45b0787945d25",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "c8060cc83f22fefbd96080d84759f319a9d3ef1336a1a3f9f2cf516ab5b67698",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "5686d692300b36cf58f49b342d4a32ebb0e99727a6332e8c5608b74a7f52f024",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "61239caab9e58b03e93f9ee59a59f05c83ce28326c97d5580f275d47777660eb",
     (
@@ -513,6 +1332,278 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "c3cbadb8cf13b7f1fafd693389d04ce23000d3db0022f355d323da012bea6981",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "9e79307c2477ae4f20f61da0d60ccca9e88cc680f7a2c791bab7b1a9d6fb2c9d",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "4dd64908632aa4276a3eb5d1a149f742492554160af1284f789ad50a20d8a19d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "b7e6d167aa1723483919be96e907e969537945e6f7b3295ac14090e29fb002bf",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "12c24226963abb8f623ba962394942795916d7f0f0f5ac68a220781d9d7e10c1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "c5ef54f18a62c8b95071d7ffe2f4f77e34bf9ee3ec8e7d7c2ae549d990483921",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "be3bfb188e54eeed4489b8c28309376ba5423dcb5b5e9c790822997debdb9907",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "436987ca10740a7252d95ab81fa585a42e6c8b4946b7172e2676f4d825d7718b",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "39d0304ceacca2d5292f5119e9aacef7ad1a5b850e8ee969155d49c4ec0d67cb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "c326ed62d526b91ce153ab7c8878388c4b1dddc50e556859a72ba64e12ae6538",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "109f613e6ac1de0a3131074aa24709d1074f1ea96f3693d83692552b1111e3c1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "703bd21d8dc34ea62eb5c113478d9c4d63e05e5ab2b3406fccdbef991d4f3176",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "f8148de1bf2949f967b123a76f3ef3f2b2bf52d54f74a5edcfd41c808542b99e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "9ff5fa78b025fccce9112bf7f5f24e386eae32ff9b86204184754a2bbf37f329",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "0ff60966d27af80fd9c3883a415d64fa698985cef309eaca2bc1134a4f544d51",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "1311fb551a3b388fa30e13fdad8afc0b3ebf4790055b701ff8b95d49683ff648",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "dacd157cfb28ec23a8078109a979f8f8448ddf5596d90dd5db6d5e5670ff8e84",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "c658276859967d28811c37359cb55ed49efc7433976e05cdd10ec02591c66c7c",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "532ac01dd7e9ceda2f37bb6d82ad81b8d37daac90761518f6dc13fc83d1504cd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "f898dceb8d6768fe830b8f5181addf58170636cc282580b97f4b320f30f46df0",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "321eec703c2079f798d5cd8e76ca906758770f373356f5b2ec19e632e0e9582d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "1511a306fdde0b7f27dce6a6ce57733d9c405b34f35b2706b1e22a925e7f9ce4",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "81e061489035d5afa2d45dfbd1126cdafa2da1b966139eeaf1fc64c094101bf9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "7c054ecf4971557466de0a6b5b7bcbbbcbfe66598f6edab39624d051a71548e0",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "3f0a59cf0c5db295b784978b3746c6fbf9069b4f37b26399a523f251c1afd4c8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "1bd5e69dfd45a3f8ab70c35b466bb3b7d9808d1041d0836721d0f5c95ca2f960",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "4a2f42beb6a7be2cd867fd2e0a7ab934f459cba92a8e0480d914cb522663978c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "80629949bca2595fd939e72d363fcdcb542042e76914cbcc9d9df06c04206ff8",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "cf3df80d8483ca58fc4377e9929ed491035b7f8f0031b3e1599f6706f7b5b989",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "3b9ea929ceb35f1409ec36b397c82d71d684fd7f0691261bb05dbb4f51c87f18",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "305b0494f4dc8d97af511035398941a593c459ea0091e34a54090f444b24efbe",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "ef801973ee42be4f6b4dc0687b93351083b4c0e7085a0e4f4039ea37ecb01fcb",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "a7a23fd84f6aef66dd4fe576b174625188e931c7aee46541cf17ce740ecc47e1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "0ce5cf0a46a2b543e87809f1f4b7fc3ff7eb92b59f109d05d4f5dfaa313edd79",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "13b3d53a77bfa3b4603b9a0ea6e5cad1fbf639bf2aa41518a3bf3d1530892941",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "af7bae30fa7b1e55afed4c5bb9f6b4c700e8a62316657cf473d38129498d3944",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "a3feb325df540c5d1ea49b9dc1129825204a75aa28c0f8980b2d1d3ad9837716",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "c380a1b24213dbb95765576c911f4b5ee43748e33fa65c3a2c3bb284ac040cbf",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "1895b69968d9e7b15e4e261c06901bd09c2b41fdebbd98ad860f6e38a4756d52",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "26a9a3a5536dbfa5185e778d86c359968f2e0be318cb276eeed015ae7e1bcffc",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "13ea4e8774cef8e7bcbab9a273598bbe77f61dc868ff5ffac57e31a51937a0f1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "f4a4fdf32d8fa851790f82d2adf4c0f48a17d91907f96f10a098c5773e9e38ca",
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "3f5cb8ab70f462c417695a5233378ce5b9d502547db1e487a42af4dfa06d0ce7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "4796091adebffdb520b40fb798e7be85e37076cb7949ec5e753af51643537f12",
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "673b21e1727423bd9cb59624b4d286a9acc20801cc57d44b1a62859813a6a937",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "90c144fcda779457eac3f5c428161a36d4fbd9d934b55898f54f168e96f39a6a",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "69cd74dcd6f9f108976c23d34c0ad855656fe14df5522806a94634ae68793cc0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "56e62554598d37276cce8a198f3fe341bf8b695768d722ab51ca4e4ddee7d8bb",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "e50bc4dfbcd82634b4f08600a66d25b8720603e3cf1ea7e7d8e11e5f0e283656",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "be834aa42f02b858f23130d08fc801851569720bea3b40250912b35b26f34361",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "fb328b45607f5117d72c3fcafabb9997ee9e33c18e3fe4334254546ffe875de4",
     (
@@ -580,6 +1671,278 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "f1ae92fcdfc0ce71b82c51280f419bb5abf0ed1a3e3299dd4c48ce7466ec07be",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "a76a398a1ad0d20973b9696b80a6ff5296205022ddf390fe90e09de85edf1973",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "852f3319efb1b0e9a0129d6ff41dc1c4119aaa098729a08b17e13c54a3ceff53",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "9dfb2655bee0b6b163ca7be5b4df254eaaf7867c388105c0e8d6fec776f14f5f",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "cca9cde049e15197076dbef037be4014f72419f19316bb5d3847819b1fabb3be",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "d4d17fde98260c7cdfa2fcca7c2e0bebec1745d8ebd74756337cf90982af0406",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "42ef6ee337e786ceeafde811e00b186c8e75eebba5ae733f316bce99cbdd22e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "94b4e57eb2d84efbda5e1604bdd571e3b17cf6f30c4c58b10423ffca6348eeb4",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "42ef6ee337e786ceeafde811e00b186c8e75eebba5ae733f316bce99cbdd22e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "94b4e57eb2d84efbda5e1604bdd571e3b17cf6f30c4c58b10423ffca6348eeb4",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "42ef6ee337e786ceeafde811e00b186c8e75eebba5ae733f316bce99cbdd22e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "94b4e57eb2d84efbda5e1604bdd571e3b17cf6f30c4c58b10423ffca6348eeb4",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "ec0a2cc594f64ac2a3c0aa358a9b8f3b688950df7c23aaf8ecd40e4b77fdec5b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "0c4599247d1392dbf5608cb09f87406cf2c621b8418b606687708b644a9b5333",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "94f9e94cd866c938c2fe192fa6323942d8c86fbc8cc938a2c3dafba0c78fd021",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "06866b31c02dcb67733b8c3e271e0f084e68bad34f7c00c345eb69bef03a9802",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "8e7cb0f1a98236bf96e2f7989d670de405a8f32ac1ef45aa2b51de7fe4ae4852",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "0bbb2f8e2ef90449295b5cd1bdfe11cc9dbb35cb13375a6a8c79af81be6ad056",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "89bbaffad24c2a7a108ec1f2a5a2f366b3ec4ac9f2f708949fb7088dd0e0b863",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "d7c1f73cf338fbf45e2e2b378da3403c324236bb2e9e4ca1a50a86ed951b5ce4",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "077ff0181284fffba277aac12daf5e516cff722d384f2c0f106e1a0581452568",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "fe51f1433b677ce8c0bb6f2614eabc8e459b90e84551b0a556a509876cf1c982",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "e15c540345fa786dccb96a7827d5ac931f1cd43fdfc11d375d223a8851f76ac6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "158237c9d4f0b7c6ba28cdc249f9858595de7333900569b008a5aca06a844f12",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "7be520e79138a1e3ef353ebab61df7605e0e19fb64440df60f3c31bb4051ce47",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "cb15b6fad2342f02986d94d765be5090667327a3456fdcd9f47927c9cd09b6f6",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "38480c0a15fb2516bad4a5de3d8db2b4105f26c60a68b3d663147d65ff2b8a6a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "2bcde72de58e3e00973dc31f2337c777b2fb8992da25fd998031441a001bdb46",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "85d802b226f86abf4f7bc596093f8155da90db2d9d05b25615b5bc9d1a5f87dc",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "51fef83db0284bdb393dc629f4a13d8bf77a32ad1d34219ddb9bf99e6534a1e0",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "0b38c4cc7383650b985a2ace83d4d4a7227de4fb59f49124c2ab4dafab4bfc00",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "4d6bd890729e3bdbcc081f67bff243b784b2abb31fa5b01879039e4bf1eb7f6b",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "7e76357715c6d41f9c6e84c99ec79efd6650d86a74296c70921167c3605d74d3",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "9af5b9d5783f9ea4c05867da65fed373efd1797dbe9d9a17b3e2feb61f4324a0",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "7fb84329d90ffa91a188c3b9ad6da69b9373a191c5d38a9795121e19ebcfb110",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "f6d4b0763368a313f06c5ac041788bc04d85c1cc0affa40c4ae05fb0e2b0b841",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "943163ed51b2f2242c91831020b380b95000ded65cce13dc5abb899dfc617899",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "958dcde5966990068f93c7576ed74d445482515a7df255409e5b14e4dad6e211",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "9c9d9d72ce2e175eaabbb0c09a836daf21bee14bf0139efaa4e8aaa9e5dc0437",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "909f0f2450ec7134646d850ee36631484f2c1a9a1b4fc1b8f8da6c45b39a9f89",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "f8083ea5721f4f31faffc230f77a4d2b4ec3be4ec9e3fb28ca521f9a91595aed",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "1c1aef1c9deca4063f85ac9949157910eff0afbe2bbb8d397957865176ccd98c",
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "28bfb8ba926b45805896901e678699ae0a37b1a959d73ec0138ebcdba79c7786",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "24f21d35404e2bd9dc97ed1b1985bff9cf845e112efed9d80d881df6713226f0",
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "1014a485862f91ee768815e33017c86eef0fb0d4b1cc0965a64bf9d187cc2330",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "0f5db660cc669afafb19f25d30aed4f7852c7063e915e58f95f2ee14820312c9",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "76e11002abece6e57fba25394afae87a8bfc136b0e3c9bc4a8353a4d1a7f8eb4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "df702a4ec3578d5cb8d53820066c2f02d9dc6f5f31aea3a25904f616f9041cb1",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "536e22fb65125271c1644ac28117e941fb556f6f6b2dc8f4e288bc288c54a8da",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "e583ff6dc454d6f8f4cf5c14a909d02646c6bc2a61988ce4e4d122b551d396f8",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "389098bfb06040e6e5e8c0fdd00a3014057ef772769fd86760f03286e33c5f7f",
     (
@@ -622,6 +1985,278 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "99c1a6928fcdfc2d793b071a5a86624fe5844e656494e4085fb4f7b4cb0d2c2b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "60b68219f113b380a41a116f82db5409405edd7dd2046431ab9dbc9ddf8cefb7",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "3c094954f4e1e7c4c35960b36d2b07924a7c3356babc3656cde79046fda36b1c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "be93c2919ab89a2d28111895d9648631287be75086c4b5e8b984b7d2d326a9fb",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "808acc34cc9dd0d756471081e93e4be9bd99a22d364017f8aee1e3dea14a4a56",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "11622d73f286dc8ce4065edf9079154478a68fb2ddd75287cede0e0c28d80986",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "c24a35c51b1f29a6acf26c94579793e0fee0e0d6d28eaf35dfe05e30b49df1bd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "a50ba2cfa386ae8a40261f77390bb777561b11f41f99abb310fb89b95be54913",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "9327dfbce27a45d9aecb76aa691a6f6d884dd4545203105a06349e12228f3945",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "4eaf929b385143a9dda9e5d696c2b3284dba6fcf923baa50dcadfa6d634c1d81",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "2edc61638ecb0ebdc9f45b1ac4d56ee1008d5bc6a595e7573217e24a571a0d5f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "0d27abc50d2458a26d7ff3a4fb5b707cd2fbd35488349ce485dd6aa4bd8b3e45",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "18bdce62958c07da06001dd4edc4aca848060bdd55c102c7c323cc854ec5c7eb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "86c432ca678e97a64f8e6008f45cb72eba2be3e7a6d96f52517d8bff6f9d0210",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "029cee8a43921289d55f1eaa595557f0871a104383e83364b77cb29c6a67f6b0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "d6d4ba7afa365f4837c917f3d2b20296d47762e109fbb386b9e5eb4e4ce3d8f0",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "d161731109f29d67c182dfcf2dbdb5ec964f72c40e2a49132e40087b44c94a2a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "176d6ab130e661a0e95a1d3335978b7d413997e073595f6ed851ee794c1733d8",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "fa0a76c2b0aadef284a78e7af687103ec99f293da2b8c3ced3c52a89455fe9b8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "2034aa322141e52b864f18dfda25c1277bcf73e814b159592c64567d8e3f498f",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "118167417a3eebf254f3a27dfd53bfa4fcc5678c23b1b36c1f02f90b60905f64",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "21ee6ca9291f74d925f20d0d48a96cd39f1c486e4b57bb02b0fce5899e40e710",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "f532158c0d3df5eac0bd5404a80c3d7cd803060eab17c78140760779d8ec4667",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "213f5f17ada93ada12e307a4137de47aa4bf51264494acf72f70c2ca6122e5cc",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "2e4ebd32ae2d769ea63749564886d5c0f42fa20e82c32cf0c7c52db4b27282ef",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "dd78235a033609d469fbd2cdf09b61acaffd00153fdc65af573b474d2fbba272",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "d8b25fff1f56a05ce4f9547693bae9259f0d7e997ce3434a0c8a155808dfa878",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "dfa0fd6e5c3dcfe52fc9e5d77b9a2f9f2bce529f4f3efc11445ac53137c73241",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "62eecc799477d90700a18d12d15ea4a9bffade451aa93dd37920db09b41f169d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "989bf297be8cfd63b0d191e5940158d8bd0171595c21a02f09acd365a3c961a9",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "5e8c4ecbaf855d5cf48f318f91549b48354509ffdb633bc6854a46d2404fb6e7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "c8e111139fd6e4fa201c909ee040bff05f35ccd6be9ec8ae6c248ed97d7f9ee8",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "46acb52f70b7280cad055a8b70a3a268563dfd6908bfdda6eb3d6445e82534b4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "ac36d43dc8aea4932f7a17c0422dbb3a6314f83fdf75709434a8041155b16bfe",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "61f6983a59170c38fa18e17ee270623c9a53c0345e6b94202ebd9cf6683ce58d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "d273c85556296a19624da3a4679c2b6b2ca87f8ee8bae965efc74f87234ecdd1",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "f449476944e3074caa95168534c25ce98ab63fa93907ea776950c2a917d1f3bd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "75d43675f05f81bc9350272af2e6a5602e340881823d9102b8b6c40a0152045e",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "bb76a4278ea0866a4c4a52e61d6ba0c11b40557ff76cb37be219f5687d7afcaf",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "e95594607377cedff6b3e3c303da1f3d2a4a282b045ddb9f93134333d63739d0",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "6a709684e319e43a620ccb2cb48ddcf2ef932df32612c8b8a4cb366d939395c7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "959734fece24128a6604086345bc26684c04638855b00b4a1223b834e8b22815",
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "77efd9287fc62c59563d278e36d36d9eb1e92b0b239d269a1e6c9a0302a1e24e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "9a7b3e89d4a7929ead9bcde79074271a3a7d921af540d150257bf1c0d66ceb93",
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "d5e5c7e54bae52e55583927a99ab0fe24ac4eee7d5f3009af448d59adb981e39",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "f4ba422b561742f6cdfcb5c4c400afbb69ddcbea0613e9c46225f0c494fbce89",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "043cf91b1998ba2c9032bcc9efcfd7daa56af0e6f293ea4bbc892609d6f2562a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "38b7c4a8a0a0b71bc79ae47e52617167d4eb20f183591243cae9d511f1b57a06",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "0e4bb916d19eeedbce2843641f66d7e50571b7bd3ce0fadf46d3224c17a7a8ee",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1a00000001",
+    ): "7a1f878c6491e69fdb379b5240a91c512342a3e6b473a120061a897afd1d51ab",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "p0s000000015",
     ): "a335cad1a69229c893f8447692a79d8b4b23ea37ab7225dbc99396f447d10c79",
     (
@@ -647,6 +2282,534 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 }
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
+_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "9e476886506c5eec3bf1aaa7f06346bb80d343269e06da20afe7201745ebf89f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "ddc5bc635bc75094b7f966516a7ba473d3f8095b9d661f7c06f35235b2e705dc",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "77dc5d57dac1c9800c3c01d4abf05d3682ff02adcfe32f801b0404f1da4c99df",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "eaaf6720d185bc759c6e309806e4b87888348b206d1a0018a55103c6a151ad13",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "0b1b72c17d7829b11b7003a321b1c915006015928e50dc9b005329cfa9c627d1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "b9372795b22ec9c1699c6d554423862793609a648bba3cb9fc8040cedc546e05",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "bc3f1709d23a6fc81cf98667f58c4589ec23d39745ba6ac7017818c2ace3b133",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "0a511be66f27da20d5040ca25acb88cb159034f50679de953c0bb44ddbdc81bb",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "abd993435f0ca805c77455c4fabf31e5c744dc6d82fe259b124744b04082963f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "c18718dbde6dd5015261e6f2a07bbc7b7054df2c50e68fcf7e7a9a4a6ed1bf81",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "4c36e99cde4d1618301a82a51773c1d59ba05432adf82859674163613a77baf1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "3349a019fd4ea6ce810de89317474130a98e907c781e2b8dda7c6f0681700874",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "72da0d0ce9d4581d59fff795a399094a394d7f77b5d533a2700b4e6e818f0cad",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "4fecafdd1d909c49551a4432c508b854a6e8b1c7fe48fd1bf823cd570166631e",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "728b9900a505bd08e98a127f280e4dab25eecb2d3563e361c7335466a0691e0d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "0723a043b0df2b2cbe286acb9982f06747925deee53d5bc05ea2c8d4c6d2a3ed",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "7eb77dea8481cf23ba81f3873d8541ab8dd5543f5304be0370cf6840832f2e24",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "e0c04a73ffad77b8723c659a0bbf853de5540e2d4461394eca7b9d7c27647d19",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "a8854fadf251cd6f95d7f20ad3359128a1bd63cf702686099093d5a2cc905db0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "41b0f5788660160d5662c816453b8329c88bd3d835ac5c1b9137cf4034574948",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "dfadf1b5dedaca589d14882736a6d79155a3648d17a3302041fefaf6dd1e8fd9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "f158e9796ce1dbc49ecb5ccd93e60c23a33417c8607700130e5ac6beae7812a2",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "022c00909f9404b3ad0f7e0fa8213ac4598de2ccef1f1f70348c4f151e48aff1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "ab333c211f4b4ebeeb1a899a1f16c343cdde3d486d7d378d3b82d45c399bd254",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "cd4b83cadfdaee5413e84522e5f2bb532466c2d2364b9f3b3265a912c94e922e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "16693838ab76097e4656e98630b87b3709e90d4b328a9a24be540facf65332e1",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "3b167a082035c5dee2c1579034ce3597dee11fc33b4a28ce8b631989dccc2d3b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "a818b8e2d8f53c00a37693528bd66772bacceec45ca7243fb5972b87e47553c4",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "7588d4270d123f6a1717218fa1403278b9fc8e21a3921e0dc05f63dfe4e2c970",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "e76bebe85f1312f7e4484cb9e3f29b5dd3ab763aee1b412ea3cfd300b8f8b8c3",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "2921f1a4a76b7d600e258eeda592fa31c1b7d0e6de0b03b14c189c06df97ee5a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "c47c6878a697daf6ad6d757ac16cf449614d8aec9b517866940b2ff6f82f96fe",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "1e8ce6e73ea7160fddb0b70a4288d151fc265b63edfe38af4f7e7a5e161851f1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "9d5473b3d89e3ee4db7305521feecbe1ce1f97269d92f93a30c8c1e968748044",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "c13017fd6599a6a26db9b8b1882e9ed2a6ef6d45246d55d1204bf6462b866c1b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "32e46a1ac2d80b7da6aa0344b845888a2d46978141af5a164a945e66e30fb0f3",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "626ed582906166f37f6571d13ce9809606afe1a6e433d0facce2db1c821f8aca",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "7f5952e8a4e16dffd85e686ce211d23fca6f85336397cf10e0ebb76aec388b06",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "a88fec0bf5973e50f6dbc67c5689962824977a43c5214e01d45fb1e8ad0c7336",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "cea22b5d8f4decca30bde10d7867f3934442941643468f73d00676baada735c0",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "cf2fd93f9181c18f00d053c69bf7caf41e4b37f22777f67f621b832dcf47c459",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "a15fec8fd15626c4ea3bd8e5bb0d688752fa017a4544d287abef632127d19047",
+    # PG16/18 restricted source replay b9528de4; retained inference budget holds.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "f3dcfb6314e95241485a536578829fbe5bc289e576a6f550a01df86ce34f7183",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "b43e0bf129ea7e21b1f5b0187e79675f1b81fb337ee7ba374f49258d6ce44a35",
+    # PG16/18 restricted source replay 01d67d8d; immutable model drafts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "3fb2645f5fd2a43332455d8dbd6b68aa89d1818a4fdf96df32a9a950d324cb2d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "f80c671c65b88eb37bfffdbc6381cd71d1cd6578dc40eadaf0c987ccd083ed13",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "372608b04a82544dfe85e98a705d254f5e9aa4394a5fc2314e196f79f9f05af6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "f95bcf25de167188742047c9e63b2253e74f1b14b7ed4a46364d42dfe82c7506",
+}
+_PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
+    tuple[int, str, str], str
+] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "2a230567a8b1526cd234ea4c37f313873a9af84a1513478d1fe5ddecd7cc718a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2s00000001",
+    ): "6fd202388ec8a427d4fa2cc288310fc62919b1a3403c964c5b661f13de3c4616",
+    # Source-derived bounded model pages and admitted test-day index.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "2fee127251da10ed856dbed2b3bd7622349f98a2f4133037c55bc82573d0ce4e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2r00000001",
+    ): "e6d1d4d7a4ec54142267de86a64bee225bc9ff1ecba24ab347f7af49bb59086f",
+    # Source-derived bounded model documents and explicit relationships.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "5f6e0789bee9fa0f989a5e6407939bba34175e7593ef740630d9e82735d12c30",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2q00000001",
+    ): "ac8807760fc42b0f965b7a33e0f494f6d050e474c3bd90b260c7ebb3e178dcf8",
+    # Source-derived bounded model credential storage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "7e75a298b2ba3e2c3da62eff9d374d3da0ba3ec8af8d472725326c3505e06120",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2p00000001",
+    ): "50e82d3a07327fd3c0f6526227b6d8e7fe23a1ae393acb6f066f910778d361f3",
+    # Source-derived terminal physical recovery contract.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "dbdb8aa75795a8d45754f5f8761c958c387f477a86920b50632dc4ec4f99c3a0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2o00000001",
+    ): "5fb748c9246931788d52f39389e65d7ca3382c465f3a134b34a5867450eca020",
+    # Source-derived retained model security revocation authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "923a15b12d1a4a566d44b1c8e90fc98561e7484783792639e1b9de9399662924",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2n00000001",
+    ): "6aec0e00b0e59c282324c72dcab9f2f4cb75af38846a86bfe12d649868d49a30",
+    # Source-derived model cutoff shared-audit delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "2967cc61791fb7ae953703bff13303586603d68ccb72d675f70d5e6426a28cd5",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2m00000001",
+    ): "b978d0898e5cff9de97f42e2cff2846999f5e5e514341b8ebf53efe3798f5ca5",
+    # Source-derived immutable model cutoff authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "a58f0a002e74add57de8afab5dd19315ce97eca8e7fb6760936857e84b46fb32",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2l00000001",
+    ): "910582a1328f91b5a0044a79889a1cf1a9002dfba763e9d44db80e48b4fb1b68",
+    # Fresh PG16/18 restricted-role replay for physical recovery confirmation.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "40e06c81d2c446c27ea297107b86907fdaf40cc733e1d42efbcb218447bb5d38",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2k00000001",
+    ): "848d7967659d9e391eabf638974092b6d2d920190d3d2167eb3fe241d572311a",
+    # Fresh PG16/18 restricted-role replay for delegated Runner identity.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "5c8d1d2f1a50f5168bf84ba221b65514a759a9c1f77a3f7ce1d98ffe8f181386",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2j00000001",
+    ): "9e5190917adb60a33a9616a173b970a9698ed4a1ec660d5863bcead1764d12f5",
+    # Fresh PG16/18 restricted-role replay; historical interactive ownership only.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "5b0968e98655f5b241eee44f05da8eac41e1a764bda6c4bd3148d1c48e03f18b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2i00000001",
+    ): "09ee4b7f206f359649c12452f7f8e0266a9a32234a2917fdb1e31380c4888c6b",
+    # Restricted source replay; evidence-bound machine customer usage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "665b149579c9777cc874771bcf5cd81e922219ff2cd10a69991e9a89481e961b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2h00000001",
+    ): "36d48f4ade00e0fc460a6947f3890d24e1e6051e79a221c39b747cddc12f4036",
+    # PG16/18 restricted source replay; true-Run gateway lineage.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "dfa9c1764c7cbfbbf62647db90c71898ece8e677fc63c602be845787859f7e17",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2g00000001",
+    ): "5566911fb984e15bc9f441fe030649bde8d77958eecd8cd4bf874b4a767ee63b",
+    # PG16/18 restricted source replay; renewable real-Run model credentials.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "b145028cb4333d008d7f4f33371015a66711f29a5e4b45d3e54e51c278ba51c6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2f00000001",
+    ): "28cf65f315b5561d74d6b43c4dc4d5ebc74bc8587a3d3322840ad927b93ed73e",
+    # PG16/18 source replay 4f9ec55c; tenant-scoped model candidate reads.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "718b542a937564894a458d55d39843c734e70a17f94b991b852ff12f00704da7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2e00000001",
+    ): "4030f963cf5327fadec62ceecd95450302df0d2d6170cb17a13112ec869a2efb",
+    # PG16/18 source replay d841a033; frozen execution customer prices.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "ecdc7a0d28d426aee29612dc55f523573542f2affdb6ca9e6713569d1ae51249",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2d00000001",
+    ): "6f18b34f9b35ac5f6a1b6aa35d4ae8733049d8a8227714350fab273c2b3492f8",
+    # PG16/18 source replay 20be0280; bounded gateway audit chain delivery.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "e996fdcbd94397f3ee56180f9a44a48ce035fff2032ec6014b977d6cbb57d3e9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2c00000001",
+    ): "cd7a69c9c08dce9c35f490791dcd57f49107437456782c8a41dd381dbcfd1ca7",
+    # PG16/18 source replay 6607f02c; append-only gateway usage evidence.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "ee6b90425d0ede040d8b1d22b42c662ed55ccfdd94ffc721f2ddc7d450986b4d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2b00000001",
+    ): "eeda2fd90804bff220d0dabc72580ce9de5d765e18ec233f15a1a252aa651574",
+    # PG16/18 source replay e4042218; tenant-scoped publication commands and versions.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "e577d74759159c592859b333be9e1cbfb0c92cf96ef67ed86161592f888aef01",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2a00000001",
+    ): "af25421cd340c59f3f37b31197f13457ee1d42776b383838af033c1199f82596",
+    # PG16/18 restricted source replay 8955d6c9; durable funded model verification.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "8d7a7722e73072e7ff1e2e491b67714cff0a67c6be4d58719c58d9c01bd3d54e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1f00000001",
+    ): "c45857b9e78d26548d8a05397deaa86b9e340adec6c540a3756565797de83d01",
+    # PG16/18 restricted source replay 48e0f389; explicit platform test funding.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "48cd96276e31fa9ea61cd0102b07e98f3624d74a51ba88e3936234a63a4562f7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1e00000001",
+    ): "d2a2075574f70f058bf33ee56bf0fa5263baf3730e45501f4964eff621257b56",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "5b576a5035910c79e823e92a27145bed967bc9fd0001f4cf7835c6ee7b7fc9a8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1d00000001",
+    ): "e1c63b2f660220514b11e3c797e669d2f1c66af55e20b67059d32ae33e3e852a",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "bd14208e978cb3affc4b1a1aee7df5480e37054db36c3dae87986903b7ba0845",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1c00000001",
+    ): "5b16a688dc4559a12b4712ffc81b52f5ce07e32f80501da76ce8523e96806a60",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "e1fa4316e74e6b0cf61d8475c6762fd0901d983c0bd48d8da916caf76a270f1b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm1b00000001",
+    ): "2046e9e8550bf5dafab2111e24cb4276418f483a2b0ef169fea3881a750622db",
+}
 _CAPABILITY_ROLES = (
     "saas_app",
     "saas_authenticator",
@@ -655,6 +2818,7 @@ _CAPABILITY_ROLES = (
     "saas_dispatcher_n1_compat",
     "saas_executor",
     "saas_runner_agent",
+    "saas_model_projection",
     "saas_secret_broker",
     "saas_preview_gateway",
     "saas_preview_edge",
@@ -723,8 +2887,10 @@ class ProductionPostgreSqlPlan:
     service_role_bindings: ProductionServiceRoleBindings
     platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None
     platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None
+    model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
+    verification_saas_head: str | None = None
 
     @classmethod
     def from_urls(
@@ -738,8 +2904,10 @@ class ProductionPostgreSqlPlan:
         service_role_bindings: ProductionServiceRoleBindings,
         platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None,
         platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None,
+        model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None,
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
+        verification_saas_head: str | None = None,
     ) -> ProductionPostgreSqlPlan:
         return cls(
             product_revision=product_revision,
@@ -766,8 +2934,10 @@ class ProductionPostgreSqlPlan:
             service_role_bindings=service_role_bindings,
             platform_model_service_role_bindings=platform_model_service_role_bindings,
             platform_admin_service_role_bindings=platform_admin_service_role_bindings,
+            model_projection_service_role_bindings=model_projection_service_role_bindings,
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
+            verification_saas_head=verification_saas_head,
         )
 
     def authorities(self) -> tuple[PostgreSqlAuthority, ...]:
@@ -787,6 +2957,7 @@ class ProductionPostgreSqlPlan:
                 self.service_role_bindings,
                 self.platform_model_service_role_bindings,
                 self.platform_admin_service_role_bindings,
+                self.model_projection_service_role_bindings,
             )
         except ProductionServiceRoleBindingsError as error:
             raise PostgreSqlMigrationError(
@@ -956,6 +3127,8 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
         raise PostgreSqlMigrationError("product_revision_invalid", "configuration")
     if _installed_product_revision() != plan.product_revision:
         raise PostgreSqlMigrationError("installed_product_revision_mismatch", "configuration")
+    if plan.verification_saas_head is not None:
+        _runtime_saas_head(plan.verification_saas_head)
     if not 0 < plan.lock_timeout_seconds <= 300:
         raise PostgreSqlMigrationError("lock_timeout_invalid", "configuration")
     authorities = plan.authorities()
@@ -998,6 +3171,17 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
             )
             or set(logins) & {binding.login for binding in platform_admin_bindings.bindings}
             or _SHA256.fullmatch(platform_admin_bindings.sha256) is None
+        ):
+            raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    projection_bindings = plan.model_projection_service_role_bindings
+    if projection_bindings is not None:
+        if (
+            {binding.service: binding.base_role for binding in projection_bindings.bindings}
+            != dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)
+            or len(projection_bindings.bindings) != 1
+            or any(binding.login in _CAPABILITY_ROLES for binding in projection_bindings.bindings)
+            or set(logins) & {binding.login for binding in projection_bindings.bindings}
+            or _SHA256.fullmatch(projection_bindings.sha256) is None
         ):
             raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
     graph = plan.service_role_graph
@@ -1220,6 +3404,7 @@ def _preflight(
         _require_source_catalog_baselines(
             server_major,
             bindings=plan.service_role_graph,
+            saas_head=plan.verification_saas_head,
         )
     return facts
 
@@ -1241,6 +3426,8 @@ def _source_security_catalog_baselines(
     platform_admin = {**platform_model, **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)}
     if observed == platform_admin:
         return _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
+    if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
+        return _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
     raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
 
 
@@ -1248,10 +3435,12 @@ def _require_source_catalog_baselines(
     server_major: int,
     *,
     bindings: _ServiceRoleProfile | None = None,
+    saas_head: str | None = None,
 ) -> None:
     """Reject an unanchored release before any authority or schema mutation."""
 
-    key = (server_major, _expected_head("official"), _expected_head("saas"))
+    selected_head = _expected_head("saas") if saas_head is None else _runtime_saas_head(saas_head)
+    key = (server_major, _expected_head("official"), selected_head)
     source_security_baselines = _source_security_catalog_baselines(bindings)
     if key not in _PUBLIC_SCHEMA_INVENTORY_SHA256 or key not in source_security_baselines:
         raise PostgreSqlMigrationError("source_catalog_baseline_missing", "preflight")
@@ -1261,21 +3450,32 @@ def _read_resource(package: str, name: str) -> str:
     return files(package).joinpath(name).read_text(encoding="utf-8")
 
 
+def _capability_roles(saas_head: str | None = None) -> tuple[str, ...]:
+    selected_head = _expected_head("saas") if saas_head is None else saas_head
+    return tuple(
+        role
+        for role in _CAPABILITY_ROLES
+        if selected_head not in {"p0s000000015", "p0s000000016"} or role != "saas_model_projection"
+    )
+
+
 def _verify_capability_principal_flags(
     connection: Connection,
     *,
     require_complete: bool,
+    saas_head: str | None = None,
 ) -> None:
+    roles = _capability_roles(saas_head)
     rows = connection.execute(
         sa.text(
             "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
             "rolreplication, rolbypassrls, rolinherit, rolconnlimit, rolconfig "
             "FROM pg_roles WHERE rolname = ANY(:roles) ORDER BY rolname"
         ),
-        {"roles": list(_CAPABILITY_ROLES)},
+        {"roles": list(roles)},
     ).all()
     expected_flags = (False, False, False, False, False, False, True, -1, None)
-    if (require_complete and len(rows) != len(_CAPABILITY_ROLES)) or any(
+    if (require_complete and len(rows) != len(roles)) or any(
         tuple(row[1:]) != expected_flags for row in rows
     ):
         raise PostgreSqlMigrationError("capability_principal_projection_failed", "principals")
@@ -1287,6 +3487,7 @@ def _verify_service_principal_graph(
     bindings: _ServiceRoleProfile,
     principal_operator: str,
     require_complete: bool,
+    saas_head: str | None = None,
 ) -> None:
     """Verify the complete cluster role boundary for production services."""
 
@@ -1430,6 +3631,7 @@ def _verify_service_principal_graph(
         principal_operator=principal_operator,
         principal_operator_oid=principal_operator_oid,
         bootstrap_name=bootstrap_name,
+        saas_head=saas_head,
     )
     if not _role_graph_projection_is_safe(
         observed,
@@ -1445,6 +3647,7 @@ def _expected_service_principal_graph(
     principal_operator: str,
     principal_operator_oid: int,
     bootstrap_name: str,
+    saas_head: str | None = None,
 ) -> set[_RoleGraphEdge]:
     """Return the exact terminal role graph and each edge's real grantor."""
 
@@ -1490,7 +3693,7 @@ def _expected_service_principal_graph(
             False,
             10,
         )
-        for role_name in _CAPABILITY_ROLES
+        for role_name in _capability_roles(saas_head)
     }
     return service_edges | fixed_edges | management_edges
 
@@ -1648,13 +3851,15 @@ def _verify_capability_principals(
     *,
     bindings: _ServiceRoleProfile,
     principal_operator: str,
+    saas_head: str | None = None,
 ) -> None:
-    _verify_capability_principal_flags(connection, require_complete=True)
+    _verify_capability_principal_flags(connection, require_complete=True, saas_head=saas_head)
     _verify_service_principal_graph(
         connection,
         bindings=bindings,
         principal_operator=principal_operator,
         require_complete=True,
+        saas_head=saas_head,
     )
 
 
@@ -1814,7 +4019,7 @@ def _apply_database_authority(
             schema_usage_roles={
                 official_owner,
                 saas_owner,
-                *_CAPABILITY_ROLES,
+                *_capability_roles(),
             },
         )
 
@@ -1944,6 +4149,18 @@ def _expected_head(kind: Literal["official", "saas"]) -> str:
     return head
 
 
+def _runtime_saas_head(requested: object) -> str:
+    supported = {
+        "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001"),
+        "p0s000000016": ("p0s000000016", "lm2r00000001", "lm2s00000001"),
+        "lm2r00000001": ("lm2r00000001", "lm2s00000001"),
+        "lm2s00000001": ("lm2s00000001",),
+    }.get(_expected_head("saas"), ())
+    if not isinstance(requested, str) or requested not in supported:
+        raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")
+    return requested
+
+
 def _upgrade(engine: Engine, kind: Literal["official", "saas"]) -> None:
     config = _migration_config(kind)
     # Official migrations contain an autocommit block; Alembic must own this
@@ -1957,10 +4174,11 @@ def _version_at_head(
     connection: Connection,
     *,
     kind: Literal["official", "saas"],
+    expected_revision: str | None = None,
 ) -> str:
     table = "alembic_version" if kind == "official" else "saas_alembic_version"
     rows = connection.exec_driver_sql(f"SELECT version_num FROM {table}").scalars().all()
-    expected = _expected_head(kind)
+    expected = _expected_head(kind) if expected_revision is None else expected_revision
     if rows != [expected]:
         raise PostgreSqlMigrationError("migration_revision_not_at_head", f"{kind}_alembic")
     return expected
@@ -2486,6 +4704,7 @@ def _verify_public_schema_inventory(
     *,
     official_owner: str,
     saas_owner: str,
+    saas_head: str | None = None,
 ) -> str:
     inventory = _public_schema_inventory(
         connection,
@@ -2500,7 +4719,8 @@ def _verify_public_schema_inventory(
         )
         // 10000
     )
-    key = (server_major, _expected_head("official"), _expected_head("saas"))
+    selected_head = _expected_head("saas") if saas_head is None else saas_head
+    key = (server_major, _expected_head("official"), selected_head)
     return _verify_public_schema_inventory_digest(inventory, key=key)
 
 
@@ -2600,6 +4820,7 @@ def _verify_source_security_catalog_digest(
     """Reject ACL/policy/role drift against a clean-replay source anchor."""
 
     normalized = _normalize_source_catalog(catalog, role_aliases=role_aliases)
+    normalized = _source_catalog_without_dormant_projection_role(normalized, saas_head=key[2])
     if key[2] not in _LEGACY_ORDERED_SOURCE_SECURITY_HEADS:
         normalized = _sort_normalized_source_catalog_rows(normalized)
     digest = hashlib.sha256(
@@ -2617,9 +4838,68 @@ def _verify_source_security_catalog_digest(
             accepted_digests.add(
                 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(key)
             )
+        if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
+            accepted_digests.add(
+                _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+            )
     if digest not in accepted_digests:
         raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
     return digest
+
+
+def _source_catalog_without_dormant_projection_role(catalog: object, *, saas_head: str) -> object:
+    """Preserve old anchors only for a newly staged role with no business authority."""
+
+    if saas_head not in {
+        "p0s000000011",
+        "p0s000000012",
+        "p0s000000013",
+        "p0s000000014",
+        "p0s000000015",
+        "lm1a00000001",
+    } or not isinstance(catalog, dict):
+        return catalog
+    security = catalog.get("control_plane_security")
+    if not isinstance(security, dict):
+        return catalog
+    role = "saas_model_projection"
+    roles = security.get("roles")
+    if not isinstance(roles, list) or not any(
+        isinstance(row, list) and role in row for row in roles
+    ):
+        return catalog
+    expected_role = [role, False, False, False, False, False, False, True, -1, "null"]
+    management = [role, "authority:principal_operator", "authority:bootstrap", True, False, False]
+    usage = [role, "pg_database_owner", "USAGE", False]
+    admitted = {"roles": expected_role, "memberships": management, "schema_acls": usage}
+    projected = dict(security)
+    for key, expected in admitted.items():
+        rows = security.get(key)
+        if not isinstance(rows, list):
+            raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
+        matching = [row for row in rows if isinstance(row, list) and role in row]
+        if matching != [expected] and not (key == "schema_acls" and matching == []):
+            raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
+        projected[key] = [row for row in rows if row not in matching]
+    result = {**catalog, "control_plane_security": projected}
+
+    def references_role(value: object) -> bool:
+        if isinstance(value, str):
+            return (
+                re.search(r"(?<![A-Za-z0-9_])saas_model_projection(?![A-Za-z0-9_])", value)
+                is not None
+            )
+        if isinstance(value, dict):
+            return any(
+                references_role(key) or references_role(item) for key, item in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(references_role(item) for item in value)
+        return False
+
+    if references_role(result):
+        raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
+    return result
 
 
 _PREVIEW_OWNER_LEASE_DEFINER_SHA256 = {
@@ -2793,6 +5073,7 @@ def _verify_object_ownership(
     *,
     official_owner: str,
     saas_owner: str,
+    saas_head: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
     ownership = _object_ownership_projection(
         official_connection,
@@ -2804,6 +5085,7 @@ def _verify_object_ownership(
         official_connection,
         official_owner=official_owner,
         saas_owner=saas_owner,
+        saas_head=saas_head,
     )
     return ownership
 
@@ -3648,6 +5930,7 @@ def _verify_state(
             principal_connection,
             bindings=plan.service_role_graph,
             principal_operator=plan.principal_operator.login,
+            saas_head=plan.verification_saas_head,
         )
     with engines["database_owner"].connect() as database_connection:
         _verify_database_boundary(
@@ -3672,12 +5955,15 @@ def _verify_state(
             official_owner=plan.official_owner.login,
         )
         with engines["saas_owner"].connect() as saas_connection:
-            saas_head = _version_at_head(saas_connection, kind="saas")
+            saas_head = _version_at_head(
+                saas_connection, kind="saas", expected_revision=plan.verification_saas_head
+            )
             ownership = _verify_object_ownership(
                 official_connection,
                 saas_connection,
                 official_owner=plan.official_owner.login,
                 saas_owner=plan.saas_owner.login,
+                saas_head=saas_head,
             )
             control_plane_security = _control_plane_security_catalog(
                 saas_connection,
@@ -3750,6 +6036,12 @@ def _load_runtime_receipt(config: Any) -> _RuntimeReceipt:
     product_revision = getattr(config, "product_revision", None)
     official_head = getattr(config, "official_schema_revision", None)
     saas_head = getattr(config, "control_plane_schema_revision", None)
+    try:
+        _runtime_saas_head(saas_head)
+    except PostgreSqlMigrationError:
+        raise PostgreSqlMigrationError(
+            "migration_receipt_binding_mismatch", "runtime_verification"
+        ) from None
     bindings = {
         "product_revision": product_revision,
         "official_head": official_head,
@@ -3762,7 +6054,7 @@ def _load_runtime_receipt(config: Any) -> _RuntimeReceipt:
         or any(getattr(configured, key, None) != value for key, value in bindings.items())
         or product_revision != _installed_product_revision()
         or official_head != _expected_head("official")
-        or saas_head != _expected_head("saas")
+        or (saas_head != _expected_head("saas") and document.get("verify_only") is not True)
     ):
         raise PostgreSqlMigrationError(
             "migration_receipt_binding_mismatch", "runtime_verification"
@@ -4011,13 +6303,48 @@ def verify_production_postgresql_state(
     """
 
     try:
-        receipt = _load_runtime_receipt(config)
         expected_service_roles = dict(_SERVER_SERVICE_ROLES)
         if "billing" in config.capabilities:
             expected_service_roles["billing"] = "saas_billing"
+        _verify_service_postgresql_state(
+            engines=engines,
+            config=config,
+            expected_service_roles=expected_service_roles,
+            configured_urls=config.secrets.database_urls.as_mapping(),
+        )
+    except PostgreSqlMigrationError:
+        raise
+    except Exception:  # noqa: BLE001 - malformed deployment objects stay content-free.
+        raise PostgreSqlMigrationError(
+            "runtime_verification_failed", "runtime_verification"
+        ) from None
+
+
+def verify_model_projection_postgresql_state(
+    *, engine: Engine, database_url: str, config: Any
+) -> None:
+    """Apply the same receipt and catalog proof through only the projection login."""
+
+    _verify_service_postgresql_state(
+        engines={"model_projection": engine},
+        config=config,
+        expected_service_roles=EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+        configured_urls={"model_projection": database_url},
+    )
+
+
+def _verify_service_postgresql_state(
+    *,
+    engines: Mapping[str, Engine],
+    config: Any,
+    expected_service_roles: Mapping[str, str],
+    configured_urls: Mapping[str, str],
+) -> None:
+
+    try:
+        receipt = _load_runtime_receipt(config)
         if set(engines) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_engine_set_invalid", "runtime_verification")
-        configured_urls = config.secrets.database_urls.as_mapping()
         if set(configured_urls) != set(expected_service_roles):
             raise PostgreSqlMigrationError("service_url_set_invalid", "runtime_verification")
         facts: list[_ServiceSessionFacts] = []
@@ -4057,7 +6384,7 @@ def verify_production_postgresql_state(
             raise PostgreSqlMigrationError(
                 "service_database_receipt_mismatch", "runtime_verification"
             )
-        with engines["runtime"].connect() as connection:
+        with engines[next(iter(expected_service_roles))].connect() as connection:
             server_version_num, bootstrap_name = connection.execute(
                 sa.text(
                     "SELECT current_setting('server_version_num')::integer, "
@@ -4068,6 +6395,7 @@ def verify_production_postgresql_state(
                 connection,
                 bindings=config.service_role_graph,
                 principal_operator=receipt.principal_operator,
+                saas_head=receipt.saas_head,
             )
             _verify_database_boundary(
                 connection,
@@ -4091,6 +6419,7 @@ def verify_production_postgresql_state(
                 connection,
                 official_owner=receipt.official_owner,
                 saas_owner=receipt.saas_owner,
+                saas_head=receipt.saas_head,
             )
         catalog = _canonical_runner_management_catalog(
             {
@@ -4195,6 +6524,12 @@ def run_production_postgresql_migration(
 ) -> PostgreSqlMigrationReceipt:
     """Apply the ordered authority chain, or verify it without mutations."""
 
+    if type(verify_only) is not bool or (
+        plan.verification_saas_head is not None and not verify_only
+    ):
+        raise PostgreSqlMigrationError(
+            "verification_override_requires_verify_only", "configuration"
+        )
     _validate_plan(plan)
     engines = _create_engines(plan)
     phases: list[str] = []
@@ -4305,5 +6640,6 @@ __all__ = [
     "ProductionPostgreSqlPlan",
     "parse_production_postgresql_url",
     "run_production_postgresql_migration",
+    "verify_model_projection_postgresql_state",
     "verify_production_postgresql_state",
 ]

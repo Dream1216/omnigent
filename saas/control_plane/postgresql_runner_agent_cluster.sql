@@ -17,7 +17,7 @@ DECLARE
     api_oid oid;
     api_owner oid;
     signature text;
-    api_signatures constant text[] := ARRAY[
+    api_signatures text[] := ARRAY[
         'saas_canonical_json_v1(jsonb)',
         'saas_canonical_json_sha256_v1(jsonb)',
         'saas_runner_worktree_authority_live_v1(text,uuid,uuid,uuid,text,bigint,boolean)',
@@ -52,9 +52,14 @@ BEGIN
     END IF;
     EXECUTE 'SELECT version_num FROM public.saas_alembic_version'
     INTO STRICT schema_head;
-    IF schema_head <> 'p0s000000016' THEN
+    IF schema_head NOT IN ('p0s000000015', 'p0s000000016', 'lm2r00000001', 'lm2s00000001') THEN
         RAISE EXCEPTION
             'Runner cluster admission rejected: P0S10 authority is unavailable';
+    END IF;
+    IF schema_head IN ('lm2r00000001', 'lm2s00000001') THEN
+        api_signatures := api_signatures || ARRAY[
+            'saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)'
+        ];
     END IF;
     SELECT role.* INTO runner_role
     FROM pg_roles AS role WHERE role.rolname = 'saas_runner_agent';
@@ -226,6 +231,18 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) TO
     saas_onboarding,
     saas_billing,
     saas_metering;
+
+DO $$
+BEGIN
+    IF (SELECT version_num FROM public.saas_alembic_version)
+        IN ('lm2r00000001', 'lm2s00000001') THEN
+        GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint)
+            TO saas_platform_app;
+        GRANT EXECUTE ON FUNCTION pg_catalog.pg_try_advisory_xact_lock(bigint)
+            TO saas_executor;
+    END IF;
+END
+$$;
 
 -- EnterpriseScimService.bulk_request is the sole blocking session-lock caller.
 GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_lock(bigint) TO saas_governance;

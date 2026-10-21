@@ -1489,8 +1489,10 @@ def test_database_create_authority_is_exactly_the_official_owner() -> None:
     assert "_owned_object_acl_grantees" in source
 
 
+@pytest.mark.parametrize("schema_head", ["p0s000000015", "lm2r00000001"])
 def test_initial_schema_usage_covers_every_nologin_capability_principal(
     monkeypatch: pytest.MonkeyPatch,
+    schema_head: str,
 ) -> None:
     """Authority SQL must remain executable after PUBLIC schema USAGE is removed."""
 
@@ -1515,6 +1517,7 @@ def test_initial_schema_usage_covers_every_nologin_capability_principal(
         observed.update(kwargs)
 
     monkeypatch.setattr(migration, "_preflight_database_acl_grantors", lambda _connection: None)
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: schema_head)
     monkeypatch.setattr(migration, "_read_resource", lambda *_args: "SELECT 1")
     monkeypatch.setattr(migration, "_converge_database_acl_projection", capture)
     migration._apply_database_authority(
@@ -1525,10 +1528,13 @@ def test_initial_schema_usage_covers_every_nologin_capability_principal(
         bindings=_bindings(),
     )
 
+    expected_roles = set(migration._CAPABILITY_ROLES)
+    if schema_head == "p0s000000015":
+        expected_roles.remove("saas_model_projection")
     assert observed["schema_usage_roles"] == {
         "official_owner",
         "saas_owner",
-        *migration._CAPABILITY_ROLES,
+        *expected_roles,
     }
 
 

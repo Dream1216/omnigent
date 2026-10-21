@@ -127,6 +127,24 @@ _SELECTED_HASH_TABLES = (
     "saas_control_plane_outbox",
     "saas_outbox_quarantine_events",
 )
+_R_MODEL_HASH_TABLES = (
+    "saas_model_connections",
+    "saas_model_credential_versions",
+    "saas_model_deployment_versions",
+    "saas_model_gateway_evidence",
+    "saas_model_projection_operations",
+    "saas_model_projection_transitions",
+    "saas_model_publication_commands",
+    "saas_model_publication_disablements",
+    "saas_model_publication_revocations",
+    "saas_model_publication_versions",
+    "saas_model_run_tokens",
+    "saas_model_test_funding_policies",
+    "saas_model_verification_budget_bindings",
+    "saas_model_verification_commands",
+    "saas_model_verification_receipts",
+)
+_MAX_DIGEST_ROWS_PER_TABLE = 512
 
 
 class PostgreSqlRestoreContractError(RuntimeError):
@@ -2091,28 +2109,44 @@ def _normalize(value: Any) -> Any:
     return str(value)
 
 
-def _database_digest(endpoint: PostgreSqlEndpoint, database: str) -> tuple[str, dict[str, int]]:
-    engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
+def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
+    if head in {"p0s000000015", "p0s000000016"}:
+        return _SELECTED_HASH_TABLES
+    if head in {"lm2r00000001", "lm2s00000001"}:
+        return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
+    raise PostgreSqlRestoreContractError("unsupported restore hash schema")
+
+
+def _digest_on_connection(connection: sa.Connection) -> tuple[str, dict[str, int]]:
+    """Hash the complete bounded CI fixture; never silently truncate a larger dataset."""
+
+    inspector = sa.inspect(connection)
+    if not inspector.has_table("saas_alembic_version", schema="public"):
+        raise PostgreSqlRestoreContractError("missing restore hash schema version")
+    heads = connection.scalars(
+        sa.text("SELECT version_num FROM public.saas_alembic_version LIMIT 2")
+    ).all()
+    if len(heads) != 1 or not isinstance(heads[0], str):
+        raise PostgreSqlRestoreContractError("ambiguous restore hash schema")
+    tables = _digest_tables_for_schema(heads[0])
     table_counts: dict[str, int] = {}
     canonical_rows: dict[str, list[dict[str, Any]]] = {}
-    try:
-        with engine.connect() as connection:
-            inspector = sa.inspect(connection)
-            for table in _SELECTED_HASH_TABLES:
-                if not inspector.has_table(table, schema="public"):
-                    raise PostgreSqlRestoreContractError(f"missing hash table {table}")
-                quoted = connection.dialect.identifier_preparer.quote(table)
-                rows = [
-                    {str(key): _normalize(value) for key, value in row.items()}
-                    for row in connection.execute(
-                        sa.text(f"SELECT * FROM public.{quoted}")
-                    ).mappings()
-                ]
-                rows.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
-                canonical_rows[table] = rows
-                table_counts[table] = len(rows)
-    finally:
-        engine.dispose()
+    for table in tables:
+        if not inspector.has_table(table, schema="public"):
+            raise PostgreSqlRestoreContractError(f"missing hash table {table}")
+        quoted = connection.dialect.identifier_preparer.quote(table)
+        rows = [
+            {str(key): _normalize(value) for key, value in row.items()}
+            for row in connection.execute(
+                sa.text(f"SELECT * FROM public.{quoted} LIMIT :bound"),
+                {"bound": _MAX_DIGEST_ROWS_PER_TABLE + 1},
+            ).mappings()
+        ]
+        if len(rows) > _MAX_DIGEST_ROWS_PER_TABLE:
+            raise PostgreSqlRestoreContractError(f"restore fixture row bound exceeded for {table}")
+        rows.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        canonical_rows[table] = rows
+        table_counts[table] = len(rows)
     encoded = json.dumps(
         canonical_rows,
         ensure_ascii=True,
@@ -2120,6 +2154,18 @@ def _database_digest(endpoint: PostgreSqlEndpoint, database: str) -> tuple[str, 
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest(), table_counts
+
+
+def _database_digest(endpoint: PostgreSqlEndpoint, database: str) -> tuple[str, dict[str, int]]:
+    engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
+    try:
+        with engine.connect() as connection, connection.begin():
+            connection.exec_driver_sql(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+            )
+            return _digest_on_connection(connection)
+    finally:
+        engine.dispose()
 
 
 def _verify_control_plane_rls(connection: sa.Connection) -> None:
