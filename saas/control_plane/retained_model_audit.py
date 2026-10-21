@@ -104,7 +104,13 @@ def verify_retained_model_audit_functions(connection: Connection) -> tuple[int, 
         ):
             raise RuntimeError("retained_model_audit_function_contract_rejected")
         found.append(int(oid))
-    if found and len(found) != len(_CONTRACTS):
+    head = connection.execute(
+        sa.text("SELECT version_num FROM public.saas_alembic_version LIMIT 2")
+    ).scalar_one()
+    expected_count = {"p0s000000015": 0, "lm2r00000001": 3, "lm2s00000001": 3}.get(head)
+    if expected_count is None:
+        raise RuntimeError("retained_model_audit_schema_contract_rejected")
+    if len(found) != expected_count:
         raise RuntimeError("retained_model_audit_function_set_incomplete")
     return tuple(found)
 

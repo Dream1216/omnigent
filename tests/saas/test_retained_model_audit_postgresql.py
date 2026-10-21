@@ -50,5 +50,12 @@ def test_packaged_audit_contract_is_exact_and_drift_is_rejected_without_repair(
                         verify_retained_model_audit_functions(db)
                     savepoint.rollback()
                 assert verify_retained_model_audit_functions(db) == original
+            with db.begin_nested() as savepoint:
+                for contract in _CONTRACTS:
+                    db.exec_driver_sql(f"DROP FUNCTION {contract.function}(uuid,jsonb)")
+                with pytest.raises(RuntimeError, match="function_set_incomplete"):
+                    verify_retained_model_audit_functions(db)
+                savepoint.rollback()
+            assert verify_retained_model_audit_functions(db) == original
     finally:
         engine.dispose()
