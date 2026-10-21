@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from uuid import uuid4
 
 import pytest
@@ -11,8 +13,10 @@ from alembic.config import Config
 from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane import model_publications
+from saas.control_plane.model_document_storage import decode_model_document, encode_model_document
 from saas.control_plane.model_publications import ModelPublicationService
 from saas.control_plane.model_routing_models import ModelPublicationDisablementRecord
+from saas.control_plane.outbox import OutboxPublishError
 from saas.control_plane.platform_security import PlatformAuthorizationService
 from saas.control_plane.rls import PlatformRlsContext, apply_platform_rls_context
 from saas.control_plane.tenant_model_catalog import TenantModelCatalog
@@ -21,6 +25,42 @@ from tests.saas.test_agent_catalog import _runtime
 from tests.saas.test_model_connections import _fixture as _connection_fixture
 from tests.saas.test_model_publications import _envelope, _fixture
 from tests.saas.test_run_customer_pricing_postgresql import priced_execution as priced_execution
+
+
+def test_real_postgresql_rejects_a_future_replica_proof_without_publication(
+    priced_execution, monkeypatch
+):
+    f = priced_execution
+    monkeypatch.setattr(
+        test_model_projection, "_fixture", lambda: _connection_fixture(engine=f.engine)
+    )
+    source, publisher, factory, actor, request, calls = _fixture()
+    request["tenant_id"] = f.scope.tenant_id
+    operation = source.admit(actor, **request)
+    before = list(calls)
+    changed = []
+
+    def future_proof(connection, _cursor, statement, parameters, _context, _many):
+        if not statement.startswith("INSERT INTO saas_model_publication_versions "):
+            return
+        raw = parameters["canonical_readiness"]
+        document = json.loads(decode_model_document(raw if isinstance(raw, bytes) else raw.obj))
+        at = connection.scalar(sa.select(sa.func.clock_timestamp())) + timedelta(seconds=5)
+        document["completed_at"] = at.isoformat()
+        canonical = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        parameters["canonical_readiness"] = encode_model_document(canonical)
+        parameters["readiness_sha256"] = sha256(canonical.encode("ascii")).hexdigest()
+        changed.append(True)
+
+    sa.event.listen(f.engine, "before_cursor_execute", future_proof)
+    try:
+        with pytest.raises(OutboxPublishError, match="model_publication_storage_unavailable"):
+            publisher.publish(**_envelope(factory, operation.id))
+    finally:
+        sa.event.remove(f.engine, "before_cursor_execute", future_proof)
+    assert changed == [True]
+    assert source.list(actor) == ()
+    assert calls == before
 
 
 def test_real_staff_disablement_and_customer_column_authority(

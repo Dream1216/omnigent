@@ -50,8 +50,9 @@ from tests.saas.test_model_verification_worker import _StoredAttestor, _worker_f
 
 
 class _Readiness:
-    def __init__(self, hook=None, *, stale=False):
+    def __init__(self, hook=None, *, stale=False, clock=None):
         self.calls, self.hook, self.stale, self.unavailable = 0, hook, stale, False
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.endpoints = [(f"replica-{n}", str(n + 1) * 64) for n in range(2)]
         self.inventory_sha256 = _inventory_digest(self.endpoints)
 
@@ -63,7 +64,7 @@ class _Readiness:
             raise LiteLLMReplicaReadinessError("litellm_replica_readiness_unavailable")
         if self.hook:
             self.hook()
-        now = datetime.now(timezone.utc) - timedelta(seconds=31 if self.stale else 0)
+        now = self.clock() - timedelta(seconds=31 if self.stale else 0)
         return LiteLLMReplicaReadiness(
             draft.deployment_id,
             draft.credential_version_id,
@@ -92,7 +93,15 @@ def _fixture(*, stored=True, settle=True, hook=None, stale=False, responses=Fals
         authorization=PlatformAuthorizationService(factory),
         pricing=verification._pricing,
     )
-    readiness = _Readiness(hook, stale=stale)
+
+    def readiness_clock():
+        engine = factory.kw["bind"]
+        if engine.dialect.name == "postgresql":
+            with engine.connect() as connection:
+                return connection.scalar(sa.select(sa.func.clock_timestamp()))
+        return datetime.now(timezone.utc)
+
+    readiness = _Readiness(hook, stale=stale, clock=readiness_clock)
     worker = ModelPublicationPublisher(
         factory.kw["bind"],
         secret_cipher=verifier._cipher,
