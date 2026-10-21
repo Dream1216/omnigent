@@ -658,7 +658,7 @@ def test_renderer_rejects_spec_symlink_and_unknown_key(tmp_path: Path) -> None:
         (
             "stage",
             lambda spec: spec.__setitem__("control_plane_schema_revision", "p0s000000009"),
-            "must equal the packaged p0s14 Alembic head",
+            "is not supported by the packaged application",
         ),
         (
             "stage",

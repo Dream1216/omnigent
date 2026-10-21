@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "contract": "f440-runner-management-restart-v1",
+  "base_product_revision": "f4404d47f705c7a3c0745c38ccd1a9be125c31ad",
+  "runtime_base_image": "ghcr.io/dream1216/omnigent-saas-server@sha256:2555fafc4527912705014f5a2e84ad9db4632afb18b317daeb07a433fb9bdbc2",
+  "ui_source_image": "ghcr.io/dream1216/omnigent-saas-server@sha256:d40b0cf4c226eb1a8743f7ffe5fbf4f8d9380e556d0330ef70ce9c6bbb13313c",
+  "module_path": "saas/production/postgresql_migration.py",
+  "original_module_sha256": "ebaf76fb0a57729838761efee7bf3d83ed40be4169736edc03ff5ca21eaf7d8f",
+  "patched_module_sha256": "b83cfde2b98ff9e48a872a4eb833b931edc5f7ab067af8c9d71e0a115c44141e",
+  "patch_sha256": "c1b7e379d3f9b7bf6461cac8b1c891eba2075dd4f632d8a9052ccb7f661d25d7",
+  "original_wheel_sha256": "5ea5c280800e6fa342f2422a6974862dc6399cf241c05b8988e0d3fc2c8fed72",
+  "required_schema_revision": "p0s000000015",
+  "database_mutation": false,
+  "runner_permissions_changed": false,
+  "production_authority": false,
+  "original_metadata_sha256": "48a47815a46d713c7863d6bc42719cd2ea6fb36407df557777291e2d39f2d91a",
+  "patched_metadata_sha256": "9c969e4783b96e80480dba5927e636a8c5b4e0457867f46409f392c0a5a48759"
+}

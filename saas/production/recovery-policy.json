@@ -33,7 +33,7 @@
     "source_schema_exact",
     "source_revision_exact",
     "forced_rls_control_plane_119",
-    "forced_rls_runtime_17",
+    "forced_rls_runtime_19",
     "cross_tenant_negative",
     "tombstone_replay",
     "revocation_replay",

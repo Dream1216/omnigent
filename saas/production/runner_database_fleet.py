@@ -2014,7 +2014,7 @@ def load_runner_database_fleet_evidence_context(
 def verify_runner_database_fleet_release_facts(
     source: Mapping[str, str],
     context: RunnerDatabaseFleetEvidenceContext,
-) -> None:
+) -> str:
     """Bind the context to the immutable release facts visible to this Job."""
 
     expected = {
@@ -2023,11 +2023,30 @@ def verify_runner_database_fleet_release_facts(
         "OMNIGENT_SAAS_IMAGE_DIGEST": context.image_digest,
         "OMNIGENT_SAAS_RELEASE_INCARNATION": context.release_incarnation,
         "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": context.schema_revision,
-        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": _CONTROL_PLANE_SCHEMA_REVISION,
         RUNNER_DATABASE_FLEET_NAMESPACE_ENV: context.namespace,
     }
     if any(source.get(name) != value for name, value in expected.items()):
         raise RunnerDatabaseFleetError("Runner fleet evidence does not match release facts")
+    return _runtime_control_plane_schema_revision(
+        source.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION")
+    )
+
+
+def _runtime_control_plane_schema_revision(
+    value: object, *, default_to_packaged: bool = False
+) -> str:
+    from saas.production.postgresql_migration import (
+        PostgreSqlMigrationError,
+        _expected_head,
+        _runtime_saas_head,
+    )
+
+    try:
+        return _runtime_saas_head(
+            _expected_head("saas") if value is None and default_to_packaged else value
+        )
+    except PostgreSqlMigrationError:
+        raise RunnerDatabaseFleetError("Runner fleet schema revision is unsafe") from None
 
 
 def verify_installed_runner_database_fleet_lineage(
@@ -2619,6 +2638,7 @@ def validate_runner_database_fleet_projection(
     fleet: RunnerDatabaseFleet,
     context: RunnerDatabaseFleetEvidenceContext,
     projection: RunnerDatabaseFleetCatalogProjection,
+    control_plane_schema_revision: str | None = None,
 ) -> str:
     """Validate an observed projection and return its canonical role/ACL digest."""
 
@@ -2636,7 +2656,10 @@ def validate_runner_database_fleet_projection(
         or not identity.transaction_read_only
     ):
         raise RunnerDatabaseFleetError("Runner fleet database identity is unsafe")
-    if projection.schema_revision != _CONTROL_PLANE_SCHEMA_REVISION:
+    expected_schema = _runtime_control_plane_schema_revision(
+        control_plane_schema_revision, default_to_packaged=True
+    )
+    if projection.schema_revision != expected_schema:
         raise RunnerDatabaseFleetError("Runner fleet schema revision is unsafe")
     expected_settings = (
         ("max_notify_queue_pages", "64", "postmaster", False, "configuration file"),
@@ -2688,11 +2711,15 @@ def run_runner_database_fleet_admission(
     environment_attestation: VerifiedRunnerDatabaseFleetAttestation,
     source_sha256s: Mapping[str, str],
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    control_plane_schema_revision: str | None = None,
 ) -> dict[str, object]:
     """Run a read-only, repeatable-read fleet admission and build an unsigned receipt."""
 
     if engine.dialect.name != "postgresql":
         raise RunnerDatabaseFleetError("Runner fleet admission requires PostgreSQL")
+    expected_schema = _runtime_control_plane_schema_revision(
+        control_plane_schema_revision, default_to_packaged=True
+    )
     if trust_pins.stage != "admission":
         raise RunnerDatabaseFleetError(
             "Runner fleet owner admission requires admission trust pins"
@@ -2720,6 +2747,7 @@ def run_runner_database_fleet_admission(
                 fleet=fleet,
                 context=context,
                 projection=projection,
+                control_plane_schema_revision=expected_schema,
             )
             runtime_contract_sha256s: list[str] = []
             for runner in fleet.runners:
@@ -2738,6 +2766,7 @@ def run_runner_database_fleet_admission(
                                 ),
                             ),
                             required_registration_status="draining",
+                            control_plane_schema_revision=expected_schema,
                         )
                     )
                 finally:

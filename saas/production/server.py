@@ -27,6 +27,7 @@ from pathlib import Path
 from threading import Lock
 from types import MappingProxyType
 from typing import Any, Protocol, cast
+from uuid import UUID
 
 import sqlalchemy as sa
 import yaml
@@ -61,6 +62,8 @@ from saas.production.server_config import (
     ProductionServerConfig,
     load_production_server_config,
 )
+from saas.production.tenant_model_keys import load_tenant_model_bindings
+from saas.production.tenant_sandbox import parse_tenant_sandbox_config
 from saas.public_api_contract import FilterBoundCursorCodec
 from saas.runner_adapter.platform_models import (
     PLATFORM_MODEL_CONTEXT_WINDOW,
@@ -1104,7 +1107,6 @@ def build_official_runtime_dependencies(
     from omnigent.runtime import init as init_runtime
     from omnigent.runtime.agent_cache import AgentCache
     from omnigent.runtime.caps import RuntimeCaps
-    from omnigent.server.managed_hosts import parse_sandbox_config
     from omnigent.spec import parse_default_policies, parse_server_llm
     from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
     from omnigent.stores.comment_store.sqlalchemy_store import SqlAlchemyCommentStore
@@ -1118,6 +1120,16 @@ def build_official_runtime_dependencies(
 
     database_url = config.secrets.database_urls.runtime
     official_config = _load_official_config(config.official_config_path)
+    tenant_model_bindings = load_tenant_model_bindings(os.environ)
+    sandbox_config = parse_tenant_sandbox_config(
+        official_config.get("sandbox"),
+        model_bindings=tenant_model_bindings,
+        legacy_tenant_id=(
+            UUID(os.environ["OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"])
+            if tenant_model_bindings
+            else None
+        ),
+    )
     cache = open_private_artifact_cache_directory(
         config.artifact_cache_dir,
         product_revision=config.product_revision,
@@ -1170,7 +1182,7 @@ def build_official_runtime_dependencies(
             scheduled_task_store=None,
             project_store=project_store,
             artifact_readiness_check=built_artifact_store.assert_ready,
-            sandbox_config=parse_sandbox_config(official_config.get("sandbox")),
+            sandbox_config=sandbox_config,
             server_config=official_config,
             _artifact_cache=cache,
         )

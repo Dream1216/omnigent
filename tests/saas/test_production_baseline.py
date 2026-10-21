@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from saas.scripts.check_production_baseline import validate_baseline
+from saas.scripts.check_production_baseline import _migration_heads, validate_baseline
 from tests.saas._approval_history import require_current_approval_history
 
 
@@ -66,6 +66,16 @@ def test_production_baseline_rejects_revision_drift() -> None:
         violation.startswith("control_plane_schema_revision must be the only migration head")
         for violation in report["violations"]
     )
+
+
+def test_migration_graph_tracks_typed_and_untyped_revisions(tmp_path: Path) -> None:
+    versions = tmp_path / "saas/control_plane/migrations/versions"
+    versions.mkdir(parents=True)
+    (versions / "typed.py").write_text(
+        'revision: str = "first"\ndown_revision: str | None = None\n'
+    )
+    (versions / "untyped.py").write_text('revision = "second"\ndown_revision = "first"\n')
+    assert _migration_heads(tmp_path) == {"second"}
 
 
 def test_production_baseline_rejects_unrelated_approved_schema_lineage() -> None:
