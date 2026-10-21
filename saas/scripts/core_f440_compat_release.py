@@ -157,7 +157,14 @@ def predicate(
                 "database_changed": False,
                 "runner_permissions_changed": False,
             },
-            "internalParameters": {},
+            "internalParameters": {
+                "github": {
+                    "event_name": "workflow_dispatch",
+                    "repository_id": "1319241251",
+                    "repository_owner_id": "39821512",
+                    "runner_environment": "github-hosted",
+                }
+            },
             "resolvedDependencies": [
                 {"uri": "git+https://github.com/" + REPOSITORY, "digest": {"gitCommit": revision}},
                 {
