@@ -177,3 +177,10 @@ def test_publication_requires_exact_main_protected_approval_and_both_architectur
     assert len(builds) == 2 and builds[1]["with"]["no-cache"] is True
     assert all(step["with"]["platforms"] == "linux/amd64,linux/arm64" for step in builds)
     assert workflow["jobs"]["independent-readback"]["needs"] == "publish-core"
+    pg = next(
+        step
+        for step in job["steps"]
+        if step.get("name", "").startswith("Verify original f440 startup")
+    )
+    assert "--env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in pg["run"]
+    assert '"-p","tests.saas.test_production_migration_replay"' in pg["run"]
