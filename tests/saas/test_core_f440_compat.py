@@ -75,6 +75,7 @@ def test_exact_f440_patch_preserves_both_runner_lifecycle_states() -> None:
         ("runtime_base_image", "ghcr.io/dream1216/omnigent-saas-server:latest"),
         ("required_schema_revision", "lm2s00000001"),
         ("runner_permissions_changed", True),
+        ("patched_metadata_sha256", "0" * 64),
     ],
 )
 def test_recipe_rejects_source_image_schema_or_permission_drift(
@@ -88,6 +89,18 @@ def test_recipe_rejects_source_image_schema_or_permission_drift(
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="materials differ"):
         recipe.load_manifest(tmp_path)
+
+
+def test_legacy_metadata_cannot_downgrade_or_hide_the_qualified_pillow_dependency() -> None:
+    manifest = recipe.load_manifest(ROOT)
+    assert manifest["original_metadata_sha256"] == recipe.ORIGINAL_METADATA_SHA256
+    assert manifest["patched_metadata_sha256"] == recipe.PATCHED_METADATA_SHA256
+    assert '"pillow>=13.0.0,<14"' in (ROOT / "pyproject.toml").read_text()
+    with pytest.raises(ValueError, match="original signed wheel metadata differs"):
+        recipe.patched_metadata(b"Requires-Dist: pillow<13,>=12.2\n")
+    dockerfile = (ROOT / "saas/core_f440_compat/Dockerfile").read_text()
+    assert "patched_metadata_sha256" in dockerfile
+    assert "uv pip check --python /opt/venv/bin/python" in dockerfile
 
 
 def test_core_scan_requires_raw_exact_platform_and_zero_findings(tmp_path: Path) -> None:
