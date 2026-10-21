@@ -90,6 +90,9 @@ def _render(tmp_path, **kwargs):
         (15, "lm2s00000001"),
         (18, "lm2s00000001"),
         (19, "lm2s00000001"),
+        (15, "lm2t00000001"),
+        (18, "lm2t00000001"),
+        (19, "lm2t00000001"),
     ],
 )
 @pytest.mark.parametrize("mode", ["stage", "final"])
