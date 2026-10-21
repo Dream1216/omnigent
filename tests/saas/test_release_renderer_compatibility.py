@@ -13,6 +13,17 @@ from tests.saas.test_render_kubernetes_release import (
 )
 
 
+@pytest.fixture(autouse=True)
+def legacy_packaged_schema(monkeypatch):
+    original = migration._expected_head
+
+    def head(kind):
+        return "p0s000000015" if kind == "saas" else original(kind)
+
+    monkeypatch.setattr(migration, "_expected_head", head)
+    monkeypatch.setattr(renderer, "_expected_head", head)
+
+
 @pytest.mark.parametrize("mode", ["stage", "final"])
 @pytest.mark.parametrize("head", ["p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"])
 def test_release_binds_the_actual_database_head_and_exact_migration_mode(tmp_path, mode, head):
@@ -45,6 +56,25 @@ def test_release_binds_the_actual_database_head_and_exact_migration_mode(tmp_pat
 def test_renderer_rejects_unreviewed_database_heads(tmp_path, head):
     document = _spec_document()
     document["control_plane_schema_revision"] = head
+    spec = tmp_path / "release.json"
+    spec.write_bytes(_canonical_json(document))
+    spec.chmod(0o600)
+    with pytest.raises(renderer.ReleaseRenderError, match="not supported"):
+        renderer.render_kubernetes_release(spec, _copy_sources(tmp_path), tmp_path / "rendered")
+    assert not (tmp_path / "rendered").exists()
+
+
+@pytest.mark.parametrize("packaged", ["lm2r00000001", "lm2s00000001"])
+def test_newer_packaged_application_rejects_legacy_database(tmp_path, monkeypatch, packaged):
+    original = migration._expected_head
+
+    def head(kind):
+        return packaged if kind == "saas" else original(kind)
+
+    monkeypatch.setattr(migration, "_expected_head", head)
+    monkeypatch.setattr(renderer, "_expected_head", head)
+    document = _spec_document()
+    document["control_plane_schema_revision"] = "p0s000000015"
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)

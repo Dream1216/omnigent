@@ -49,6 +49,7 @@ BEGIN
         saas_dispatcher_n1_compat,
         saas_executor,
         saas_runner_agent,
+        saas_model_projection,
         saas_secret_broker,
         saas_preview_gateway,
         saas_preview_edge,

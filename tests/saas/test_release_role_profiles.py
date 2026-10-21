@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from saas.production import postgresql_migration as migration
 from saas.production import service_bindings as bindings
 from saas.production.server_config import (
     ProductionServerConfigError,
@@ -39,6 +40,17 @@ _PROFILES = (
         "model-projection-service-role-bindings.json",
     ),
 )
+
+
+@pytest.fixture(autouse=True)
+def legacy_packaged_schema(monkeypatch):
+    original = migration._expected_head
+
+    def head(kind):
+        return "p0s000000015" if kind == "saas" else original(kind)
+
+    monkeypatch.setattr(migration, "_expected_head", head)
+    monkeypatch.setattr(renderer, "_expected_head", head)
 
 
 def _spec(tmp_path, *, count=19, head="lm2r00000001", mode="stage", login_suffix=""):

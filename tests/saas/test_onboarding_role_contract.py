@@ -602,6 +602,7 @@ def test_all_onboarding_authorities_converge_stale_catalog_acl_channels() -> Non
         "saas_onboarding",
         "saas_executor",
         "saas_runner_agent",
+        "saas_model_projection",
         "saas_onboarding_status",
     )
     declared_roles = re.search(

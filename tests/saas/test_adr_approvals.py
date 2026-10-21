@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 from saas.scripts.check_adr_approvals import (
     _validate_append_only_history,
@@ -149,7 +151,11 @@ def test_current_schema_head_requires_a_successor_approval_record() -> None:
     baseline = _baseline()
 
     assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000012"  # type: ignore[index]
-    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000015"  # type: ignore[index]
+    scripts = ScriptDirectory.from_config(Config(_repo() / "saas/control_plane/alembic.ini"))
+    assert (
+        baseline["revision_contract"]["control_plane_schema_revision"]
+        == scripts.get_current_head()
+    )  # type: ignore[index]
     assert baseline["approval"]["state"] == "review_required"  # type: ignore[index]
     assert baseline["approval"]["record"] is None  # type: ignore[index]
     assert all(adr["status"] == "proposed" for adr in baseline["adrs"])  # type: ignore[index]
