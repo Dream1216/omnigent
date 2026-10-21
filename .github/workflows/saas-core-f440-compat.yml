@@ -146,6 +146,25 @@ jobs:
           git show f4404d47f705c7a3c0745c38ccd1a9be125c31ad:saas/upstream-baseline.json > "${RUNNER_TEMP}/f440-baseline.json"
           echo "UPSTREAM_REVISION=$(jq -er .upstream_revision "${RUNNER_TEMP}/f440-baseline.json")" >> "$GITHUB_ENV"
           echo "ADAPTER_CONTRACT_VERSION=$(jq -er .adapter_contract_version "${RUNNER_TEMP}/f440-baseline.json")" >> "$GITHUB_ENV"
+      - name: Prepare a non-deployment signing API preflight
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from saas.scripts.core_f440_compat_release import predicate
+          from saas.scripts.prepare_core_f440_compat import load_manifest
+          value = predicate({"materials": load_manifest(Path.cwd())}, os.environ["SOURCE_REVISION"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+          value["buildDefinition"]["externalParameters"].update(release_scope="signing-api-preflight-only", production_authority=False)
+          Path("artifacts/core-compat/signing-api-preflight.json").write_text(json.dumps(value, sort_keys=True) + "\n")
+          PY
+      - name: Verify native GitHub attestation API before image builds
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-path: artifacts/core-compat/materials-verification.json
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: artifacts/core-compat/signing-api-preflight.json
+          push-to-registry: false
       - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
         with:
