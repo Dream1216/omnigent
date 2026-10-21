@@ -1540,10 +1540,7 @@ def platform():
     return args[args.index("--platform")+1]
 def reference():
     return next(value for value in args if value.startswith("registry.invalid/"))
-if tool=="crane":
-    if os.environ.get("PLATFORM_RESOLUTION_FAIL"): sys.exit(42)
-    print(fixture[args[-1]][platform()].split("@",1)[1])
-elif tool=="docker":
+if tool=="docker":
     image=reference()
     cache_file=Path(os.environ["PLATFORM_CACHE"])
     cache=json.loads(cache_file.read_text()) if cache_file.exists() else {}
@@ -1575,8 +1572,27 @@ else:
         encoding="utf-8",
     )
     program.chmod(0o755)
-    for name in ("crane", "docker", "syft", "grype", "sha256sum"):
+    for name in ("docker", "syft", "grype", "sha256sum"):
         (tools / name).symlink_to(program)
+    admitted = {
+        name: {
+            "facts": {
+                "platforms": {
+                    platform: {"manifest_digest": image.split("@", 1)[1]}
+                    for platform, image in platforms.items()
+                }
+            }
+        }
+        for index, platforms in fixture.items()
+        for name in (index.split("/", 1)[1].split("@", 1)[0],)
+    }
+    for directory, names in (
+        ("admitted-oci", ("server", "host")),
+        ("admitted-litellm", ("litellm",)),
+    ):
+        destination = runtime / directory / "oci-promotion-manifest.json"
+        destination.parent.mkdir()
+        destination.write_text(json.dumps({"images": {name: admitted[name] for name in names}}))
     release = tmp_path / "saas/production/litellm_release.json"
     release.parent.mkdir(parents=True)
     release.write_bytes((_repo() / "saas/production/litellm_release.json").read_bytes())
@@ -1638,7 +1654,7 @@ def test_published_architecture_steps_use_platform_manifests(
     assert sum(call["tool"] == "docker" for call in calls) == 10
     assert sum(call["tool"] == "syft" for call in calls) == 6
     bindings = list(root.glob("artifacts/**/*.image-binding.json"))
-    assert len(bindings) == 6
+    assert len(bindings) == 2
     for path in bindings:
         binding = json.loads(path.read_text())
         assert fixture[binding["index"]][binding["platform"]] == binding["manifest"]
@@ -1649,22 +1665,22 @@ def test_published_architecture_steps_use_platform_manifests(
     [
         (
             "Generate per-architecture SBOMs and check raw findings",
-            '--entrypoint /usr/local/bin/python "$arch_image"',
+            '--entrypoint /usr/local/bin/python "$child_image"',
             "$image",
         ),
         (
             "Generate per-architecture SBOMs and check raw findings",
-            '--entrypoint /bin/sh "$arch_image"',
+            '--entrypoint /bin/sh "$child_image"',
             "$image",
         ),
         (
             "Generate per-architecture SBOMs and check raw findings",
-            'supply-chain-tools/syft" "$arch_image"',
+            'supply-chain-tools/syft" "$child_image"',
             "$image",
         ),
         (
             "Generate per-architecture SBOMs and check raw findings",
-            'supply-chain-tools/grype" "$arch_image"',
+            'supply-chain-tools/grype" "$child_image"',
             "$image",
         ),
         (
@@ -1689,7 +1705,8 @@ def test_candidate_contract_rejects_platform_manifest_probe_drift(
     before, remainder = source.split(marker, 1)
     step, separator, after = remainder.partition("\n      - name:")
     assert step.count(fragment) == 1
-    step = step.replace(fragment, fragment.replace("$arch_image", fallback))
+    replacement = fragment.replace("$child_image", fallback).replace("$arch_image", fallback)
+    step = step.replace(fragment, replacement)
     workflow.write_text(before + marker + step + separator + after)
     assert (
         "published probes and scanners must bind platform manifest digests"
@@ -1713,22 +1730,30 @@ def test_published_platform_resolution_failure_cannot_fall_back_to_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, references = _publication_platform_fixture(tmp_path, monkeypatch)
-    monkeypatch.setenv("PLATFORM_RESOLUTION_FAIL", "1")
+    manifest = root / "runtime/admitted-oci/oci-promotion-manifest.json"
+    admitted = json.loads(manifest.read_text())
+    del admitted["images"]["server"]["facts"]["platforms"]["linux/amd64"]["manifest_digest"]
+    manifest.write_text(json.dumps(admitted))
     result = _execute_publication_step(
         "Generate per-architecture SBOMs and check raw findings", root, references
     )
-    assert result.returncode == 42
-    calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+    assert result.returncode == 1
+    calls_file = root / "calls.jsonl"
+    calls = (
+        [json.loads(line) for line in calls_file.read_text().splitlines()]
+        if calls_file.exists()
+        else []
+    )
     assert not any(call["tool"] == "docker" for call in calls)
 
 
 @pytest.mark.parametrize(
     "fragment",
     [
-        '--entrypoint /usr/local/bin/python "$arch_image"',
-        '--entrypoint /bin/sh "$arch_image"',
-        'supply-chain-tools/syft" "$arch_image"',
-        'supply-chain-tools/grype" "$arch_image"',
+        '--entrypoint /usr/local/bin/python "$child_image"',
+        '--entrypoint /bin/sh "$child_image"',
+        'supply-chain-tools/syft" "$child_image"',
+        'supply-chain-tools/grype" "$child_image"',
     ],
 )
 def test_main_publication_requires_platform_manifest_consumers(
@@ -1741,7 +1766,7 @@ def test_main_publication_requires_platform_manifest_consumers(
     before, remainder = source.split(marker, 1)
     step, separator, after = remainder.partition("\n      - name:")
     assert step.count(fragment) == 1
-    step = step.replace(fragment, fragment.replace("$arch_image", "$image"))
+    step = step.replace(fragment, fragment.replace("$child_image", "$image"))
     workflow.write_text(before + marker + step + separator + after)
     assert (
         "published probes and scanners must bind platform manifest digests"

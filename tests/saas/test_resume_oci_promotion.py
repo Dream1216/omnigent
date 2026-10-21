@@ -44,6 +44,12 @@ RUN = "43"
             ".github/workflows/saas-oci-promotion-token-renewal.yml",
             "c90a079cb6e3c6cadda35ee1ea3121083e86d8fa",
         ),
+        (
+            "model-renewal-7cea0940",
+            "saas/supply_chain/oci-promotion-model-renewal-7cea0940.json",
+            ".github/workflows/saas-oci-promotion-model-renewal.yml",
+            "7cea09404d49fc965ce053e51803688a5be5fe53",
+        ),
     ],
 )
 def test_release_profile_binds_exact_product_lock_and_signer(

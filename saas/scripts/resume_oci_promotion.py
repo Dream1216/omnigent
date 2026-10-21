@@ -38,6 +38,11 @@ _RELEASE_PROFILES = {
         ".github/workflows/saas-oci-promotion-token-renewal.yml",
         "c90a079cb6e3c6cadda35ee1ea3121083e86d8fa",
     ),
+    "model-renewal-7cea0940": (
+        Path("saas/supply_chain/oci-promotion-model-renewal-7cea0940.json"),
+        ".github/workflows/saas-oci-promotion-model-renewal.yml",
+        "7cea09404d49fc965ce053e51803688a5be5fe53",
+    ),
 }
 _SELECTED_PRODUCT_REVISION = _RELEASE_PROFILES["f440"][2]
 

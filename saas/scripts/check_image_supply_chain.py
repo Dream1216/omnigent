@@ -645,21 +645,27 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append("protected signed release workflow contract is incomplete")
     platform_steps = {
         "Generate per-architecture SBOMs and check raw findings": {
-            'arch_image="${image%@*}@$(crane digest --platform "linux/${arch}" "$image")"',
-            '--entrypoint /usr/local/bin/python "$arch_image"',
-            '--entrypoint /bin/sh "$arch_image"',
-            'supply-chain-tools/syft" "$arch_image"',
-            'supply-chain-tools/grype" "$arch_image"',
-            '--arg index "$image" --arg manifest "$arch_image"',
+            ".images[$role].facts.platforms[$platform].manifest_digest",
+            '"${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json"',
+            '[[ "$child_digest" =~ ^sha256:[0-9a-f]{64}$ ]]',
+            'child_image="${image%@*}@${child_digest}"',
+            '--entrypoint /usr/local/bin/python "$child_image"',
+            '--entrypoint /bin/sh "$child_image"',
+            'supply-chain-tools/syft" "$child_image"',
+            'supply-chain-tools/grype" "$child_image"',
         },
         "Verify published LiteLLM runtime on both architectures": {
-            'arch_image="${LITELLM_IMAGE%@*}@$(crane digest '
-            '--platform "linux/$arch" "$LITELLM_IMAGE")"',
+            ".images.litellm.facts.platforms[$platform].manifest_digest",
+            '"${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json"',
+            '[[ "$arch_digest" =~ ^sha256:[0-9a-f]{64}$ ]]',
+            'arch_image="${LITELLM_IMAGE%@*}@${arch_digest}"',
             '"$arch_image" -B -I -c',
         },
         "Generate LiteLLM per-architecture SBOMs and check raw findings": {
-            'arch_image="${LITELLM_IMAGE%@*}@$(crane digest '
-            '--platform "linux/$arch" "$LITELLM_IMAGE")"',
+            ".images.litellm.facts.platforms[$platform].manifest_digest",
+            '"${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json"',
+            '[[ "$arch_digest" =~ ^sha256:[0-9a-f]{64}$ ]]',
+            'arch_image="${LITELLM_IMAGE%@*}@${arch_digest}"',
             'supply-chain-tools/syft" "$arch_image"',
             '--arg index "$LITELLM_IMAGE" --arg manifest "$arch_image"',
         },
