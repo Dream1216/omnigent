@@ -344,6 +344,58 @@ def test_wrong_artifact_or_workflow_coordinates_are_rejected(field: str) -> None
         )
 
 
+def test_isolated_pr_oci_export_preserves_protected_publication_boundary() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/saas-image-candidate.yml").read_text())
+    build = workflow["jobs"]["build-candidate"]
+    steps = build["steps"]
+    export = next(
+        step for step in steps if step["name"] == "Upload unsigned OCI for isolated PR validation"
+    )
+    assert " ".join(export["if"].split()) == (
+        "success() && github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name == github.repository"
+    )
+    assert export["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    assert export["with"] == {
+        "name": "saas-oci-validation-${{ env.CANDIDATE_REVISION }}",
+        "path": "artifacts/promotion/",
+        "compression-level": 0,
+        "if-no-files-found": "error",
+        "retention-days": 3,
+    }
+    seal = next(step for step in steps if step.get("id") == "seal")
+    scan = next(
+        step for step in steps if step["name"] == "Scan exact OCI candidates on both architectures"
+    )
+    compare = next(step for step in steps if step.get("id") == "compare")
+    assert steps.index(compare) < steps.index(scan) < steps.index(seal) < steps.index(export)
+    protected = next(step for step in steps if step.get("id") == "upload-oci")
+    assert " ".join(protected["if"].split()) == (
+        "github.event_name == 'workflow_dispatch' && "
+        "inputs.publish_signed && github.ref == 'refs/heads/main'"
+    )
+    assert protected["with"]["name"] == "saas-oci-promotion-${{ env.CANDIDATE_REVISION }}"
+    assert build["outputs"]["oci-artifact-id"] == "${{ steps.upload-oci.outputs.artifact-id }}"
+    assert workflow["permissions"] == {"contents": "read"}
+
+
+def test_unsigned_pr_oci_metadata_is_rejected_for_production_promotion() -> None:
+    with pytest.raises(ValueError, match="exact workflow"):
+        verify_artifact_metadata(
+            {
+                "id": 17,
+                "name": f"saas-oci-validation-{REVISION}",
+                "expired": False,
+                "digest": "sha256:" + "b" * 64,
+                "workflow_run": {"id": 23, "head_sha": REVISION},
+            },
+            artifact_id=17,
+            zip_sha256="b" * 64,
+            revision=REVISION,
+            run_id=23,
+        )
+
+
 def test_zip_sha_and_path_traversal_fail_closed(tmp_path: Path) -> None:
     archive = tmp_path / "unsafe.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
