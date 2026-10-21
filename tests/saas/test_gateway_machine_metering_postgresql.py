@@ -266,7 +266,7 @@ def test_actual_login_and_mtls_record_late_gateway_usage_without_double_cost(
                 == 0
             )
         with (
-            pytest.raises(RuntimeError, match="retained gateway customer usage"),
+            pytest.raises(RuntimeError, match=r"^retained execution schema cannot be downgraded$"),
             f.engine.begin() as db,
         ):
             config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
