@@ -1722,6 +1722,33 @@ def test_published_platform_resolution_failure_cannot_fall_back_to_index(
     assert not any(call["tool"] == "docker" for call in calls)
 
 
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        '--entrypoint /usr/local/bin/python "$arch_image"',
+        '--entrypoint /bin/sh "$arch_image"',
+        'supply-chain-tools/syft" "$arch_image"',
+        'supply-chain-tools/grype" "$arch_image"',
+    ],
+)
+def test_main_publication_requires_platform_manifest_consumers(
+    tmp_path: Path, fragment: str
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text()
+    marker = "      - name: Generate per-architecture SBOMs and check raw findings\n"
+    before, remainder = source.split(marker, 1)
+    step, separator, after = remainder.partition("\n      - name:")
+    assert step.count(fragment) == 1
+    step = step.replace(fragment, fragment.replace("$arch_image", "$image"))
+    workflow.write_text(before + marker + step + separator + after)
+    assert (
+        "published probes and scanners must bind platform manifest digests"
+        in validate_candidate_build_contract(repo)
+    )
+
+
 def test_candidate_composite_build_contract_rejects_missing_and_symlink(
     tmp_path: Path,
 ) -> None:
