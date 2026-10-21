@@ -63,7 +63,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       SOURCE_REVISION: ${{ github.sha }}
-      CORE_IMAGE: ghcr.io/dream1216/omnigent-saas-core-f440-compat
+      CORE_IMAGE: ghcr.io/dream1216/omnigent-saas-server
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -182,8 +182,8 @@ jobs:
           set -euo pipefail
           python -c 'from pathlib import Path; from saas.scripts.oci_promotion import extract_layout; import os; r=Path(os.environ["RUNNER_TEMP"]);extract_layout(r/"core-1.tar",r/"core-layout")'
           expected=$(jq -er .index_digest artifacts/core-compat/core-compat-manifest.json)
-          crane push "${RUNNER_TEMP}/core-layout" "$CORE_IMAGE:sha-$SOURCE_REVISION"
-          [[ "$(crane digest "$CORE_IMAGE:sha-$SOURCE_REVISION")" == "$expected" ]]
+          crane push "${RUNNER_TEMP}/core-layout" "$CORE_IMAGE:core-f440-compat-sha-$SOURCE_REVISION"
+          [[ "$(crane digest "$CORE_IMAGE:core-f440-compat-sha-$SOURCE_REVISION")" == "$expected" ]]
           echo "digest=$expected" >> "$GITHUB_OUTPUT"
           for arch in amd64 arm64; do
             child=$(jq -er --arg p "linux/$arch" '.facts.platforms[$p].manifest_digest' artifacts/core-compat/core-compat-manifest.json)
@@ -234,7 +234,7 @@ jobs:
       - name: Sign the exact original wheel, base image and compatibility patch materials
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
         with:
-          subject-name: ghcr.io/dream1216/omnigent-saas-core-f440-compat
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
           subject-digest: ${{ steps.image.outputs.digest }}
           predicate-type: https://slsa.dev/provenance/v1
           predicate-path: artifacts/core-compat/core-provenance.json
@@ -242,14 +242,14 @@ jobs:
       - name: Sign explicit amd64 SPDX subject
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
         with:
-          subject-name: ghcr.io/dream1216/omnigent-saas-core-f440-compat
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
           subject-digest: ${{ steps.image.outputs.amd64 }}
           sbom-path: artifacts/core-compat/supply-chain/amd64.spdx.json
           push-to-registry: true
       - name: Sign explicit arm64 SPDX subject
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
         with:
-          subject-name: ghcr.io/dream1216/omnigent-saas-core-f440-compat
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
           subject-digest: ${{ steps.image.outputs.arm64 }}
           sbom-path: artifacts/core-compat/supply-chain/arm64.spdx.json
           push-to-registry: true
@@ -302,6 +302,11 @@ jobs:
         with:
           name: core-f440-compat-facts-${{ github.sha }}
           path: artifacts/core-compat
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Independently verify both signed subjects and exact OCI content
         env:
           GH_TOKEN: ${{ github.token }}
@@ -310,7 +315,7 @@ jobs:
           python -m saas.scripts.core_f440_compat_release signatures --root artifacts/core-compat \
             --revision "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
           digest=$(jq -er .index_digest artifacts/core-compat/core-compat-manifest.json)
-          image="ghcr.io/dream1216/omnigent-saas-core-f440-compat@$digest"
+          image="ghcr.io/dream1216/omnigent-saas-server@$digest"
           [[ "$(crane digest "$image")" == "$digest" ]]
           crane pull --format=oci --platform=all "$image" "${RUNNER_TEMP}/independent-layout"
           tar -cf "${RUNNER_TEMP}/independent.tar" -C "${RUNNER_TEMP}/independent-layout" oci-layout index.json blobs

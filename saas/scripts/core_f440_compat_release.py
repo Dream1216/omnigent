@@ -17,7 +17,7 @@ from saas.scripts import scan_oci_candidates as scans
 
 WORKFLOW = ".github/workflows/saas-core-f440-compat.yml"
 REPOSITORY = "Dream1216/omnigent"
-IMAGE = "ghcr.io/dream1216/omnigent-saas-core-f440-compat"
+IMAGE = "ghcr.io/dream1216/omnigent-saas-server"
 
 
 def require(value: object, message: str) -> None:
