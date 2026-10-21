@@ -26,6 +26,15 @@ jobs:
   verify-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+        env:
+          POSTGRES_PASSWORD: fixture-only-core-compat
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -40,6 +49,29 @@ jobs:
       - run: uv run pytest tests/saas/test_core_f440_compat.py -q
       - name: Verify full pinned base materialization with complete Git history
         run: python -c 'from pathlib import Path; from saas.scripts.prepare_core_f440_compat import patched_module; patched_module(Path.cwd())'
+      - name: Exercise the isolated PG18 harness on the retained unpublished candidate
+        env:
+          OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL: postgresql+psycopg://postgres:fixture-only-core-compat@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          # This unsigned candidate is only a CI fixture; it cannot authorize deployment.
+          uv sync --frozen --group dev --extra saas --no-install-local --no-config
+          fixtures="$RUNNER_TEMP/core-fixtures"
+          mkdir -p "$fixtures"
+          for file in tests/__init__.py tests/saas/__init__.py tests/saas/test_production_migration_replay.py tests/saas/fixtures/production_preview_authority.sql; do
+            mkdir -p "$fixtures/$(dirname "$file")"
+            git show "f4404d47f705c7a3c0745c38ccd1a9be125c31ad:$file" > "$fixtures/$file"
+          done
+          cp saas/core_f440_compat/test_revoked_runner_startup.py "$fixtures/tests/saas/"
+          printf '[pytest]\naddopts = -p no:cacheprovider\n' > "$fixtures/pytest.ini"
+          deps=$(realpath .venv/lib/python3.12/site-packages)
+          docker run --rm --pull always --platform linux/amd64 --network host \
+            --env OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL --env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+            --mount "type=bind,source=$fixtures,target=/fixtures,readonly" \
+            --mount "type=bind,source=$deps,target=/test-deps,readonly" \
+            --entrypoint /opt/venv/bin/python \
+            ghcr.io/dream1216/omnigent-saas-server@sha256:1c8c4602fcfa909869f48b93dd08ad516d5b7277c66ca6f38eddef4d34f72d5b -B -c \
+            'import hashlib,sys; from pathlib import Path; from omnigent import _build_info; import saas.production.postgresql_migration as m; assert _build_info.COMMIT_SHA=="3cbe87d59a7dbe9f8f8a8dabdeda6f71207d9089"; assert hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()=="b83cfde2b98ff9e48a872a4eb833b931edc5f7ab067af8c9d71e0a115c44141e"; sys.path[:0]=["/fixtures","/test-deps"]; import pytest; raise SystemExit(pytest.main(["-c","/fixtures/pytest.ini","--confcutdir=/fixtures","-p","tests.saas.test_production_migration_replay","/fixtures/tests/saas/test_revoked_runner_startup.py","-q"]))'
 
   publish-core:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
@@ -201,6 +233,7 @@ jobs:
           deps=$(realpath .venv/lib/python3.12/site-packages)
           docker run --rm --pull always --platform linux/amd64 --network host \
             --env OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL \
+            --env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
             --mount "type=bind,source=$fixtures,target=/fixtures,readonly" \
             --mount "type=bind,source=$deps,target=/test-deps,readonly" \
             --entrypoint /opt/venv/bin/python "$CORE_IMAGE@${{ steps.image.outputs.amd64 }}" -B -c \
