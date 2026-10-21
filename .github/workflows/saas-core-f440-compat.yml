@@ -38,6 +38,8 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --group dev --extra saas
       - run: uv run pytest tests/saas/test_core_f440_compat.py -q
+      - name: Verify full pinned base materialization with complete Git history
+        run: python -c 'from pathlib import Path; from saas.scripts.prepare_core_f440_compat import patched_module; patched_module(Path.cwd())'
 
   publish-core:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha

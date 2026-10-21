@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import shutil
 from collections.abc import Mapping
@@ -14,7 +15,10 @@ from typing import cast
 import pytest
 import yaml
 
-from saas.production.postgresql_migration import PostgreSqlMigrationError
+from saas.production.postgresql_migration import (
+    PostgreSqlMigrationError,
+    _canonical_runner_management_catalog,
+)
 from saas.scripts import core_f440_compat_release as release
 from saas.scripts import prepare_core_f440_compat as recipe
 
@@ -22,14 +26,26 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_exact_f440_patch_preserves_both_runner_lifecycle_states() -> None:
-    module, manifest = recipe.patched_module(ROOT)
-    assert hashlib.sha256(module).hexdigest() == manifest["patched_module_sha256"]
-    tree = ast.parse(module)
+    manifest = recipe.load_manifest(ROOT)
+    patch = (ROOT / "saas/core_f440_compat/postgresql_migration.patch").read_text()
+    hunks = patch.split("@@")
+    # The first zero-context hunk contains only the source-pinned helper.
+    helper = "".join(
+        line[1:] for line in hunks[2].splitlines(keepends=True) if line.startswith("+")
+    )
+    tree = ast.parse(helper)
     function = next(
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_canonical_runner_management_catalog"
+    )
+    current = ast.parse(inspect.getsource(_canonical_runner_management_catalog)).body[0]
+    assert ast.dump(function, include_attributes=False) == ast.dump(
+        current, include_attributes=False
+    )
+    assert manifest["patched_module_sha256"] == (
+        "b83cfde2b98ff9e48a872a4eb833b931edc5f7ab067af8c9d71e0a115c44141e"
     )
     scope = {
         "Mapping": Mapping,
@@ -47,7 +63,7 @@ def test_exact_f440_patch_preserves_both_runner_lifecycle_states() -> None:
     wrong = {"control_plane_security": {"memberships": [[*management[:3], True, True, False]]}}
     with pytest.raises(PostgreSqlMigrationError):
         canonical(wrong, principal_operator="operator", bootstrap_name="bootstrap")
-    assert module.count(b"catalog = _canonical_runner_management_catalog(") == 2
+    assert patch.count("catalog = _canonical_runner_management_catalog(") == 2
     assert manifest["database_mutation"] is manifest["runner_permissions_changed"] is False
 
 
