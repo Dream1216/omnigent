@@ -1,0 +1,56 @@
+--- a/saas/production/postgresql_migration.py
++++ b/saas/production/postgresql_migration.py
+@@ -2429,0 +2430,41 @@
++
++
++def _canonical_runner_management_catalog(
++    catalog: Mapping[str, object],
++    *,
++    principal_operator: str,
++    bootstrap_name: str,
++) -> dict[str, object]:
++    """Hash both admitted Runner lifecycle states as the original staging state.
++
++    Call only after the complete principal graph has been verified. Revoking
++    its sole optional management edge must not invalidate the source anchor or
++    the immutable staging receipt; every other catalog fact stays authoritative.
++    This projection changes no database permissions or caller-owned values.
++    """
++
++    security = catalog.get("control_plane_security")
++    memberships = security.get("memberships") if isinstance(security, Mapping) else None
++    if not isinstance(memberships, list) or any(
++        not isinstance(row, list) or len(row) != 6 for row in memberships
++    ):
++        raise PostgreSqlMigrationError("service_role_graph_drifted", "verification")
++    management = ["saas_runner_agent", principal_operator, bootstrap_name, True, False, False]
++    observed = [
++        row
++        for row in memberships
++        if row[0] == "saas_runner_agent" and row[1] == principal_operator
++    ]
++    if observed == [management]:
++        return dict(catalog)
++    if observed:
++        raise PostgreSqlMigrationError("service_role_graph_drifted", "verification")
++    projected = [*memberships, management]
++    projected.sort(key=lambda row: tuple(str(value) for value in row[:3]))
++    return {
++        **catalog,
++        "control_plane_security": {
++            **cast(Mapping[str, object], security),
++            "memberships": projected,
++        },
++    }
+@@ -3517,0 +3559,5 @@
++    catalog = _canonical_runner_management_catalog(
++        catalog,
++        principal_operator=plan.principal_operator.login,
++        bootstrap_name=str(bootstrap_name),
++    )
+@@ -3922,0 +3969,5 @@
++        catalog = _canonical_runner_management_catalog(
++            catalog,
++            principal_operator=receipt.principal_operator,
++            bootstrap_name=str(bootstrap_name),
++        )
