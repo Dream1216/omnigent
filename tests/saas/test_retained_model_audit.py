@@ -39,19 +39,18 @@ def _acls():
     ]
 
 
-def _result(row=None, acls=None, head="p0s000000015"):
+def _result(row=None, acls=None, model_tables=(False, False, False, False)):
     result = MagicMock()
     result.one_or_none.return_value = row
     result.all.return_value = acls
-    result.scalar_one.return_value = head
+    result.one.return_value = model_tables
     return result
 
 
-@pytest.mark.parametrize("head", ["lm2r00000001", "lm2s00000001"])
-def test_retained_schema_cannot_borrow_p0_absence_after_all_functions_are_removed(head):
+def test_retained_schema_cannot_borrow_p0_absence_after_all_functions_are_removed():
     db = MagicMock()
     schema = _result()
-    schema.scalar_one.return_value = head
+    schema.one.return_value = (True, True, True, True)
     db.execute.side_effect = [*[_result() for _ in _CONTRACTS], schema]
     with pytest.raises(RuntimeError, match="function_set_incomplete"):
         verify_retained_model_audit_functions(db)
@@ -67,7 +66,7 @@ def test_p0_absence_and_complete_retained_function_set_are_distinct():
             for i, contract in enumerate(_CONTRACTS)
             for result in (_result(_row(contract, 42 + i)), _result(acls=_acls()))
         ],
-        _result(head="lm2s00000001"),
+        _result(model_tables=(True, True, True, True)),
     ]
     assert verify_retained_model_audit_functions(db) == (42, 43, 44)
 
@@ -121,7 +120,7 @@ def test_partial_retained_schema_cannot_start_a_dispatcher():
         _result(acls=_acls()),
         _result(),
         _result(),
-        _result(head="lm2s00000001"),
+        _result(model_tables=(True, True, True, True)),
     ]
     with pytest.raises(RuntimeError, match="function_set_incomplete"):
         verify_retained_model_audit_functions(db)
@@ -238,8 +237,14 @@ def test_retained_audit_startup_validates_functions_even_when_the_p0_set_is_abse
         publisher.validate_outbox_configuration()
 
 
-def test_unknown_schema_is_rejected_even_without_any_audit_function():
+@pytest.mark.parametrize("missing", range(4))
+def test_partial_model_table_set_is_rejected_even_without_any_audit_function(missing):
     db = MagicMock()
-    db.execute.side_effect = [*[_result() for _ in _CONTRACTS], _result(head="future")]
+    tables = [True] * 4
+    tables[missing] = False
+    db.execute.side_effect = [
+        *[_result() for _ in _CONTRACTS],
+        _result(model_tables=tuple(tables)),
+    ]
     with pytest.raises(RuntimeError, match="schema_contract_rejected"):
         verify_retained_model_audit_functions(db)
