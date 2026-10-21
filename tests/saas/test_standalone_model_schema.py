@@ -106,7 +106,7 @@ def _assert_packaged_model_service_boundary() -> str:
         return "schema-only-legacy-application"
     from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 
-    assert CONTROL_PLANE_SCHEMA_REVISION == "lm2s00000001"
+    assert CONTROL_PLANE_SCHEMA_REVISION == "lm2t00000001"
     assert model_source.is_file()
     assert imported
     return "complete-application"
@@ -117,9 +117,9 @@ def test_standalone_model_schema_replays_and_matches_the_pinned_r_catalog(
 ):
     plan = standalone_replay
     monkeypatch.setattr(migration, "_installed_product_revision", lambda: plan.product_revision)
-    assert migration._expected_head("saas") == "lm2s00000001"
+    assert migration._expected_head("saas") == "lm2t00000001"
     receipt = migration.run_production_postgresql_migration(plan)
-    assert receipt.saas_head == "lm2s00000001"
+    assert receipt.saas_head == "lm2t00000001"
     assert receipt.runtime_rls_table_count == 19
     record_property("source_distribution", _assert_packaged_model_service_boundary())
     engine = sa.create_engine(plan.saas_owner.url)
@@ -246,7 +246,7 @@ def test_forward_price_reference_retirement_retains_old_app_execution(
                 connection.exec_driver_sql(
                     "SELECT version_num FROM saas_alembic_version"
                 ).scalar_one()
-                == "lm2s00000001"
+                == "lm2t00000001"
             )
             assert (
                 connection.exec_driver_sql(

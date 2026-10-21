@@ -36,7 +36,7 @@ def test_runner_schema_binding_matches_migrations_and_cluster_bootstrap() -> Non
     guard = re.search(r"IF schema_head NOT IN \(([^)]+)\) THEN", source)
     assert guard is not None
     accepted = re.findall(r"'([^']+)'", guard.group(1))
-    assert accepted == ["p0s000000015", "lm2r00000001", "lm2s00000001"]
+    assert accepted == ["p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"]
     assert CONTROL_PLANE_SCHEMA_REVISION in accepted
 
 

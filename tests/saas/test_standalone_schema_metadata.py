@@ -19,7 +19,7 @@ from tests.saas.test_control_plane_migration import _migration_config
 from tests.saas.test_execution_control_plane import _admitted_run, _execution_fixture
 
 _R = "lm2r00000001"
-_S = "lm2s00000001"
+_T = "lm2t00000001"
 _PRICE_KEYS = {"fk_session_customer_pricing", "fk_run_customer_pricing"}
 
 
@@ -96,7 +96,7 @@ def test_fresh_schema_matches_the_ordinary_unfiltered_alembic_check(schema_datab
         command.check(_migration_config(connection))
         assert (
             connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-            == _S
+            == _T
         )
     assert _foreign_keys(schema_database) == set()
 
@@ -188,7 +188,7 @@ def test_schema_downgrade_refuses_retained_execution_without_erasing_data(schema
     with schema_database.connect() as connection:
         assert (
             connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-            == _S
+            == _T
         )
 
 
