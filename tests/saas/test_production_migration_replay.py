@@ -77,7 +77,7 @@ def _enable_replay_tls(connection: sa.Connection, tmp_path: Path) -> Path:
     return ca_path
 
 
-@pytest.fixture(params=["core", "model", "admin"])
+@pytest.fixture(params=["core", "model", "admin", "projection"])
 def production_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> Iterator[migration.ProductionPostgreSqlPlan]:
@@ -141,6 +141,21 @@ def production_replay(
         hashlib.sha256(platform_admin_document.encode()).hexdigest(),
         platform_admin_bindings,
     )
+    projection_bindings = tuple(
+        ProductionServiceRoleBinding(service=service, login=f"replay_{service}", base_role=role)
+        for service, role in sorted(
+            service_bindings.EXPECTED_MODEL_PROJECTION_SERVICE_ROLES.items()
+        )
+    )
+    projection_document = render_production_service_role_bindings(projection_bindings)
+    projection_path = tmp_path / "model-projection-bindings.json"
+    projection_path.write_text(projection_document)
+    projection_path.chmod(0o400)
+    projection_manifest = ProductionServiceRoleBindings(
+        projection_path,
+        hashlib.sha256(projection_document.encode()).hexdigest(),
+        projection_bindings,
+    )
     delivery_manifest = None
     delivery_bindings: tuple[ProductionServiceRoleBinding, ...] = ()
     if migration._expected_head("saas") == "p0s000000017":
@@ -192,6 +207,7 @@ def production_replay(
                 *bindings,
                 *platform_bindings,
                 *platform_admin_bindings,
+                *projection_bindings,
                 *delivery_bindings,
             )
         }
@@ -227,7 +243,10 @@ def production_replay(
             platform_manifest if request.param != "core" else None
         ),
         platform_admin_service_role_bindings=(
-            platform_admin_manifest if request.param == "admin" else None
+            platform_admin_manifest if request.param in {"admin", "projection"} else None
+        ),
+        model_projection_service_role_bindings=(
+            projection_manifest if request.param == "projection" else None
         ),
         **(
             {"business_delivery_service_role_bindings": delivery_manifest}
@@ -273,7 +292,9 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     assert first.status == "pass" and first.official_head == target
     assert first.service_role_graph_sha256 == plan.service_role_graph.sha256
     profile = (
-        "core"
+        "projection"
+        if plan.model_projection_service_role_bindings is not None
+        else "core"
         if plan.platform_model_service_role_bindings is None
         else "model"
         if plan.platform_admin_service_role_bindings is None
@@ -281,7 +302,7 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     )
     delivery_manifest = getattr(plan, "business_delivery_service_role_bindings", None)
     assert len(plan.service_role_graph.bindings) == (
-        {"core": 15, "model": 17, "admin": 18}[profile]
+        {"core": 15, "model": 17, "admin": 18, "projection": 19}[profile]
         + (3 if delivery_manifest is not None else 0)
     )
     verified = migration.run_production_postgresql_migration(plan, verify_only=True)
@@ -311,6 +332,7 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
                         "core": "_SOURCE_SECURITY_CATALOG_SHA256",
                         "model": "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
                         "admin": "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                        "projection": "_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256",
                     }[profile],
                     {},
                 )
@@ -347,7 +369,13 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         assert final.catalog_sha256 == first.catalog_sha256
     finally:
         owner.dispose()
-    if profile == "admin":
+    if final.saas_head in {"lm2t00000001", "p0s000000016", "p0s000000017"}:
+        from tests.saas.test_model_budget_owner_settlement_postgresql import (
+            verify_non_bypass_budget_owner_settlement,
+        )
+
+        verify_non_bypass_budget_owner_settlement(plan)
+    if profile in {"admin", "projection"}:
         _verify_preview_deployment_and_startup(plan, final, tmp_path)
     else:
         config, engines = _startup_config(plan, final, tmp_path)

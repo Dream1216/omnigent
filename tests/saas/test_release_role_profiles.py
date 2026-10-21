@@ -39,16 +39,32 @@ _PROFILES = (
         "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS",
         "model-projection-service-role-bindings.json",
     ),
+    (
+        "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS",
+        "business-delivery-service-role-bindings.json",
+    ),
 )
+
+
+@pytest.fixture(autouse=True)
+def legacy_packaged_schema(monkeypatch):
+    original = postgresql_migration._expected_head
+
+    def head(kind):
+        return "p0s000000015" if kind == "saas" else original(kind)
+
+    monkeypatch.setattr(postgresql_migration, "_expected_head", head)
+    monkeypatch.setattr(renderer, "_expected_head", head)
 
 
 def _spec(tmp_path, *, count=19, head="lm2r00000001", mode="stage", login_suffix=""):
     document = _spec_document(mode=mode, schema_head=head)
     roles = dict(bindings.EXPECTED_PRODUCTION_SERVICE_ROLES)
-    if count >= 18:
+    base_count = count - 3 if head == "p0s000000017" else count
+    if base_count >= 18:
         roles.update(bindings.EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
         roles.update(bindings.EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
-    if count == 19:
+    if base_count == 19:
         roles.update(bindings.EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)
     for service in roles:
         if service not in document["service_logins"]:
@@ -75,6 +91,8 @@ def _render(tmp_path, **kwargs):
         (18, "p0s000000015"),
         (15, "p0s000000016"),
         (18, "p0s000000016"),
+        (19, "p0s000000016"),
+        (22, "p0s000000017"),
         (18, "lm2r00000001"),
         (19, "lm2r00000001"),
         (15, "lm2s00000001"),
@@ -100,8 +118,11 @@ def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
         production, kind="ConfigMap", data_key="service-role-bindings.json"
     )
     assert migration_bindings == production_bindings
-    count_profiles = 0 if count == 15 else 2 if count == 18 else 3
+    base_count = count - 3 if head == "p0s000000017" else count
+    count_profiles = 0 if base_count == 15 else 2 if base_count == 18 else 3
     active = _PROFILES[:count_profiles]
+    if head == "p0s000000017":
+        active += _PROFILES[3:]
     assert set(migration_bindings["data"]) == {
         "service-role-bindings.json",
         *(filename for _, filename in active),
@@ -198,7 +219,7 @@ def test_extension_login_change_rekeys_the_immutable_bindings_without_changing_c
     assert acm["metadata"]["name"] != bcm["metadata"]["name"]
 
 
-@pytest.mark.parametrize("head", ["p0s000000015", "p0s000000016"])
+@pytest.mark.parametrize("head", ["p0s000000015"])
 def test_projection_profile_is_not_admitted_on_the_p0_schema(tmp_path, monkeypatch, head):
     monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: head)
     monkeypatch.setattr(renderer, "_expected_head", lambda _kind: head)

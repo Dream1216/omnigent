@@ -1541,7 +1541,7 @@ def test_initial_schema_usage_covers_every_nologin_capability_principal(
     )
 
     expected_roles = set(migration._CAPABILITY_ROLES)
-    if schema_head in {"p0s000000015", "p0s000000016", "p0s000000017"}:
+    if schema_head == "p0s000000015":
         expected_roles.remove("saas_model_projection")
     if schema_head != "p0s000000017":
         expected_roles -= {

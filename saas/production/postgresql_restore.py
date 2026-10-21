@@ -29,6 +29,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy.engine import URL, make_url
 
+from saas.control_plane.db_models import ControlPlaneOutboxEvent
 from saas.control_plane.dispatch_binding import dispatch_requirements_hash
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
@@ -1878,7 +1879,9 @@ def _apply_post_backup_replay(
     endpoint: PostgreSqlEndpoint,
     database: str,
     identifiers: Mapping[str, str | int],
-) -> None:
+    *,
+    revocation_events: Sequence[Mapping[str, Any]] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
     runtime_target = _recovery_runtime_target(identifiers)
     runtime_request_hash = _canonical_json_sha256(runtime_target)
     replay_at = datetime.fromisoformat(str(identifiers["onboarding_replay_at"]))
@@ -1890,8 +1893,29 @@ def _apply_post_backup_replay(
         "runtime_request_hash": runtime_request_hash,
     }
     engine = sa.create_engine(endpoint.sqlalchemy_url(database), poolclass=sa.pool.NullPool)
+    outbox = ControlPlaneOutboxEvent.__table__
+    revocation_keys = {
+        f"authorization:{kind}:{identifiers[entity]}:{floor}:change"
+        for kind, entity, floor in (
+            ("user", "actor_b", 2),
+            ("service_account", "service_account_b", 2),
+            ("api_credential", "api_credential_b", 1),
+        )
+    }
     try:
         with engine.begin() as connection:
+            head = connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+            if revocation_events is not None and head == "p0s000000017":
+                if (
+                    len(revocation_events) != 3
+                    or {row["idempotency_key"] for row in revocation_events} != revocation_keys
+                ):
+                    raise PostgreSqlRestoreContractError("incomplete revocation replay facts")
+                # Catch up the committed Outbox facts before replaying their source
+                # updates. Native triggers validate and reuse those exact events.
+                connection.execute(
+                    sa.insert(ControlPlaneOutboxEvent), [dict(row) for row in revocation_events]
+                )
             connection.execute(
                 sa.text("UPDATE saas_global_users SET security_version = 2 WHERE id = :actor_b"),
                 identifiers,
@@ -2098,6 +2122,17 @@ def _apply_post_backup_replay(
                     "request_hash": "d" * 64,
                 },
             )
+            if head == "p0s000000017":
+                events = tuple(
+                    {str(key): value for key, value in row.items()}
+                    for row in connection.execute(
+                        sa.select(outbox).where(outbox.c.idempotency_key.in_(revocation_keys))
+                    ).mappings()
+                )
+                if len(events) != 3:
+                    raise PostgreSqlRestoreContractError("incomplete revocation replay facts")
+                return events
+            return ()
     finally:
         engine.dispose()
 
@@ -2117,10 +2152,12 @@ def _normalize(value: Any) -> Any:
 
 
 def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
-    if head in {"p0s000000015", "p0s000000016"}:
+    if head == "p0s000000015":
         return _SELECTED_HASH_TABLES
+    if head == "p0s000000016":
+        return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
     if head == "p0s000000017":
-        return (*_SELECTED_HASH_TABLES, *_TYPED_DELIVERY_HASH_TABLES)
+        return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES, *_TYPED_DELIVERY_HASH_TABLES)
     if head in {"lm2r00000001", "lm2s00000001", "lm2t00000001"}:
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
     raise PostgreSqlRestoreContractError("unsupported restore hash schema")
@@ -3344,7 +3381,9 @@ def run_logical_restore_contract(
             if not archive.is_file() or archive.stat().st_size <= 0:
                 raise PostgreSqlRestoreContractError("pg_dump produced an empty archive")
             backup_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
-            _apply_post_backup_replay(admin_endpoint, source_database, identifiers)
+            revocation_events = _apply_post_backup_replay(
+                admin_endpoint, source_database, identifiers
+            )
             source_hash, source_counts = _database_digest(admin_endpoint, source_database)
             _create_database(admin_endpoint, target_database, owner=owner_role)
             created.append(target_database)
@@ -3385,7 +3424,9 @@ def run_logical_restore_contract(
                 )
         finally:
             target_engine.dispose()
-        _apply_post_backup_replay(admin_endpoint, target_database, identifiers)
+        _apply_post_backup_replay(
+            admin_endpoint, target_database, identifiers, revocation_events=revocation_events
+        )
         restored_facts = _verify_restored_database(
             admin_endpoint,
             target_database,
@@ -3415,6 +3456,7 @@ def run_logical_restore_contract(
             "backup_archive_sha256": backup_sha256,
             "selected_table_content_sha256": target_hash,
             "selected_table_row_counts": target_counts,
+            "post_backup_revocation_event_count": len(revocation_events),
             **restored_facts,
             "source_and_restore_database_names_were_distinct": source_database != target_database,
             "database_authority_applied_to_source_and_restore": True,

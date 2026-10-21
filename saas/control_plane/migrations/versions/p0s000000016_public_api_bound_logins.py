@@ -1,7 +1,7 @@
 """Apply exact machine credential RLS to bound service logins.
 
 Revision ID: p0s000000016
-Revises: p0s000000015
+Revises: lm2t00000001
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "p0s000000016"
-down_revision: str | None = "p0s000000015"
+down_revision: str | None = "lm2t00000001"
 branch_labels: str | None = None
 depends_on: str | None = None
 

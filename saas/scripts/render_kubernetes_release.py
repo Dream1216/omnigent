@@ -942,10 +942,12 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
     if control_plane_schema_revision == "p0s000000017":
         required_roles = core_roles | set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
         model_roles = required_roles | set(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
+        admin_roles = model_roles | set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
         allowed_profiles = (
             required_roles,
             model_roles,
-            model_roles | set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES),
+            admin_roles,
+            admin_roles | set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
         )
     else:
         legacy_roles = set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
@@ -962,8 +964,12 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
+        "p0s000000016",
+        "p0s000000017",
     }:
-        raise ReleaseRenderError("model projection profile requires the R, S or T schema")
+        raise ReleaseRenderError(
+            "model projection profile requires R, S, T or its P16/P17 successor"
+        )
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
         for service in sorted(login_rows)

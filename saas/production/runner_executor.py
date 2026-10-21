@@ -366,7 +366,13 @@ def _runner_agent_schema_contract(
         raise RunnerControlError(
             "runner_executor_not_ready", "Runner database schema is unavailable"
         ) from None
-    if selected in {"lm2r00000001", "lm2s00000001", "lm2t00000001"}:
+    if selected in {
+        "lm2r00000001",
+        "lm2s00000001",
+        "lm2t00000001",
+        "p0s000000016",
+        "p0s000000017",
+    }:
         return (
             selected,
             (

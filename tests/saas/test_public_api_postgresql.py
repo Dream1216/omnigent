@@ -106,7 +106,7 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
 
     with engine.begin() as connection:
         migration = _migration_config(connection, root)
-        command.upgrade(migration, "head")
+        command.upgrade(migration, "p0s000000015")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
@@ -126,7 +126,7 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
             ).scalar_one()
             is False
         )
-        command.upgrade(migration, "head")
+        command.upgrade(migration, "p0s000000016")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
@@ -152,9 +152,9 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
             )
             return {(row[0], row[1]): tuple(row[2:]) for row in rows}
 
-        command.downgrade(migration, "p0s000000015")
+        command.downgrade(migration, "lm2t00000001")
         before_policies = policy_projection()
-        command.upgrade(migration, "head")
+        command.upgrade(migration, "p0s000000016")
         after_policies = policy_projection()
         assert before_policies.keys() == after_policies.keys()
         changed = [key for key in before_policies if before_policies[key] != after_policies[key]]
@@ -169,9 +169,9 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
                         "pg_has_role(CURRENT_USER, 'saas_public_api'::name, 'USAGE'::text)"
                         in expression
                     )
-        command.downgrade(migration, "p0s000000015")
+        command.downgrade(migration, "lm2t00000001")
         assert policy_projection() == before_policies
-        command.upgrade(migration, "head")
+        command.upgrade(migration, "p0s000000016")
         assert policy_projection() == after_policies
 
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")

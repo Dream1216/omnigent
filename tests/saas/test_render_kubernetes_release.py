@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 import saas.scripts.render_kubernetes_release as release_renderer_module
+from saas.production.postgresql_migration import _expected_head
 from saas.production.service_bindings import (
     EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
@@ -47,7 +48,9 @@ def _copy_sources(tmp_path: Path) -> Path:
     return source
 
 
-def _spec_document(*, mode: str = "stage", schema_head: str = "p0s000000017") -> dict[str, Any]:
+def _spec_document(*, mode: str = "stage", schema_head: str | None = None) -> dict[str, Any]:
+    if schema_head is None:
+        schema_head = _expected_head("saas")
     store_uri = "s3://omnigent-release/runtime"
     runners = {
         "a": {
@@ -894,9 +897,10 @@ def test_failed_render_does_not_modify_source_templates(tmp_path: Path) -> None:
     assert {name: (source / name).read_bytes() for name in MANIFEST_NAMES} == before
 
 
-@pytest.mark.parametrize("profile", ["core", "model", "admin"])
+@pytest.mark.parametrize("profile", ["core", "model", "admin", "projection"])
 def test_p17_business_bindings_are_complete_and_server_identity_is_native(tmp_path, profile):
     from saas.production.service_bindings import (
+        EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
         EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
         EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     )
@@ -904,7 +908,8 @@ def test_p17_business_bindings_are_complete_and_server_identity_is_native(tmp_pa
     document = _spec_document()
     for roles in (
         (() if profile == "core" else EXPECTED_PLATFORM_MODEL_SERVICE_ROLES),
-        (() if profile != "admin" else EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES),
+        (() if profile not in {"admin", "projection"} else EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES),
+        (() if profile != "projection" else EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
     ):
         for service in roles:
             document["service_logins"].setdefault(service, f"release_{service}_login")

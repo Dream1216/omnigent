@@ -221,12 +221,12 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         16,
         "nf12ab34cd56",
         "p0s000000017",
-    ): "0b35d9235ea15a057826d475e169b13d4e61e5f426d03d681e4200d789989fe7",
+    ): "487767ff4154e92effb751324ead7b3bed392c342a054cdc58cf59088f74ad6c",
     (
         18,
         "nf12ab34cd56",
         "p0s000000017",
-    ): "300c98d18f675ee884513d504cb6092c0159a777ef615562f7154f1285bc7180",
+    ): "e3b526ba9f74a30026ba3ee64f22f96174239d9bed31f1fd468c42fd086642c2",
     # Source replay: exact owner-scoped budget settlement without ACL widening.
     (
         16,
@@ -1706,12 +1706,12 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         16,
         "nf12ab34cd56",
         "p0s000000017",
-    ): "ac34fc5ffd60705644bc75b27d0d86cbfe6de0d427806a3aefdf3bb6e6c0c063",
+    ): "3a01557a39e8f8cbcb63a7444e8ed669d676ff5ad8e3064d12eb126ae33612af",
     (
         18,
         "nf12ab34cd56",
         "p0s000000017",
-    ): "3216d4056830a0571867e87d991e3f991544772365e544473b1534deb0597edd",
+    ): "37417a278e9e13dcf57990012dded55cfc96e5f743c80a511ebfa3ff30326562",
     (
         16,
         "nf12ab34cd56",
@@ -2041,12 +2041,12 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
         16,
         "nf12ab34cd56",
         "p0s000000017",
-    ): "353dce09ca286261f07f4d1d98cae18068096c8baab718c7e137bdfa4f8a2e2c",
+    ): "b5af69731caa7e52039a043de97ca9bd680fe92bb5a8891b8318a955a75fccaf",
     (
         18,
         "nf12ab34cd56",
         "p0s000000017",
-    ): "dd91a634610f4524ce2ac121710a1e5b0bb82dc6b9a17c9f2ede60423a15f190",
+    ): "89c7f24d86dfdb666df48dec42027de69fa954fcf7f0260034208061c4a0a045",
     (
         16,
         "nf12ab34cd56",
@@ -2924,6 +2924,16 @@ _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
         "mm1a2b3c4d5e",
         "lm1b00000001",
     ): "2046e9e8550bf5dafab2111e24cb4276418f483a2b0ef169fea3881a750622db",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "9bd115e77773e339cef8e58d2b3e394bd80129af42252c9b665ca025c90a78db",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "352ed24346a1d7fec6cc4d0c6b74f847f11638bb35e232bdccdce3b968d75a1a",
 }
 # Populated only by the reviewed clean-source PG16/18 replay. Missing anchors
 # fail preflight; live deployment receipts can never teach these baselines.
@@ -2933,38 +2943,49 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             16,
             "nf12ab34cd56",
             "p0s000000017",
-        ): "8afd7964b1efd45b2376dbfe32cd62a8d8c4482655eb53908db8294952aa6550",
+        ): "235f96ec2549ebf6f3b2926f672bea6ef87aa1410dcb61f87a6ee432a41b8643",
         (
             18,
             "nf12ab34cd56",
             "p0s000000017",
-        ): "09ef52139f1bbd6f54e3f8c11003f26d8e0e79b2a7fc5b2a74e1cc068bcfae76",
+        ): "876d5be267c8e348c6e471452b1e35c613538111e10546d37ee510e85ee6c8c8",
     },
     "model": {
         (
             16,
             "nf12ab34cd56",
             "p0s000000017",
-        ): "3a6e7a7e9b9c2016cab7831acfef51a0fe386238d2343c0dafa69f328dbbc52c",
+        ): "b1921174cfcb080d39c4ddcaef38fb50a1bd5af4aafdbe7e2429dc12b90807bb",
         (
             18,
             "nf12ab34cd56",
             "p0s000000017",
-        ): "573b7009200aa77e338bde59944a02c09765b7ba5068e8da68ad8a55947c3ab0",
+        ): "21c0aded1cc3203bf177ada27207d60021e865fc4b1fbe714e1f592692bb15ac",
     },
     "admin": {
         (
             16,
             "nf12ab34cd56",
             "p0s000000017",
-        ): "149bfcbf7f3946ef50a935e3445f40e9e53b642afebc8a60968676ef3fc33dfc",
+        ): "dad33b5d96b876ec9bae02529028746d0d94fc49c16cf69b49f391d37c496189",
         (
             18,
             "nf12ab34cd56",
             "p0s000000017",
-        ): "bdc62cbf0a0da4d71b700f4039b8b0edeaa8fb25959a9c78624b37b9433e644f",
+        ): "a02f8eaec24f0946c25c9dd8ea5f401833400e58613606da823292800debe494",
     },
-    "projection": {},
+    "projection": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "d2c5cab9deaeafac42245998426338c3ddbec5f751fda4bf1408659c71e804cb",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "80091db4068aef752cb0b5e78d6ec8619466285859970b72557df2c1546803ac",
+    },
 }
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -3650,10 +3671,7 @@ def _capability_roles(saas_head: str | None = None) -> tuple[str, ...]:
     return tuple(
         role
         for role in _CAPABILITY_ROLES
-        if (
-            selected_head not in {"p0s000000015", "p0s000000016", "p0s000000017"}
-            or role != "saas_model_projection"
-        )
+        if (selected_head != "p0s000000015" or role != "saas_model_projection")
         and (
             selected_head == "p0s000000017"
             or role not in EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.values()
@@ -4354,7 +4372,7 @@ def _expected_head(kind: Literal["official", "saas"]) -> str:
 def _runtime_saas_head(requested: object) -> str:
     supported = {
         "p0s000000017": ("p0s000000017",),
-        "p0s000000016": ("p0s000000016", "lm2r00000001", "lm2s00000001"),
+        "p0s000000016": ("p0s000000016",),
         "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"),
         "lm2r00000001": ("lm2r00000001", "lm2s00000001", "lm2t00000001"),
         "lm2s00000001": ("lm2s00000001", "lm2t00000001"),

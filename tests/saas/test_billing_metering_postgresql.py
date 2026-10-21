@@ -42,6 +42,7 @@ from saas.control_plane import (
     Tenant,
     TenantMembership,
 )
+from saas.production.postgresql_migration import _expected_head
 from saas.runner_adapter.metering import (
     ManagedMeteringGrant,
     ProviderUsageMeter,
@@ -625,49 +626,51 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         assert len(posture) == 2
         assert all(not superuser and not bypass for _role, superuser, bypass in posture)
 
-        # The p0s8 profile-binding downgrade is intentionally fail-closed: all
-        # dispatches must be drained before its binding columns can be removed.
-        # This isolated fixture owns only the dispatch created above, so remove
-        # it to establish the schema-migration precondition. Production drain
-        # orchestration remains a separate runbook and admission concern.
-        assert (
-            connection.execute(
-                sa.text("DELETE FROM saas_run_dispatches WHERE run_id = :run"),
-                {"run": run_id},
-            ).rowcount
-            == 1
-        )
-        assert connection.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 0
-
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
         config.attributes["connection"] = connection
-        command.downgrade(config, "p6a000000008")
-        assert not sa.inspect(connection).has_table("saas_billing_metering_receipts")
-        assert (
-            connection.execute(
-                sa.text(
-                    "SELECT count(*) FROM saas_runner_certificates "
-                    "WHERE fingerprint_sha256 = :fingerprint"
-                ),
-                {"fingerprint": fingerprint},
-            ).scalar_one()
-            == 0
-        )
-        assert (
-            connection.execute(
-                sa.text(
-                    "SELECT tgenabled FROM pg_trigger "
-                    "WHERE tgname = 'trg_reject_runner_certificate_delete'"
-                )
-            ).scalar_one()
-            == "O"
-        )
-        command.upgrade(config, "head")
-        connection.exec_driver_sql(
-            (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
-        )
+        before = _retained_metering_snapshot(connection)
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                r"^(retained execution schema cannot be downgraded|"
+                r"retained model budgets require owner settlement policy|"
+                r"P17 downgrade requires reviewed preserving-driver archive; "
+                r"never DROP durable facts)$"
+            ),
+        ):
+            with connection.begin_nested():
+                command.downgrade(config, "p6a000000008")
+        assert _retained_metering_snapshot(connection) == before
+        assert connection.scalar(
+            sa.text("SELECT version_num FROM saas_alembic_version")
+        ) == _expected_head("saas")
         for base, child in reversed(tuple(roles.items())):
             connection.exec_driver_sql(f"REVOKE saas_{base} FROM {child}")
             connection.exec_driver_sql(f"DROP ROLE {child}")
     engine.dispose()
+
+
+def _retained_metering_snapshot(connection: sa.Connection) -> dict[str, str]:
+    tables = (
+        "saas_execution_sessions",
+        "saas_runs",
+        "saas_run_dispatches",
+        "saas_runner_certificates",
+        "saas_usage_events",
+        "saas_billing_metering_receipts",
+        "saas_customer_ledger_entries",
+        "saas_control_plane_outbox",
+    )
+    return {
+        table: sha256(
+            connection.exec_driver_sql(
+                "SELECT COALESCE(jsonb_agg(to_jsonb(retained) "
+                "ORDER BY to_jsonb(retained)::text), '[]'::jsonb)::text "
+                f"FROM {table} AS retained"
+            )
+            .scalar_one()
+            .encode()
+        ).hexdigest()
+        for table in tables
+    }

@@ -28,35 +28,34 @@ _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
 _T = "lm2t00000001"
+_P16 = "p0s000000016"
+_P17 = "p0s000000017"
 
 
-@pytest.mark.parametrize(
-    "packaged_head,expected",
-    [
-        (_P0, "0b33c0098f024b515a5f2860a24ceec077b597e04d573ac9bd69edcc9db2a07a"),
-        ("p0s000000016", "1fd78c6d7d71706319d99f226fd79f36e1a64b58f8686b6799e4bf978017e7a7"),
-    ],
-)
-def test_p0_runner_contract_retains_its_original_bytes(monkeypatch, packaged_head, expected):
-    monkeypatch.setattr(migration, "_expected_head", lambda _kind: packaged_head)
-    assert runner_agent_database_authority_contract_sha256() == expected
+@pytest.fixture(autouse=True)
+def legacy_packaged_schema(monkeypatch):
+    original = migration._expected_head
+    monkeypatch.setattr(
+        migration, "_expected_head", lambda kind: _P0 if kind == "saas" else original(kind)
+    )
 
 
-@pytest.mark.parametrize(
-    "packaged_head,head",
-    [(_P0, _R), (_P0, _S), (_P0, _T), ("p0s000000016", _R), ("p0s000000016", _S)],
-)
-def test_r_runner_contract_pins_the_complete_new_function_set_and_digest(
-    monkeypatch, head, packaged_head
-) -> None:
-    monkeypatch.setattr(migration, "_expected_head", lambda _kind: packaged_head)
-    p0, old_functions, old_hashes = _runner_agent_schema_contract(packaged_head)
+def test_p0_runner_contract_retains_its_original_bytes() -> None:
+    assert runner_agent_database_authority_contract_sha256() == (
+        "0b33c0098f024b515a5f2860a24ceec077b597e04d573ac9bd69edcc9db2a07a"
+    )
+
+
+@pytest.mark.parametrize("head", [_R, _S, _T])
+def test_r_runner_contract_pins_the_complete_new_function_set_and_digest(head) -> None:
+    p0, old_functions, old_hashes = _runner_agent_schema_contract(_P0)
     r, new_functions, new_hashes = _runner_agent_schema_contract(head)
-    assert (p0, r) == (packaged_head, head)
+    assert (p0, r) == (_P0, head)
     assert set(new_functions) - set(old_functions) == {
         ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb")
     }
     assert set(old_functions) < set(new_functions)
+    assert len(new_functions) == len(set(new_functions))
     assert old_hashes == dict.fromkeys(
         (16, 18), "43423586ac39ca5a08a415b36f37e93d7409deb5f03050238b0b876c4d33ca02"
     )
@@ -65,9 +64,22 @@ def test_r_runner_contract_pins_the_complete_new_function_set_and_digest(
     )
     assert runner_agent_database_authority_contract_sha256(
         control_plane_schema_revision=head
-    ) != runner_agent_database_authority_contract_sha256(
-        control_plane_schema_revision=packaged_head
-    )
+    ) != runner_agent_database_authority_contract_sha256(control_plane_schema_revision=_P0)
+
+
+@pytest.mark.parametrize("installed", [_P16, _P17])
+def test_unreleased_p16_p17_inherit_the_complete_t_runner_contract(monkeypatch, installed):
+    _t, t_functions, t_hashes = _runner_agent_schema_contract(_T)
+    _p0, p0_functions, _p0_hashes = _runner_agent_schema_contract(_P0)
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: installed)
+    selected, functions, hashes = _runner_agent_schema_contract(None)
+    assert selected == installed
+    assert functions == t_functions
+    assert hashes == t_hashes
+    assert len(functions) == len(set(functions)) == len(p0_functions) + 1
+    assert set(functions) - set(p0_functions) == {
+        ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb")
+    }
 
 
 @pytest.mark.parametrize("revision", ["lm2q00000001", "future", ""])
@@ -81,7 +93,7 @@ def test_runner_unknown_schema_is_rejected_before_a_database_connection(revision
         )
 
 
-@pytest.mark.parametrize("installed", [_R, _S, _T])
+@pytest.mark.parametrize("installed", [_R, _S, _T, _P16, _P17])
 def test_r_packaged_application_cannot_borrow_the_p0_contract(monkeypatch, installed) -> None:
     monkeypatch.setattr(migration, "_expected_head", lambda _kind: installed)
     assert _runner_agent_schema_contract(None)[0] == installed
@@ -89,9 +101,18 @@ def test_r_packaged_application_cannot_borrow_the_p0_contract(monkeypatch, insta
         runner_agent_database_authority_contract_sha256(control_plane_schema_revision=_P0)
 
 
-def test_fleet_projection_must_equal_the_explicit_release_schema(monkeypatch) -> None:
-    monkeypatch.setattr(migration, "_expected_head", lambda _kind: "p0s000000016")
-    old = _projection(schema_revision="p0s000000016")
+@pytest.mark.parametrize("borrowed", [_P0, _R])
+def test_s_packaged_application_keeps_its_own_contract_and_rejects_old_heads(
+    monkeypatch, borrowed
+):
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: _S)
+    assert _runner_agent_schema_contract(None)[0] == _S
+    with pytest.raises(RunnerControlError, match="schema"):
+        runner_agent_database_authority_contract_sha256(control_plane_schema_revision=borrowed)
+
+
+def test_fleet_projection_must_equal_the_explicit_release_schema() -> None:
+    old = replace(_projection(), schema_revision=_P0)
     new = replace(old, schema_revision=_R)
     with pytest.raises(RunnerDatabaseFleetError, match="schema revision"):
         validate_runner_database_fleet_projection(
@@ -111,12 +132,12 @@ def test_fleet_projection_must_equal_the_explicit_release_schema(monkeypatch) ->
         )
 
 
-@pytest.mark.parametrize("revision", [_P0, "p0s000000016", _R, _S, _T])
+@pytest.mark.parametrize("revision", [_P0, _R, _S, _T, _P16, _P17])
 def test_fleet_release_facts_keep_official_and_control_plane_heads_distinct(
     monkeypatch, revision
 ) -> None:
-    packaged_head = revision if revision.startswith("p0s") else _P0
-    monkeypatch.setattr(migration, "_expected_head", lambda _kind: packaged_head)
+    if revision in {_P16, _P17}:
+        monkeypatch.setattr(migration, "_expected_head", lambda _kind: revision)
     context = _context()
     source = {
         "OMNIGENT_SAAS_PRODUCT_REVISION": context.product_revision,

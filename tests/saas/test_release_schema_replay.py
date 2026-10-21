@@ -29,7 +29,7 @@ from tests.saas.test_production_migration_replay import (
     production_replay as production_replay,
 )
 
-_P0 = "p0s000000016"
+_P0 = "p0s000000015"
 _R = "lm2r00000001"
 
 

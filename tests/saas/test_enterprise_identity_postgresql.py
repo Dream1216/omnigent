@@ -56,7 +56,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
         config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+        command.upgrade(config, "p0s000000015")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
@@ -709,7 +709,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         service.get_group(overlap_token, scim_group_id=group.id)
     assert disabled_overlap_token.value.code == "scim_authentication_failed"
 
-    assert len(CONTROL_PLANE_RLS_TABLES) == 119
+    assert len(CONTROL_PLANE_RLS_TABLES) == 131
     assert {
         "saas_enterprise_scim_directories",
         "saas_enterprise_scim_users",
