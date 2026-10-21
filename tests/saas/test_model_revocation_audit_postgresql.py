@@ -20,12 +20,13 @@ from saas.control_plane.platform_governed_models import PlatformAuditEventRecord
 from saas.control_plane.platform_models import PlatformRoleAssignmentRecord
 from saas.control_plane.platform_password_auth import PlatformPasswordAuthenticationService
 from saas.control_plane.platform_security import PlatformSecurityError, PlatformSessionService
+from saas.control_plane.retained_model_audit import RetainedModelAuditPublisher
 from saas.control_plane.rls import PlatformRlsContext, apply_platform_rls_context
 from saas.outbox_worker import verify_dispatcher_database_role
 from tests.saas.test_model_disablement_audit_postgresql import (
     audit_disablement as audit_disablement,
 )
-from tests.saas.test_model_gateway_audit_postgresql import _event
+from tests.saas.test_model_gateway_audit_postgresql import _event, _RejectFallback
 from tests.saas.test_model_gateway_audit_postgresql import audit_gateway as audit_gateway
 
 
@@ -47,12 +48,18 @@ def _request(f):
     return receipt, _event(event)
 
 
+@pytest.mark.parametrize("retained", (False, True), ids=("specialized", "retained"))
 def test_real_staff_revocation_and_dispatcher_lost_ack_retain_one_shared_audit_fact(
     audit_disablement,
+    retained,
 ):
     f = audit_disablement
     receipt, event = _request(f)
-    publisher = ModelRevocationAuditPublisher(f.dispatcher, f.publisher)
+    publisher = (
+        RetainedModelAuditPublisher(f.dispatcher, _RejectFallback())
+        if retained
+        else ModelRevocationAuditPublisher(f.dispatcher, f.publisher)
+    )
     publisher.validate_outbox_configuration()
     verify_dispatcher_database_role(f.dispatcher)
     route = OutboxClaimRoute("platform_model", REVOCATION_EVENT, REVOCATION_EVENT)

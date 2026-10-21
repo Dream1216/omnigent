@@ -31,6 +31,7 @@ from saas.control_plane.platform_models import (
     ModelProviderConfigurationRecord,
     PlatformRoleAssignmentRecord,
 )
+from saas.control_plane.retained_model_audit import RetainedModelAuditPublisher
 from saas.outbox_worker import verify_dispatcher_database_role
 from tests.saas.test_model_connections import _fixture as _staff_fixture
 from tests.saas.test_platform_model_gateway import TENANT_ID
@@ -228,8 +229,13 @@ def _state(fixture):
         ).scalar_one()
 
 
-def test_real_postgresql_gateway_audit_survives_lost_ack_and_preserves_shared_chain(audit_gateway):
+@pytest.mark.parametrize("retained", (False, True), ids=("specialized", "retained"))
+def test_real_postgresql_gateway_audit_survives_lost_ack_and_preserves_shared_chain(
+    audit_gateway, retained
+):
     f = audit_gateway
+    if retained:
+        f.publisher = RetainedModelAuditPublisher(f.dispatcher, _RejectFallback())
     verify_dispatcher_database_role(f.dispatcher)
     f.publisher.validate_outbox_configuration()
     assert f.client.post(f.path, **f.request).status_code == 200

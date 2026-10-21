@@ -24,11 +24,13 @@ from saas.control_plane.outbox import OutboxClaimRoute, OutboxDispatcher, Outbox
 from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
 from saas.control_plane.platform_governed_models import PlatformAuditEventRecord
 from saas.control_plane.platform_security import PlatformAuthorizationService
+from saas.control_plane.retained_model_audit import RetainedModelAuditPublisher
 from saas.outbox_worker import verify_dispatcher_database_role
 from tests.saas import test_model_projection
 from tests.saas.test_model_connections import _Cipher
 from tests.saas.test_model_gateway_audit_postgresql import (
     _event,
+    _RejectFallback,
     _state,
 )
 from tests.saas.test_model_gateway_audit_postgresql import (
@@ -122,10 +124,14 @@ def _audit_count(f):
         return db.scalar(sa.select(sa.func.count()).select_from(PlatformAuditEventRecord))
 
 
+@pytest.mark.parametrize("retained", (False, True), ids=("specialized", "retained"))
 def test_real_disablement_audit_lost_ack_uses_existing_chain_and_exact_dispatcher(
     audit_disablement,
+    retained,
 ):
     f = audit_disablement
+    if retained:
+        f.publisher = RetainedModelAuditPublisher(f.dispatcher, _RejectFallback())
     verify_dispatcher_database_role(f.dispatcher)
     f.publisher.validate_outbox_configuration()
     before, calls = _state(f), list(f.model_calls)
