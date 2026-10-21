@@ -7,6 +7,46 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.parametrize("parent_telemetry", [None, "enabled", "log"])
+def test_saas_harness_build_disables_gh_telemetry_before_delegation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parent_telemetry: str | None
+) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    installer = (repo / "saas/scripts/install-saas-harness-cli.sh").read_text(encoding="utf-8")
+    install_phase = installer[: installer.index("# Version probes can write logs")]
+    delegate = tmp_path / "upstream installer.sh"
+    delegate.write_text(
+        'printf "%s:%s\\n" "$1" "$GH_TELEMETRY"\n'
+        'bash -euc \'printf "child:%s\\n" "$GH_TELEMETRY"\'\n',
+        encoding="utf-8",
+    )
+    if parent_telemetry is None:
+        monkeypatch.delenv("GH_TELEMETRY", raising=False)
+    else:
+        monkeypatch.setenv("GH_TELEMETRY", parent_telemetry)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-euc",
+            install_phase.replace("/tmp/install-harness-cli.sh", shlex.quote(str(delegate))),
+            "installer",
+            "jcode@0.90.1",
+            "cursor@1.0.0",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == [
+        "jcode@0.90.1:false",
+        "child:false",
+        "cursor@1.0.0:false",
+        "child:false",
+    ]
+
+
 @pytest.mark.parametrize("prune_marker_present", [False, True])
 def test_saas_harness_installer_removes_only_jcode_probe_state(
     tmp_path: Path, prune_marker_present: bool
