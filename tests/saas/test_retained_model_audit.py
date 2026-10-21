@@ -39,21 +39,35 @@ def _acls():
     ]
 
 
-def _result(row=None, acls=None):
+def _result(row=None, acls=None, head="p0s000000015"):
     result = MagicMock()
     result.one_or_none.return_value = row
     result.all.return_value = acls
+    result.scalar_one.return_value = head
     return result
+
+
+@pytest.mark.parametrize("head", ["lm2r00000001", "lm2s00000001"])
+def test_retained_schema_cannot_borrow_p0_absence_after_all_functions_are_removed(head):
+    db = MagicMock()
+    schema = _result()
+    schema.scalar_one.return_value = head
+    db.execute.side_effect = [*[_result() for _ in _CONTRACTS], schema]
+    with pytest.raises(RuntimeError, match="function_set_incomplete"):
+        verify_retained_model_audit_functions(db)
 
 
 def test_p0_absence_and_complete_retained_function_set_are_distinct():
     db = MagicMock()
-    db.execute.side_effect = [_result() for _ in _CONTRACTS]
+    db.execute.side_effect = [_result() for _ in range(len(_CONTRACTS) + 1)]
     assert verify_retained_model_audit_functions(db) == ()
     db.execute.side_effect = [
-        result
-        for i, contract in enumerate(_CONTRACTS)
-        for result in (_result(_row(contract, 42 + i)), _result(acls=_acls()))
+        *[
+            result
+            for i, contract in enumerate(_CONTRACTS)
+            for result in (_result(_row(contract, 42 + i)), _result(acls=_acls()))
+        ],
+        _result(head="lm2s00000001"),
     ]
     assert verify_retained_model_audit_functions(db) == (42, 43, 44)
 
@@ -107,6 +121,7 @@ def test_partial_retained_schema_cannot_start_a_dispatcher():
         _result(acls=_acls()),
         _result(),
         _result(),
+        _result(head="lm2s00000001"),
     ]
     with pytest.raises(RuntimeError, match="function_set_incomplete"):
         verify_retained_model_audit_functions(db)
@@ -215,9 +230,16 @@ def test_retained_audit_never_accepts_a_non_boolean_ack():
 def test_retained_audit_startup_validates_functions_even_when_the_p0_set_is_absent():
     publisher, engine, _, _ = _publisher(_CONTRACTS[0])
     db = engine.connect.return_value.__enter__.return_value
-    db.execute.side_effect = [_result() for _ in _CONTRACTS]
+    db.execute.side_effect = [_result() for _ in range(len(_CONTRACTS) + 1)]
     publisher.validate_outbox_configuration()
-    assert db.execute.call_count == len(_CONTRACTS)
+    assert db.execute.call_count == len(_CONTRACTS) + 1
     engine.dialect.name = "sqlite"
     with pytest.raises(RuntimeError, match="requires_postgresql"):
         publisher.validate_outbox_configuration()
+
+
+def test_unknown_schema_is_rejected_even_without_any_audit_function():
+    db = MagicMock()
+    db.execute.side_effect = [*[_result() for _ in _CONTRACTS], _result(head="future")]
+    with pytest.raises(RuntimeError, match="schema_contract_rejected"):
+        verify_retained_model_audit_functions(db)
