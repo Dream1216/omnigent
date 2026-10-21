@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Source replay: exact owner-scoped budget settlement without ACL widening.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "2071bc65ee3fff82b0739d93a182644a5432ba6eb14064002d499cf7df8d5c2f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "52023b8893a16b6bad417d2c85887e94d599e27897bb2bee206c6054a91774fb",
     # Source replay: retained price references without new foreign keys.
     (
         16,
@@ -574,6 +585,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "01f3199c4d49f85514da53115d1a83b103026e07d1fc117e9e439a6420e9752c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "d535421adde29990414100ae1dbede002bca7dc57060477006eae20e17fe9212",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm2s00000001",
     ): "4f0d8bd7370bf80a5d761a7bfb82614ab94fc917eafd5dfd1610c75f69aa93ad",
     (
@@ -928,6 +949,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "9deb086b3e5d131d0b04c432bdabc36dec5dc6b52136193d4eeaad9c8680e09d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "7fe118df3d8c03f96f4ab78c6f8c3ae48ea970fcd0ed0841cfebaadda948b4e5",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm2s00000001",
     ): "cd54976f8773fb4c1be9bb5468ed8cba753ead55158a12a60635613df3ac2e45",
     (
@@ -1252,6 +1283,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "1b9152fe524c60b009db0d06b70a4211e67cfab49cbf89fbced73a835d64a310",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "5b1a46d5f00ff7893f701d8880d07a80d3133325025a9d1beb80cd7d79f29ebe",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm2s00000001",
     ): "c3cbadb8cf13b7f1fafd693389d04ce23000d3db0022f355d323da012bea6981",
     (
@@ -1571,6 +1612,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "0563e8d3f3ee8baa1e0919a50f5f29bf11bd982ab56cbea3f98fa13d427f3ed9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "bf1698d9ec0841aeeb9aff503c02262e486a70471788507a8479f5d351e14faf",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm2s00000001",
     ): "f1ae92fcdfc0ce71b82c51280f419bb5abf0ed1a3e3299dd4c48ce7466ec07be",
     (
@@ -1862,6 +1913,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "b5bd76b605cf89e03ca535a7a69f13bbb2a23b8f1d1e81781f7bb7f81ad9cf15",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "ae7ab84a2dcb141ba86451614da42dd286e0c2c3a63abb34fabe3948a21c01d3",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2166,6 +2227,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "6ec1a03a2eef578d7968d18b7cb5b103fbf9f3b254477b0351ab0cab9bfe76f9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "90ed1dce7098a4397a7a34d7d81d570eb772bb8081ebcb2bd3fd24ce5582b82e",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "lm2s00000001",
     ): "9e476886506c5eec3bf1aaa7f06346bb80d343269e06da20afe7201745ebf89f",
     (
@@ -2429,6 +2500,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "40487698730ae66ce5543b0672242b41a5561d15cb16e70a1722269a971f19a2",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "lm2t00000001",
+    ): "adc38812fd31618093c7a1c8fd33c35a8b76053e66c55448bd71d58b98c39909",
     (
         16,
         "mm1a2b3c4d5e",
@@ -4031,9 +4112,10 @@ def _expected_head(kind: Literal["official", "saas"]) -> str:
 
 def _runtime_saas_head(requested: object) -> str:
     supported = {
-        "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001"),
-        "lm2r00000001": ("lm2r00000001", "lm2s00000001"),
-        "lm2s00000001": ("lm2s00000001",),
+        "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"),
+        "lm2r00000001": ("lm2r00000001", "lm2s00000001", "lm2t00000001"),
+        "lm2s00000001": ("lm2s00000001", "lm2t00000001"),
+        "lm2t00000001": ("lm2t00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")
