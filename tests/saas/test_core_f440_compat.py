@@ -103,6 +103,21 @@ def test_legacy_metadata_cannot_downgrade_or_hide_the_qualified_pillow_dependenc
     assert "uv pip check --python /opt/venv/bin/python" in dockerfile
 
 
+def test_custom_slsa_includes_the_required_github_repository_identity() -> None:
+    manifest = {"materials": recipe.load_manifest(ROOT)}
+    predicate = release.predicate(manifest, "a" * 40, "1", "1")
+    assert predicate["buildDefinition"]["internalParameters"]["github"] == {
+        "event_name": "workflow_dispatch",
+        "repository_id": "1319241251",
+        "repository_owner_id": "39821512",
+        "runner_environment": "github-hosted",
+    }
+    assert predicate["buildDefinition"]["externalParameters"]["database_changed"] is False
+    assert (
+        predicate["buildDefinition"]["externalParameters"]["runner_permissions_changed"] is False
+    )
+
+
 def test_core_scan_requires_raw_exact_platform_and_zero_findings(tmp_path: Path) -> None:
     built = datetime.now(UTC).isoformat()
     platforms = {}
