@@ -21,6 +21,7 @@ from saas.production.postgresql_migration import (
 )
 from saas.scripts import core_f440_compat_release as release
 from saas.scripts import prepare_core_f440_compat as recipe
+from saas.scripts import resume_oci_promotion as signatures
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -118,6 +119,29 @@ def test_custom_slsa_includes_the_required_github_repository_identity() -> None:
     )
 
 
+def test_slsa_native_envelope_matches_the_existing_successful_promotion() -> None:
+    actual = release.predicate({"materials": recipe.load_manifest(ROOT)}, "a" * 40, "1", "1")
+    reference = signatures.promotion_predicate("a" * 40, "1", "1")
+    definition, known = actual["buildDefinition"], reference["buildDefinition"]
+    assert definition["buildType"] == known["buildType"]
+    assert definition["internalParameters"] == known["internalParameters"]
+    assert definition["externalParameters"]["workflow"] == {
+        **known["externalParameters"]["workflow"],
+        "path": release.WORKFLOW,
+    }
+    assert definition["resolvedDependencies"][0] == known["resolvedDependencies"][0]
+    assert definition["resolvedDependencies"][1] == {
+        "uri": "git+https://github.com/" + release.REPOSITORY + "@" + recipe.BASE,
+        "digest": {"gitCommit": recipe.BASE},
+    }
+    uris = [entry["uri"] for entry in definition["resolvedDependencies"]]
+    assert len(set(uris)) == len(uris)
+    assert actual["runDetails"]["metadata"] == reference["runDetails"]["metadata"]
+    assert actual["runDetails"]["builder"]["id"] == reference["runDetails"]["builder"][
+        "id"
+    ].replace(signatures.WORKFLOW, release.WORKFLOW)
+
+
 def test_core_scan_requires_raw_exact_platform_and_zero_findings(tmp_path: Path) -> None:
     built = datetime.now(UTC).isoformat()
     platforms = {}
@@ -191,6 +215,14 @@ def test_publication_requires_exact_main_protected_approval_and_both_architectur
     builds = [step for step in job["steps"] if "docker/build-push-action@" in step.get("uses", "")]
     assert len(builds) == 2 and builds[1]["with"]["no-cache"] is True
     assert all(step["with"]["platforms"] == "linux/amd64,linux/arm64" for step in builds)
+    preflight = next(
+        step
+        for step in job["steps"]
+        if step.get("name", "").startswith("Verify native GitHub attestation API")
+    )
+    assert preflight["with"]["push-to-registry"] is False
+    assert preflight["with"]["subject-path"] == "artifacts/core-compat/materials-verification.json"
+    assert job["steps"].index(preflight) < job["steps"].index(builds[0])
     assert workflow["jobs"]["independent-readback"]["needs"] == "publish-core"
     pg = next(
         step

@@ -166,9 +166,12 @@ def predicate(
                 }
             },
             "resolvedDependencies": [
-                {"uri": "git+https://github.com/" + REPOSITORY, "digest": {"gitCommit": revision}},
                 {
-                    "uri": "git+https://github.com/" + REPOSITORY,
+                    "uri": "git+https://github.com/" + REPOSITORY + "@refs/heads/main",
+                    "digest": {"gitCommit": revision},
+                },
+                {
+                    "uri": "git+https://github.com/" + REPOSITORY + "@" + recipe.BASE,
                     "digest": {"gitCommit": recipe.BASE},
                 },
                 {"uri": "pkg:pypi/omnigent@f440", "digest": {"sha256": recipe.WHEEL}},
