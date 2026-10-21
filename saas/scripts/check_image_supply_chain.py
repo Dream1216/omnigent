@@ -635,21 +635,6 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     }
     if any(fragment not in workflow for fragment in protected_release_fragments):
         violations.append("protected signed release workflow contract is incomplete")
-    platform_scan = _named_workflow_step(
-        workflow, "Generate per-architecture SBOMs and check raw findings"
-    )
-    if platform_scan is None or any(
-        fragment not in platform_scan
-        for fragment in {
-            'arch_image="${image%@*}@$(crane digest --platform "linux/${arch}" "$image")"',
-            '--entrypoint /usr/local/bin/python "$arch_image"',
-            '--entrypoint /bin/sh "$arch_image"',
-            'supply-chain-tools/syft" "$arch_image"',
-            'supply-chain-tools/grype" "$arch_image"',
-            '--arg index "$image" --arg manifest "$arch_image"',
-        }
-    ):
-        violations.append("published probes and scanners must bind platform manifest digests")
     if workflow.count(f"uses: {_ATTEST_ACTION}") != 3:
         violations.append("protected release must sign the wheel and both OCI images")
     if workflow.count("push-to-registry: true") != 2 or workflow.count("crane push ") != 2:

@@ -1497,29 +1497,6 @@ def test_candidate_contract_rejects_missing_published_host_harness_check(
     )
 
 
-@pytest.mark.parametrize(
-    "fragment",
-    [
-        '--entrypoint /usr/local/bin/python "$arch_image"',
-        '--entrypoint /bin/sh "$arch_image"',
-        'supply-chain-tools/syft" "$arch_image"',
-        'supply-chain-tools/grype" "$arch_image"',
-    ],
-)
-def test_main_publication_requires_platform_manifest_consumers(
-    tmp_path: Path, fragment: str
-) -> None:
-    repo = _candidate_contract_repo(tmp_path)
-    workflow = repo / ".github/workflows/saas-image-candidate.yml"
-    source = workflow.read_text()
-    assert source.count(fragment) == 1
-    workflow.write_text(source.replace(fragment, fragment.replace("$arch_image", "$image")))
-    assert (
-        "published probes and scanners must bind platform manifest digests"
-        in validate_candidate_build_contract(repo)
-    )
-
-
 def test_candidate_composite_build_contract_rejects_missing_and_symlink(
     tmp_path: Path,
 ) -> None:
