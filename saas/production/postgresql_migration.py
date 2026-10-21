@@ -34,6 +34,7 @@ from omnigent.db import ConversationBase, OmnigentBase
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 from .service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
@@ -215,6 +216,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independently old-anchor-verified clean PG16/18 P17 replay.
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "0b35d9235ea15a057826d475e169b13d4e61e5f426d03d681e4200d789989fe7",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "300c98d18f675ee884513d504cb6092c0159a777ef615562f7154f1285bc7180",
     # Source replay: retained price references without new foreign keys.
     (
         16,
@@ -1648,6 +1660,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independently old-anchor-verified clean PG16/18 P17 replay.
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "ac34fc5ffd60705644bc75b27d0d86cbfe6de0d427806a3aefdf3bb6e6c0c063",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "3216d4056830a0571867e87d991e3f991544772365e544473b1534deb0597edd",
     (
         16,
         "nf12ab34cd56",
@@ -1962,6 +1985,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independently old-anchor-verified clean PG16/18 P17 replay.
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "353dce09ca286261f07f4d1d98cae18068096c8baab718c7e137bdfa4f8a2e2c",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "dd91a634610f4524ce2ac121710a1e5b0bb82dc6b9a17c9f2ede60423a15f190",
     (
         16,
         "nf12ab34cd56",
@@ -2810,6 +2844,47 @@ _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
         "lm1b00000001",
     ): "2046e9e8550bf5dafab2111e24cb4276418f483a2b0ef169fea3881a750622db",
 }
+# Populated only by the reviewed clean-source PG16/18 replay. Missing anchors
+# fail preflight; live deployment receipts can never teach these baselines.
+_BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str], str]] = {
+    "core": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "8afd7964b1efd45b2376dbfe32cd62a8d8c4482655eb53908db8294952aa6550",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "09ef52139f1bbd6f54e3f8c11003f26d8e0e79b2a7fc5b2a74e1cc068bcfae76",
+    },
+    "model": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "3a6e7a7e9b9c2016cab7831acfef51a0fe386238d2343c0dafa69f328dbbc52c",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "573b7009200aa77e338bde59944a02c09765b7ba5068e8da68ad8a55947c3ab0",
+    },
+    "admin": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "149bfcbf7f3946ef50a935e3445f40e9e53b642afebc8a60968676ef3fc33dfc",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "bdc62cbf0a0da4d71b700f4039b8b0edeaa8fb25959a9c78624b37b9433e644f",
+    },
+    "projection": {},
+}
 _CAPABILITY_ROLES = (
     "saas_app",
     "saas_authenticator",
@@ -2819,6 +2894,9 @@ _CAPABILITY_ROLES = (
     "saas_executor",
     "saas_runner_agent",
     "saas_model_projection",
+    "saas_usage_consumer",
+    "saas_audit_delivery",
+    "saas_revocation_consumer",
     "saas_secret_broker",
     "saas_preview_gateway",
     "saas_preview_edge",
@@ -2888,6 +2966,7 @@ class ProductionPostgreSqlPlan:
     platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None
     platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None
+    business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = None
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
     verification_saas_head: str | None = None
@@ -2905,6 +2984,7 @@ class ProductionPostgreSqlPlan:
         platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None,
         platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None,
         model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None,
+        business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = None,
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
         verification_saas_head: str | None = None,
@@ -2935,6 +3015,7 @@ class ProductionPostgreSqlPlan:
             platform_model_service_role_bindings=platform_model_service_role_bindings,
             platform_admin_service_role_bindings=platform_admin_service_role_bindings,
             model_projection_service_role_bindings=model_projection_service_role_bindings,
+            business_delivery_service_role_bindings=business_delivery_service_role_bindings,
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
             verification_saas_head=verification_saas_head,
@@ -2958,6 +3039,7 @@ class ProductionPostgreSqlPlan:
                 self.platform_model_service_role_bindings,
                 self.platform_admin_service_role_bindings,
                 self.model_projection_service_role_bindings,
+                self.business_delivery_service_role_bindings,
             )
         except ProductionServiceRoleBindingsError as error:
             raise PostgreSqlMigrationError(
@@ -3184,6 +3266,18 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
             or _SHA256.fullmatch(projection_bindings.sha256) is None
         ):
             raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    delivery_bindings = plan.business_delivery_service_role_bindings
+    if delivery_bindings is not None and (
+        {binding.service: binding.base_role for binding in delivery_bindings.bindings}
+        != dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        or len({binding.login for binding in delivery_bindings.bindings}) != 3
+        or any(binding.login in _CAPABILITY_ROLES for binding in delivery_bindings.bindings)
+        or set(logins) & {binding.login for binding in delivery_bindings.bindings}
+        or _SHA256.fullmatch(delivery_bindings.sha256) is None
+    ):
+        raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    if _expected_head("saas") == "p0s000000017" and delivery_bindings is None:
+        raise PostgreSqlMigrationError("business_delivery_profile_required", "configuration")
     graph = plan.service_role_graph
     if set(logins) & {binding.login for binding in graph.bindings}:
         raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
@@ -3417,17 +3511,37 @@ def _source_security_catalog_baselines(
     if bindings is None:
         return _SOURCE_SECURITY_CATALOG_SHA256
     observed = {binding.service: binding.base_role for binding in bindings.bindings}
+    delivery = dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+    has_delivery = all(observed.get(key) == value for key, value in delivery.items())
+    if has_delivery:
+        observed = {key: value for key, value in observed.items() if key not in delivery}
     core = dict(EXPECTED_PRODUCTION_SERVICE_ROLES)
     if observed == core:
-        return _SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["core"]
+            if has_delivery
+            else _SOURCE_SECURITY_CATALOG_SHA256
+        )
     platform_model = {**core, **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)}
     if observed == platform_model:
-        return _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["model"]
+            if has_delivery
+            else _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256
+        )
     platform_admin = {**platform_model, **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)}
     if observed == platform_admin:
-        return _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["admin"]
+            if has_delivery
+            else _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
+        )
     if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
-        return _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["projection"]
+            if has_delivery
+            else _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+        )
     raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
 
 
@@ -3455,7 +3569,14 @@ def _capability_roles(saas_head: str | None = None) -> tuple[str, ...]:
     return tuple(
         role
         for role in _CAPABILITY_ROLES
-        if selected_head not in {"p0s000000015", "p0s000000016"} or role != "saas_model_projection"
+        if (
+            selected_head not in {"p0s000000015", "p0s000000016", "p0s000000017"}
+            or role != "saas_model_projection"
+        )
+        and (
+            selected_head == "p0s000000017"
+            or role not in EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.values()
+        )
     )
 
 
@@ -4151,6 +4272,7 @@ def _expected_head(kind: Literal["official", "saas"]) -> str:
 
 def _runtime_saas_head(requested: object) -> str:
     supported = {
+        "p0s000000017": ("p0s000000017",),
         "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001"),
         "p0s000000016": ("p0s000000016", "lm2r00000001", "lm2s00000001"),
         "lm2r00000001": ("lm2r00000001", "lm2s00000001"),
@@ -4829,6 +4951,11 @@ def _verify_source_security_catalog_digest(
     accepted_digests = {_source_security_catalog_baselines(bindings).get(key)}
     if bindings is not None:
         observed = {binding.service: binding.base_role for binding in bindings.bindings}
+        delivery = dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        if all(observed.get(service) == role for service, role in delivery.items()):
+            observed = {
+                service: role for service, role in observed.items() if service not in delivery
+            }
         platform_admin = {
             **dict(EXPECTED_PRODUCTION_SERVICE_ROLES),
             **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES),
@@ -6306,6 +6433,8 @@ def verify_production_postgresql_state(
         expected_service_roles = dict(_SERVER_SERVICE_ROLES)
         if "billing" in config.capabilities:
             expected_service_roles["billing"] = "saas_billing"
+        if getattr(config, "business_delivery_service_role_bindings", None) is not None:
+            expected_service_roles["revocation_consumer"] = "saas_revocation_consumer"
         _verify_service_postgresql_state(
             engines=engines,
             config=config,
@@ -6330,6 +6459,18 @@ def verify_model_projection_postgresql_state(
         config=config,
         expected_service_roles=EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
         configured_urls={"model_projection": database_url},
+    )
+
+
+def verify_business_delivery_postgresql_state(
+    *, engines: Mapping[str, Engine], database_urls: Mapping[str, str], config: Any
+) -> None:
+    """Verify the three separate native consumers using the original receipt proof."""
+    _verify_service_postgresql_state(
+        engines=engines,
+        config=config,
+        expected_service_roles=EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
+        configured_urls=database_urls,
     )
 
 
@@ -6640,6 +6781,7 @@ __all__ = [
     "ProductionPostgreSqlPlan",
     "parse_production_postgresql_url",
     "run_production_postgresql_migration",
+    "verify_business_delivery_postgresql_state",
     "verify_model_projection_postgresql_state",
     "verify_production_postgresql_state",
 ]

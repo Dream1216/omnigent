@@ -32,6 +32,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
     ProductionServiceRoleGraph,
     compose_production_service_role_graph,
+    load_business_delivery_service_role_bindings,
     load_model_projection_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
@@ -109,6 +110,7 @@ class ProductionDatabaseUrls:
     governance: str = field(repr=False)
     public_api: str = field(repr=False)
     billing: str | None = field(default=None, repr=False)
+    revocation_consumer: str | None = field(default=None, repr=False)
 
     def as_mapping(self) -> Mapping[str, str]:
         """Return a read-only role-to-URL mapping."""
@@ -122,6 +124,8 @@ class ProductionDatabaseUrls:
         }
         if self.billing is not None:
             urls["billing"] = self.billing
+        if self.revocation_consumer is not None:
+            urls["revocation_consumer"] = self.revocation_consumer
         return MappingProxyType(urls)
 
 
@@ -228,6 +232,9 @@ class ProductionServerConfig:
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
     )
+    business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = field(
+        default=None, repr=False
+    )
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
 
@@ -240,6 +247,7 @@ class ProductionServerConfig:
             self.platform_model_service_role_bindings,
             self.platform_admin_service_role_bindings,
             self.model_projection_service_role_bindings,
+            self.business_delivery_service_role_bindings,
         )
 
     @property
@@ -410,7 +418,15 @@ def _load_database_urls(
         raise ProductionServerConfigError(
             "production server process must not receive ambient, owner, or migration database URLs"
         )
-    roles = (*_DATABASE_ROLES, *(("billing",) if "billing" in capabilities else ()))
+    roles = (
+        *_DATABASE_ROLES,
+        *(("billing",) if "billing" in capabilities else ()),
+        *(
+            ("revocation_consumer",)
+            if "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE" in environ
+            else ()
+        ),
+    )
     loaded = {role: _database_url(environ, role) for role in roles}
     urls = [value[0] for value in loaded.values()]
     paths = [value[2] for value in loaded.values()]
@@ -1025,11 +1041,22 @@ def load_production_server_config(
             if "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE" in source
             else None
         )
+        business_delivery_service_role_bindings = (
+            load_business_delivery_service_role_bindings(source)
+            if "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE" in source
+            else None
+        )
+        if (
+            source.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION") == "p0s000000017"
+            and business_delivery_service_role_bindings is None
+        ):
+            raise ProductionServerConfigError("P17 requires native business-delivery bindings")
         service_role_graph = compose_production_service_role_graph(
             service_role_bindings,
             platform_model_service_role_bindings,
             platform_admin_service_role_bindings,
             model_projection_service_role_bindings,
+            business_delivery_service_role_bindings,
         )
     except ProductionServiceRoleBindingsError as error:
         raise ProductionServerConfigError(str(error)) from error
@@ -1166,6 +1193,7 @@ def load_production_server_config(
         platform_model_service_role_bindings=platform_model_service_role_bindings,
         platform_admin_service_role_bindings=platform_admin_service_role_bindings,
         model_projection_service_role_bindings=model_projection_service_role_bindings,
+        business_delivery_service_role_bindings=business_delivery_service_role_bindings,
         migration_receipt=receipt,
         artifact_admission_receipt=artifact_admission_receipt,
         secrets=secrets,

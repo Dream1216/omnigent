@@ -1,0 +1,383 @@
+name: SaaS f440 Core restart compatibility
+
+on:
+  pull_request:
+    paths:
+      - saas/core_f440_compat/**
+      - saas/scripts/prepare_core_f440_compat.py
+      - saas/scripts/core_f440_compat_release.py
+      - tests/saas/test_core_f440_compat.py
+      - .github/workflows/saas-core-f440-compat.yml
+  workflow_dispatch:
+    inputs:
+      product_revision:
+        description: Exact main revision containing this compatibility recipe
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-f440-compat-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+        env:
+          POSTGRES_PASSWORD: fixture-only-core-compat
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --group dev --extra saas
+      - run: uv run pytest tests/saas/test_core_f440_compat.py -q
+      - name: Verify full pinned base materialization with complete Git history
+        run: python -c 'from pathlib import Path; from saas.scripts.prepare_core_f440_compat import patched_module; patched_module(Path.cwd())'
+      - name: Exercise the isolated PG18 harness on the retained unpublished candidate
+        env:
+          OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL: postgresql+psycopg://postgres:fixture-only-core-compat@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          # This unsigned candidate is only a CI fixture; it cannot authorize deployment.
+          uv sync --frozen --group dev --extra saas --no-install-local --no-config
+          fixtures="$RUNNER_TEMP/core-fixtures"
+          mkdir -p "$fixtures"
+          for file in tests/__init__.py tests/saas/__init__.py tests/saas/test_production_migration_replay.py tests/saas/fixtures/production_preview_authority.sql; do
+            mkdir -p "$fixtures/$(dirname "$file")"
+            git show "f4404d47f705c7a3c0745c38ccd1a9be125c31ad:$file" > "$fixtures/$file"
+          done
+          cp saas/core_f440_compat/test_revoked_runner_startup.py "$fixtures/tests/saas/"
+          printf '[pytest]\naddopts = -p no:cacheprovider\n' > "$fixtures/pytest.ini"
+          deps=$(realpath .venv/lib/python3.12/site-packages)
+          docker run --rm --pull always --platform linux/amd64 --network host \
+            --env OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL --env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+            --mount "type=bind,source=$fixtures,target=/fixtures,readonly" \
+            --mount "type=bind,source=$deps,target=/test-deps,readonly" \
+            --entrypoint /opt/venv/bin/python \
+            ghcr.io/dream1216/omnigent-saas-server@sha256:1c8c4602fcfa909869f48b93dd08ad516d5b7277c66ca6f38eddef4d34f72d5b -B -c \
+            'import hashlib,sys; from pathlib import Path; from omnigent import _build_info; import saas.production.postgresql_migration as m; assert _build_info.COMMIT_SHA=="3cbe87d59a7dbe9f8f8a8dabdeda6f71207d9089"; assert hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()=="b83cfde2b98ff9e48a872a4eb833b931edc5f7ab067af8c9d71e0a115c44141e"; sys.path[:0]=["/fixtures","/test-deps"]; import pytest; raise SystemExit(pytest.main(["-c","/fixtures/pytest.ini","--confcutdir=/fixtures","-p","tests.saas.test_production_migration_replay","/fixtures/tests/saas/test_revoked_runner_startup.py","-q"]))'
+
+  publish-core:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
+    needs: verify-contract
+    runs-on: ubuntu-latest
+    environment: production-image
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    services:
+      postgres:
+        image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+        env:
+          POSTGRES_PASSWORD: fixture-only-core-compat
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SOURCE_REVISION: ${{ github.sha }}
+      CORE_IMAGE: ghcr.io/dream1216/omnigent-saas-server
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install only the locked test dependencies
+        run: uv sync --frozen --extra saas --group dev --no-install-local --no-config
+      - name: Verify protected source and original signed f440 wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_WORKFLOW_SHA" == "$SOURCE_REVISION" ]]
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_REVISION" ]]
+          mkdir -p artifacts/core-compat "${RUNNER_TEMP}/core-context"
+          gh attestation verify oci://ghcr.io/dream1216/omnigent-saas-server@sha256:2555fafc4527912705014f5a2e84ad9db4632afb18b317daeb07a433fb9bdbc2 \
+            --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/saas-oci-promotion-model-renewal.yml" \
+            --source-ref refs/heads/main --source-digest 24cf65ab733515f096be94045a7177015c48d419 \
+            --signer-digest 24cf65ab733515f096be94045a7177015c48d419 --deny-self-hosted-runners \
+            --format json > artifacts/core-compat/runtime-base-signature.json
+          python -c 'import json; from saas.scripts import resume_oci_promotion as p; p.configure_release_profile("model-renewal-7cea0940"); p.verify_signature(json.load(open("artifacts/core-compat/runtime-base-signature.json")),subject="sha256:2555fafc4527912705014f5a2e84ad9db4632afb18b317daeb07a433fb9bdbc2",policy_revision="24cf65ab733515f096be94045a7177015c48d419",run_id="39604159480",attempt="1")'
+          gh attestation verify oci://ghcr.io/dream1216/omnigent-saas-server@sha256:d40b0cf4c226eb1a8743f7ffe5fbf4f8d9380e556d0330ef70ce9c6bbb13313c \
+            --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/saas-oci-promotion-resume.yml" \
+            --source-ref refs/heads/main --source-digest a302eb6d588f6f5e1e6934c11589e84fa9b810f0 \
+            --signer-digest a302eb6d588f6f5e1e6934c11589e84fa9b810f0 --deny-self-hosted-runners \
+            --format json > artifacts/core-compat/original-ui-signature.json
+          python -c 'import json; from saas.scripts import resume_oci_promotion as p; p.configure_release_profile("f440"); p.verify_signature(json.load(open("artifacts/core-compat/original-ui-signature.json")),subject="sha256:d40b0cf4c226eb1a8743f7ffe5fbf4f8d9380e556d0330ef70ce9c6bbb13313c",policy_revision="a302eb6d588f6f5e1e6934c11589e84fa9b810f0",run_id="38462621784",attempt="1")'
+          wheel=$(python -m saas.scripts.resume_oci_promotion --release f440 wheel --root "${RUNNER_TEMP}/f440-wheel")
+          gh attestation verify "$wheel" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/saas-image-candidate.yml" \
+            --source-ref refs/heads/main --source-digest f4404d47f705c7a3c0745c38ccd1a9be125c31ad \
+            --signer-digest f4404d47f705c7a3c0745c38ccd1a9be125c31ad \
+            --deny-self-hosted-runners --format json > artifacts/core-compat/original-wheel-signature.json
+          python -m saas.scripts.resume_oci_promotion --release f440 verify-wheel \
+            --verification artifacts/core-compat/original-wheel-signature.json
+          python -m saas.scripts.prepare_core_f440_compat --repository . --wheel "$wheel" \
+            --output "${RUNNER_TEMP}/core-context/runtime-inputs" > artifacts/core-compat/materials-verification.json
+          cp saas/core_f440_compat/Dockerfile "${RUNNER_TEMP}/core-context/Dockerfile"
+          source_epoch=$(git show -s --format=%ct "$SOURCE_REVISION")
+          echo "SOURCE_DATE_EPOCH=$source_epoch" >> "$GITHUB_ENV"
+          git show f4404d47f705c7a3c0745c38ccd1a9be125c31ad:saas/upstream-baseline.json > "${RUNNER_TEMP}/f440-baseline.json"
+          echo "UPSTREAM_REVISION=$(jq -er .upstream_revision "${RUNNER_TEMP}/f440-baseline.json")" >> "$GITHUB_ENV"
+          echo "ADAPTER_CONTRACT_VERSION=$(jq -er .adapter_contract_version "${RUNNER_TEMP}/f440-baseline.json")" >> "$GITHUB_ENV"
+      - name: Prepare a non-deployment signing API preflight
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from saas.scripts.core_f440_compat_release import predicate
+          from saas.scripts.prepare_core_f440_compat import load_manifest
+          value = predicate({"materials": load_manifest(Path.cwd())}, os.environ["SOURCE_REVISION"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+          value["buildDefinition"]["externalParameters"].update(release_scope="signing-api-preflight-only", production_authority=False)
+          Path("artifacts/core-compat/signing-api-preflight.json").write_text(json.dumps(value, sort_keys=True) + "\n")
+          PY
+      - name: Verify native GitHub attestation API before image builds
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-path: artifacts/core-compat/materials-verification.json
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: artifacts/core-compat/signing-api-preflight.json
+          push-to-registry: false
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          version: v0.36.1
+          driver-opts: image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build both compatibility architectures attempt 1
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: ${{ runner.temp }}/core-context
+          file: ${{ runner.temp }}/core-context/Dockerfile
+          target: core-f440-compat
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/core-1.tar,rewrite-timestamp=true
+          provenance: mode=max
+          sbom: true
+          push: false
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+            UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
+            ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+      - name: Build both compatibility architectures attempt 2
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: ${{ runner.temp }}/core-context
+          file: ${{ runner.temp }}/core-context/Dockerfile
+          target: core-f440-compat
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/core-2.tar,rewrite-timestamp=true
+          provenance: mode=max
+          sbom: true
+          push: false
+          no-cache: true
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+            UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
+            ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+      - name: Verify repeated exact platform bytes and current raw findings
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.core_f440_compat_release candidate --root artifacts/core-compat \
+            --revision "$SOURCE_REVISION" --epoch "$SOURCE_DATE_EPOCH" \
+            --first "${RUNNER_TEMP}/core-1.tar" --second "${RUNNER_TEMP}/core-2.tar"
+          python -m saas.scripts.scan_oci_candidates --scope server-preflight \
+            --image "server=${RUNNER_TEMP}/core-1.tar" --output artifacts/core-compat/original-scans
+          python -m saas.scripts.core_f440_compat_release scans --root artifacts/core-compat \
+            --revision "$SOURCE_REVISION" --archive "${RUNNER_TEMP}/core-1.tar" \
+            --scan-root artifacts/core-compat/original-scans > artifacts/core-compat/original-scan-verification.json
+      - name: Retain immutable original OCI for qualified deployment
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-f440-compat-oci-${{ github.sha }}
+          path: ${{ runner.temp }}/core-1.tar
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish the exact admitted compatibility image without rebuilding
+        id: image
+        run: |
+          set -euo pipefail
+          python -c 'from pathlib import Path; from saas.scripts.oci_promotion import extract_layout; import os; r=Path(os.environ["RUNNER_TEMP"]);extract_layout(r/"core-1.tar",r/"core-layout")'
+          expected=$(jq -er .index_digest artifacts/core-compat/core-compat-manifest.json)
+          crane push "${RUNNER_TEMP}/core-layout" "$CORE_IMAGE:core-f440-compat-sha-$SOURCE_REVISION"
+          [[ "$(crane digest "$CORE_IMAGE:core-f440-compat-sha-$SOURCE_REVISION")" == "$expected" ]]
+          echo "digest=$expected" >> "$GITHUB_OUTPUT"
+          for arch in amd64 arm64; do
+            child=$(jq -er --arg p "linux/$arch" '.facts.platforms[$p].manifest_digest' artifacts/core-compat/core-compat-manifest.json)
+            echo "$arch=$child" >> "$GITHUB_OUTPUT"
+          done
+      - name: Verify original f440 startup after Runner management revocation on isolated PG18
+        env:
+          OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL: postgresql+psycopg://postgres:fixture-only-core-compat@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          fixtures="${RUNNER_TEMP}/core-context/runtime-inputs"
+          printf '[pytest]\naddopts = -p no:cacheprovider\n' > "$fixtures/pytest.ini"
+          deps=$(realpath .venv/lib/python3.12/site-packages)
+          docker run --rm --pull always --platform linux/amd64 --network host \
+            --env OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL \
+            --env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+            --mount "type=bind,source=$fixtures,target=/fixtures,readonly" \
+            --mount "type=bind,source=$deps,target=/test-deps,readonly" \
+            --entrypoint /opt/venv/bin/python "$CORE_IMAGE@${{ steps.image.outputs.amd64 }}" -B -c \
+            'import sys; from pathlib import Path; sys.path[:0]=["/fixtures","/test-deps"]; import saas.production.postgresql_migration as m; assert Path(m.__file__).is_relative_to(Path("/opt/venv")); import pytest; raise SystemExit(pytest.main(["-c","/fixtures/pytest.ini","--confcutdir=/fixtures","-p","tests.saas.test_production_migration_replay","/fixtures/tests/saas/test_revoked_runner_startup.py","-q"]))'
+      - name: Install hash-pinned SBOM and vulnerability tools
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/tools" artifacts/core-compat/supply-chain
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            -o "${RUNNER_TEMP}/syft.tar.gz" https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            -o "${RUNNER_TEMP}/grype.tar.gz" https://github.com/anchore/grype/releases/download/v0.120.1/grype_0.120.1_linux_amd64.tar.gz
+          printf '%s  %s\n' c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47 "${RUNNER_TEMP}/syft.tar.gz" \
+            0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d "${RUNNER_TEMP}/grype.tar.gz" | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/syft.tar.gz" -C "${RUNNER_TEMP}/tools" syft
+          tar -xzf "${RUNNER_TEMP}/grype.tar.gz" -C "${RUNNER_TEMP}/tools" grype
+      - name: Verify installed source and produce both explicit platform SBOMs
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            child=$(jq -er --arg p "linux/$arch" '.facts.platforms[$p].manifest_digest' artifacts/core-compat/core-compat-manifest.json)
+            image="$CORE_IMAGE@$child"
+            docker run --rm --pull always --platform "linux/$arch" --network none \
+              --entrypoint /opt/venv/bin/python "$image" -B -I -c \
+              'import hashlib,sys;from pathlib import Path;from importlib.metadata import distribution;from omnigent import _build_info;import saas.production.postgresql_migration as m;assert _build_info.COMMIT_SHA==sys.argv[1];assert hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()==sys.argv[2];assert callable(m._canonical_runner_management_catalog);assert hashlib.sha256((Path(distribution("omnigent")._path)/"METADATA").read_bytes()).hexdigest()==sys.argv[3]' \
+              "$SOURCE_REVISION" "$(jq -er .patched_module_sha256 saas/core_f440_compat/manifest.json)" "$(jq -er .patched_metadata_sha256 saas/core_f440_compat/manifest.json)"
+            "${RUNNER_TEMP}/tools/syft" "$image" --platform "linux/$arch" -o "spdx-json=artifacts/core-compat/supply-chain/$arch.spdx.json"
+            "${RUNNER_TEMP}/tools/grype" "$image" --platform "linux/$arch" -o json > "artifacts/core-compat/supply-chain/$arch.raw.grype.json"
+            jq -e '([.matches[]|select(.vulnerability.severity=="Critical" or .vulnerability.severity=="High")]|length)==0 and (.ignoredMatches//[])==[]' "artifacts/core-compat/supply-chain/$arch.raw.grype.json"
+          done
+          python -m saas.scripts.core_f440_compat_release predicate --root artifacts/core-compat \
+            --revision "$SOURCE_REVISION" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > artifacts/core-compat/core-provenance.json
+      - name: Sign the exact original wheel, base image and compatibility patch materials
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
+          subject-digest: ${{ steps.image.outputs.digest }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: artifacts/core-compat/core-provenance.json
+          push-to-registry: true
+      - name: Sign explicit amd64 SPDX subject
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
+          subject-digest: ${{ steps.image.outputs.amd64 }}
+          sbom-path: artifacts/core-compat/supply-chain/amd64.spdx.json
+          push-to-registry: true
+      - name: Sign explicit arm64 SPDX subject
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
+          subject-digest: ${{ steps.image.outputs.arm64 }}
+          sbom-path: artifacts/core-compat/supply-chain/arm64.spdx.json
+          push-to-registry: true
+      - name: Verify protected signatures and signed registry contents with fresh raw scans
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.core_f440_compat_release signatures --root artifacts/core-compat \
+            --revision "$SOURCE_REVISION" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+          crane pull --format=oci --platform=all "$CORE_IMAGE@${{ steps.image.outputs.digest }}" "${RUNNER_TEMP}/signed-core-layout"
+          tar -cf "${RUNNER_TEMP}/signed-core.tar" -C "${RUNNER_TEMP}/signed-core-layout" oci-layout index.json blobs
+          python -m saas.scripts.core_f440_compat_release readback --root artifacts/core-compat \
+            --revision "$SOURCE_REVISION" --archive "${RUNNER_TEMP}/signed-core.tar" > artifacts/core-compat/signed-readback.json
+          python -m saas.scripts.scan_oci_candidates --scope server-preflight \
+            --image "server=${RUNNER_TEMP}/signed-core.tar" --output artifacts/core-compat/signed-scans
+          python -m saas.scripts.core_f440_compat_release scans --root artifacts/core-compat \
+            --revision "$SOURCE_REVISION" --archive "${RUNNER_TEMP}/signed-core.tar" \
+            --scan-root artifacts/core-compat/signed-scans > artifacts/core-compat/signed-scan-verification.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: core-f440-compat-facts-${{ github.sha }}
+          path: artifacts/core-compat/
+          if-no-files-found: error
+          retention-days: 30
+
+  independent-readback:
+    needs: publish-core
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: core-f440-compat-facts-${{ github.sha }}
+          path: artifacts/core-compat
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Independently verify both signed subjects and exact OCI content
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.core_f440_compat_release signatures --root artifacts/core-compat \
+            --revision "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+          digest=$(jq -er .index_digest artifacts/core-compat/core-compat-manifest.json)
+          image="ghcr.io/dream1216/omnigent-saas-server@$digest"
+          [[ "$(crane digest "$image")" == "$digest" ]]
+          crane pull --format=oci --platform=all "$image" "${RUNNER_TEMP}/independent-layout"
+          tar -cf "${RUNNER_TEMP}/independent.tar" -C "${RUNNER_TEMP}/independent-layout" oci-layout index.json blobs
+          python -m saas.scripts.core_f440_compat_release readback --root artifacts/core-compat \
+            --revision "$GITHUB_SHA" --archive "${RUNNER_TEMP}/independent.tar" > artifacts/core-compat/independent-readback.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-f440-compat-independent-${{ github.sha }}
+          path: artifacts/core-compat/
+          if-no-files-found: error
+          retention-days: 30

@@ -39,6 +39,13 @@ from saas.control_plane.public_api_models import (
     PublicApiRateLimitRecord,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.observability import (
+    capture_event_page_floor,
+    ensure_observed_factory,
+    measure_stage,
+    require_event_page_witness,
+    require_run_witness,
+)
 from saas.public_api_contract import CursorError, FilterBoundCursorCodec
 
 _LEASED_STATUSES = frozenset(
@@ -219,6 +226,7 @@ class PublicApiExecutionService:
         rate_limits: Mapping[str, tuple[int, timedelta]] | None = None,
     ) -> None:
         self._sessions = session_factory
+        ensure_observed_factory(session_factory)
         self._database_login = _text(database_login, "database_login", 63)
         self._cursors = cursor_codec
         self._idempotency = PublicApiIdempotencyKeyring(
@@ -381,6 +389,7 @@ class PublicApiExecutionService:
             )
             return self._project_view(self._project(db, principal, project_id))
 
+    @measure_stage("admission")
     def create_run(
         self,
         principal: ValidatedApiCredential,
@@ -459,6 +468,7 @@ class PublicApiExecutionService:
             )
             if existing is not None:
                 self._require_replay_match(existing, principal, project_id, digest)
+                require_run_witness(db, existing)
                 return self._run_view(existing, replayed=True)
             quota = self._reserve_quota(
                 db,
@@ -737,6 +747,8 @@ class PublicApiExecutionService:
                 request_hash=request_hash,
             )
             if replay is not None:
+                # Cached success still requires the current independent ACK witness.
+                require_run_witness(db, self._run(db, principal, project_id, run_id))
                 return self._run_view_from_receipt(replay)
             run = self._run(db, principal, project_id, run_id, lock=True)
             self._require_version(run, expected_version)
@@ -788,6 +800,7 @@ class PublicApiExecutionService:
             )
             return view
 
+    @measure_stage("admission")
     def retry_run(
         self,
         principal: ValidatedApiCredential,
@@ -854,6 +867,7 @@ class PublicApiExecutionService:
             )
             if existing is not None:
                 self._require_replay_match(existing, principal, project_id, digest)
+                require_run_witness(db, existing)
                 return self._run_view(existing, replayed=True)
             source = self._run(db, principal, project_id, run_id, lock=True)
             self._require_version(source, expected_version)
@@ -971,29 +985,46 @@ class PublicApiExecutionService:
                 raise PublicApiError("cursor_invalid", "cursor is invalid")
             resolved_after_sequence = raw_sequence
             after_event_id = self._uuid_value(values, "event_id")
+        # Authorize scope before independent I/O. Release this short connection,
+        # then capture the floor before the final source snapshot below. Its
+        # original permission check remains mandatory for intervening revocation.
+        with self._sessions.begin() as preflight:
+            self._require_machine_permission(
+                preflight, principal, project_id=project_id, permission="run.read_content"
+            )
+            self._run(preflight, principal, project_id, run_id)
+        minimum_source_head = capture_event_page_floor(self._sessions, principal.tenant_id, run_id)
         with self._sessions.begin() as db:
             self._require_machine_permission(
                 db, principal, project_id=project_id, permission="run.read_content"
             )
-            self._run(db, principal, project_id, run_id)
-            query = sa.select(RunEventRecord).where(
-                RunEventRecord.run_id == run_id,
+            run = self._run(db, principal, project_id, run_id)
+            predicate = sa.and_(
+                RunEventRecord.run_id == RunRecord.id,
                 RunEventRecord.tenant_id == principal.tenant_id,
                 RunEventRecord.space_id == principal.space_id,
                 RunEventRecord.project_id == project_id,
+                RunEventRecord.sequence > resolved_after_sequence,
             )
-            if after_event_id is None:
-                query = query.where(RunEventRecord.sequence > resolved_after_sequence)
-            else:
-                query = query.where(
+            if after_event_id is not None:
+                predicate = sa.and_(
+                    predicate,
                     sa.tuple_(RunEventRecord.sequence, RunEventRecord.id)
-                    > sa.tuple_(sa.literal(resolved_after_sequence), sa.literal(after_event_id))
+                    > sa.tuple_(sa.literal(resolved_after_sequence), sa.literal(after_event_id)),
                 )
-            rows = tuple(
-                db.scalars(
-                    query.order_by(RunEventRecord.sequence, RunEventRecord.id).limit(limit + 1)
+            source = tuple(
+                db.execute(
+                    sa.select(RunRecord.event_sequence, RunEventRecord)
+                    .select_from(RunRecord)
+                    .outerjoin(RunEventRecord, predicate)
+                    .where(RunRecord.id == run_id)
+                    .order_by(RunEventRecord.sequence, RunEventRecord.id)
+                    .limit(limit + 1)
                 )
             )
+            if not source:
+                raise PublicApiError("run_not_found", "Run is no longer visible")
+            rows = tuple(row[1] for row in source if row[1] is not None)
             visible = rows[:limit]
             next_cursor = None
             if len(rows) > limit and visible:
@@ -1007,6 +1038,15 @@ class PublicApiExecutionService:
                         "event_id": str(visible[-1].id),
                     },
                 )
+            require_event_page_witness(
+                db,
+                run,
+                visible,
+                after_sequence=resolved_after_sequence,
+                source_head=source[0][0],
+                limit=limit,
+                minimum_source_head=minimum_source_head,
+            )
             return PublicApiPage(
                 tuple(
                     PublicApiRunEventView(

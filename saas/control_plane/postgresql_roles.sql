@@ -27,6 +27,9 @@ DECLARE
         'saas_preview_owner',
         'saas_webhook_dispatcher',
         'saas_billing',
+        'saas_usage_consumer',
+        'saas_audit_delivery',
+        'saas_revocation_consumer',
         'saas_metering',
         'saas_public_api',
         'saas_platform',
@@ -211,7 +214,7 @@ BEGIN
         'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'p0s000000016'
+        'p0s000000015', 'p0s000000016', 'p0s000000017'
     ) THEN
         RAISE EXCEPTION
             'control-plane schema revision/object contract rejected';
@@ -652,6 +655,8 @@ BEGIN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
                   WHEN 'p0s000000016' THEN
                       '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
+                  WHEN 'p0s000000017' THEN
+                      '8c21f811324aa7ebceae27b159369502ad24ae6aa9cc1e12c6e38070a8119112'
               END
           ) OR (
               procedure.oid = prune_function
@@ -738,7 +743,7 @@ BEGIN
           schema_revision IN (
               'p0s000000006', 'p0s000000007', 'p0s000000008', 'p0s000000009',
               'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
-              'p0s000000014', 'p0s000000015', 'p0s000000016'
+              'p0s000000014', 'p0s000000015', 'p0s000000016', 'p0s000000017'
           )
           AND rate_constraint_contract_hash IS DISTINCT FROM
              '659fd922560eea249898647400542e711de87d290327029d74325201d82b725a'
@@ -1111,12 +1116,12 @@ BEGIN
     FROM public.saas_alembic_version;
     IF to_regclass('public.saas_email_provider_configurations') IS NULL
        AND to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
-        IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016') THEN
+        IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016', 'p0s000000017') THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
         END IF;
         RETURN;
     END IF;
-    IF schema_revision NOT IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016')
+    IF schema_revision NOT IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016', 'p0s000000017')
        OR to_regclass('public.saas_email_provider_configurations') IS NULL
        OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
         RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -1171,7 +1176,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000014', 'p0s000000015', 'p0s000000016') THEN
+    IF schema_revision IN ('p0s000000014', 'p0s000000015', 'p0s000000016', 'p0s000000017') THEN
         IF to_regclass('public.saas_platform_password_credentials') IS NULL THEN
             RAISE EXCEPTION 'P0S14 Staff password authority object contract rejected';
         END IF;
@@ -1263,7 +1268,7 @@ BEGIN
         'p0s000000009', 'p0s000000010', 'p0s000000011', 'p0s000000012',
         'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'p0s000000016'
+        'p0s000000015', 'p0s000000016', 'p0s000000017'
     ) THEN
         IF EXISTS (
             SELECT 1 FROM unnest(preview_tables) AS expected(table_name)
@@ -3761,7 +3766,33 @@ BEGIN
         WHERE tgrelid = 'public.saas_control_plane_outbox'::regclass
           AND NOT tgisinternal
           AND (tgtype & 19) = 19
-    ) <> 1
+    ) <> (CASE WHEN (SELECT version_num FROM public.saas_alembic_version)
+                   = 'p0s000000017' THEN 2 ELSE 1 END)
+    OR (
+        (SELECT version_num FROM public.saas_alembic_version) = 'p0s000000017'
+        AND NOT EXISTS (
+            SELECT 1 FROM pg_trigger AS trigger
+            JOIN pg_proc AS guard ON guard.oid=trigger.tgfoid
+            JOIN pg_language AS language ON language.oid=guard.prolang
+            JOIN pg_class AS outbox ON outbox.oid=trigger.tgrelid
+            WHERE trigger.tgrelid='public.saas_control_plane_outbox'::regclass
+              AND trigger.tgname='saas_delivery_typed_source_immutable_v1'
+              AND NOT trigger.tgisinternal AND trigger.tgenabled='O'
+              AND trigger.tgtype=27
+              AND guard.oid=to_regprocedure(
+                  'public.saas_delivery_protect_typed_source_v1()')
+              AND guard.proowner=outbox.relowner AND language.lanname='plpgsql'
+              AND NOT guard.prosecdef AND NOT guard.proleakproof
+              AND guard.provolatile='v' AND guard.proparallel='u'
+              AND guard.proconfig=ARRAY['search_path=pg_catalog, pg_temp']::text[]
+              AND encode(sha256(convert_to(btrim(guard.prosrc,E' \n\r\t'),
+                  'UTF8')),'hex')='b62fdcab27b73c9c630d90368ef6693e5649bfb9ba9a3ceffb500263a85dd378'
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(guard.proacl) AS acl
+                  WHERE acl.grantee<>guard.proowner)
+              AND NOT has_function_privilege('saas_dispatcher_n1_compat',
+                  guard.oid,'EXECUTE')
+        )
+    )
     THEN
         RAISE EXCEPTION
             'p0s3 N-1 Outbox compatibility guards are absent or disabled';
@@ -4109,7 +4140,7 @@ BEGIN
     IF schema_revision NOT IN (
         'p0s000000010', 'p0s000000011', 'p0s000000012', 'p0s000000013',
         'p0s000000014',
-        'p0s000000015', 'p0s000000016'
+        'p0s000000015', 'p0s000000016', 'p0s000000017'
     ) THEN
         IF canonical_json_function IS NOT NULL
            OR canonical_json_sha256_function IS NOT NULL
@@ -4631,7 +4662,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016') THEN
+    IF schema_revision IN ('p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016', 'p0s000000017') THEN
         IF to_regclass('public.saas_email_provider_configurations') IS NULL
            OR to_regclass('public.saas_email_provider_configuration_receipts') IS NULL THEN
             RAISE EXCEPTION 'P0S12 SMTP authority object contract rejected';
@@ -4662,7 +4693,7 @@ DECLARE
 BEGIN
     SELECT version_num INTO STRICT schema_revision
     FROM public.saas_alembic_version;
-    IF schema_revision IN ('p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016') THEN
+    IF schema_revision IN ('p0s000000013', 'p0s000000014', 'p0s000000015', 'p0s000000016', 'p0s000000017') THEN
         IF to_regclass('public.saas_model_provider_configurations') IS NULL
            OR to_regclass('public.saas_model_provider_configuration_receipts') IS NULL
            OR to_regclass('public.saas_model_provider_monthly_budgets') IS NULL
@@ -4709,3 +4740,39 @@ BEGIN
     END IF;
 END
 $$;
+
+-- P17 leaves every old-role grant unchanged except the real reconciliation
+-- reader's own-tenant immutable ingress view. Reapply it after legacy projection.
+DO $delivery$
+BEGIN
+    IF (SELECT version_num FROM public.saas_alembic_version)='p0s000000017' THEN
+        IF NOT EXISTS(SELECT 1 FROM pg_class c
+            WHERE c.oid='public.saas_usage_reconciliation_ingress'::regclass
+                AND c.relrowsecurity AND c.relforcerowsecurity) THEN
+            RAISE EXCEPTION 'P17 usage ingress authority is incomplete';
+        END IF;
+        -- Reconstruct only the packaged P17 least-role receiver surface after
+        -- the production owner ACL projection has removed all earlier grants.
+        GRANT SELECT,INSERT ON public.saas_usage_reconciliation_ingress TO saas_usage_consumer;
+        GRANT SELECT,INSERT ON public.saas_platform_audit_journal_deliveries TO saas_audit_delivery;
+        GRANT SELECT,INSERT ON public.saas_revocation_replica_applied TO saas_revocation_consumer;
+        GRANT SELECT ON public.saas_usage_reconciliation_ingress TO saas_billing;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_usage_outbox_source_v1(uuid) TO
+            saas_usage_consumer;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_audit_outbox_source_v1(uuid) TO
+            saas_audit_delivery;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_revocation_outbox_source_v1(uuid) TO
+            saas_revocation_consumer;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_usage_facts_v1(uuid) TO saas_usage_consumer;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_pricing_facts_v1(uuid) TO saas_usage_consumer;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_audit_chain_v1(uuid) TO saas_audit_delivery;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_revocation_authority_v1(uuid) TO
+            saas_revocation_consumer;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_revocation_scan_v1(uuid,integer) TO
+            saas_revocation_consumer;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_audit_backfill_v1(bigint,integer)
+        TO saas_platform;
+        GRANT EXECUTE ON FUNCTION public.saas_delivery_revocation_fanout_ready_v1(uuid,text)
+            TO saas_revocation_consumer;
+    END IF;
+END $delivery$;

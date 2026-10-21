@@ -28,6 +28,7 @@ from saas.control_plane.scheduling_models import (
     RunnerPoolRecord,
     TenantQueueShareRecord,
 )
+from saas.observability import ensure_observed_factory, require_event_ack_witness
 
 _OUTBOX_KEYS = frozenset(
     {
@@ -133,6 +134,7 @@ class RunQueuedDispatchProjection:
         if not 1 <= cost_units <= 1_000_000:
             raise ValueError("cost_units must be between 1 and 1000000")
         self._session_factory = session_factory
+        ensure_observed_factory(session_factory)
         self._maximum_wait = maximum_wait
         self._cost_units = cost_units
 
@@ -189,6 +191,7 @@ class RunQueuedDispatchProjection:
                 event=event,
             )
             run_event = self._require_run_event(db, event)
+            require_event_ack_witness(db, (run_event,))
             run = db.scalar(
                 sa.select(RunRecord).where(RunRecord.id == event.run_id).with_for_update()
             )

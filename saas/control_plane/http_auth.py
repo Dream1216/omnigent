@@ -48,6 +48,7 @@ from saas.control_plane.lifecycle import (
 )
 from saas.control_plane.oidc import OidcAuthorizationService
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
+from saas.observability import SloHttpMiddleware, current_runtime, measure_stage
 from saas.public_api_contract import ApiVersionPolicy
 
 if TYPE_CHECKING:
@@ -185,6 +186,7 @@ class SaasHttpIntegration:
             degraded_read_paths=self.degraded_read_paths,
             runtime_initializer=self.runtime_initializer,
         )
+        app.add_middleware(SloHttpMiddleware)
 
 
 class LoginRequest(BaseModel):
@@ -707,6 +709,7 @@ class SaasAuthContextMiddleware:
             return
         snapshot_token = connection.headers.get("x-saas-context-snapshot", "")
         try:
+            self._context_snapshots.require_invalidation_ready()
             verified = self._context_snapshots.verify(token=snapshot_token, auth_token=token)
             self._validate_selector_headers(connection, verified.runtime_context)
         except (ContextSnapshotError, ValueError):
@@ -720,6 +723,10 @@ class SaasAuthContextMiddleware:
         )
         state["saas_degraded_authorization"] = True
         state["saas_context_snapshot_id"] = verified.snapshot_id
+        observation = current_runtime()
+        if observation is not None:
+            age = (datetime.now(timezone.utc) - verified.issued_at).total_seconds()
+            observation.metrics.duration("snapshot_age", "success", max(0.0, age))
 
         async def degraded_send(message: Message) -> None:
             if message.get("type") == "http.response.start":
@@ -806,6 +813,8 @@ class SaasAuthContextMiddleware:
             and parts[5] in {"start", "callback"}
         )
 
+    @measure_stage("resolve", omit_none=True)
+    @measure_stage("resolve_db", omit_none=True)
     def _resolve_runtime_context(
         self,
         connection: HTTPConnection,

@@ -306,6 +306,7 @@ class RoleSessionFactories:
     public_api: sessionmaker[Session]
     _engines: tuple[Engine, ...] = field(repr=False)
     billing: sessionmaker[Session] | None = None
+    revocation_consumer: sessionmaker[Session] | None = None
     _readiness_engines: Mapping[str, Engine] = field(
         default_factory=dict,
         repr=False,
@@ -315,6 +316,8 @@ class RoleSessionFactories:
         factories = (self.authenticator, self.app, self.governance, self.public_api)
         if self.billing is not None:
             factories = (*factories, self.billing)
+        if self.revocation_consumer is not None:
+            factories = (*factories, self.revocation_consumer)
         if any(not callable(factory) for factory in factories):
             raise TypeError("role Session factories must be callable")
         binds = tuple(factory.kw.get("bind") for factory in factories)
@@ -352,6 +355,8 @@ class RoleSessionFactories:
         }
         if self.billing is not None:
             engines["billing"] = cast(Engine, self.billing.kw["bind"])
+        if self.revocation_consumer is not None:
+            engines["revocation_consumer"] = cast(Engine, self.revocation_consumer.kw["bind"])
         return MappingProxyType(engines)
 
     def close(self) -> None:
@@ -451,6 +456,7 @@ class ProductionSaasServices:
         default=None,
         repr=False,
     )
+    invalidation_follower: Any | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def close(self) -> None:
@@ -460,10 +466,14 @@ class ProductionSaasServices:
             return
         self._closed = True
         try:
-            self.readiness.close()
+            if self.invalidation_follower is not None:
+                self.invalidation_follower.close()
         finally:
-            if self.onboarding is not None:
-                self.onboarding.close()
+            try:
+                self.readiness.close()
+            finally:
+                if self.onboarding is not None:
+                    self.onboarding.close()
 
 
 @dataclass(slots=True)
@@ -931,6 +941,11 @@ def create_role_session_factories(
             _new_readiness_engine if engine_factory is _new_engine else engine_factory
         )
         for role, database_url in urls.items():
+            if role == "revocation_consumer":
+                value = sa.make_url(database_url)
+                database_url = value.update_query_dict(
+                    {"application_name": "saas-revocation-worker"}
+                ).render_as_string(hide_password=False)
             engine = engine_factory(database_url)
             if engine.dialect.name != "postgresql":
                 raise ProductionServerCompositionError(f"{role} service login must use PostgreSQL")
@@ -954,6 +969,11 @@ def create_role_session_factories(
             billing=(
                 sessionmaker(engines["billing"], expire_on_commit=False)
                 if "billing" in engines
+                else None
+            ),
+            revocation_consumer=(
+                sessionmaker(engines["revocation_consumer"], expire_on_commit=False)
+                if "revocation_consumer" in engines
                 else None
             ),
             _readiness_engines=MappingProxyType(readiness_engines),
@@ -1279,6 +1299,14 @@ def build_production_saas_services(
             )
         checks.update(extra_readiness_checks)
 
+    from saas.control_plane.revocation import AuthorizationInvalidations
+
+    if config.control_plane_schema_revision == "p0s000000017" and (
+        config.business_delivery_service_role_bindings is None
+        or sessions.revocation_consumer is None
+    ):
+        raise ProductionServerCompositionError("P17 requires its native invalidation authority")
+    invalidations = AuthorizationInvalidations() if sessions.revocation_consumer else None
     lifecycle = MembershipLifecycleService(sessions.authenticator)
     identities = IdentityManagementService(sessions.authenticator)
     passwords = PasswordCredentialService(sessions.authenticator)
@@ -1297,7 +1325,8 @@ def build_production_saas_services(
             issuer=f"{config.public_origin}/saas",
             audience=config.public_origin,
             ttl=timedelta(seconds=config.snapshot_ttl_seconds),
-        )
+        ),
+        invalidations=invalidations,
     )
     # Credential lifecycle is a governance mutation; public Run transactions
     # use the separate saas_public_api login below.  The existing integration
@@ -1308,10 +1337,12 @@ def build_production_saas_services(
         authenticator=ApiCredentialService(
             sessions.authenticator,
             credential_pepper=config.secrets.api_credential_pepper,
+            invalidations=invalidations,
         ),
         governance=ApiCredentialService(
             sessions.governance,
             credential_pepper=config.secrets.api_credential_pepper,
+            invalidations=invalidations,
         ),
     )
     public_execution = PublicApiExecutionService(
@@ -1344,7 +1375,7 @@ def build_production_saas_services(
             raise ProductionServerCompositionError(
                 "billing capability requires its dedicated service login"
             )
-        billing = BillingControlPlane(sessions.billing)
+        billing = BillingControlPlane(sessions.billing, require_usage_ingress=True)
     elif sessions.billing is not None:
         raise ProductionServerCompositionError(
             "billing service login requires the billing capability"
@@ -1425,17 +1456,49 @@ def build_production_saas_services(
     readiness = ProductionReadiness(checks)
     # The readiness/version endpoints are SaaS-owned and therefore live below
     # the existing /saas router; no competing official router is introduced.
-    integration.router.include_router(_production_router(config, readiness))
     try:
         readiness.assert_ready()
     except Exception:
         readiness.close()
         raise
-    return ProductionSaasServices(
-        integration=integration,
-        readiness=readiness,
-        onboarding=onboarding,
-    )
+    follower = None
+    try:
+        if invalidations is not None:
+            from saas.production.business_delivery import start_revocation_follower
+
+            follower = start_revocation_follower(
+                sessions.revocation_consumer,
+                invalidations,
+                product_revision=config.product_revision,
+                pod_uid=os.environ.get("OMNIGENT_SAAS_POD_UID", ""),
+            )
+            # Async full-source catch-up is not a static connection prerequisite.
+            # Process stays alive, but its live readiness remains503 until actual
+            # cache application/ACK completes; no caller may set Ready itself.
+            readiness.close()
+
+            def invalidation_ready() -> None:
+                # The original readiness protocol uses exceptions, not a return
+                # boolean. A false value alone would accidentally count as ready.
+                if not invalidations.ready:
+                    raise ProductionServerCompositionError(
+                        "native invalidation catch-up and old-snapshot expiry are pending"
+                    )
+
+            checks["authorization_invalidation"] = invalidation_ready
+            readiness = ProductionReadiness(checks)
+        integration.router.include_router(_production_router(config, readiness))
+        return ProductionSaasServices(
+            integration=integration,
+            readiness=readiness,
+            onboarding=onboarding,
+            invalidation_follower=follower,
+        )
+    except Exception:
+        if follower is not None:
+            follower.close()
+        readiness.close()
+        raise
 
 
 def build_production_server(
