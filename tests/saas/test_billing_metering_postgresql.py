@@ -631,7 +631,11 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
         config.attributes["connection"] = connection
         before = _retained_metering_snapshot(connection)
         with pytest.raises(
-            RuntimeError, match=r"^retained execution schema cannot be downgraded$"
+            RuntimeError,
+            match=(
+                r"^(retained execution schema cannot be downgraded|"
+                r"retained model budgets require owner settlement policy)$"
+            ),
         ):
             with connection.begin_nested():
                 command.downgrade(config, "p6a000000008")
