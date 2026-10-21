@@ -225,8 +225,8 @@ jobs:
             image="$CORE_IMAGE@$child"
             docker run --rm --pull always --platform "linux/$arch" --network none \
               --entrypoint /opt/venv/bin/python "$image" -B -I -c \
-              'import hashlib,sys;from pathlib import Path;from omnigent import _build_info;import saas.production.postgresql_migration as m;assert _build_info.COMMIT_SHA==sys.argv[1];assert hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()==sys.argv[2];assert callable(m._canonical_runner_management_catalog)' \
-              "$SOURCE_REVISION" "$(jq -er .patched_module_sha256 saas/core_f440_compat/manifest.json)"
+              'import hashlib,sys;from pathlib import Path;from importlib.metadata import distribution;from omnigent import _build_info;import saas.production.postgresql_migration as m;assert _build_info.COMMIT_SHA==sys.argv[1];assert hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()==sys.argv[2];assert callable(m._canonical_runner_management_catalog);assert hashlib.sha256((Path(distribution("omnigent")._path)/"METADATA").read_bytes()).hexdigest()==sys.argv[3]' \
+              "$SOURCE_REVISION" "$(jq -er .patched_module_sha256 saas/core_f440_compat/manifest.json)" "$(jq -er .patched_metadata_sha256 saas/core_f440_compat/manifest.json)"
             "${RUNNER_TEMP}/tools/syft" "$image" --platform "linux/$arch" -o "spdx-json=artifacts/core-compat/supply-chain/$arch.spdx.json"
             "${RUNNER_TEMP}/tools/grype" "$image" --platform "linux/$arch" -o json > "artifacts/core-compat/supply-chain/$arch.raw.grype.json"
             jq -e '([.matches[]|select(.vulnerability.severity=="Critical" or .vulnerability.severity=="High")]|length)==0 and (.ignoredMatches//[])==[]' "artifacts/core-compat/supply-chain/$arch.raw.grype.json"

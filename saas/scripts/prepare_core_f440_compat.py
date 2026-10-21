@@ -24,6 +24,9 @@ UI = (
     "ghcr.io/dream1216/omnigent-saas-server@"
     "sha256:d40b0cf4c226eb1a8743f7ffe5fbf4f8d9380e556d0330ef70ce9c6bbb13313c"
 )
+METADATA = "omnigent-0.18.0.dev20261006.dist-info/METADATA"
+ORIGINAL_METADATA_SHA256 = "48a47815a46d713c7863d6bc42719cd2ea6fb36407df557777291e2d39f2d91a"
+PATCHED_METADATA_SHA256 = "9c969e4783b96e80480dba5927e636a8c5b4e0457867f46409f392c0a5a48759"
 
 
 def digest(data: bytes) -> str:
@@ -45,10 +48,24 @@ def load_manifest(repository: Path) -> dict[str, Any]:
         or value.get("database_mutation") is not False
         or value.get("runner_permissions_changed") is not False
         or value.get("production_authority") is not False
+        or value.get("original_metadata_sha256") != ORIGINAL_METADATA_SHA256
+        or value.get("patched_metadata_sha256") != PATCHED_METADATA_SHA256
         or digest((root / "postgresql_migration.patch").read_bytes()) != value.get("patch_sha256")
     ):
         raise ValueError("fixed f440 core compatibility materials differ")
     return value
+
+
+def patched_metadata(data: bytes) -> bytes:
+    """Retain the already qualified Pillow 13 dependency and its exact declared range."""
+    original = b"Requires-Dist: pillow<13,>=12.2\n"
+    replacement = b"Requires-Dist: pillow<14,>=13.0.0\n"
+    if digest(data) != ORIGINAL_METADATA_SHA256 or data.count(original) != 1:
+        raise ValueError("original signed wheel metadata differs")
+    changed = data.replace(original, replacement)
+    if digest(changed) != PATCHED_METADATA_SHA256:
+        raise ValueError("fixed Pillow metadata differs")
+    return changed
 
 
 def patched_module(repository: Path) -> tuple[bytes, dict[str, Any]]:
@@ -83,9 +100,11 @@ def prepare(repository: Path, wheel: Path, output: Path) -> dict[str, Any]:
     with zipfile.ZipFile(wheel) as bundle:
         if digest(bundle.read(MODULE)) != manifest["original_module_sha256"]:
             raise ValueError("original wheel does not contain the source-pinned f440 module")
+        metadata = patched_metadata(bundle.read(METADATA))
     output.mkdir(parents=True, exist_ok=False)
     shutil.copyfile(wheel, output / wheel.name)
     (output / "postgresql_migration.py").write_bytes(changed)
+    (output / "METADATA").write_bytes(metadata)
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     for name in ("bind_runtime_build_revision.py", "normalize_host_cli_tree.py"):
         shutil.copyfile(repository / "saas/scripts" / name, output / name)
