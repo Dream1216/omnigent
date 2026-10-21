@@ -374,7 +374,10 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
             verify_non_bypass_budget_owner_settlement,
         )
 
-        verify_non_bypass_budget_owner_settlement(plan)
+        if profile == "core":
+            assert "billing" not in plan.service_role_graph.by_service
+        else:
+            verify_non_bypass_budget_owner_settlement(plan)
     if profile in {"admin", "projection"}:
         _verify_preview_deployment_and_startup(plan, final, tmp_path)
     else:
@@ -503,12 +506,12 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             print(f"CLEAN_REPLAY_PREVIEW_SECURITY_PG{major}={digest}")
-            assert (
-                digest
-                == migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(
-                    key
-                )
+            expected_security = (
+                migration._PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+                if plan.model_projection_service_role_bindings is not None
+                else migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
             )
+            assert digest == expected_security.get(key)
             return key, digest
     finally:
         engine.dispose()
