@@ -294,12 +294,5 @@ def connect_url(url):
     from sqlalchemy import make_url
 
     value = make_url(url)
-    return psycopg.connect(
-        host=value.host,
-        port=value.port,
-        user=value.username,
-        password=value.password,
-        dbname=value.database,
-        **value.query,
-        autocommit=True,
-    )
+    args, kwargs = value.get_dialect()().create_connect_args(value)
+    return psycopg.connect(*args, **kwargs, autocommit=True)

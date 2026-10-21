@@ -197,8 +197,33 @@ def _sessions(*, billing: bool = False) -> RoleSessionFactories:
 def test_actual_server_ready_endpoint_requires_epoch_grace_and_resets_on_disconnect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import yaml
+
     from saas.control_plane.revocation import AuthorizationInvalidations
 
+    template = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[2]
+            / "saas/deployment/server/kubernetes.production.yaml"
+        ).read_text()
+    )
+    server = next(
+        item
+        for item in template["items"]
+        if item["kind"] == "Deployment" and item["metadata"]["name"] == "omnigent-saas-server"
+    )
+    main = next(
+        item
+        for item in server["spec"]["template"]["spec"]["containers"]
+        if item["name"] == "server"
+    )
+    projected_uid = next(
+        row
+        for row in main["env"]
+        if row.get("valueFrom", {}).get("fieldRef", {}).get("fieldPath") == "metadata.uid"
+    )
+    pod_uid = "f8e67fc2-57dd-4bbf-97ba-daf712b0c339"
+    monkeypatch.setenv(projected_uid["name"], pod_uid)
     monotonic = [100.0]
     cache = AuthorizationInvalidations(clock=lambda: monotonic[0])
     monkeypatch.setattr("saas.control_plane.revocation.AuthorizationInvalidations", lambda: cache)
@@ -242,6 +267,7 @@ def test_actual_server_ready_endpoint_requires_epoch_grace_and_resets_on_disconn
         # LISTEN/ACK/reconnect is separately exercised by the native database suite.
         assert factory is sessions.revocation_consumer and actual_cache is cache
         assert scope["product_revision"] == config.product_revision
+        assert scope["pod_uid"] == pod_uid
         cache.begin_listener_epoch()
         cache.caught_up()
         return FollowerPort()

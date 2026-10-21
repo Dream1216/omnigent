@@ -84,7 +84,7 @@ _POOL = UUID("44444444-4444-4444-8444-444444444444")
 _PLACEMENT = UUID("55555555-5555-4555-8555-555555555555")
 _SERVICE = UUID("66666666-6666-4666-8666-666666666666")
 _OFFICIAL_SCHEMA_REVISION = "official-head-v1"
-_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000016"
+_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000017"
 _CAPABILITIES = ("shell",)
 _CAPABILITIES_SHA256 = hashlib.sha256(b'["shell"]').hexdigest()
 
@@ -218,7 +218,9 @@ def _fleet() -> RunnerDatabaseFleet:
     return RunnerDatabaseFleet(Path("/fleet"), "f" * 64, _members())
 
 
-def _projection() -> RunnerDatabaseFleetCatalogProjection:
+def _projection(
+    *, schema_revision: str = _CONTROL_PLANE_SCHEMA_REVISION
+) -> RunnerDatabaseFleetCatalogProjection:
     runners = _members()
     roles = tuple(
         sorted(
@@ -275,7 +277,7 @@ def _projection() -> RunnerDatabaseFleetCatalogProjection:
             transaction_read_only=True,
             operator_is_superuser=True,
         ),
-        schema_revision=_CONTROL_PLANE_SCHEMA_REVISION,
+        schema_revision=schema_revision,
         cluster_settings=(
             ("max_notify_queue_pages", "64", "postmaster", False, "configuration file"),
             ("max_prepared_transactions", "0", "postmaster", False, "configuration file"),

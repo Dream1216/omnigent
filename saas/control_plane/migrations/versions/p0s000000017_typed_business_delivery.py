@@ -183,8 +183,10 @@ def upgrade():
     bind = op.get_bind()
     for statement in TABLE_DDL:
         if bind.dialect.name != "postgresql":
-            statement = statement.replace("UUID", "CHAR(32)").replace(
-                "TIMESTAMP WITH TIME ZONE", "DATETIME"
+            statement = (
+                statement.replace("UUID", "CHAR(32)")
+                .replace("TIMESTAMP WITH TIME ZONE", "DATETIME")
+                .replace("DEFAULT now()", "DEFAULT CURRENT_TIMESTAMP")
             )
         op.execute(statement)
     if bind.dialect.name == "postgresql":

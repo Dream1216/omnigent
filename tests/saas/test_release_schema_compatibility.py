@@ -15,6 +15,7 @@ from tests.saas.test_production_postgresql_migration import _REVISION, _bindings
 _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
+_T = "lm2t00000001"
 _OFFICIAL = "mm1a2b3c4d5e"
 
 
@@ -78,6 +79,11 @@ def _receipt(tmp_path, monkeypatch, *, installed, requested, verify_only=True):
         ("p0s000000016", "p0s000000016"),
         ("p0s000000016", _R),
         ("p0s000000016", _S),
+        (_P0, _T),
+        (_R, _T),
+        (_S, _T),
+        (_T, _T),
+        ("p0s000000017", "p0s000000017"),
     ],
 )
 def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
@@ -95,10 +101,19 @@ def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
         (_R, _P0),
         (_S, _P0),
         (_S, _R),
+        (_T, _P0),
+        (_T, _R),
+        (_T, _S),
         (_P0, "lm2q00000001"),
         (_P0, "future"),
         ("future", "future"),
         ("p0s000000016", _P0),
+        ("p0s000000016", _T),
+        ("p0s000000017", _P0),
+        ("p0s000000017", "p0s000000016"),
+        ("p0s000000017", _R),
+        ("p0s000000017", _S),
+        ("p0s000000017", _T),
     ],
 )
 def test_receipt_rejects_unsupported_or_future_schema_pairs(
@@ -109,19 +124,19 @@ def test_receipt_rejects_unsupported_or_future_schema_pairs(
         migration._load_runtime_receipt(config)
 
 
-@pytest.mark.parametrize("head", [_P0, "p0s000000016", _R, _S])
+@pytest.mark.parametrize("head", [_P0, "p0s000000016", _R, _S, _T])
 def test_projection_capability_is_only_present_in_model_schemas(head):
-    assert ("saas_model_projection" in migration._capability_roles(head)) == (head in {_R, _S})
+    assert ("saas_model_projection" in migration._capability_roles(head)) == (head in {_R, _S, _T})
 
 
-@pytest.mark.parametrize("requested", [_R, _S])
+@pytest.mark.parametrize("requested", [_R, _S, _T])
 def test_cross_schema_receipt_requires_read_only_verification(tmp_path, monkeypatch, requested):
     config = _receipt(tmp_path, monkeypatch, installed=_P0, requested=requested, verify_only=False)
     with pytest.raises(migration.PostgreSqlMigrationError):
         migration._load_runtime_receipt(config)
 
 
-@pytest.mark.parametrize("requested", [_R, _S])
+@pytest.mark.parametrize("requested", [_R, _S, _T])
 def test_cross_schema_receipt_cannot_borrow_the_schema_producer_sha(
     tmp_path, monkeypatch, requested
 ):
@@ -143,7 +158,7 @@ def test_cross_schema_receipt_retains_owner_only_read_only_file_requirement(
     assert error.value.code == "migration_receipt_invalid"
 
 
-@pytest.mark.parametrize("verify_only,requested", [(False, _R), (True, "future")])
+@pytest.mark.parametrize("verify_only,requested", [(False, _R), (False, _T), (True, "future")])
 def test_schema_override_is_rejected_before_any_authority_connection(
     monkeypatch, verify_only, requested
 ):

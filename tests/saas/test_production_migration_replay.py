@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from saas.production import postgresql_migration as migration
+from saas.production import service_bindings
 from saas.production.server import create_role_session_factories
 from saas.production.server_config import ProductionMigrationReceipt
 from saas.production.service_bindings import (
@@ -140,6 +141,28 @@ def production_replay(
         hashlib.sha256(platform_admin_document.encode()).hexdigest(),
         platform_admin_bindings,
     )
+    delivery_manifest = None
+    delivery_bindings: tuple[ProductionServiceRoleBinding, ...] = ()
+    if migration._expected_head("saas") == "p0s000000017":
+        delivery_bindings = tuple(
+            ProductionServiceRoleBinding(
+                service=service,
+                login=f"replay_{service}",
+                base_role=role,
+            )
+            for service, role in sorted(
+                service_bindings.EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items()
+            )
+        )
+        delivery_document = render_production_service_role_bindings(delivery_bindings)
+        delivery_path = tmp_path / "business-delivery-bindings.json"
+        delivery_path.write_text(delivery_document)
+        delivery_path.chmod(0o400)
+        delivery_manifest = ProductionServiceRoleBindings(
+            delivery_path,
+            hashlib.sha256(delivery_document.encode()).hexdigest(),
+            delivery_bindings,
+        )
     roles = {
         "principal_operator": "replay_principal",
         "database_owner": "replay_database",
@@ -165,7 +188,12 @@ def production_replay(
             )
         all_bindings = {
             binding.login: binding
-            for binding in (*bindings, *platform_bindings, *platform_admin_bindings)
+            for binding in (
+                *bindings,
+                *platform_bindings,
+                *platform_admin_bindings,
+                *delivery_bindings,
+            )
         }
         for binding in all_bindings.values():
             connection.exec_driver_sql(
@@ -200,6 +228,11 @@ def production_replay(
         ),
         platform_admin_service_role_bindings=(
             platform_admin_manifest if request.param == "admin" else None
+        ),
+        **(
+            {"business_delivery_service_role_bindings": delivery_manifest}
+            if delivery_manifest is not None
+            else {}
         ),
         require_tls=True,
     )
@@ -246,7 +279,11 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         if plan.platform_admin_service_role_bindings is None
         else "admin"
     )
-    assert len(plan.service_role_graph.bindings) == {"core": 15, "model": 17, "admin": 18}[profile]
+    delivery_manifest = getattr(plan, "business_delivery_service_role_bindings", None)
+    assert len(plan.service_role_graph.bindings) == (
+        {"core": 15, "model": 17, "admin": 18}[profile]
+        + (3 if delivery_manifest is not None else 0)
+    )
     verified = migration.run_production_postgresql_migration(plan, verify_only=True)
     assert verified.catalog_sha256 == first.catalog_sha256
     repeated = migration.run_production_postgresql_migration(plan)
@@ -265,15 +302,18 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
                 == "ga1b2c3d4e5f"
             )
         with monkeypatch.context() as context:
-            context.setattr(
-                migration,
-                {
-                    "core": "_SOURCE_SECURITY_CATALOG_SHA256",
-                    "model": "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
-                    "admin": "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
-                }[profile],
-                {},
-            )
+            if delivery_manifest is not None:
+                context.setitem(migration._BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS, profile, {})
+            else:
+                context.setattr(
+                    migration,
+                    {
+                        "core": "_SOURCE_SECURITY_CATALOG_SHA256",
+                        "model": "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
+                        "admin": "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                    }[profile],
+                    {},
+                )
             with pytest.raises(migration.PostgreSqlMigrationError) as absent:
                 migration.run_production_postgresql_migration(plan)
             assert absent.value.code == "source_catalog_baseline_missing"
@@ -335,13 +375,20 @@ def _startup_config(
     path = tmp_path / f"runtime-migration-receipt-{receipt.catalog_sha256}.json"
     path.write_text(json.dumps(receipt.to_dict()))
     path.chmod(0o400)
+    delivery_manifest = getattr(plan, "business_delivery_service_role_bindings", None)
     urls = {
         service: sa.make_url(plan.saas_owner.url)
         .set(username=plan.service_role_graph.login_for(service))
+        .update_query_dict(
+            {"application_name": "saas-revocation-worker"}
+            if service == "revocation_consumer"
+            else {}
+        )
         .render_as_string(hide_password=False)
         for service in (
             *migration._SERVER_SERVICE_ROLES,
             *(("billing",) if "billing" in plan.service_role_graph.by_service else ()),
+            *(("revocation_consumer",) if delivery_manifest is not None else ()),
         )
     }
     config = SimpleNamespace(
@@ -350,6 +397,7 @@ def _startup_config(
         control_plane_schema_revision=receipt.saas_head,
         service_role_bindings=plan.service_role_bindings,
         service_role_graph=plan.service_role_graph,
+        business_delivery_service_role_bindings=delivery_manifest,
         capabilities=(
             frozenset({"billing"})
             if "billing" in plan.service_role_graph.by_service

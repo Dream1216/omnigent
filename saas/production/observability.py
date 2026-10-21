@@ -175,7 +175,7 @@ def configured_runtime() -> SloRuntime | None:
                     self.end_headers()
                     self.wfile.write(payload)
 
-                def log_message(self, _format: str, *_args: object) -> None:
+                def log_message(self, format: str, *_args: object) -> None:
                     pass
 
             # Deployment must apply its existing metrics-only NetworkPolicy; no

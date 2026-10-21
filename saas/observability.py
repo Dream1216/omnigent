@@ -255,7 +255,7 @@ class SloRuntime:
                     terminal = run.terminal_at
                     if terminal is not None and terminal.tzinfo is None:
                         terminal = terminal.replace(tzinfo=UTC)
-                    projection = {
+                    projection: dict[str, object] = {
                         "status": run.status,
                         "terminal_at": None
                         if terminal is None
@@ -396,7 +396,7 @@ def install_session_witness(factory: sessionmaker[Session], runtime: SloRuntime)
         if factory._saas_slo_witness is not runtime:
             raise WitnessUnavailable("session factory already has a different witness authority")
         return
-    factory._saas_slo_witness = runtime
+    setattr(factory, "_saas_slo_witness", runtime)  # noqa: B010 - third-party runtime extension
     bind = factory.kw.get("bind")
     if isinstance(bind, sa.engine.Engine) and bind.dialect.name == "postgresql":
         runtime.metrics.register_pool_engine(bind)

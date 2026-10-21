@@ -44,7 +44,7 @@ _Result = TypeVar("_Result")
 _REVISION_CONTRACT = {
     "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p0s000000016",
+    "control_plane_schema_revision": "p0s000000017",
 }
 _DOMAIN_ROLES = {
     "image": {"release-engineering", "security", "site-reliability"},

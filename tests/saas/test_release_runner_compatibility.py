@@ -27,6 +27,7 @@ from tests.saas.test_production_runner_database_fleet import _context, _fleet, _
 _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
+_T = "lm2t00000001"
 
 
 @pytest.mark.parametrize(
@@ -41,8 +42,10 @@ def test_p0_runner_contract_retains_its_original_bytes(monkeypatch, packaged_hea
     assert runner_agent_database_authority_contract_sha256() == expected
 
 
-@pytest.mark.parametrize("head", [_R, _S])
-@pytest.mark.parametrize("packaged_head", [_P0, "p0s000000016"])
+@pytest.mark.parametrize(
+    "packaged_head,head",
+    [(_P0, _R), (_P0, _S), (_P0, _T), ("p0s000000016", _R), ("p0s000000016", _S)],
+)
 def test_r_runner_contract_pins_the_complete_new_function_set_and_digest(
     monkeypatch, head, packaged_head
 ) -> None:
@@ -78,15 +81,17 @@ def test_runner_unknown_schema_is_rejected_before_a_database_connection(revision
         )
 
 
-def test_r_packaged_application_cannot_borrow_the_p0_contract(monkeypatch) -> None:
-    monkeypatch.setattr(migration, "_expected_head", lambda _kind: _R)
-    assert _runner_agent_schema_contract(None)[0] == _R
+@pytest.mark.parametrize("installed", [_R, _S, _T])
+def test_r_packaged_application_cannot_borrow_the_p0_contract(monkeypatch, installed) -> None:
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: installed)
+    assert _runner_agent_schema_contract(None)[0] == installed
     with pytest.raises(RunnerControlError, match="schema"):
         runner_agent_database_authority_contract_sha256(control_plane_schema_revision=_P0)
 
 
-def test_fleet_projection_must_equal_the_explicit_release_schema() -> None:
-    old = _projection()
+def test_fleet_projection_must_equal_the_explicit_release_schema(monkeypatch) -> None:
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: "p0s000000016")
+    old = _projection(schema_revision="p0s000000016")
     new = replace(old, schema_revision=_R)
     with pytest.raises(RunnerDatabaseFleetError, match="schema revision"):
         validate_runner_database_fleet_projection(
@@ -106,12 +111,12 @@ def test_fleet_projection_must_equal_the_explicit_release_schema() -> None:
         )
 
 
-@pytest.mark.parametrize("revision", [_P0, "p0s000000016", _R, _S])
+@pytest.mark.parametrize("revision", [_P0, "p0s000000016", _R, _S, _T])
 def test_fleet_release_facts_keep_official_and_control_plane_heads_distinct(
     monkeypatch, revision
 ) -> None:
-    if revision == _P0:
-        monkeypatch.setattr(migration, "_expected_head", lambda _kind: _P0)
+    packaged_head = revision if revision.startswith("p0s") else _P0
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: packaged_head)
     context = _context()
     source = {
         "OMNIGENT_SAAS_PRODUCT_REVISION": context.product_revision,

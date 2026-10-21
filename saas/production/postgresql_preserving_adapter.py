@@ -518,15 +518,16 @@ def move_receipts(
                 (PREFIX,),
             )
             need(archives == [{"nspname": archive}], "unknown_partial_or_multiple_archive")
-            need(
-                scope.expected_archive_catalog is not None
-                and archive_catalog(connection) == scope.expected_archive_catalog,
-                "archive_inventory_CAS_failed",
-            )
+            expected_archive_catalog = scope.expected_archive_catalog
+            if (
+                expected_archive_catalog is None
+                or archive_catalog(connection) != expected_archive_catalog
+            ):
+                raise Refused("archive_inventory_CAS_failed")
             if scope.direction == "detach":
                 need(
                     all(
-                        scope.expected_archive_catalog[key] == []
+                        expected_archive_catalog[key] == []
                         for key in ("namespace_dependents", "relations", "types", "functions")
                     ),
                     "archive_target_not_empty",

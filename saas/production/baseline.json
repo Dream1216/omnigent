@@ -6,7 +6,7 @@
     "upstream_manifest": "saas/upstream-baseline.json",
     "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p0s000000016",
+    "control_plane_schema_revision": "p0s000000017",
     "deployment_scope": "single-region-multi-az"
   },
   "approval": {
@@ -14,7 +14,7 @@
     "mode": "sole-owner-risk-waiver",
     "governance_classification": "degraded",
     "scope": "p0-architectural-decision-bundle",
-    "approved_control_plane_schema_revision": "p0s000000016",
+    "approved_control_plane_schema_revision": "p0s000000017",
     "policy": "saas/production/adr-approval-policy.json",
     "authorities": "saas/production/adr-approval-authorities.json",
     "candidate": "saas/production/adr-approval-candidate.json",

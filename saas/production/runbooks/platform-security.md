@@ -15,8 +15,8 @@ role. Destructive User/Tenant deletion and production release remain separate ga
 2. Require a valid local Staff username/password. Do not configure TOTP, Passkey,
    WebAuthn or an enterprise IdP for Staff. Bearer tokens, a Tenant session, mixed
    Staff/Tenant cookies, an incorrect Origin, and an incorrect Audience fail closed.
-3. Migrate through `p0s000000016`, then apply
-   `saas/control_plane/postgresql_roles.psql` as the database authority. Verify 119 control-plane
+3. Migrate through `p0s000000017`, then apply
+   `saas/control_plane/postgresql_roles.psql` as the database authority. Verify 122 control-plane
    tables and 19 Runtime tables retain both enabled and forced RLS.
 4. Give each process login exactly one NOLOGIN role:
 
@@ -29,9 +29,19 @@ role. Destructive User/Tenant deletion and production release remain separate ga
    None may inherit `saas_platform`, `saas_app`, `saas_governance`, or another platform
    process role. The emergency `saas_platform` credential is not application
    configuration and must remain in the separate recovery Realm.
-5. Enable `PlatformHttpConfig.enabled` only after the Origin, Audience, cookie, password
+5. For P17, render the mandatory canonical business-delivery profile alongside the
+   core profile. Give each new LOGIN exactly its independent NOLOGIN role:
+   `usage_consumer` → `saas_usage_consumer`, `audit_delivery` → `saas_audit_delivery`,
+   and `revocation_consumer` → `saas_revocation_consumer`. The three URLs must be
+   distinct, use `sslmode=verify-full`, and match the exact migration receipt and
+   role graph. The Server receives only the revocation URL, its binding profile and
+   its actual Downward API `OMNIGENT_SAAS_POD_UID`. Missing P17 bindings or URL fail startup;
+   LISTEN reconnects require a new epoch, full-source catchup and the original
+   65-second Snapshot barrier before degraded fallback is eligible. Every real
+   replica must apply invalidations; a single replica ACK is insufficient.
+6. Enable `PlatformHttpConfig.enabled` only after the Origin, Audience, cookie, password
    lockout, database-role and negative-matrix checks below pass for the exact release revision.
-6. Run the standalone production process with
+7. Run the standalone production process with
    `python -m saas.production.platform_admin`. Set
    `OMNIGENT_SAAS_PLATFORM_ADMIN_ENABLED=true`, the exact Staff Origin and Audience,
    the canonical Platform Admin service-role binding file, and only the

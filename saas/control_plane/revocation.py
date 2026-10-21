@@ -9,6 +9,7 @@ import re
 import threading
 import time
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -189,7 +190,7 @@ class ReplicaRevocationConsumer:
                 "revocation_route_invalid", retryable=False, pre_side_effect=True
             )
         try:
-            entity = UUID(body["entity_id"])
+            entity = UUID(cast(str, body["entity_id"]))
         except (ValueError, TypeError, AttributeError):
             raise OutboxPublishError(
                 "revocation_entity_invalid", retryable=False, pre_side_effect=True
@@ -211,11 +212,20 @@ class ReplicaRevocationConsumer:
         }[kind]
         # The consumer login has no permission to read API token hashes or
         # user PII. Do not use an ORM entity load that expands SELECT *.
-        columns = (
-            (model.id, model.status, model.revoked_at)
-            if kind == "api_credential"
-            else (model.id, model.status, model.security_version)
-        )
+        if kind == "api_credential":
+            columns = (
+                ApiCredentialRecord.id,
+                ApiCredentialRecord.status,
+                ApiCredentialRecord.revoked_at,
+            )
+        elif kind == "user":
+            columns = (GlobalUser.id, GlobalUser.status, GlobalUser.security_version)
+        else:
+            columns = (
+                ServiceAccountRecord.id,
+                ServiceAccountRecord.status,
+                ServiceAccountRecord.security_version,
+            )
         if db.get_bind().dialect.name == "postgresql":
             authority = native_delivery_row(db, "revocation_authority", event_id)
             actual = (

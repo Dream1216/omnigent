@@ -4,6 +4,7 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -82,7 +83,25 @@ def _url(login: str, *, database: str = "omnigent", tls: bool = True) -> str:
     return f"postgresql+psycopg://{login}:top-secret@db.example:5432/{database}{query}"
 
 
+def _business_bindings() -> ProductionServiceRoleBindings:
+    from saas.production.service_bindings import EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
+
+    return ProductionServiceRoleBindings(
+        path=Path("/business-delivery-bindings.json"),
+        sha256="e" * 64,
+        bindings=tuple(
+            ProductionServiceRoleBinding(service, f"{service}_login", base_role)
+            for service, base_role in sorted(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items())
+        ),
+    )
+
+
 def _plan(*, tls: bool = True) -> migration.ProductionPostgreSqlPlan:
+    profiles = (
+        {"business_delivery_service_role_bindings": _business_bindings()}
+        if migration._expected_head("saas") == "p0s000000017"
+        else {}
+    )
     return migration.ProductionPostgreSqlPlan.from_urls(
         product_revision=_REVISION,
         principal_operator_url=_url("principal_operator", tls=tls),
@@ -91,6 +110,7 @@ def _plan(*, tls: bool = True) -> migration.ProductionPostgreSqlPlan:
         saas_owner_url=_url("saas_owner", tls=tls),
         service_role_bindings=_bindings(),
         require_tls=tls,
+        **profiles,
     )
 
 
@@ -149,32 +169,24 @@ def test_plan_requires_distinct_logins_and_one_target(monkeypatch: pytest.Monkey
     plan = _plan()
     migration._validate_plan(plan)
 
-    duplicate = migration.ProductionPostgreSqlPlan(
-        product_revision=plan.product_revision,
-        principal_operator=plan.principal_operator,
-        database_owner=plan.database_owner,
-        official_owner=plan.official_owner,
+    duplicate = replace(
+        plan,
         saas_owner=migration.PostgreSqlAuthority(
             kind="saas_owner",
             url=plan.official_owner.url,
             login=plan.official_owner.login,
         ),
-        service_role_bindings=plan.service_role_bindings,
     )
     with pytest.raises(migration.PostgreSqlMigrationError) as duplicate_error:
         migration._validate_plan(duplicate)
     assert duplicate_error.value.code == "authority_logins_not_distinct"
 
-    other_target = migration.ProductionPostgreSqlPlan(
-        product_revision=plan.product_revision,
-        principal_operator=plan.principal_operator,
-        database_owner=plan.database_owner,
-        official_owner=plan.official_owner,
+    other_target = replace(
+        plan,
         saas_owner=migration.parse_production_postgresql_url(
             _url("saas_owner", database="another"),
             kind="saas_owner",
         ),
-        service_role_bindings=plan.service_role_bindings,
     )
     with pytest.raises(migration.PostgreSqlMigrationError) as target_error:
         migration._validate_plan(other_target)
@@ -186,20 +198,16 @@ def test_plan_composes_exact_platform_extension_role_graph(
 ) -> None:
     monkeypatch.setattr(migration, "_installed_product_revision", lambda: _REVISION)
     base = _plan()
-    plan = migration.ProductionPostgreSqlPlan(
-        product_revision=base.product_revision,
-        principal_operator=base.principal_operator,
-        database_owner=base.database_owner,
-        official_owner=base.official_owner,
-        saas_owner=base.saas_owner,
-        service_role_bindings=base.service_role_bindings,
+    plan = replace(
+        base,
         platform_model_service_role_bindings=_platform_bindings(),
         platform_admin_service_role_bindings=_platform_admin_bindings(),
     )
 
     migration._validate_plan(plan)
 
-    assert len(plan.service_role_graph.bindings) == 18
+    expected_count = 21 if migration._expected_head("saas") == "p0s000000017" else 18
+    assert len(plan.service_role_graph.bindings) == expected_count
     assert plan.service_role_graph.login_for("app") == "app_login"
     assert plan.service_role_graph.login_for("billing") == "platform_model_billing_login"
     assert (
@@ -802,22 +810,11 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
 
 @pytest.mark.parametrize("server_major", [16, 18])
 def test_current_migration_heads_have_source_catalog_baselines(server_major: int) -> None:
-    migration._require_source_catalog_baselines(server_major)
-    migration._require_source_catalog_baselines(
-        server_major,
-        bindings=migration.compose_production_service_role_graph(
-            _bindings(),
-            _platform_bindings(),
-        ),
-    )
-    migration._require_source_catalog_baselines(
-        server_major,
-        bindings=migration.compose_production_service_role_graph(
-            _bindings(),
-            _platform_bindings(),
-            _platform_admin_bindings(),
-        ),
-    )
+    core = _plan()
+    model = replace(core, platform_model_service_role_bindings=_platform_bindings())
+    admin = replace(model, platform_admin_service_role_bindings=_platform_admin_bindings())
+    for plan in (core, model, admin):
+        migration._require_source_catalog_baselines(server_major, bindings=plan.service_role_graph)
 
 
 def test_platform_model_profile_requires_its_own_source_catalog_baseline(
@@ -1054,7 +1051,12 @@ def test_current_heads_pin_distinct_clean_replay_preview_catalogs(major: int) ->
     security = migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256[key]
     assert len(inventory) == len(security) == 64
     assert inventory != migration._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
-    assert security != migration._PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256[key]
+    admin = replace(
+        _plan(),
+        platform_model_service_role_bindings=_platform_bindings(),
+        platform_admin_service_role_bindings=_platform_admin_bindings(),
+    )
+    assert security != migration._source_security_catalog_baselines(admin.service_role_graph)[key]
 
 
 def test_preview_authority_public_inventory_accepts_only_the_pinned_projection(
@@ -1489,7 +1491,17 @@ def test_database_create_authority_is_exactly_the_official_owner() -> None:
     assert "_owned_object_acl_grantees" in source
 
 
-@pytest.mark.parametrize("schema_head", ["p0s000000015", "lm2r00000001"])
+@pytest.mark.parametrize(
+    "schema_head",
+    [
+        "p0s000000015",
+        "p0s000000016",
+        "p0s000000017",
+        "lm2r00000001",
+        "lm2s00000001",
+        "lm2t00000001",
+    ],
+)
 def test_initial_schema_usage_covers_every_nologin_capability_principal(
     monkeypatch: pytest.MonkeyPatch,
     schema_head: str,
@@ -1529,8 +1541,14 @@ def test_initial_schema_usage_covers_every_nologin_capability_principal(
     )
 
     expected_roles = set(migration._CAPABILITY_ROLES)
-    if schema_head == "p0s000000015":
+    if schema_head in {"p0s000000015", "p0s000000016", "p0s000000017"}:
         expected_roles.remove("saas_model_projection")
+    if schema_head != "p0s000000017":
+        expected_roles -= {
+            "saas_usage_consumer",
+            "saas_audit_delivery",
+            "saas_revocation_consumer",
+        }
     assert observed["schema_usage_roles"] == {
         "official_owner",
         "saas_owner",

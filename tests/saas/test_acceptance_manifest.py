@@ -87,7 +87,7 @@ def test_current_adr_gate_reopens_for_exact_upstream_sync_candidate() -> None:
 
     assert gate["status"] == "pending"
     assert baseline["approval"]["state"] == "review_required"
-    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000016")
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000017")
     assert baseline["approval"]["record"] is None
     assert all(adr["status"] == "proposed" for adr in baseline["adrs"])
     assert candidate["upstream_revision"] == ("3db749d784ff044304473939acaae3a65c0fec61")

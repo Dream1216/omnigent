@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import Literal, Protocol, cast, overload
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -22,7 +24,106 @@ from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.observability import SloMetrics
 
 
-def native_delivery_row(db: Session, name: str, event_id: UUID):
+class NativeUsageFacts(Protocol):
+    """Read-only fields shared by the verified getter and immutable ORM fact."""
+
+    @property
+    def id(self) -> UUID: ...
+
+    @property
+    def tenant_id(self) -> UUID: ...
+
+    @property
+    def space_id(self) -> UUID | None: ...
+
+    @property
+    def project_id(self) -> UUID | None: ...
+
+    @property
+    def run_id(self) -> UUID | None: ...
+
+    @property
+    def meter(self) -> str: ...
+
+    @property
+    def quantity(self) -> Decimal: ...
+
+    @property
+    def unit(self) -> str: ...
+
+    @property
+    def provider(self) -> str: ...
+
+    @property
+    def provider_request_id(self) -> str: ...
+
+    @property
+    def pricing_snapshot_id(self) -> UUID: ...
+
+    @property
+    def currency(self) -> str: ...
+
+    @property
+    def customer_charge_minor(self) -> int: ...
+
+    @property
+    def attributes(self) -> dict[str, object]: ...
+
+    @property
+    def occurred_at(self) -> datetime: ...
+
+
+class NativePricingFacts(Protocol):
+    """Read-only fields shared by the verified getter and immutable ORM fact."""
+
+    @property
+    def id(self) -> UUID: ...
+
+    @property
+    def tenant_id(self) -> UUID: ...
+
+    @property
+    def plan_key(self) -> str: ...
+
+    @property
+    def currency(self) -> str: ...
+
+    @property
+    def rates(self) -> dict[str, dict[str, object]]: ...
+
+    @property
+    def version(self) -> int: ...
+
+    @property
+    def effective_from(self) -> datetime: ...
+
+    @property
+    def effective_until(self) -> datetime | None: ...
+
+
+@overload
+def native_delivery_row(
+    db: Session, name: Literal["usage_facts"], event_id: UUID
+) -> NativeUsageFacts | None: ...
+
+
+@overload
+def native_delivery_row(
+    db: Session, name: Literal["pricing_facts"], event_id: UUID
+) -> NativePricingFacts | None: ...
+
+
+@overload
+def native_delivery_row(
+    db: Session,
+    name: Literal["usage_source", "audit_source", "revocation_source", "revocation_authority"],
+    event_id: UUID,
+) -> SimpleNamespace | None: ...
+
+
+def native_delivery_row(
+    db: Session, name: str, event_id: UUID
+) -> NativeUsageFacts | NativePricingFacts | SimpleNamespace | None:
     names = {
         "usage_source": "saas_delivery_usage_outbox_source_v1",
         "audit_source": "saas_delivery_audit_outbox_source_v1",
@@ -38,12 +139,16 @@ def native_delivery_row(db: Session, name: str, event_id: UUID):
         .mappings()
         .one_or_none()
     )
-    return None if row is None else SimpleNamespace(**row)
+    return None if row is None else SimpleNamespace(**cast(Mapping[str, object], row))
 
 
-def delivery_source(db: Session, kind: str, event_id: UUID):
+def delivery_source(db: Session, kind: Literal["usage", "audit", "revocation"], event_id: UUID):
     if db.get_bind().dialect.name == "postgresql":
-        return native_delivery_row(db, kind + "_source", event_id)
+        return native_delivery_row(
+            db,
+            cast(Literal["usage_source", "audit_source", "revocation_source"], kind + "_source"),
+            event_id,
+        )
     return db.get(ControlPlaneOutboxEvent, event_id)
 
 
@@ -59,7 +164,10 @@ def digest(value: object) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
-def usage_facts(usage: UsageEventRecord, pricing: PricingSnapshotRecord) -> dict[str, object]:
+def usage_facts(
+    usage: NativeUsageFacts | UsageEventRecord,
+    pricing: NativePricingFacts | PricingSnapshotRecord,
+) -> dict[str, object]:
     """Materialize the original immutable business facts, without a financial posting."""
     return {
         "usage": {
@@ -96,8 +204,8 @@ def usage_facts(usage: UsageEventRecord, pricing: PricingSnapshotRecord) -> dict
 
 def verify_usage_ingress(
     db: Session,
-    usage: UsageEventRecord,
-    pricing: PricingSnapshotRecord,
+    usage: NativeUsageFacts | UsageEventRecord,
+    pricing: NativePricingFacts | PricingSnapshotRecord,
 ) -> UsageReconciliationIngressRecord:
     row = db.scalar(
         sa.select(UsageReconciliationIngressRecord).where(
@@ -139,7 +247,7 @@ class UsageReconciliationConsumer:
         self.metrics = metrics
 
     @staticmethod
-    def _source(db: Session, event_id: UUID, event: dict[str, object]):
+    def _source(db: Session, event_id: UUID, event: Mapping[str, object]):
         source = delivery_source(db, "usage", event_id)
         if source is None:
             raise OutboxPublishError("usage_source_missing", retryable=True, pre_side_effect=True)

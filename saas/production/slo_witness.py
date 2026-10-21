@@ -372,7 +372,7 @@ class RunEventWitness:
             raise WitnessConflict("source Run lost previously witnessed events")
         if source_head - old_sequence > self.max_segment:
             raise WitnessBackfillRequired("Run Event witness needs bounded background recovery")
-        if old_sequence:
+        if head is not None and old_sequence:
             if anchor is None or anchor.sequence != old_sequence:
                 raise WitnessConflict("source witness anchor is missing")
             digest = self.identifier(canonical(anchor.content).decode())

@@ -84,7 +84,15 @@ def test_all_pods_stage_owner_only_files_without_root_or_plaintext_secret_envs()
             assert security["capabilities"]["drop"] == ["ALL"]
             for entry in container.get("env", []):
                 assert "secretKeyRef" not in entry
-                assert "valueFrom" not in entry
+                if entry["name"] == "OMNIGENT_SAAS_POD_UID":
+                    assert entry == {
+                        "name": "OMNIGENT_SAAS_POD_UID",
+                        "valueFrom": {
+                            "fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"}
+                        },
+                    }
+                else:
+                    assert "valueFrom" not in entry
                 if entry["name"] not in {
                     "OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_URI",
                     "OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_ENDPOINT_URL",
@@ -207,7 +215,7 @@ def test_server_consumes_exact_artifact_admission_authority_and_rollout_bindings
     template = server["spec"]["template"]
     pod = template["spec"]
     container = next(item for item in pod["containers"] if item["name"] == "server")
-    env = {item["name"]: item["value"] for item in container["env"]}
+    env = {item["name"]: item.get("value") for item in container["env"]}
     volumes = {item["name"]: item for item in pod["volumes"]}
 
     for name in (
@@ -763,7 +771,7 @@ def test_server_and_runner_artifact_authorities_are_three_way_isolated() -> None
             for entry in container["env"]
             if entry["name"].endswith("ARTIFACT_CREDENTIALS_FILE")
         )
-        env = {entry["name"]: entry["value"] for entry in container["env"]}
+        env = {entry["name"]: entry.get("value") for entry in container["env"]}
         return secret, credentials_file, env
 
     server_secret, server_file, _server_env = artifact_binding("omnigent-saas-server")
@@ -978,7 +986,7 @@ def test_beta_database_contract_requires_external_cnpg_postgresql18_admission() 
     ordered_contract = (
         "`postgresql_principals.sql`",
         "`postgresql_database.sql`",
-        "`p0s000000016`",
+        "`p0s000000017`",
         "`postgresql_roles.sql`",
         "`saas/control_plane/postgresql_runner_agent_cluster.psql`",
         "**Freeze the coupled evidence.**",
@@ -1046,7 +1054,7 @@ def test_server_advertises_only_concrete_runner_and_holds_only_its_public_ca() -
     )
     pod = server["spec"]["template"]["spec"]
     container = pod["containers"][0]
-    env = {entry["name"]: entry["value"] for entry in container["env"]}
+    env = {entry["name"]: entry.get("value") for entry in container["env"]}
     secret_names = {
         volume["secret"]["secretName"] for volume in pod["volumes"] if "secret" in volume
     }
@@ -1124,7 +1132,7 @@ def test_preview_exchange_authority_is_a_distinct_server_only_file() -> None:
         )
         == 1
     )
-    server_env = {entry["name"]: entry["value"] for entry in pod["containers"][0]["env"]}
+    server_env = {entry["name"]: entry.get("value") for entry in pod["containers"][0]["env"]}
     assert server_env["OMNIGENT_SAAS_PREVIEW_EXCHANGE_HMAC_KEY_FILE"] == (
         "/runtime/preview-exchange-hmac-key"
     )

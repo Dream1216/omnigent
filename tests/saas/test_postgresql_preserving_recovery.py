@@ -14,6 +14,7 @@ import pytest
 from psycopg.pq import TransactionStatus
 
 from saas.production import postgresql_preserving_adapter as adapter
+from saas.production import postgresql_preserving_native as native
 from saas.production import postgresql_preserving_recovery as recovery
 
 
@@ -151,3 +152,41 @@ def test_state_from_another_operation_is_rejected_before_revalidation(recovery_b
     with pytest.raises(adapter.Refused, match="prepared_operation_required"):
         control.inverse(state)
     assert recovery_boundary.events == []
+
+
+@pytest.mark.parametrize("driver", ["postgresql", "postgresql+psycopg"])
+def test_native_connection_preserves_escaped_identity_and_strict_tls_parameters(
+    monkeypatch, driver
+):
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    observed = []
+    sentinel = object()
+
+    def connect(*args, autocommit, **kwargs):
+        observed.append((conninfo_to_dict(make_conninfo(*args, **kwargs)), autocommit))
+        return sentinel
+
+    monkeypatch.setattr(native.psycopg, "connect", connect)
+    url = (
+        f"{driver}://fixture_login:synthetic%3A%40password@127.0.0.1:5433/fixture_db"
+        "?sslmode=verify-full&sslrootcert=%2Ffixture%2Froot.crt"
+        "&application_name=preserving%20recovery&connect_timeout=2"
+    )
+    assert native.connect_url(url) is sentinel
+    assert observed == [
+        (
+            {
+                "host": "127.0.0.1",
+                "port": "5433",
+                "user": "fixture_login",
+                "password": "synthetic:@password",
+                "dbname": "fixture_db",
+                "sslmode": "verify-full",
+                "sslrootcert": "/fixture/root.crt",
+                "application_name": "preserving recovery",
+                "connect_timeout": "2",
+            },
+            True,
+        )
+    ]

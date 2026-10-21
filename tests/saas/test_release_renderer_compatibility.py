@@ -14,15 +14,16 @@ from tests.saas.test_render_kubernetes_release import (
 
 
 @pytest.mark.parametrize("mode", ["stage", "final"])
-@pytest.mark.parametrize("head", ["p0s000000015", "p0s000000016", "lm2r00000001", "lm2s00000001"])
+@pytest.mark.parametrize(
+    "head", ["p0s000000015", "p0s000000016", "lm2r00000001", "lm2s00000001", "lm2t00000001"]
+)
 def test_release_binds_the_actual_database_head_and_exact_migration_mode(
     tmp_path, monkeypatch, mode, head
 ):
-    if head == "p0s000000015":
-        monkeypatch.setattr(migration, "_expected_head", lambda _kind: head)
-        monkeypatch.setattr(renderer, "_expected_head", lambda _kind: head)
-    document = _spec_document(mode=mode)
-    document["control_plane_schema_revision"] = head
+    packaged_head = head if head.startswith("p0s") else "p0s000000015"
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: packaged_head)
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: packaged_head)
+    document = _spec_document(mode=mode, schema_head=head)
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)
@@ -35,7 +36,7 @@ def test_release_binds_the_actual_database_head_and_exact_migration_mode(
     )
     assert migrate["command"] == ["python", "-m", "saas.scripts.run_postgresql_migration"]
     expected = ["--product-revision", "$(OMNIGENT_SAAS_SOURCE_SHA)"]
-    if head in {"lm2r00000001", "lm2s00000001"}:
+    if head in {"lm2r00000001", "lm2s00000001", "lm2t00000001"}:
         expected.extend(["--verify-only", "--verification-saas-head", head])
     assert migrate["args"] == expected
     evidence = _document(output / renderer.EVIDENCE_FILE_NAME)
@@ -48,8 +49,7 @@ def test_release_binds_the_actual_database_head_and_exact_migration_mode(
 
 @pytest.mark.parametrize("head", ["lm2q00000001", "future", "p0s000000009"])
 def test_renderer_rejects_unreviewed_database_heads(tmp_path, head):
-    document = _spec_document()
-    document["control_plane_schema_revision"] = head
+    document = _spec_document(schema_head=head)
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)
@@ -63,8 +63,7 @@ def test_r_packaged_image_uses_its_own_migrations_without_a_cross_head_override(
 ):
     monkeypatch.setattr(migration, "_expected_head", lambda _kind: "lm2r00000001")
     monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "lm2r00000001")
-    document = _spec_document()
-    document["control_plane_schema_revision"] = "lm2r00000001"
+    document = _spec_document(schema_head="lm2r00000001")
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)
@@ -75,9 +74,13 @@ def test_r_packaged_image_uses_its_own_migrations_without_a_cross_head_override(
     ]
 
 
-def test_renderer_never_authorizes_a_mutating_argument_added_to_a_rollback(tmp_path, monkeypatch):
-    document = _spec_document()
-    document["control_plane_schema_revision"] = "lm2r00000001"
+@pytest.mark.parametrize("head", ["lm2r00000001", "lm2t00000001"])
+def test_renderer_never_authorizes_a_mutating_argument_added_to_a_rollback(
+    tmp_path, monkeypatch, head
+):
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: "p0s000000015")
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "p0s000000015")
+    document = _spec_document(schema_head=head)
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)

@@ -43,8 +43,7 @@ _PROFILES = (
 
 
 def _spec(tmp_path, *, count=19, head="lm2r00000001", mode="stage", login_suffix=""):
-    document = _spec_document(mode=mode)
-    document["control_plane_schema_revision"] = head
+    document = _spec_document(mode=mode, schema_head=head)
     roles = dict(bindings.EXPECTED_PRODUCTION_SERVICE_ROLES)
     if count >= 18:
         roles.update(bindings.EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
@@ -81,15 +80,18 @@ def _render(tmp_path, **kwargs):
         (15, "lm2s00000001"),
         (18, "lm2s00000001"),
         (19, "lm2s00000001"),
+        (15, "lm2t00000001"),
+        (18, "lm2t00000001"),
+        (19, "lm2t00000001"),
     ],
 )
 @pytest.mark.parametrize("mode", ["stage", "final"])
 def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
     tmp_path, monkeypatch, count, head, mode
 ):
-    if head == "p0s000000015":
-        monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: head)
-        monkeypatch.setattr(renderer, "_expected_head", lambda _kind: head)
+    packaged_head = head if head.startswith("p0s") else "p0s000000015"
+    monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: packaged_head)
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: packaged_head)
     migration, production, evidence = _render(tmp_path, count=count, head=head, mode=mode)
     migration_bindings = _resource(
         migration, kind="ConfigMap", data_key="service-role-bindings.json"
@@ -181,7 +183,10 @@ def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
 
 def test_extension_login_change_rekeys_the_immutable_bindings_without_changing_core_bytes(
     tmp_path,
+    monkeypatch,
 ):
+    monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: "p0s000000015")
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "p0s000000015")
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir()
     second.mkdir()
@@ -195,14 +200,15 @@ def test_extension_login_change_rekeys_the_immutable_bindings_without_changing_c
 
 @pytest.mark.parametrize("head", ["p0s000000015", "p0s000000016"])
 def test_projection_profile_is_not_admitted_on_the_p0_schema(tmp_path, monkeypatch, head):
-    if head == "p0s000000015":
-        monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: head)
-        monkeypatch.setattr(renderer, "_expected_head", lambda _kind: head)
+    monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: head)
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: head)
     with pytest.raises(renderer.ReleaseRenderError, match=r"projection.*R|projection.*lm2r"):
         renderer.load_public_release_spec(_spec(tmp_path, count=19, head=head))
 
 
-def test_partial_extension_role_set_is_not_silently_reduced_to_core(tmp_path):
+def test_partial_extension_role_set_is_not_silently_reduced_to_core(tmp_path, monkeypatch):
+    monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: "p0s000000015")
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "p0s000000015")
     spec = _spec(tmp_path)
     document = json.loads(spec.read_text())
     document["service_logins"].pop("platform_authenticator")
@@ -216,6 +222,8 @@ def test_partial_extension_role_set_is_not_silently_reduced_to_core(tmp_path):
 def test_profile_additions_and_staging_are_not_a_general_mutation_exception(
     tmp_path, monkeypatch, change
 ):
+    monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: "p0s000000015")
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "p0s000000015")
     original = renderer._render_release_documents
 
     def altered(sources, spec):
