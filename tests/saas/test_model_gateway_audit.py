@@ -134,11 +134,11 @@ def test_gateway_audit_classifies_database_failures_without_exposing_bind_values
 
 def test_generic_outbox_process_installs_gateway_audit_before_claiming(monkeypatch):
     from saas import outbox_worker
-    from saas.control_plane.model_disablement_audit import ModelDisablementAuditPublisher
-    from saas.control_plane.model_revocation_audit import ModelRevocationAuditPublisher
+    from saas.control_plane.retained_model_audit import _CONTRACTS, RetainedModelAuditPublisher
 
-    _, engine, fallback, _ = _fixture()
+    _, engine, fallback, gateway = _fixture()
     captured = []
+    validation = []
     monkeypatch.setenv("OMNIGENT_SAAS_OUTBOX_PUBLISHER", "isolated:publisher")
     monkeypatch.setenv("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL", "postgresql://isolated")
     monkeypatch.delenv("OMNIGENT_SAAS_CONTROL_PLANE_DATABASE_URL_FILE", raising=False)
@@ -146,30 +146,48 @@ def test_generic_outbox_process_installs_gateway_audit_before_claiming(monkeypat
     monkeypatch.setattr(outbox_worker, "verify_dispatcher_database_role", lambda _engine: None)
     monkeypatch.setattr(outbox_worker, "_load_publisher", lambda _reference: fallback)
     monkeypatch.setattr(outbox_worker.signal, "signal", lambda *_args: None)
+
+    def verified(_db):
+        validation.append("verified")
+        return (1, 2, 3)
+
     monkeypatch.setattr(
-        "saas.control_plane.model_gateway_audit.verify_gateway_audit_function", lambda _db: 1
-    )
-    monkeypatch.setattr(
-        "saas.control_plane.model_disablement_audit.verify_disablement_audit_function",
-        lambda _db: 2,
-    )
-    monkeypatch.setattr(
-        "saas.control_plane.model_revocation_audit.verify_revocation_audit_function",
-        lambda _db: 3,
+        "saas.control_plane.retained_model_audit.verify_retained_model_audit_functions",
+        verified,
     )
 
     class Worker:
         def __init__(self, dispatcher, **_kwargs):
+            assert validation == ["verified"]
             captured.append(dispatcher._publisher)
 
         def run(self, _stop):
+            captured[0].publish(**gateway)
+            for contract in _CONTRACTS[1:]:
+                identity = str(uuid4())
+                captured[0].publish(
+                    event_id=uuid4(),
+                    event_type=contract.event,
+                    aggregate_type=contract.aggregate,
+                    aggregate_key=identity,
+                    payload={
+                        "event_type": contract.event,
+                        "schema_version": 1,
+                        contract.reference: identity,
+                    },
+                )
             return SimpleNamespace(cycles=0)
 
     monkeypatch.setattr(outbox_worker, "OutboxWorker", Worker)
     assert outbox_worker.main() == 0
-    assert len(captured) == 1 and isinstance(captured[0], ModelRevocationAuditPublisher)
-    assert isinstance(captured[0]._fallback, ModelDisablementAuditPublisher)
-    assert isinstance(captured[0]._fallback._fallback, ModelGatewayAuditPublisher)
-    assert captured[0]._fallback._fallback._fallback is fallback
+    assert len(captured) == 1 and isinstance(captured[0], RetainedModelAuditPublisher)
+    assert captured[0]._fallback is fallback
+    statements = engine.begin.return_value.__enter__.return_value.scalar.call_args_list
+    assert len(statements) == 3
+    for call, contract in zip(statements, _CONTRACTS, strict=True):
+        assert (
+            str(call.args[0]) == f"SELECT {contract.function}(:event_id,CAST(:payload AS jsonb))"
+        )
+    fallback.publish.assert_not_called()
     fallback.close.assert_called_once_with()
     engine.dispose.assert_called_once_with()
