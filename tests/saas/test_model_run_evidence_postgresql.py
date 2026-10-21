@@ -195,7 +195,7 @@ def test_actual_billing_login_retains_real_run_and_late_outcome_on_the_existing_
                 == 4
             )
         with (
-            pytest.raises(RuntimeError, match="retained Run gateway evidence"),
+            pytest.raises(RuntimeError, match=r"^retained execution schema cannot be downgraded$"),
             f.engine.begin() as db,
         ):
             config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")

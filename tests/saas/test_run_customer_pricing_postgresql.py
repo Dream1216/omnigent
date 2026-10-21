@@ -150,7 +150,7 @@ def test_real_postgresql_retained_customer_price_blocks_schema_downgrade(priced_
     f = priced_execution
     _plan(f.factory, f.scope)
     f.service.create_session(f.context, project_id=f.scope.project_id)
-    with pytest.raises(RuntimeError, match="cannot remove retained"):
+    with pytest.raises(RuntimeError, match=r"^retained execution schema cannot be downgraded$"):
         with f.engine.begin() as connection:
             config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
             config.attributes["connection"] = connection

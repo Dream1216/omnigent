@@ -316,6 +316,7 @@ def test_signed_fleet_real_mtls_factory_issues_only_the_current_run_credential(
     _signed_fleet(
         isolated_postgres_url,
         tmp_path,
+        monkeypatch,
         runtime_probe=lambda case: _factory_run(
             case, db_uri=db_uri, tmp_path=tmp_path, monkeypatch=monkeypatch
         ),
