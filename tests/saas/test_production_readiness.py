@@ -169,9 +169,9 @@ def test_current_overall_readiness_is_structurally_valid_and_no_go() -> None:
     assert report["verifiers"]["candidate_revision"]["production_readiness"] == "blocked"
     assert report["verifiers"]["deployment"]["production_readiness"] == "blocked"
     assert report["verifiers"]["baseline_admission"]["production_readiness"] == "blocked"
-    assert any(
-        "no active trusted production evidence admission key" in blocker
-        for blocker in report["verifiers"]["baseline_admission"]["blockers"]
+    assert (
+        "no valid signed admission receipt for saas/production/baseline.json"
+        in report["verifiers"]["baseline_admission"]["blockers"]
     )
 
 
