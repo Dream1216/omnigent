@@ -1097,7 +1097,9 @@ async def test_worktree_heartbeat_covers_materialization_before_shell(
     monkeypatch.setattr(context.executor, "_finish_preparation", delayed_finish)
     monkeypatch.setattr(context.executor._worktree_adapter, "heartbeat", counted_heartbeat)
     context.executor._worktree_heartbeat_interval_seconds = 0.01
-    context.executor._worktree_heartbeat_timeout_seconds = 1
+    # Allow loaded CI SQLite renewals the same bounded response window as the
+    # active-command test; production allows 50 seconds for this lease.
+    context.executor._worktree_heartbeat_timeout_seconds = 5
 
     assert (
         await context.executor.execute(context.lease, cancellation=asyncio.Event()) == "succeeded"

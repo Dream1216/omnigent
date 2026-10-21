@@ -284,7 +284,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
  && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache \
-      ca-certificates-bundle=20260909-r2 \
+      ca-certificates-bundle=20260909-r3 \
       gdbm=1.26-r7 \
       libbz2-1=1.0.8-r25 \
       libexpat1=2.9.0-r0 \
@@ -471,7 +471,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       bubblewrap=0.13.0-r0 \
       bzip2=1.0.8-r25 \
       coreutils=9.12-r4 \
-      curl=8.22.0-r4 \
+      curl=8.23.0-r1 \
       findutils=4.11.0-r3 \
       gcc=16.2.0-r1 \
       git=2.56.0-r0 \
