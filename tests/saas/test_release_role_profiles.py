@@ -60,9 +60,10 @@ def legacy_packaged_schema(monkeypatch):
 def _spec(tmp_path, *, count=19, head="lm2r00000001", mode="stage", login_suffix=""):
     document = _spec_document(mode=mode, schema_head=head)
     roles = dict(bindings.EXPECTED_PRODUCTION_SERVICE_ROLES)
-    base_count = count - 3 if head == "p0s000000017" else count
-    if base_count >= 18:
+    base_count = count - 3 if head in {"p0s000000017", "p0s000000018"} else count
+    if base_count >= 17:
         roles.update(bindings.EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
+    if base_count >= 18:
         roles.update(bindings.EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
     if base_count == 19:
         roles.update(bindings.EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)
@@ -93,6 +94,10 @@ def _render(tmp_path, **kwargs):
         (18, "p0s000000016"),
         (19, "p0s000000016"),
         (22, "p0s000000017"),
+        (18, "p0s000000018"),
+        (20, "p0s000000018"),
+        (21, "p0s000000018"),
+        (22, "p0s000000018"),
         (18, "lm2r00000001"),
         (19, "lm2r00000001"),
         (15, "lm2s00000001"),
@@ -118,10 +123,10 @@ def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
         production, kind="ConfigMap", data_key="service-role-bindings.json"
     )
     assert migration_bindings == production_bindings
-    base_count = count - 3 if head == "p0s000000017" else count
-    count_profiles = 0 if base_count == 15 else 2 if base_count == 18 else 3
+    base_count = count - 3 if head in {"p0s000000017", "p0s000000018"} else count
+    count_profiles = {15: 0, 17: 1, 18: 2, 19: 3}[base_count]
     active = _PROFILES[:count_profiles]
-    if head == "p0s000000017":
+    if head in {"p0s000000017", "p0s000000018"}:
         active += _PROFILES[3:]
     assert set(migration_bindings["data"]) == {
         "service-role-bindings.json",

@@ -31,6 +31,7 @@ def legacy_packaged_schema(monkeypatch):
         "p0s000000015",
         "p0s000000016",
         "p0s000000017",
+        "p0s000000018",
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
@@ -78,7 +79,7 @@ def test_renderer_rejects_unreviewed_database_heads(tmp_path, head):
 
 
 @pytest.mark.parametrize(
-    "packaged", ["lm2r00000001", "lm2s00000001", "p0s000000016", "p0s000000017"]
+    "packaged", ["lm2r00000001", "lm2s00000001", "p0s000000016", "p0s000000017", "p0s000000018"]
 )
 def test_newer_packaged_application_rejects_legacy_database(tmp_path, monkeypatch, packaged):
     original = migration._expected_head

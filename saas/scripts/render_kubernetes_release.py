@@ -65,7 +65,7 @@ _TEMPLATE_RELEASE_INCARNATION = "0" * 32
 _TEMPLATE_ARTIFACT_STORE_URI = "s3://replace-with-production-bucket/omnigent"
 _TEMPLATE_ARTIFACT_ENDPOINT = "https://replace-artifact-endpoint.example.invalid"
 _TEMPLATE_ARTIFACT_REGION = "replace-with-artifact-region"
-_TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000017"
+_TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000018"
 _MIGRATION_COMMAND = ["python", "-m", "saas.scripts.run_postgresql_migration"]
 _MIGRATION_ARGS = ["--product-revision", "$(OMNIGENT_SAAS_SOURCE_SHA)"]
 _RELEASE_SERVICE_ROLES = {
@@ -939,7 +939,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         name="service_logins",
     )
     core_roles = set(EXPECTED_PRODUCTION_SERVICE_ROLES)
-    if control_plane_schema_revision == "p0s000000017":
+    if control_plane_schema_revision in {"p0s000000017", "p0s000000018"}:
         required_roles = core_roles | set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
         model_roles = required_roles | set(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
         admin_roles = model_roles | set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
@@ -966,9 +966,10 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         "lm2t00000001",
         "p0s000000016",
         "p0s000000017",
+        "p0s000000018",
     }:
         raise ReleaseRenderError(
-            "model projection profile requires R, S, T or its P16/P17 successor"
+            "model projection profile requires R, S, T or its P16/P17/P18 successor"
         )
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
@@ -1460,7 +1461,7 @@ def _render_release_documents(
         ),
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": (
             spec.control_plane_schema_revision,
-            "p0s000000017",
+            "p0s000000018",
         ),
         "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": (
             spec.adapter_contract_version,

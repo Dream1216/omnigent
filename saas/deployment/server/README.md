@@ -9,7 +9,7 @@ PostgreSQL migration. The K3s path is authoritative for `next.jxhh.com`.
 The rendered profile becomes **Beta-deployable only after** its external PG18,
 Runner database-fleet, repository-mirror, artifact, PKI, containment, and
 stability admission receipts all pass for the same release. Until then it is a
-fail-closed candidate with `p0s000000017` and exactly
+fail-closed candidate with `p0s000000018` and exactly
 `tenant,run,runner,preview`. The source Runner A/B Deployments deliberately have
 `replicas: 0`; stage rendering keeps every long-running Deployment at zero, and
 only the trusted final renderer may restore the reviewed Server/Worker/Edge/Owner
@@ -106,7 +106,7 @@ replaced in a release copy before server-side apply. The image reference is alwa
    worker.
    The driver order is fixed and fail-closed: `postgresql_principals.sql` then
    `postgresql_database.sql`, official Alembic, SaaS Alembic through exact head
-   `p0s000000017`, the runtime and control-plane projections from
+   `p0s000000018`, the runtime and control-plane projections from
    `postgresql_roles.sql`, and the final database ACL projection and verifier.
    A different or partial order is not an admissible receipt.
    Before this phase, the cluster owner or audited superuser must revoke
@@ -208,7 +208,7 @@ replaced in a release copy before server-side apply. The image reference is alwa
    sticky poison.
    Runner pool and registration compatibility use the official runtime schema
    revision from `OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION`; the catalog projection
-   independently requires the packaged control-plane head `p0s000000017`.
+   independently requires the packaged control-plane head `p0s000000018`.
 7. **Pre-provision the exact-one repository profile.** This isolated Beta
    manifest supports exactly one reviewed binding named `primary`. Each
    canonical provisioning spec must declare
@@ -926,3 +926,19 @@ receipt verifier and claim only its five typed routes; unknown events remain for
 their original consumers. Supply the explicit SLO process configuration and
 independent witness identity to each observed process; missing observations do
 not qualify the production SLO gate. Deployment alone is not delivery acceptance.
+
+### P18 retained Runtime maintenance
+
+P18 retains P17's three dedicated business consumers and the real 65-second
+new-listener epoch barrier. Default platform-admin deployments use 21 service
+LOGINs; the 22-LOGIN model-projection profile remains optional and requires its
+own source-catalog and Preview evidence. The official Run schema is still the
+upstream schema; it is never replaced by the downstream P18 control-plane head.
+
+The four new policies authorize only the original direct table owner to inspect
+and update the complete Runtime placement/partition/binding set. They grant no
+application, executor, onboarding, project-owner, or HTTP authority. Existing
+projects, physical workspaces, aliases and retired binding history are retained.
+Use the existing release/recovery coordinator and the preparation/apply protocol
+in `../../production/runbooks/runtime-placement-maintenance.md`; ordinary
+requests cannot supply a Placement or authorize this operation.

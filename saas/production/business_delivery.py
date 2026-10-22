@@ -276,7 +276,7 @@ def create_business_delivery_publisher():
         or config["purpose"] != "platform-audit-journal"
         or config["product_revision"] != _build_info.COMMIT_SHA
         or config["official_head"] != "nf12ab34cd56"
-        or config["saas_head"] != "p0s000000017"
+        or config["saas_head"] != "p0s000000018"
     ):
         raise ValueError("typed business delivery configuration/product lineage is invalid")
     core = load_production_service_role_bindings(os.environ)

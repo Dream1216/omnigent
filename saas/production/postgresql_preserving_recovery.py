@@ -1,4 +1,4 @@
-"""Explicit maintenance composition for preserving P17 -> P15 and reattachment.
+"""Explicit maintenance composition for preserving P18/P17 -> P15 and reattachment.
 
 No environment read, connection creation, import I/O, signing identity or automatic
 migration downgrade. The existing recovery coordinator supplies the real direct
@@ -26,6 +26,7 @@ from saas.control_plane.migrations.typed_business_delivery import SOURCE_NATIVE_
 from saas.production import postgresql_migration as migration
 from saas.production import postgresql_preserving_adapter as adapter
 from saas.production import postgresql_preserving_native as native
+from saas.production import postgresql_runtime_maintenance_native as runtime_native
 
 
 @dataclass(frozen=True)
@@ -256,7 +257,7 @@ class PreservingPostgreSqlRecovery:
         self._identity()
         verified = migration._verify_state(self.plan, dict(self.engines))
         adapter.need(
-            verified.official_head == "nf12ab34cd56" and verified.saas_head == "p0s000000017",
+            verified.official_head == "nf12ab34cd56" and verified.saas_head == "p0s000000018",
             "candidate_heads_required",
         )
         adapter.need(
@@ -287,6 +288,7 @@ class PreservingPostgreSqlRecovery:
             "manifest_sha256": native.MANIFEST_SHA,
             "before": before,
             "p17_source_snapshot": source,
+            "p18_policy_snapshot": runtime_native.policy_snapshot(self.owner),
             "archive": adapter.archive_name(self.operation.operation_id),
         }
         self._save("prepared", state)
@@ -298,6 +300,19 @@ class PreservingPostgreSqlRecovery:
             state["phase"] == "prepared" and state["operation"] == asdict(self.operation),
             "prepared_operation_required",
         )
+        # This current P16 lineage includes T. Do not detach receipts or remove
+        # policies before discovering any original retained-data refusal.
+        self._begin("preflight_source_inverse")
+        preflight = runtime_native.require_source_inverse_possible(
+            self.owner,
+            maintenance=self.maintenance,
+            expected_identity=self.operation.database_identity,
+        )
+        state = {**state, "source_inverse_preflight": preflight}
+        self._save("source_inverse_preflight_passed", state)
+        self._begin("remove_p18_owner_policies")
+        runtime_native.remove_p18_policies(self.owner, state["p18_policy_snapshot"])
+        self._save("p18_policies_removed", state)
         self._begin("prepare_archive")
         inventory = adapter.prepare_archive(
             self.database_owner,
@@ -413,6 +428,11 @@ class PreservingPostgreSqlRecovery:
             self.plan.saas_owner.login,
             self.maintenance,
         )
+        self._save("p17_exact_objects_reattached", state)
+        self._begin("restore_p18_owner_policies")
+        _migrate(self.engines["saas_owner"], "saas", "p0s000000018")
+        # P18 policies are recreated by their real migration. P17 receipt table
+        # OIDs/rows/FKs remain the exact archived originals.
         migration._verify_state(self.plan, dict(self.engines))
         state = {
             **state,

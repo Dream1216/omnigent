@@ -59,6 +59,10 @@ def recovery_boundary(monkeypatch):
         events.append("move")
         raise AssertionError("the next SQL phase must not run")
 
+    monkeypatch.setattr(
+        recovery.runtime_native, "require_source_inverse_possible", lambda *_, **__: {}
+    )
+    monkeypatch.setattr(recovery.runtime_native, "remove_p18_policies", lambda *_: None)
     monkeypatch.setattr(adapter, "prepare_archive", prepare_archive)
     monkeypatch.setattr(adapter, "move_receipts", move_receipts)
 
@@ -89,6 +93,7 @@ def recovery_boundary(monkeypatch):
             "phase": "prepared",
             "operation": asdict(selected),
             "before": {"tables": {}},
+            "p18_policy_snapshot": [],
         }
         return control, state
 
@@ -106,7 +111,7 @@ def test_stale_fence_or_unreadable_backup_stops_before_any_archive_or_move(
     control, state = recovery_boundary.make(before=failed_revalidation)
     with pytest.raises(failure, match="unavailable or stale"):
         control.inverse(state)
-    assert recovery_boundary.events == ["prepare_archive"]
+    assert recovery_boundary.events == ["preflight_source_inverse"]
 
 
 @pytest.mark.parametrize("flag", [True, False])
@@ -125,7 +130,7 @@ def test_failed_durable_checkpoint_stops_before_the_next_sql_phase(recovery_boun
     control, state = recovery_boundary.make(checkpoint=failed_checkpoint)
     with pytest.raises(OSError, match="fsync failed"):
         control.inverse(state)
-    assert recovery_boundary.events == ["archive", "archive_prepared"]
+    assert recovery_boundary.events == ["source_inverse_preflight_passed"]
 
 
 @pytest.mark.parametrize(
@@ -190,3 +195,21 @@ def test_native_connection_preserves_escaped_identity_and_strict_tls_parameters(
             True,
         )
     ]
+
+
+def test_retained_guard_failure_prevents_every_inverse_mutation(recovery_boundary, monkeypatch):
+    control, state = recovery_boundary.make(
+        before=lambda _operation, phase: recovery_boundary.events.append(phase)
+    )
+
+    def retained(*_, **__):
+        raise adapter.Refused("retained_runtime_facts_require_original_database_restore")
+
+    def mutation(*_, **__):
+        raise AssertionError("no policy/archive/detach mutation may precede preflight")
+
+    monkeypatch.setattr(recovery.runtime_native, "require_source_inverse_possible", retained)
+    monkeypatch.setattr(recovery.runtime_native, "remove_p18_policies", mutation)
+    with pytest.raises(adapter.Refused, match="require_original_database_restore"):
+        control.inverse(state)
+    assert recovery_boundary.events == ["preflight_source_inverse"]

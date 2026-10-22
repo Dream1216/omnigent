@@ -99,7 +99,7 @@ def _business_bindings() -> ProductionServiceRoleBindings:
 def _plan(*, tls: bool = True) -> migration.ProductionPostgreSqlPlan:
     profiles = (
         {"business_delivery_service_role_bindings": _business_bindings()}
-        if migration._expected_head("saas") == "p0s000000017"
+        if migration._expected_head("saas") in {"p0s000000017", "p0s000000018"}
         else {}
     )
     return migration.ProductionPostgreSqlPlan.from_urls(
@@ -206,7 +206,9 @@ def test_plan_composes_exact_platform_extension_role_graph(
 
     migration._validate_plan(plan)
 
-    expected_count = 21 if migration._expected_head("saas") == "p0s000000017" else 18
+    expected_count = (
+        21 if migration._expected_head("saas") in {"p0s000000017", "p0s000000018"} else 18
+    )
     assert len(plan.service_role_graph.bindings) == expected_count
     assert plan.service_role_graph.login_for("app") == "app_login"
     assert plan.service_role_graph.login_for("billing") == "platform_model_billing_login"
@@ -1554,6 +1556,7 @@ def test_database_create_authority_is_exactly_the_official_owner() -> None:
         "p0s000000015",
         "p0s000000016",
         "p0s000000017",
+        "p0s000000018",
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
@@ -1600,7 +1603,7 @@ def test_initial_schema_usage_covers_every_nologin_capability_principal(
     expected_roles = set(migration._CAPABILITY_ROLES)
     if schema_head == "p0s000000015":
         expected_roles.remove("saas_model_projection")
-    if schema_head != "p0s000000017":
+    if schema_head not in {"p0s000000017", "p0s000000018"}:
         expected_roles -= {
             "saas_usage_consumer",
             "saas_audit_delivery",

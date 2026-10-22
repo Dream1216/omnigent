@@ -87,7 +87,7 @@ def test_p17_digest_adds_delivery_receipts_and_audit_source_without_removing_leg
     assert len(new) == len(set(new)) == len(old) + 5
 
 
-@pytest.mark.parametrize("head", [_P0, "p0s000000016", _P17, _R, _S, _T])
+@pytest.mark.parametrize("head", [_P0, "p0s000000016", _P17, "p0s000000018", _R, _S, _T])
 def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_connection, head):
     _populate(digest_connection, head)
     digest, counts = restore._digest_on_connection(digest_connection)
@@ -147,7 +147,7 @@ def test_unknown_or_ambiguous_schema_is_rejected_before_other_table_reads(
         restore._digest_on_connection(digest_connection)
 
 
-@pytest.mark.parametrize("head", [_P17, _R, _S, _T])
+@pytest.mark.parametrize("head", [_P17, "p0s000000018", _R, _S, _T])
 def test_fixture_limit_is_not_a_silent_truncation(digest_connection, head):
     _populate(digest_connection, head)
     digest_connection.execute(

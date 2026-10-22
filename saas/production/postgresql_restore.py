@@ -1905,7 +1905,7 @@ def _apply_post_backup_replay(
     try:
         with engine.begin() as connection:
             head = connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-            if revocation_events is not None and head == "p0s000000017":
+            if revocation_events is not None and head in {"p0s000000017", "p0s000000018"}:
                 if (
                     len(revocation_events) != 3
                     or {row["idempotency_key"] for row in revocation_events} != revocation_keys
@@ -2122,7 +2122,7 @@ def _apply_post_backup_replay(
                     "request_hash": "d" * 64,
                 },
             )
-            if head == "p0s000000017":
+            if head in {"p0s000000017", "p0s000000018"}:
                 events = tuple(
                     {str(key): value for key, value in row.items()}
                     for row in connection.execute(
@@ -2156,7 +2156,7 @@ def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
         return _SELECTED_HASH_TABLES
     if head == "p0s000000016":
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
-    if head == "p0s000000017":
+    if head in {"p0s000000017", "p0s000000018"}:
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES, *_TYPED_DELIVERY_HASH_TABLES)
     if head in {"lm2r00000001", "lm2s00000001", "lm2t00000001"}:
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)

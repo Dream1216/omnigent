@@ -148,8 +148,8 @@ def test_current_schema_head_requires_a_successor_approval_record() -> None:
     require_current_approval_history(_repo())
     baseline = _baseline()
 
-    assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000017"  # type: ignore[index]
-    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000017"  # type: ignore[index]
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == "p0s000000018"  # type: ignore[index]
+    assert baseline["revision_contract"]["control_plane_schema_revision"] == "p0s000000018"  # type: ignore[index]
     assert baseline["approval"]["state"] == "review_required"  # type: ignore[index]
     assert baseline["approval"]["record"] is None  # type: ignore[index]
     assert all(adr["status"] == "proposed" for adr in baseline["adrs"])  # type: ignore[index]

@@ -181,7 +181,7 @@ def _spec_document(*, mode: str = "stage", schema_head: str | None = None) -> di
                     **EXPECTED_PRODUCTION_SERVICE_ROLES,
                     **(
                         EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
-                        if schema_head == "p0s000000017"
+                        if schema_head in {"p0s000000017", "p0s000000018"}
                         else {}
                     ),
                 },

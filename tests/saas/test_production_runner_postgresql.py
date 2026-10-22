@@ -1006,7 +1006,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                 {"role": schema_owner},
             )
 
-        if _expected_head("saas") == "p0s000000017":
+        if _expected_head("saas") in {"p0s000000017", "p0s000000018"}:
             _assert_revocation_writer_after_runner_hardening(
                 owner_engine,
                 schema_owner=schema_owner,

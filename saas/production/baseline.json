@@ -6,7 +6,7 @@
     "upstream_manifest": "saas/upstream-baseline.json",
     "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "p0s000000017",
+    "control_plane_schema_revision": "p0s000000018",
     "deployment_scope": "single-region-multi-az"
   },
   "approval": {
@@ -14,7 +14,7 @@
     "mode": "sole-owner-risk-waiver",
     "governance_classification": "degraded",
     "scope": "p0-architectural-decision-bundle",
-    "approved_control_plane_schema_revision": "p0s000000017",
+    "approved_control_plane_schema_revision": "p0s000000018",
     "policy": "saas/production/adr-approval-policy.json",
     "authorities": "saas/production/adr-approval-authorities.json",
     "candidate": "saas/production/adr-approval-candidate.json",
@@ -41,7 +41,7 @@
       "title": "Runtime Placement and migration protocol",
       "owner": "runtime-compatibility",
       "status": "proposed",
-      "decision": "The server selects Placement from residency, plan, capacity, runtime lineage, and Project affinity; active bindings never reroute from client input; migration uses snapshot, catch-up, generation fencing, atomic cutover, and retained rollback material.",
+      "decision": "The server selects Placement from residency, plan, capacity, runtime lineage, and Project affinity; active bindings never reroute from client input; migration uses snapshot, catch-up, generation fencing, atomic cutover, and retained rollback material. In-place upgrades use only the original direct owner under the existing backup/fence/provider maintenance boundary, a complete Placement collection CAS, monotonic generations and transactional Outbox; no tenant or service authority is added.",
       "verification_gate": "Same physical workspace number in two Placements, stale generation, partial cutover, and N-1 rollback tests must fail closed or recover."
     },
     {

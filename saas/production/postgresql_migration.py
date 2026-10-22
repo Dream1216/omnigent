@@ -612,6 +612,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "hh1b2c3d4e5f",
         "p0s000000014",
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "9f23a4b04c47086d91a73393c062620cd7ea5264aa0e49d169ca87b76b69ad7a",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "65cdff3e1cf583f8fb0a61adc8d17f40d649fa993255af8bb6ec3d10ed7c0867",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
@@ -2034,6 +2044,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "hh1b2c3d4e5f",
         "p0s000000014",
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "585d5f46973f5924387223a2deee1b78c1b28ad92a419a954d5ba031dd0d8cb3",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "05a3b8eca8a8fffccd1ea093c7afa3f7ef62abb845fd9547ceaa0d5ce1eccbf6",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     # Independently old-anchor-verified clean PG16/18 P17 replay.
@@ -2374,6 +2394,16 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
         "hh1b2c3d4e5f",
         "p0s000000014",
     ): "9839f65fa0ff7614c4bc7566fda9ae18223924cf9ad63adbf71e66433f995e34",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "9c2d2778b777aa28f06747905ad0727d4e03cbdb8d5ffe95ae059a043d3c1351",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "07c19758147cdd617a795a22bc4ac8f5ebacd5676d81881ddb90476f48c92087",
 }
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
@@ -2934,6 +2964,16 @@ _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
         "nf12ab34cd56",
         "p0s000000017",
     ): "352ed24346a1d7fec6cc4d0c6b74f847f11638bb35e232bdccdce3b968d75a1a",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "41787ed7af10ad239976b2de1baa3328153dfc23e05cfb8ba5c22bf90f34eb69",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "c08f677f1b24eeacb70e0df15c1a73c0b18f25cec9dd98c2c893dc0510b8385e",
 }
 # Populated only by the reviewed clean-source PG16/18 replay. Missing anchors
 # fail preflight; live deployment receipts can never teach these baselines.
@@ -2949,6 +2989,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             "nf12ab34cd56",
             "p0s000000017",
         ): "876d5be267c8e348c6e471452b1e35c613538111e10546d37ee510e85ee6c8c8",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "7b53c4b56b028c1115918ca450192280d703ec5e4fd88ffeaf5265ae6bbb54cc",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "f7989192a42530b9361cdeadad84e2981fdad330705dc7165baeb4b690aaaabb",
     },
     "model": {
         (
@@ -2961,6 +3011,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             "nf12ab34cd56",
             "p0s000000017",
         ): "21c0aded1cc3203bf177ada27207d60021e865fc4b1fbe714e1f592692bb15ac",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "b89a75372a53dd358aa283c7a9d46f4b2b0b8e76da69a3734c8913d7e535c53c",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "e48a5d3b6a3ada8ea9615e63f0bc467b6bc6fa6c40a713d72d82ead29ee94b08",
     },
     "admin": {
         (
@@ -2973,6 +3033,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             "nf12ab34cd56",
             "p0s000000017",
         ): "a02f8eaec24f0946c25c9dd8ea5f401833400e58613606da823292800debe494",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "8b6a678538c96ada904b9d33aaacfb0f76f28f06ecb2eb79bc232188405050d2",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "839de6b98bf8f67ea4c3a7c41ab09da91e729bc0ed08f2a280051cd3e6be2b01",
     },
     "projection": {
         (
@@ -2985,6 +3055,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             "nf12ab34cd56",
             "p0s000000017",
         ): "80091db4068aef752cb0b5e78d6ec8619466285859970b72557df2c1546803ac",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "b17294a3a172ef515cbab0053cca55455a315a808280fb28fc819e9d63864c2a",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "9a6749caa1b40c6ca947c4be8d1ec2330fa9e22106e0dbe8c366480b098d499b",
     },
 }
 _CAPABILITY_ROLES = (
@@ -3378,7 +3458,7 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
         or _SHA256.fullmatch(delivery_bindings.sha256) is None
     ):
         raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
-    if _expected_head("saas") == "p0s000000017" and delivery_bindings is None:
+    if _expected_head("saas") in {"p0s000000017", "p0s000000018"} and delivery_bindings is None:
         raise PostgreSqlMigrationError("business_delivery_profile_required", "configuration")
     graph = plan.service_role_graph
     if set(logins) & {binding.login for binding in graph.bindings}:
@@ -3673,7 +3753,7 @@ def _capability_roles(saas_head: str | None = None) -> tuple[str, ...]:
         for role in _CAPABILITY_ROLES
         if (selected_head != "p0s000000015" or role != "saas_model_projection")
         and (
-            selected_head == "p0s000000017"
+            selected_head in {"p0s000000017", "p0s000000018"}
             or role not in EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.values()
         )
     )
@@ -4371,6 +4451,7 @@ def _expected_head(kind: Literal["official", "saas"]) -> str:
 
 def _runtime_saas_head(requested: object) -> str:
     supported = {
+        "p0s000000018": ("p0s000000018",),
         "p0s000000017": ("p0s000000017",),
         "p0s000000016": ("p0s000000016",),
         "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"),

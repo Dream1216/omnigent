@@ -1047,7 +1047,8 @@ def load_production_server_config(
             else None
         )
         if (
-            source.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION") == "p0s000000017"
+            source.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION")
+            in {"p0s000000017", "p0s000000018"}
             and business_delivery_service_role_bindings is None
         ):
             raise ProductionServerConfigError("P17 requires native business-delivery bindings")

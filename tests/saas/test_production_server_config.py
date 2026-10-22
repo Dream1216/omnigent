@@ -763,11 +763,12 @@ def test_artifact_admission_receipt_is_read_only_and_exactly_bound(tmp_path: Pat
         load_production_server_config(tampered)
 
 
-def test_p17_requires_exact_business_profile_and_dedicated_revocation_file(tmp_path):
+@pytest.mark.parametrize("head", ["p0s000000017", "p0s000000018"])
+def test_p17_requires_exact_business_profile_and_dedicated_revocation_file(tmp_path, head):
     from saas.production.service_bindings import EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
 
     environment = _environment(tmp_path)
-    environment["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] = "p0s000000017"
+    environment["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] = head
     environment["OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION"] = "nf12ab34cd56"
     with pytest.raises(ProductionServerConfigError, match="P17 requires native"):
         load_production_server_config(environment)
@@ -794,7 +795,7 @@ def test_p17_requires_exact_business_profile_and_dedicated_revocation_file(tmp_p
     receipt = json.loads(receipt_path.read_bytes())
     receipt.update(
         official_head="nf12ab34cd56",
-        saas_head="p0s000000017",
+        saas_head=head,
         runtime_rls_table_count=19,
         service_role_graph_sha256=graph.sha256,
     )
@@ -802,7 +803,7 @@ def test_p17_requires_exact_business_profile_and_dedicated_revocation_file(tmp_p
     receipt_path.write_text(json.dumps(receipt))
     receipt_path.chmod(0o400)
     config = load_production_server_config(environment)
-    assert config.control_plane_schema_revision == "p0s000000017"
+    assert config.control_plane_schema_revision == head
     assert len(config.service_role_graph.bindings) == 18
     assert config.secrets.database_urls.revocation_consumer.startswith(
         "postgresql+psycopg://revocation_consumer_login:"

@@ -124,7 +124,7 @@ def delivery_database(isolated_postgres_url):
             assert tuple(flags) == (False, False, False)
             assert (
                 db.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-                == "p0s000000017"
+                == "p0s000000018"
             )
         factories = {}
         for name, login in logins.items():

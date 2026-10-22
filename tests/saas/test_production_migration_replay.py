@@ -158,7 +158,7 @@ def production_replay(
     )
     delivery_manifest = None
     delivery_bindings: tuple[ProductionServiceRoleBinding, ...] = ()
-    if migration._expected_head("saas") == "p0s000000017":
+    if migration._expected_head("saas") in {"p0s000000017", "p0s000000018"}:
         delivery_bindings = tuple(
             ProductionServiceRoleBinding(
                 service=service,
@@ -528,7 +528,7 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         assert final.catalog_sha256 == first.catalog_sha256
     finally:
         owner.dispose()
-    if final.saas_head in {"lm2t00000001", "p0s000000016", "p0s000000017"}:
+    if final.saas_head in {"lm2t00000001", "p0s000000016", "p0s000000017", "p0s000000018"}:
         from tests.saas.test_model_budget_owner_settlement_postgresql import (
             verify_non_bypass_budget_owner_settlement,
         )

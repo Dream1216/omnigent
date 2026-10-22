@@ -457,13 +457,15 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         assert runner_fence_index["column_names"] == ["run_id", "run_fence_token"]
         assert runner_fence_index["unique"] == 1
 
-        with pytest.raises(RuntimeError, match="P17 downgrade requires reviewed preserving"):
+        with pytest.raises(
+            RuntimeError, match="P18 downgrade requires reviewed runtime-maintenance"
+        ):
             command.downgrade(config, "base")
         assert set(sa.inspect(connection).get_table_names()) == (
             application_tables | {"saas_alembic_version"}
         )
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-            "p0s000000017"
+            _migration_head()
         )
     engine.dispose()
 
@@ -4510,3 +4512,42 @@ def test_migration_cli_guard_rejects_lost_receipt_and_unrelated_cli_failure(tmp_
         engine.dispose()
     with pytest.raises(RuntimeError, match="changed durable schema, head, or facts"):
         cli._assert_protected(before, cli._snapshot(database), rejected)
+
+
+def test_runtime_maintenance_revision_preserves_p17_facts_and_rejects_implicit_inverse(
+    tmp_path: Path,
+) -> None:
+    from saas.scripts import check_control_plane_migration_cli as cli
+
+    root = Path(__file__).resolve().parents[2]
+    database = tmp_path / "runtime-maintenance-current.db"
+    cli._success(cli._run(root, database, "upgrade", "p0s000000017"))
+    cli._seed_receipt(database)
+    predecessor = json.loads(cli._snapshot(database))
+    cli._success(cli._run(root, database, "upgrade", "head"))
+    cli._success(cli._run(root, database, "check"))
+    current = json.loads(cli._snapshot(database))
+    assert cli._head(database) == _migration_head() == "p0s000000018"
+    assert current["schema"] == predecessor["schema"]
+    assert {
+        table: rows for table, rows in current["rows"].items() if table != "saas_alembic_version"
+    } == {
+        table: rows
+        for table, rows in predecessor["rows"].items()
+        if table != "saas_alembic_version"
+    }
+    before = cli._snapshot(database)
+    rejected = cli._run(root, database, "downgrade", "base")
+    assert rejected.returncode != 0
+    assert "P18 downgrade requires reviewed runtime-maintenance inverse" in rejected.stderr
+    assert cli._snapshot(database) == before
+
+    historical = tmp_path / "runtime-maintenance-historical-p17.db"
+    cli._success(cli._run(root, historical, "upgrade", "p0s000000017"))
+    cli._seed_receipt(historical)
+    historical_before = cli._snapshot(historical)
+    historical_rejected = cli._run(root, historical, "downgrade", "base")
+    cli._assert_protected(
+        historical_before, cli._snapshot(historical), historical_rejected, refusal=cli.P17_REFUSAL
+    )
+    assert cli._head(historical) == "p0s000000017"

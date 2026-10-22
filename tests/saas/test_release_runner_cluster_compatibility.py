@@ -7,7 +7,7 @@ _SQL = (
     Path(__file__).resolve().parents[2] / "saas/control_plane/postgresql_runner_agent_cluster.sql"
 ).read_text()
 _MODEL_HEADS = ("lm2r00000001", "lm2s00000001", "lm2t00000001")
-_POST_T_HEADS = ("p0s000000016", "p0s000000017")
+_POST_T_HEADS = ("p0s000000016", "p0s000000017", "p0s000000018")
 
 
 def _heads(pattern: str) -> tuple[str, ...]:
@@ -26,6 +26,7 @@ def test_t_bootstrap_preserves_recovery_api_and_support_grant_scope():
     recovery = _heads(r"IF schema_head IN \(([^)]+)\) THEN")
     grants = _heads(
         r"IF \(SELECT version_num FROM public\.saas_alembic_version\)\s+IN \(([^)]+)\) THEN"
+        r"\s+GRANT EXECUTE ON FUNCTION pg_catalog\.pg_advisory_xact_lock"
     )
     assert recovery == grants == (*_MODEL_HEADS, *_POST_T_HEADS)
     assert "'saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)'" in _SQL

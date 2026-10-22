@@ -52,11 +52,11 @@ BEGIN
     END IF;
     EXECUTE 'SELECT version_num FROM public.saas_alembic_version'
     INTO STRICT schema_head;
-    IF schema_head NOT IN ('p0s000000015', 'lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'p0s000000016', 'p0s000000017') THEN
+    IF schema_head NOT IN ('p0s000000015', 'lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'p0s000000016', 'p0s000000017', 'p0s000000018') THEN
         RAISE EXCEPTION
             'Runner cluster admission rejected: P0S10 authority is unavailable';
     END IF;
-    IF schema_head IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'p0s000000016', 'p0s000000017') THEN
+    IF schema_head IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'p0s000000016', 'p0s000000017', 'p0s000000018') THEN
         api_signatures := api_signatures || ARRAY[
             'saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)'
         ];
@@ -199,7 +199,7 @@ BEGIN
         || quote_ident(schema_owner);
     -- P17's original non-superuser SECURITY DEFINER emits only its typed
     -- invalidation source. Application and Runner roles keep direct NOTIFY denied.
-    IF (SELECT version_num FROM public.saas_alembic_version) = 'p0s000000017' THEN
+    IF (SELECT version_num FROM public.saas_alembic_version) IN ('p0s000000017', 'p0s000000018') THEN
         EXECUTE 'GRANT EXECUTE ON FUNCTION pg_catalog.pg_notify(text, text) TO '
             || quote_ident(schema_owner);
     END IF;
@@ -241,7 +241,7 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) TO
 DO $$
 BEGIN
     IF (SELECT version_num FROM public.saas_alembic_version)
-        IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'p0s000000016', 'p0s000000017') THEN
+        IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'p0s000000016', 'p0s000000017', 'p0s000000018') THEN
         GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint)
             TO saas_platform_app;
         GRANT EXECUTE ON FUNCTION pg_catalog.pg_try_advisory_xact_lock(bigint)

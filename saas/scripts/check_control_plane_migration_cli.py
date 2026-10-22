@@ -16,9 +16,13 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CURRENT = "p0s000000017"
+CURRENT = "p0s000000018"
 LEGACY = "p0s000000016"
-REFUSAL = "P17 downgrade requires reviewed preserving-driver archive; never DROP durable facts"
+REFUSAL = (
+    "P18 downgrade requires reviewed runtime-maintenance inverse; "
+    "never remove policy contracts implicitly"
+)
+P17_REFUSAL = "P17 downgrade requires reviewed preserving-driver archive; never DROP durable facts"
 
 
 def _run(root: Path, database: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -106,9 +110,13 @@ def _seed_receipt(database: Path) -> None:
 
 
 def _assert_protected(
-    before: bytes, after: bytes, result: subprocess.CompletedProcess[str]
+    before: bytes,
+    after: bytes,
+    result: subprocess.CompletedProcess[str],
+    *,
+    refusal: str = REFUSAL,
 ) -> None:
-    if result.returncode == 0 or REFUSAL not in result.stderr:
+    if result.returncode == 0 or refusal not in result.stderr:
         raise RuntimeError("current downgrade did not produce the exact preserving refusal")
     if before != after:
         raise RuntimeError("rejected current downgrade changed durable schema, head, or facts")
@@ -124,7 +132,7 @@ def verify(root: Path = ROOT) -> dict[str, object]:
         _success(_run(root, current, "upgrade", "head"))
         _success(_run(root, current, "check"))
         if _head(current) != CURRENT:
-            raise RuntimeError("current CLI did not migrate to the reviewed P17 head")
+            raise RuntimeError("current CLI did not migrate to the reviewed P18 head")
         _seed_receipt(current)
         before = _snapshot(current)
         rejected = _run(root, current, "downgrade", "base")
@@ -132,6 +140,19 @@ def verify(root: Path = ROOT) -> dict[str, object]:
         _assert_protected(before, after, rejected)
         if _head(current) != CURRENT:
             raise RuntimeError("rejected downgrade changed the current head")
+        historical = Path(directory) / "historical-p17.db"
+        _success(_run(root, historical, "upgrade", "p0s000000017"))
+        _seed_receipt(historical)
+        historical_before = _snapshot(historical)
+        historical_rejected = _run(root, historical, "downgrade", "base")
+        _assert_protected(
+            historical_before,
+            _snapshot(historical),
+            historical_rejected,
+            refusal=P17_REFUSAL,
+        )
+        if _head(historical) != "p0s000000017":
+            raise RuntimeError("historical P17 rejection changed its head")
         _success(_run(root, legacy, "upgrade", LEGACY))
         if _head(legacy) != LEGACY:
             raise RuntimeError("legacy fixture did not reach its explicit P16 head")
@@ -153,6 +174,7 @@ def verify(root: Path = ROOT) -> dict[str, object]:
             "current_head": CURRENT,
             "current_upgrade_and_check": True,
             "current_base_downgrade_rejected": True,
+            "historical_p17_base_downgrade_rejected": True,
             "nonempty_receipt_schema_head_and_data_preserved": True,
             "current_snapshot_sha256": hashlib.sha256(after).hexdigest(),
             "legacy_head": LEGACY,

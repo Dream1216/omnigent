@@ -372,6 +372,7 @@ def _runner_agent_schema_contract(
         "lm2t00000001",
         "p0s000000016",
         "p0s000000017",
+        "p0s000000018",
     }:
         return (
             selected,

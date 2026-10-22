@@ -1301,7 +1301,7 @@ def build_production_saas_services(
 
     from saas.control_plane.revocation import AuthorizationInvalidations
 
-    if config.control_plane_schema_revision == "p0s000000017" and (
+    if config.control_plane_schema_revision in {"p0s000000017", "p0s000000018"} and (
         config.business_delivery_service_role_bindings is None
         or sessions.revocation_consumer is None
     ):
