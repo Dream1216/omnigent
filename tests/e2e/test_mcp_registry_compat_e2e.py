@@ -13,7 +13,7 @@ import yaml
 
 from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
 from omnigent.spec import load
-from tests._helpers.compat import compat_server_python
+from tests._helpers.compat import meets_min_server_version
 
 
 def _registry_bundle() -> bytes:
@@ -64,11 +64,11 @@ def _registry_bundle() -> bytes:
 
 @pytest.mark.compat_smoke
 def test_native_inline_registry_bundle_survives_old_servers(
-    live_server: str, tmp_path: Path
+    live_server: str, server_version: str, tmp_path: Path
 ) -> None:
     """Upload and download through real HTTP without executing a turn or an MCP."""
     bundle = _registry_bundle()
-    old_server = compat_server_python() is not None
+    supports_registry = meets_min_server_version(server_version, "0.19.0")
     with httpx.Client(
         base_url=live_server,
         headers={"Origin": OMNIGENT_INTERNAL_WS_ORIGIN},
@@ -85,10 +85,10 @@ def test_native_inline_registry_bundle_survives_old_servers(
         summary = client.get(agent_url)
         assert summary.status_code == 200, summary.text
         servers = {server["name"]: server for server in summary.json()["mcp_servers"]}
-        assert set(servers) == ({"ordinary"} if old_server else {"ordinary", "tracker"})
+        assert set(servers) == ({"ordinary", "tracker"} if supports_registry else {"ordinary"})
         assert servers["ordinary"]["transport"] == "http"
         assert servers["ordinary"]["url"] == "https://example.test/ordinary"
-        if not old_server:
+        if supports_registry:
             assert servers["tracker"]["transport"] == "registry"
 
         for negotiated in (False, True):
@@ -98,7 +98,7 @@ def test_native_inline_registry_bundle_survives_old_servers(
             )
             assert response.status_code == 200, response.text
             assert response.content == bundle
-            if negotiated and not old_server:
+            if negotiated and supports_registry:
                 assert json.loads(response.headers["X-Omnigent-MCP-Selection"]) == {}
             else:
                 assert "X-Omnigent-MCP-Selection" not in response.headers
