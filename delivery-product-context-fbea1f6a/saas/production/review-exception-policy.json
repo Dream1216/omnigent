@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "release_id": "omnigent-saas-v0.19.0.dev20261020-3db749d7",
+  "mode": "sole-owner-risk-waiver",
+  "governance_classification": "degraded",
+  "revision_contract": {
+    "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+    "adapter_contract_version": "0.2.0",
+    "control_plane_schema_revision": "p0s000000017"
+  },
+  "authorized_login": "Dream1216",
+  "authorized_github_user_id": 39821512,
+  "valid_from": "2026-10-21T00:00:00Z",
+  "expires_at": "2026-12-20T00:00:00Z",
+  "authorization_reference_sha256": "f1e0adca52738ab569922fc22a033601d143dee93d26a3cf933d7c08f0f0919c",
+  "record_directory": "saas/production/review-exception-evidence",
+  "domain_roles": {
+    "image": [
+      "release-engineering",
+      "security",
+      "site-reliability"
+    ],
+    "deployment": [
+      "release-engineering",
+      "security",
+      "site-reliability"
+    ],
+    "recovery": [
+      "data-owner",
+      "security",
+      "site-reliability"
+    ],
+    "slo_capacity": [
+      "product-owner",
+      "service-owner",
+      "site-reliability"
+    ],
+    "deletion": [
+      "data_owner",
+      "privacy",
+      "security"
+    ],
+    "commercial": [
+      "customer-success",
+      "finance",
+      "product-owner",
+      "service-owner"
+    ],
+    "enterprise": [
+      "customer-admin",
+      "identity-owner",
+      "privacy",
+      "security"
+    ]
+  },
+  "risks_accepted": [
+    "independent production review separation of duties is absent for this release",
+    "one compromised or mistaken owner can approve all production evidence domains",
+    "all technical tests measurements signatures and release gates remain mandatory"
+  ],
+  "technical_gates_waived": []
+}

@@ -1,0 +1,79 @@
+diff --git a/omnigent/harnesses/pi_native/bridge.py b/omnigent/harnesses/pi_native/bridge.py
+index 89e10a838..8c40d157e 100644
+--- a/omnigent/harnesses/pi_native/bridge.py
++++ b/omnigent/harnesses/pi_native/bridge.py
+@@ -365,0 +366,14 @@ def write_extension_files(
++    resolved_auth_headers = dict(auth_headers or {})
++    # Delegated Runner callbacks are routed through a physical workspace
++    # partition in multi-tenant deployments.  The Pi extension runs outside
++    # the runner's httpx client, so it must carry the same selector explicitly;
++    # otherwise the server rejects every callback with
++    # ``runner_machine_workspace_required`` before session authorization.
++    from omnigent.runner.identity import (
++        RUNNER_TUNNEL_WORKSPACE_HEADER,
++        load_runner_tunnel_workspace_id,
++    )
++
++    workspace_id = load_runner_tunnel_workspace_id()
++    if workspace_id is not None:
++        resolved_auth_headers.setdefault(RUNNER_TUNNEL_WORKSPACE_HEADER, str(workspace_id))
+@@ -372 +386 @@ def write_extension_files(
+-        "authHeaders": auth_headers or {},
++        "authHeaders": resolved_auth_headers,
+diff --git a/omnigent/onboarding/provider_config.py b/omnigent/onboarding/provider_config.py
+index c3fae48ee..5d698a633 100644
+--- a/omnigent/onboarding/provider_config.py
++++ b/omnigent/onboarding/provider_config.py
+@@ -46,0 +47 @@ from __future__ import annotations
++import json
+@@ -181,0 +183,5 @@ _HARNESS_FAMILY: dict[str, str] = {
++    # OpenCode accepts an OpenAI-compatible provider block in its per-session
++    # opencode.json. The native adapter synthesizes that block from the same
++    # default family Provider used by Codex/Qwen, so it is provider-routed
++    # rather than permanently tied to a separate `opencode auth login`.
++    "opencode-native": OPENAI_FAMILY,
+@@ -186,4 +192,7 @@ _HARNESS_FAMILY: dict[str, str] = {
+-    # NB: ``kimi`` is intentionally absent. Upstream Kimi Code CLI has no
+-    # per-spawn provider override flag, so Omnigent cannot thread a generic
+-    # provider through. Provider routing for kimi lives in ``~/.kimi-code/config.toml``
+-    # and is managed out-of-band via ``kimi provider add``.
++    # Kimi Code supports an in-memory OpenAI-compatible provider through the
++    # KIMI_MODEL_* environment family. Both the headless and native adapters
++    # synthesize those values per session, so no upstream key is persisted in
++    # ~/.kimi-code/config.toml.
++    "kimi": OPENAI_FAMILY,
++    "kimi-native": OPENAI_FAMILY,
++    "native-kimi": OPENAI_FAMILY,
+@@ -656,0 +666 @@ def _expand_family(provider_name: str, family_name: str, family: FamilyConfig) -
++    base_url = _loopback_transport_url(provider_name, family_name, base_url)
+@@ -666,0 +677,27 @@ def _expand_family(provider_name: str, family_name: str, family: FamilyConfig) -
++def _loopback_transport_url(provider: str, family: str, base_url: str) -> str:
++    """Apply a Host-owned local transport without mutating the saved provider policy."""
++    raw = os.environ.get("OMNIGENT_PROVIDER_LOOPBACK_TRANSPORTS")
++    if not raw:
++        return base_url
++    from urllib.parse import urlsplit
++
++    try:
++        overrides = json.loads(raw)
++        endpoint = overrides.get(provider, {}).get(family)
++        if endpoint is None:
++            return base_url
++        parsed = urlsplit(endpoint)
++        if (
++            parsed.scheme != "http"
++            or parsed.hostname != "127.0.0.1"
++            or parsed.port is None
++            or not 1 <= parsed.port <= 65535
++            or not isinstance(endpoint, str)
++            or endpoint != f"http://127.0.0.1:{parsed.port}/v1"
++        ):
++            raise ValueError("invalid endpoint")
++        return endpoint
++    except (ValueError, TypeError, AttributeError):
++        raise ValueError("Host provider transport is invalid") from None
++
++
+@@ -1563 +1600 @@ def harness_owns_its_credential(harness: str) -> bool:
+-    (e.g. qwen consumes the openai family via its gateway env) even when its
++    (e.g. qwen and opencode-native consume the openai family) even when its

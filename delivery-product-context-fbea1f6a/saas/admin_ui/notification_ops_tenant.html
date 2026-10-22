@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN" data-notification-realm="tenant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tenant Notification Operations</title>
+    <link rel="stylesheet" href="./notification-ops/assets/notification-ops.css">
+    <script src="./notification-ops/assets/notification-ops.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#operations-main">跳至运营区</a>
+    <div class="signal-shell" id="notification-ops-shell" aria-busy="true">
+      <header class="signal-header">
+        <div class="signal-identity">
+          <span class="realm-beacon" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">TENANT REALM · OPERATIONS DESK</p>
+            <h1>通知与审批信号台</h1>
+          </div>
+        </div>
+        <div class="clock-block" aria-label="数据安全边界">
+          <span>CONTENT ACCESS</span>
+          <strong>NONE</strong>
+        </div>
+      </header>
+
+      <nav class="desk-nav" aria-label="运营区切换">
+        <button class="nav-key is-active" type="button" data-panel-target="approvals">01 审批</button>
+        <button class="nav-key" type="button" data-panel-target="delivery">02 投递</button>
+        <button class="nav-key" type="button" data-panel-target="policy">03 偏好与模板</button>
+      </nav>
+
+      <main id="operations-main">
+        <section class="metric-strip" aria-label="当前运营指标">
+          <article><span>待处理</span><strong data-metric="pending">—</strong></article>
+          <article><span>高风险</span><strong data-metric="critical">—</strong></article>
+          <article><span>死信</span><strong data-metric="dead_letter">—</strong></article>
+          <article><span>已选择</span><strong data-metric="selected">0</strong></article>
+        </section>
+
+        <section class="desk-panel is-visible" data-panel="approvals" aria-labelledby="approvals-title">
+          <div class="panel-heading">
+            <div><p class="section-index">01 / APPROVAL QUEUE</p><h2 id="approvals-title">审批收件箱</h2></div>
+            <button type="button" class="secondary-action" data-open-delegation>建立委派</button>
+          </div>
+          <p class="guard-note">工单只展示操作类型、风险和路由状态；请求正文与目标定位信息不可见。</p>
+          <div class="work-grid" data-inbox-list aria-live="polite"></div>
+          <div class="empty-state" data-inbox-empty hidden>当前筛选没有可处理工单。</div>
+          <div class="subsection-head"><h3>当前委派</h3><span>我发起 / 委派给我</span></div>
+          <div class="delegation-list" data-delegation-list></div>
+        </section>
+
+        <section class="desk-panel" data-panel="delivery" aria-labelledby="delivery-title" hidden>
+          <div class="panel-heading">
+            <div><p class="section-index">02 / DELIVERY WATCH</p><h2 id="delivery-title">投递与死信</h2></div>
+            <span class="status-key"><i></i> 内容盲运维</span>
+          </div>
+          <div class="delivery-list" data-delivery-list aria-live="polite"></div>
+          <div class="empty-state" data-delivery-empty hidden>没有待观察的投递记录。</div>
+        </section>
+
+        <section class="desk-panel" data-panel="policy" aria-labelledby="policy-title" hidden>
+          <div class="panel-heading">
+            <div><p class="section-index">03 / POLICY SURFACE</p><h2 id="policy-title">个人偏好与模板目录</h2></div>
+            <span class="readonly-tag">模板只读</span>
+          </div>
+          <div class="policy-grid">
+            <article class="policy-column"><h3>通知偏好</h3><div data-preference-list></div></article>
+            <article class="policy-column"><h3>已发布模板</h3><div data-template-list></div></article>
+          </div>
+        </section>
+      </main>
+
+      <aside class="batch-rail" data-batch-rail aria-label="批量审批" hidden>
+        <div><p class="section-index">BATCH CONTROL</p><strong><span data-selected-count>0</span> 项已锁定</strong></div>
+        <label>决策码<input data-decision-code value="operator_verified" maxlength="128"></label>
+        <label>审计原因<input data-batch-reason type="password" autocomplete="off" maxlength="1024" aria-label="批量决策审计原因"></label>
+        <div class="rail-actions">
+          <button type="button" class="primary-action" data-batch-preview="approve">预检通过</button>
+          <button type="button" class="danger-action" data-batch-preview="reject">预检拒绝</button>
+          <button type="button" class="primary-action execute" data-batch-execute hidden>执行批次</button>
+          <button type="button" class="text-action" data-clear-selection>清除</button>
+        </div>
+        <p class="rail-result" data-batch-result role="status"></p>
+      </aside>
+
+      <dialog class="delegation-dialog decision-dialog" data-decision-dialog aria-labelledby="decision-title">
+        <form method="dialog" data-decision-form><div class="dialog-head"><div><p class="section-index">SOURCE AUTHORITY</p><h2 id="decision-title">提交审批决策</h2></div><button type="button" data-close-decision aria-label="关闭">×</button></div><p class="guard-note">审计原因仅瞬时提交至源权威，不在收件箱或前端状态中保留。</p><label>决策码<input data-single-decision-code value="operator_verified" maxlength="128" required></label><label>审计原因<textarea data-single-reason maxlength="1024" required></textarea></label><button class="primary-action" type="submit" data-decision-submit>提交决策</button><p data-decision-result role="status"></p></form>
+      </dialog>
+
+      <dialog class="delegation-dialog" data-delegation-dialog aria-labelledby="delegation-title">
+        <form method="dialog" data-delegation-form>
+          <div class="dialog-head"><div><p class="section-index">TIME-BOXED</p><h2 id="delegation-title">建立审批委派</h2></div><button type="button" data-close-dialog aria-label="关闭">×</button></div>
+          <p class="guard-note">权限和作用域由所选工单派生，不能由客户端扩大。</p>
+          <label>工单<select data-delegation-work required></select></label>
+          <label>受托人 ID<input data-delegate-id type="text" inputmode="text" required></label>
+          <div class="field-pair"><label>开始时间<input data-delegation-start type="datetime-local" required></label><label>结束时间<input data-delegation-end type="datetime-local" required></label></div>
+          <label>审计原因<textarea data-delegation-reason maxlength="1024" required></textarea></label>
+          <button class="primary-action" type="submit">创建时限委派</button>
+          <p data-delegation-result role="status"></p>
+        </form>
+      </dialog>
+
+      <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
+    </div>
+  </body>
+</html>

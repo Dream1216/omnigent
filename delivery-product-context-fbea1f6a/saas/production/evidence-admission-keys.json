@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "keys": [
+    {
+      "key_id": "openbao-ed25519-production-evidence-20261021-v1",
+      "algorithm": "ed25519",
+      "purpose": "production-evidence-admission",
+      "workflow_identity": "Dream1216/omnigent/.github/workflows/saas-production-admission.yml@refs/heads/main",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAJzy5yNTUd5WdnkZ3KJ7tAwl2/PSUJlYgSCi4ahthdHM=\n-----END PUBLIC KEY-----\n",
+      "not_before": "2026-10-21T12:46:46Z",
+      "not_after": "2027-01-19T12:46:46Z",
+      "revoked_at": null
+    }
+  ]
+}

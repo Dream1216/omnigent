@@ -1,0 +1,223 @@
+// TanStack Query wrapper around the resources filesystem file-content endpoint:
+// `GET /v1/sessions/{sessionId}/resources/environments/{environmentId}/filesystem/{path}`.
+//
+// Text files have `encoding: "utf-8"` and return content inline.
+// Binary files that cannot be decoded as UTF-8 have `encoding: "base64"`.
+// The query is disabled when either `conversationId` or `path` is null/undefined.
+
+import { useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { withBasePath } from "@/lib/basePath";
+import { isDatabricksWorkspace } from "@/lib/host";
+import { authenticatedFetch } from "@/lib/identity";
+import { isAndroidShell, isIOSShell } from "@/lib/nativeBridge";
+import { isTempConvId } from "@/lib/tempConversationId";
+import {
+  browseLocationBase,
+  browseLocationSegment,
+  useWorkspaceServeable,
+} from "@/hooks/useWorkspaceChangedFiles";
+import { useChatStore } from "@/store/chatStore";
+
+// The primary workspace environment is always "default".  This hook targets
+// the primary workspace; pass a different id if terminal environments are needed.
+const DEFAULT_ENVIRONMENT_ID = "default";
+
+export interface FileContentResponse {
+  object: "session.environment.filesystem.file_content";
+  path: string;
+  content_type: string | null;
+  encoding: "utf-8" | "base64";
+  content: string;
+  bytes: number;
+  truncated?: boolean;
+}
+
+/**
+ * Build the filesystem URL for a workspace file.
+ *
+ * Reuses the shared browse-location wire form: a per-segment-encoded path with
+ * literal slashes and, for an absolute path (a file opened while browsing
+ * outside the workspace), the base named by `?base=host`. Keeping this on the
+ * shared helpers means the slash-merge-safe contract lives in one place (see
+ * `browseLocationSegment`).
+ *
+ * :param conversationId: The session/conversation ID, e.g. ``"sess_abc123"``.
+ * :param path: Workspace-relative or host-absolute file path.
+ * :param query: Extra query parameters, e.g. ``{ download: "true" }``.
+ */
+function workspaceFileUrl(
+  conversationId: string,
+  path: string,
+  query: Record<string, string> = {},
+): string {
+  const base = browseLocationBase(path);
+  const params = new URLSearchParams(base ? { ...query, base } : query).toString();
+  return (
+    `/v1/sessions/${encodeURIComponent(conversationId)}` +
+    `/resources/environments/${DEFAULT_ENVIRONMENT_ID}/filesystem/${browseLocationSegment(path)}` +
+    (params ? `?${params}` : "")
+  );
+}
+
+/** Read complete media bytes through the host's authenticated transport, with cancellation. */
+export async function fetchWorkspaceFileBlob(
+  conversationId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await authenticatedFetch(
+    workspaceFileUrl(conversationId, path, { download: "true" }),
+    {
+      signal,
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.blob();
+}
+
+export async function fetchFileContent(
+  conversationId: string,
+  path: string,
+): Promise<FileContentResponse> {
+  const res = await authenticatedFetch(workspaceFileUrl(conversationId, path));
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as FileContentResponse;
+}
+
+/**
+ * Convert a ``FileContentResponse`` into a ``Blob`` with the correct MIME type.
+ *
+ * Handles both UTF-8 text files and base64-encoded binary files. This is the
+ * single source of truth for MIME/encoding handling — callers that already
+ * have a response object (e.g. FileViewer) call this directly instead of
+ * re-fetching.
+ *
+ * :param data: The file content response from the filesystem API.
+ * :returns: A ``Blob`` suitable for a browser download.
+ */
+export function fileContentToBlob(data: FileContentResponse): Blob {
+  if (data.encoding === "base64") {
+    const binary = atob(data.content);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: data.content_type ?? "application/octet-stream" });
+  }
+  return new Blob([data.content], { type: data.content_type ?? "text/plain" });
+}
+
+/**
+ * Programmatically trigger a browser file download for the given ``Blob``.
+ *
+ * Creates a temporary object URL, clicks a synthetic ``<a>`` element to
+ * initiate the download, then immediately cleans up both the element and
+ * the URL.
+ *
+ * :param blob: The file data to download.
+ * :param filename: The suggested filename presented to the browser's save dialog.
+ */
+export function triggerBrowserDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  clickDownloadLink(url, filename);
+  URL.revokeObjectURL(url);
+}
+
+function clickDownloadLink(href: string, filename: string): void {
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+/**
+ * Download a workspace file's complete bytes.
+ *
+ * Asks the filesystem endpoint for the raw file (`download=true`), which the
+ * server streams with no size cap, rather than the viewer's JSON envelope,
+ * which is truncated past the server's read cap.
+ *
+ * In a browser this is a plain same-origin link click: the browser streams the
+ * attachment straight to disk and shows it in its download UI at once, and the
+ * session cookie or proxy identity header rides along as on any request. The
+ * managed embed owns the transport (auth headers, replica routing) and the
+ * mobile shells save http(s) downloads outside the WebView's session, so those
+ * fetch the bytes through `authenticatedFetch` and hand them over as a Blob,
+ * which only surfaces once the whole file has arrived.
+ *
+ * :param conversationId: The session/conversation ID, e.g. ``"sess_abc123"``.
+ * :param path: Workspace-relative file path, e.g. ``"src/main.py"``.
+ */
+export async function downloadWorkspaceFile(conversationId: string, path: string): Promise<void> {
+  const url = workspaceFileUrl(conversationId, path, { download: "true" });
+  const filename = path.split("/").pop() ?? path;
+  if (!isDatabricksWorkspace() && !isIOSShell() && !isAndroidShell()) {
+    // A direct anchor navigation, so it must carry the deployment subpath the
+    // fetch paths get for free via hostFetch/authenticatedFetch. Without it a
+    // stripping proxy (`/proxy/<port>/`) sends it to the origin root and misses
+    // the app. The fetch branch below keeps `url` raw: authenticatedFetch
+    // prefixes internally, so passing it prefixed would double the base path.
+    clickDownloadLink(withBasePath(url), filename);
+    return;
+  }
+  const res = await authenticatedFetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  triggerBrowserDownload(await res.blob(), filename);
+}
+
+/**
+ * Fetch the content of a workspace file for the given conversation.
+ *
+ * Disabled (no request made) when `conversationId` or `path` is
+ * null / undefined, or when `conversationId` is a client-only temp id.
+ *
+ * Fires one trailing invalidation when the session transitions from active
+ * (running/waiting) to idle so the viewer picks up any file writes the agent
+ * made during the turn. No polling is used — the invalidation fires exactly
+ * once at end-of-turn, avoiding continuous refetches that would reset the
+ * editor's scroll and cursor position.
+ */
+export function useFileContent(
+  conversationId: string | undefined,
+  path: string | null,
+  options: { retry?: boolean } = {},
+) {
+  // A `temp:*` id (navigate-first new-chat window) has no server session yet,
+  // so never request `/v1/sessions/temp:*/resources/*` for it.
+  const serverId = isTempConvId(conversationId) ? undefined : conversationId;
+  const focusedId = useChatStore((s) => s.conversationId);
+  const sessionStatus = useChatStore((s) => s.sessionStatus);
+  const sessionActive =
+    !!serverId &&
+    serverId === focusedId &&
+    (sessionStatus === "running" || sessionStatus === "waiting");
+  // Serveable when the runner is online OR (runner offline but) the host can
+  // read the workspace from disk — keeps the viewer live while the agent is
+  // asleep. `false` only when neither source can answer.
+  const serveable = useWorkspaceServeable(serverId);
+  const queryClient = useQueryClient();
+
+  const prevRef = useRef<{ id: string | undefined; active: boolean }>({
+    id: serverId,
+    active: sessionActive,
+  });
+  useEffect(() => {
+    const sameSession = prevRef.current.id === serverId;
+    const justWentIdle = sameSession && prevRef.current.active && !sessionActive;
+    prevRef.current = { id: serverId, active: sessionActive };
+    if (justWentIdle && serverId && path) {
+      void queryClient.invalidateQueries({
+        queryKey: ["file-content", serverId, path],
+      });
+    }
+  }, [serverId, path, sessionActive, queryClient]);
+
+  return useQuery({
+    queryKey: ["file-content", serverId, path],
+    queryFn: () => fetchFileContent(serverId!, path!),
+    enabled: !!serverId && !!path && serveable !== false,
+    staleTime: 5_000,
+    ...(options.retry === undefined ? {} : { retry: options.retry }),
+  });
+}

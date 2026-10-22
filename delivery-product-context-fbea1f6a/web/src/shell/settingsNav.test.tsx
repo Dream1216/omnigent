@@ -1,0 +1,538 @@
+// Tests for the Settings nav model + sidebar body (settingsNav).
+//
+// Covers the mobile-specific behavior: keyboard shortcuts is hidden on mobile
+// (max-md:hidden), and "Back" does NOT close the sidebar overlay
+// on a plain tap (no onNavClick) so mobile lands back on the conversation list
+// instead of the homepage. Section links still close it.
+
+import { cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { SettingsIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { MemoryRouter, useNavigate } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
+const mocks = vi.hoisted(() => ({
+  accountsEnabled: false,
+  // login_url: non-null for any sign-in mode (accounts OR OIDC), null in
+  // header mode. Gates the Account section.
+  loginUrl: null as string | null,
+  // single_user: the server's explicit single-user marker. A multi-user
+  // header-auth deploy reports false even though it has no accounts / login,
+  // so this is the ONLY signal that hides account/sharing chrome.
+  singleUser: false,
+  isAdmin: false,
+  customAgentsEnabled: false as boolean | undefined,
+  agentInstall: false,
+  enabledConnections: [] as string[],
+}));
+
+vi.mock("@/lib/CapabilitiesContext", () => ({
+  useServerInfo: () => ({
+    accounts_enabled: mocks.accountsEnabled,
+    login_url: mocks.loginUrl,
+    single_user: mocks.singleUser,
+    features: {
+      custom_agents_settings_ui: mocks.customAgentsEnabled,
+    },
+    agent_install: mocks.agentInstall,
+    enabled_connections: mocks.enabledConnections,
+  }),
+}));
+// Admin gating is now mode-agnostic, sourced from `/v1/me` via useIsAdmin
+// (not the accounts-only `/auth/me` useMe hook), so the Admin group appears
+// under OIDC too.
+vi.mock("@/hooks/useIsAdmin", () => ({
+  useIsAdmin: () => mocks.isAdmin,
+}));
+
+import {
+  SettingsSidebarBody,
+  settingsNavGroups,
+  useSettingsRoute,
+  useTrackSettingsReturn,
+} from "./settingsNav";
+
+function renderBody(opts: { onNavClick?: () => void } = {}) {
+  const onNavClick = opts.onNavClick ?? vi.fn();
+  render(
+    <TooltipProvider>
+      <MemoryRouter initialEntries={["/settings/appearance"]}>
+        <SettingsSidebarBody onNavClick={onNavClick} />
+      </MemoryRouter>
+    </TooltipProvider>,
+  );
+  return { onNavClick };
+}
+
+beforeEach(() => {
+  mocks.accountsEnabled = false;
+  mocks.loginUrl = null;
+  mocks.singleUser = false;
+  mocks.isAdmin = false;
+  mocks.customAgentsEnabled = false;
+  mocks.agentInstall = false;
+  mocks.enabledConnections = [];
+});
+afterEach(cleanup);
+
+describe("settingsNavGroups", () => {
+  it("starts general preferences with a General gear entry", () => {
+    const general = settingsNavGroups(false, false).find((group) => group.title === "General");
+    expect(general?.items[0]).toMatchObject({
+      id: "general",
+      label: "General",
+      icon: SettingsIcon,
+    });
+    expect(general?.items.slice(0, 3).map((item) => item.id)).toEqual([
+      "general",
+      "appearance",
+      "harnesses",
+    ]);
+  });
+
+  it("flags Keyboard shortcuts as hidden on mobile, but not the other items", () => {
+    const items = settingsNavGroups(false, false).flatMap((g) => g.items);
+    const shortcuts = items.find((i) => i.id === "shortcuts");
+    expect(shortcuts?.hideOnMobile).toBe(true);
+    for (const item of items) {
+      if (item.id !== "shortcuts") expect(item.hideOnMobile).toBeFalsy();
+    }
+  });
+
+  it("includes Account (leading) whenever a login session exists (accounts OR OIDC)", () => {
+    // First arg is hasAuthSession (login_url != null), not accounts-specific.
+    // Header single-user (no session) → no Account section.
+    expect(
+      settingsNavGroups(false, false)
+        .flatMap((g) => g.items)
+        .map((i) => i.id),
+    ).not.toContain("account");
+    // Any login session → Account appears and leads its group.
+    const withAccount = settingsNavGroups(true, false)
+      .flatMap((g) => g.items)
+      .map((i) => i.id);
+    expect(withAccount).toContain("account");
+    expect(withAccount[0]).toBe("account");
+  });
+
+  it("includes the Local CLI section only in the desktop shell", () => {
+    const ids = (isDesktop: boolean) =>
+      settingsNavGroups(false, isDesktop)
+        .flatMap((g) => g.items)
+        .map((i) => i.id);
+    expect(ids(false)).not.toContain("cli");
+    expect(ids(false)).not.toContain("updates");
+    expect(ids(true)).toContain("cli");
+    expect(ids(true)).toContain("updates");
+  });
+
+  it("places Desktop immediately after General", () => {
+    expect(settingsNavGroups(false, true).map((group) => group.title)).toEqual([
+      "General",
+      "Desktop",
+      "Archived",
+    ]);
+  });
+
+  it("includes the Admin group (Members / Policies / Sharing) for any admin, in accounts OR OIDC mode", () => {
+    const ids = (accountsEnabled: boolean, isAdmin: boolean) =>
+      settingsNavGroups(accountsEnabled, false, isAdmin)
+        .flatMap((g) => g.items)
+        .map((i) => i.id);
+    // Non-admin → no admin items, regardless of auth mode.
+    expect(ids(true, false)).not.toContain("members");
+    expect(ids(false, false)).not.toContain("members");
+    // Admin on an accounts deploy → all appear, grouped under "Admin".
+    const accountsAdmin = settingsNavGroups(true, false, true).find((g) => g.title === "Admin");
+    expect(accountsAdmin?.items.map((i) => i.id)).toEqual(["members", "policies", "sharing"]);
+    // Admin under OIDC (accountsEnabled false) → still appears. This is the
+    // #1489 fix: OIDC previously had no admin chrome at all.
+    const oidcAdmin = settingsNavGroups(false, false, true).find((g) => g.title === "Admin");
+    expect(oidcAdmin?.items.map((i) => i.id)).toEqual(["members", "policies", "sharing"]);
+  });
+
+  it("drops Members and Sharing from the Admin group in single-user mode, keeping Policies", () => {
+    // 4th arg is isSingleUser. Members (manage accounts) and Sharing (grant to
+    // other users) are meaningless with no other users, so both are hidden;
+    // Policies stays — global policies apply to the solo user's own sessions.
+    const singleUserAdmin = settingsNavGroups(false, false, true, true).find(
+      (g) => g.title === "Admin",
+    );
+    expect(singleUserAdmin?.items.map((i) => i.id)).toEqual(["policies"]);
+  });
+
+  it("includes the Sandbox Integrations item only when a connection is enabled", () => {
+    // 5th arg is integrationsEnabled (enabled_connections non-empty). Absent when
+    // the server has no GitHub App configured, so the nav item must not appear.
+    const item = (integrationsEnabled: boolean) =>
+      settingsNavGroups(false, false, false, false, integrationsEnabled)
+        .flatMap((g) => g.items)
+        .find((i) => i.id === "integrations");
+    expect(item(false)).toBeUndefined();
+    expect(item(true)).toMatchObject({ id: "integrations", label: "Sandbox Integrations" });
+  });
+});
+
+describe("SettingsSidebarBody", () => {
+  it.each([
+    { connections: [], mcp: false, integrations: false },
+    { connections: ["mcp"], mcp: true, integrations: false },
+    { connections: ["github", "mcp"], mcp: true, integrations: true },
+    { connections: ["github"], mcp: false, integrations: true },
+  ])(
+    "separates MCP navigation from sandbox accounts: $connections",
+    ({ connections, mcp, integrations }) => {
+      mocks.enabledConnections = connections;
+      renderBody();
+      expect(!!screen.queryByTestId("settings-nav-mcp")).toBe(mcp);
+      expect(!!screen.queryByTestId("settings-nav-integrations")).toBe(integrations);
+      if (mcp)
+        expect(screen.getByTestId("settings-nav-mcp")).toHaveAttribute("href", "/settings/mcp");
+    },
+  );
+
+  it("renders Back as a standard sidebar row without a collapse button", () => {
+    renderBody();
+    const backLink = screen.getByRole("link", { name: "Back" });
+    expect(backLink.querySelector("svg")).toHaveClass("ui-icon");
+    expect(backLink).toHaveClass(
+      "sidebar-row",
+      "h-auto",
+      "min-h-0",
+      "gap-2",
+      "px-2",
+      "py-1.5",
+      "md:py-1",
+      "rounded-[var(--radius-otto-button)]",
+      "w-fit",
+      "justify-start",
+      "border-0",
+      "font-normal",
+    );
+    expect(screen.queryByRole("button", { name: "Close sidebar" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("settings-nav-appearance").querySelector("svg")).toHaveClass(
+      "ui-icon",
+    );
+    expect(screen.getByTestId("settings-nav-general")).toHaveAttribute("href", "/settings/general");
+  });
+
+  it("uses the shared row geometry with normal-weight labels", () => {
+    renderBody();
+    const selected = screen.getByTestId("settings-nav-appearance");
+    const unselected = screen.getByTestId("settings-nav-git");
+    expect(selected).toHaveClass(
+      "sidebar-row",
+      "h-auto",
+      "min-h-0",
+      "gap-2",
+      "px-2",
+      "py-1.5",
+      "md:py-1",
+      "rounded-[var(--radius-otto-button)]",
+      "font-normal",
+      "bg-[var(--sidebar-active)]",
+      "text-[var(--sidebar-active-foreground)]",
+      "dark:hover:bg-[var(--sidebar-active)]",
+      "dark:hover:text-[var(--sidebar-active-foreground)]",
+    );
+    expect(selected).not.toHaveClass("bg-muted", "font-semibold");
+    expect(unselected).toHaveClass("sidebar-row", "font-normal");
+    expect(selected.querySelector("svg")).toHaveClass("text-[var(--sidebar-active-foreground)]");
+    expect(selected.querySelector("svg")).not.toHaveClass("text-muted-foreground");
+    expect(unselected.querySelector("svg")).toHaveClass("text-muted-foreground");
+  });
+
+  it("renders group subtitles in sentence case at the text-sm tier", () => {
+    renderBody();
+    const heading = screen.getByRole("heading", { name: "General" });
+    expect(heading).toHaveClass("h-7", "text-sm", "font-normal");
+    expect(heading).not.toHaveClass("font-medium", "uppercase");
+    expect(heading.parentElement?.parentElement).toHaveClass("gap-4");
+    expect(heading.nextElementSibling).toHaveClass("mt-1", "gap-px");
+  });
+
+  it("marks the Keyboard shortcuts nav item hidden on mobile via max-md:hidden", () => {
+    renderBody();
+    expect(screen.getByTestId("settings-nav-shortcuts").className).toContain("max-md:hidden");
+    // Sibling items stay visible on every viewport.
+    expect(screen.getByTestId("settings-nav-appearance").className).not.toContain("max-md:hidden");
+    expect(screen.getByTestId("settings-nav-archived").className).not.toContain("max-md:hidden");
+  });
+
+  it("does NOT close the sidebar when Back is tapped", () => {
+    // No onNavClick on the back link: on mobile the overlay stays open so the
+    // sidebar swaps back to the conversation list rather than closing onto the
+    // homepage behind it.
+    const { onNavClick } = renderBody();
+    fireEvent.click(screen.getByRole("link", { name: "Back" }));
+    expect(onNavClick).not.toHaveBeenCalled();
+  });
+
+  it("Back returns to the conversation the user came from", () => {
+    // Simulate the real flow: the sidebar (which stays mounted) tracks the
+    // pre-settings location, then the user enters /settings. Back must point at
+    // the conversation, not the home page.
+    function Harness() {
+      useTrackSettingsReturn();
+      const navigate = useNavigate();
+      const { inSettings } = useSettingsRoute();
+      return (
+        <>
+          <button type="button" onClick={() => navigate("/settings")}>
+            go-settings
+          </button>
+          {inSettings && <SettingsSidebarBody onNavClick={vi.fn()} />}
+        </>
+      );
+    }
+    render(
+      <TooltipProvider>
+        <MemoryRouter initialEntries={["/c/conv_123?file=foo.ts"]}>
+          <Harness />
+        </MemoryRouter>
+      </TooltipProvider>,
+    );
+    fireEvent.click(screen.getByText("go-settings"));
+    expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
+      "href",
+      "/c/conv_123?file=foo.ts",
+    );
+    expect(screen.getByTestId("settings-nav-general")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("DOES close the sidebar when a section is tapped (drills into content)", () => {
+    const { onNavClick } = renderBody();
+    fireEvent.click(screen.getByTestId("settings-nav-appearance"));
+    expect(onNavClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders Members / Policies sub-categories for an admin, linking under /settings", () => {
+    mocks.accountsEnabled = true;
+    mocks.isAdmin = true;
+    renderBody();
+    const members = screen.getByTestId("settings-nav-members");
+    const policies = screen.getByTestId("settings-nav-policies");
+    expect(members).toHaveAttribute("href", "/settings/members");
+    expect(policies).toHaveAttribute("href", "/settings/policies");
+  });
+
+  it("renders the admin sub-categories for an admin under OIDC (accounts off)", () => {
+    // #1489: admin chrome must surface under OIDC, where accounts is off. OIDC
+    // advertises a login_url, so this is NOT single-user mode — Members shows.
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = "/auth/login";
+    mocks.isAdmin = true;
+    renderBody();
+    expect(screen.getByTestId("settings-nav-members")).toHaveAttribute("href", "/settings/members");
+    expect(screen.getByTestId("settings-nav-policies")).toHaveAttribute(
+      "href",
+      "/settings/policies",
+    );
+  });
+
+  it("hides Members and Sharing but keeps Policies for an admin in single-user mode", () => {
+    // Explicit single-user local runtime (single_user marker set): there are
+    // no other users to manage or share with, so Members and Sharing drop from
+    // the nav. Policies stays — it's meaningful for a solo user's own sessions.
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = null;
+    mocks.singleUser = true;
+    mocks.isAdmin = true;
+    renderBody();
+    expect(screen.queryByTestId("settings-nav-members")).toBeNull();
+    expect(screen.queryByTestId("settings-nav-sharing")).toBeNull();
+    expect(screen.getByTestId("settings-nav-policies")).toHaveAttribute(
+      "href",
+      "/settings/policies",
+    );
+  });
+
+  it("hides the admin sub-categories for a non-admin", () => {
+    mocks.accountsEnabled = true;
+    mocks.isAdmin = false;
+    renderBody();
+    expect(screen.queryByTestId("settings-nav-members")).toBeNull();
+    expect(screen.queryByTestId("settings-nav-policies")).toBeNull();
+  });
+});
+
+describe("useSettingsRoute", () => {
+  it("treats /settings/members and /settings/policies as in-settings sections on an accounts deploy", () => {
+    // The core of the fix: Members / Policies now live UNDER /settings, so the
+    // sidebar's `inSettings` gate stays true and the settings nav stays put —
+    // the old standalone /members and /policies fell through to inSettings:false
+    // (see the bare-path case below), which snapped the sidebar back to the
+    // conversation list.
+    mocks.accountsEnabled = true;
+    expect(routeHook("/settings/members")).toEqual({ inSettings: true, section: "members" });
+    expect(routeHook("/settings/policies")).toEqual({ inSettings: true, section: "policies" });
+  });
+
+  it("treats the admin sections as valid destinations even when accounts is off (OIDC)", () => {
+    // #1489: Members / Policies are admin sections valid in ANY multi-user
+    // mode (accounts AND OIDC). They no longer fall back to the default
+    // section off an accounts deploy — the nav gates them on is_admin and the
+    // pages self-gate / the server 403s. OIDC has a login_url, so it's NOT
+    // single-user mode and Members stays valid.
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = "/auth/login";
+    expect(routeHook("/settings/members")).toEqual({ inSettings: true, section: "members" });
+    expect(routeHook("/settings/policies")).toEqual({ inSettings: true, section: "policies" });
+  });
+
+  it("keeps Members / Sharing valid on a multi-user header-auth deploy (not single_user)", () => {
+    // Header-auth multi-user (SSO proxy): accounts off AND no login_url, same
+    // shape as single-user, but single_user is false so the admin sections
+    // stay valid. This is the regression the single_user signal fixes.
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = null;
+    mocks.singleUser = false;
+    expect(routeHook("/settings/members")).toEqual({ inSettings: true, section: "members" });
+    expect(routeHook("/settings/sharing")).toEqual({ inSettings: true, section: "sharing" });
+  });
+
+  it("redirects a direct /settings/members or /settings/sharing to the default section in single-user mode", () => {
+    // Explicit single-user local runtime (single_user marker): Members and
+    // Sharing are hidden, so a direct hit to either falls back to the default
+    // section (General). Policies stays valid — it's functional single-user.
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = null;
+    mocks.singleUser = true;
+    expect(routeHook("/settings/members")).toEqual({ inSettings: true, section: "general" });
+    expect(routeHook("/settings/sharing")).toEqual({ inSettings: true, section: "general" });
+    expect(routeHook("/settings/policies")).toEqual({ inSettings: true, section: "policies" });
+  });
+
+  it("reports NOT in settings for the legacy standalone /members and /policies paths", () => {
+    // These paths only exist as redirects now; if one is ever hit directly it
+    // must NOT read as in-settings (that was the bug's mechanism).
+    expect(routeHook("/members").inSettings).toBe(false);
+    expect(routeHook("/policies").inSettings).toBe(false);
+  });
+
+  it("keeps explicit settings sections and defaults bare or unknown sections to General", () => {
+    expect(routeHook("/settings/appearance")).toEqual({
+      inSettings: true,
+      section: "appearance",
+    });
+    expect(routeHook("/settings/updates")).toEqual({
+      inSettings: true,
+      section: "updates",
+    });
+    expect(routeHook("/settings")).toEqual({ inSettings: true, section: "general" });
+    expect(routeHook("/settings/not-a-section")).toEqual({
+      inSettings: true,
+      section: "general",
+    });
+    // A non-settings route is out of settings.
+    expect(routeHook("/inbox").inSettings).toBe(false);
+  });
+
+  it("parses the harness details segment of the harnesses section", () => {
+    expect(routeHook("/settings/harnesses")).toEqual({ inSettings: true, section: "harnesses" });
+    expect(routeHook("/settings/harnesses/claude-native")).toEqual({
+      inSettings: true,
+      section: "harnesses",
+      harness: "claude-native",
+    });
+  });
+
+  it("keeps General as the bare settings default when a login session exists", () => {
+    mocks.loginUrl = "/login";
+    expect(routeHook("/settings")).toEqual({ inSettings: true, section: "general" });
+  });
+
+  it("matches the settings segment under an embed basename", () => {
+    // Basename-agnostic: the sidebar rebases links behind the app's back in the
+    // embed, so detection keys off the `settings` segment wherever it lands.
+    mocks.accountsEnabled = true;
+    expect(routeHook("/ml/omnigent-embed/settings/members")).toEqual({
+      inSettings: true,
+      section: "members",
+    });
+  });
+});
+
+function routeHook(path: string) {
+  const w = ({ children }: { children: ReactNode }) => (
+    <MemoryRouter initialEntries={[path]}>{children}</MemoryRouter>
+  );
+  return renderHook(() => useSettingsRoute(), { wrapper: w }).result.current;
+}
+
+describe("custom agent settings availability", () => {
+  it.each(["agent/space %2F?#é", "a%percent", "simple-id"])(
+    "decodes the agent ID once: %s",
+    (agentId) => {
+      mocks.customAgentsEnabled = true;
+      mocks.agentInstall = true;
+      expect(
+        routeHook(`/ml/omnigent-embed/settings/custom-agents/${encodeURIComponent(agentId)}`),
+      ).toEqual({
+        inSettings: true,
+        section: "custom-agents",
+        agentId,
+      });
+    },
+  );
+
+  it("falls back to the agent list for malformed URL escapes", () => {
+    mocks.customAgentsEnabled = true;
+    mocks.agentInstall = true;
+    expect(routeHook("/settings/custom-agents/%E0%A4%A")).toEqual({
+      inSettings: true,
+      section: "custom-agents",
+    });
+  });
+
+  it.each([
+    [undefined, true],
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])("gates nav and direct routes with flag=%s and API=%s", (flag, api) => {
+    mocks.customAgentsEnabled = flag;
+    mocks.agentInstall = api;
+    renderBody();
+    const enabled = flag === true && api;
+    expect(!!screen.queryByTestId("settings-nav-custom-agents")).toBe(enabled);
+    expect(!!screen.queryByRole("heading", { name: "Customize" })).toBe(enabled);
+    const group = screen.getByRole("heading", { name: enabled ? "Customize" : "General" });
+    expect(group.parentElement).toContainElement(screen.getByTestId("settings-nav-harnesses"));
+    if (enabled) {
+      expect(group.parentElement).toContainElement(
+        screen.getByTestId("settings-nav-custom-agents"),
+      );
+    }
+    for (const suffix of ["", "/new", "/agent-1"]) {
+      expect(routeHook(`/settings/custom-agents${suffix}`).section).toBe(
+        flag && api ? "custom-agents" : "general",
+      );
+    }
+  });
+
+  it("groups Harnesses and Custom agents under Customize and parses embedded detail routes", () => {
+    mocks.customAgentsEnabled = true;
+    mocks.agentInstall = true;
+    const groups = settingsNavGroups(false, true, false, false, false, true);
+    expect(groups.map((group) => group.title)).toEqual([
+      "General",
+      "Customize",
+      "Desktop",
+      "Archived",
+    ]);
+    expect(
+      groups.find((group) => group.title === "Customize")?.items.map((item) => item.id),
+    ).toEqual(["harnesses", "custom-agents"]);
+    expect(
+      groups.flatMap((group) => group.items).filter((item) => item.id === "harnesses"),
+    ).toHaveLength(1);
+    expect(routeHook("/ml/omnigent-embed/settings/custom-agents/agent-1")).toEqual({
+      inSettings: true,
+      section: "custom-agents",
+      agentId: "agent-1",
+    });
+  });
+});

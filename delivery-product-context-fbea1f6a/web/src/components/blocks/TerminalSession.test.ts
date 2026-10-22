@@ -1,0 +1,1211 @@
+// Unit tests for the terminal session's pure helpers.
+//
+// The full TerminalSession constructor needs a real xterm + WebSocket
+// + DOM container, so it's exercised via manual REPL verification (see
+// TerminalView.test.ts). `openTerminalLink` is the click handler the
+// terminal link provider delegates to — the piece that makes terminal URLs
+// open the right way — so we pin it here.
+
+import { Terminal } from "@xterm/xterm";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  SHIFT_ENTER_CSI_U,
+  TerminalSession,
+  WHEEL_REPORTS_MAX_PER_EVENT,
+  applyTerminalCopy,
+  decodeTerminalClipboardBase64,
+  hadRecentTerminalInput,
+  isUnexpectedTerminalClose,
+  loadWebglRenderer,
+  openTerminalLink,
+  parseTerminalClipboardMessage,
+  resolveTerminalWorkspaceFileLink,
+  sgrWheelReports,
+  terminalTheme,
+  terminalKeyEventPayload,
+  touchScrollPayload,
+  type ConnectionState,
+  wheelReportPayload,
+  type WheelMouseState,
+  type WheelScreenMetrics,
+} from "./TerminalSession";
+
+describe("openTerminalLink", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("opens the uri in a new tab with noopener,noreferrer", () => {
+    // Stub window.open so we observe the call without spawning a tab.
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const event = new MouseEvent("click");
+
+    openTerminalLink(event, "https://example.com/foo");
+
+    // Proves the handler routes the detected URL to a new tab with the
+    // hardening flags. If it regressed to navigating in-place, _blank
+    // would be missing and the live terminal session would be torn down.
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://example.com/foo",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("routes same-origin session links in-place without opening a new tab", () => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const pushSpy = vi.spyOn(window.history, "pushState");
+    const event = new MouseEvent("click");
+    const preventSpy = vi.spyOn(event, "preventDefault");
+
+    openTerminalLink(event, `${window.location.origin}/c/conv_next`);
+
+    expect(preventSpy).toHaveBeenCalledOnce();
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(pushSpy).toHaveBeenCalledWith(null, "", "/c/conv_next");
+  });
+
+  it("does not reopen the current same-origin session link", () => {
+    window.history.replaceState(null, "", "/c/conv_current");
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const pushSpy = vi.spyOn(window.history, "pushState");
+    const event = new MouseEvent("click");
+
+    openTerminalLink(event, `${window.location.origin}/c/conv_current`);
+
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+
+  it("rebases session links under the configured base path", () => {
+    window.__OMNIGENT_BASE_PATH__ = "/proxy/6767";
+    window.history.replaceState(null, "", "/proxy/6767/");
+    try {
+      const pushSpy = vi.spyOn(window.history, "pushState");
+      const event = new MouseEvent("click");
+      // Unprefixed terminal link is rebased under the basename.
+      openTerminalLink(event, `${window.location.origin}/c/conv_x`);
+      expect(pushSpy).toHaveBeenCalledWith(null, "", "/proxy/6767/c/conv_x");
+      // Already-prefixed link is pushed unchanged (idempotent, no doubling).
+      openTerminalLink(event, `${window.location.origin}/proxy/6767/c/conv_y`);
+      expect(pushSpy).toHaveBeenCalledWith(null, "", "/proxy/6767/c/conv_y");
+    } finally {
+      delete window.__OMNIGENT_BASE_PATH__;
+    }
+  });
+
+  it("prevents the click's default in-place navigation", () => {
+    vi.spyOn(window, "open").mockReturnValue(null);
+    const event = new MouseEvent("click");
+    const preventSpy = vi.spyOn(event, "preventDefault");
+
+    openTerminalLink(event, "https://example.com/foo");
+
+    // Without preventDefault the click's default navigation would unload the
+    // SPA (and kill the WebSocket-attached terminal) before window.open's
+    // tab is usable.
+    expect(preventSpy).toHaveBeenCalledOnce();
+  });
+
+  it("lets the app consume an OSC 8 file link instead of opening the browser", () => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const onFileLink = vi.fn(() => true);
+    const event = new MouseEvent("click");
+
+    openTerminalLink(event, "file:///home/u/ws/src/app.ts#L42", onFileLink);
+
+    expect(onFileLink).toHaveBeenCalledWith("file:///home/u/ws/src/app.ts#L42");
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the normal external-link path when the app declines a link", () => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    openTerminalLink(new MouseEvent("click"), "https://example.com/foo", () => false);
+
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://example.com/foo",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it.each([
+    "file:///etc/hosts#L1",
+    "javascript:alert(document.domain)",
+    "data:text/html,<script>alert(1)</script>",
+    "mailto:user@example.com",
+  ])("does not browser-open a declined non-HTTP OSC 8 link: %s", (uri) => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    openTerminalLink(new MouseEvent("click"), uri, () => false);
+
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveTerminalWorkspaceFileLink", () => {
+  const ROOT = "/home/u/ws";
+  const HOME = "/home/u";
+
+  it.each([
+    ["file:///home/u/ws/src/app.ts", "src/app.ts", null],
+    ["file:///home/u/ws/src/app.ts:42", "src/app.ts", 42],
+    ["file:///home/u/ws/src/app.ts:42:7", "src/app.ts", 42],
+    ["file:///home/u/ws/src/app.ts#L43", "src/app.ts", 43],
+    ["file:///home/u/ws/src/app.ts#L44C3", "src/app.ts", 44],
+    ["file:///home/u/ws/src/app.ts#L45-L50", "src/app.ts", 45],
+    ["file:///home/u/ws/Design%20Notes.md#L46", "Design Notes.md", 46],
+  ])("resolves %s", (uri, path, line) => {
+    expect(resolveTerminalWorkspaceFileLink(uri, ROOT, HOME)).toEqual({ path, line });
+  });
+
+  it.each([
+    "https://example.com/src/app.ts#L42",
+    "file:///etc/hosts#L1",
+    "file:///home/u/ws/src/app.ts#heading",
+    "file:///home/u/ws/src/app.ts?line=42",
+    "file://fileserver/home/u/ws/src/app.ts#L42",
+    "file:///home/u/ws/%E0%A4%A.md#L42",
+  ])("rejects a non-workspace or unsafe target: %s", (uri) => {
+    expect(resolveTerminalWorkspaceFileLink(uri, ROOT, HOME)).toBeNull();
+  });
+});
+
+describe("applyTerminalCopy", () => {
+  function copyEvent() {
+    const setData = vi.fn();
+    const preventDefault = vi.fn();
+    const event: Pick<ClipboardEvent, "clipboardData" | "preventDefault"> = {
+      clipboardData: { setData } as unknown as DataTransfer,
+      preventDefault,
+    };
+    return { event, setData, preventDefault };
+  }
+
+  it("writes the selection to the clipboard and prevents default", () => {
+    const { event, setData, preventDefault } = copyEvent();
+
+    // A real selection must be placed on the clipboard as text/plain and
+    // the browser's default (per-visual-row) copy suppressed, so a
+    // soft-wrapped paragraph pastes as the single logical line that
+    // getSelection() already reflowed.
+    expect(applyTerminalCopy(event, "selected text")).toBe(true);
+    expect(setData).toHaveBeenCalledWith("text/plain", "selected text");
+    expect(preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("does nothing when there is no selection", () => {
+    const { event, setData, preventDefault } = copyEvent();
+
+    // With no selection the event must be left untouched so the browser's
+    // default copy behavior still applies (and we never clobber the
+    // clipboard with an empty string).
+    expect(applyTerminalCopy(event, "")).toBe(false);
+    expect(setData).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("tmux clipboard parsing", () => {
+  function utf8Base64(text: string): string {
+    const bytes = new TextEncoder().encode(text);
+    return btoa(String.fromCharCode(...bytes));
+  }
+
+  it("decodes bounded UTF-8 base64", () => {
+    expect(decodeTerminalClipboardBase64(utf8Base64("hello λ\nworld"))).toBe("hello λ\nworld");
+    expect(decodeTerminalClipboardBase64("not base64")).toBeNull();
+    expect(decodeTerminalClipboardBase64("")).toBeNull();
+  });
+
+  it("accepts only the clipboard-write websocket schema", () => {
+    const encoded = utf8Base64("from control mode");
+    expect(
+      parseTerminalClipboardMessage(
+        JSON.stringify({ type: "clipboard-write", encoding: "base64", data: encoded }),
+      ),
+    ).toBe("from control mode");
+    expect(
+      parseTerminalClipboardMessage(JSON.stringify({ type: "resize", data: encoded })),
+    ).toBeNull();
+    expect(parseTerminalClipboardMessage("not json")).toBeNull();
+  });
+
+  it("requires positive, recent input timing", () => {
+    expect(hadRecentTerminalInput(9000, 10_000)).toBe(true);
+    expect(hadRecentTerminalInput(0, 100)).toBe(false);
+    expect(hadRecentTerminalInput(1000, 10_000)).toBe(false);
+    expect(hadRecentTerminalInput(2000, 1000)).toBe(false);
+  });
+});
+
+describe("loadWebglRenderer", () => {
+  it("returns null without throwing when WebGL is unavailable", () => {
+    // jsdom has no WebGL context (getContext() is unimplemented), so this
+    // exercises the exact degraded environment the fallback exists for:
+    // headless CI, a blocklisted GPU, or a browser with WebGL disabled.
+    // The function must swallow the failure and return null so the caller
+    // keeps the working DOM renderer — a throw here would crash terminal
+    // construction and leave the user with no terminal at all.
+    const term = new Terminal();
+    const container = document.createElement("div");
+    term.open(container);
+
+    expect(loadWebglRenderer(term)).toBeNull();
+
+    term.dispose();
+  });
+});
+
+describe("terminalTheme", () => {
+  it("uses a light ANSI bright-black in light mode", () => {
+    const theme = terminalTheme(false);
+
+    // Codex paints its prompt/input band with ANSI gray. In the web light
+    // theme that gray must be a pale surface so dark prompt text remains
+    // readable.
+    expect(theme.background).toBe("#ffffff");
+    expect(theme.foreground).toBe("#18181b");
+    expect(theme.brightBlack).toBe("#e4e4e7");
+
+    // CLIs that assume a dark terminal paint primary text with ANSI
+    // white / bright-white. On the white card background those slots must
+    // be dark, or the text renders white-on-white and disappears.
+    expect(theme.white).toBe("#3f3f46");
+    expect(theme.brightWhite).toBe("#18181b");
+  });
+
+  it("keeps dark mode terminal surfaces dark", () => {
+    const theme = terminalTheme(true);
+
+    // Dark mode should retain the terminal-like contrast the rest of the
+    // app expects rather than inheriting the light prompt-band treatment.
+    expect(theme.background).toBe("#131517");
+    expect(theme.foreground).toBe("#e4e4e7");
+    expect(theme.brightBlack).toBe("#71717a");
+  });
+});
+
+describe("terminalKeyEventPayload", () => {
+  function keyEvent(init: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent("keydown", init);
+  }
+
+  it("encodes Shift+Enter as Kitty CSI-u", () => {
+    const payload = terminalKeyEventPayload(keyEvent({ key: "Enter", shiftKey: true }));
+
+    // This is the byte sequence prompt-toolkit maps to F20, which the
+    // REPL binds to "insert newline". Returning "\x1b\r" here would be
+    // the old Alt+Enter fallback, not Kitty/CSI-u support.
+    expect(payload).toBe(SHIFT_ENTER_CSI_U);
+    expect(payload).toBe("\x1b[13;2u");
+  });
+
+  it("maps macOS Cmd line shortcuts to their readline control bytes", () => {
+    // WHY: Option+key works because xterm encodes Alt as ESC-prefixes, but
+    // Cmd (metaKey) combos reach neither xterm nor the PTY — native-terminal
+    // line editing (delete to start / home / end) silently did nothing.
+    expect(terminalKeyEventPayload(keyEvent({ key: "Backspace", metaKey: true }))).toBe("\x15");
+    expect(terminalKeyEventPayload(keyEvent({ key: "ArrowLeft", metaKey: true }))).toBe("\x01");
+    expect(terminalKeyEventPayload(keyEvent({ key: "ArrowRight", metaKey: true }))).toBe("\x05");
+  });
+
+  it("keeps browser-owned Cmd combos off the mapping", () => {
+    // Cmd+C/V/K/R (copy/paste/clear/reload) and every Cmd combo with another
+    // modifier must keep their browser meaning — only the bare three
+    // line-editing combos are synthesized.
+    expect(terminalKeyEventPayload(keyEvent({ key: "c", metaKey: true }))).toBeNull();
+    expect(terminalKeyEventPayload(keyEvent({ key: "v", metaKey: true }))).toBeNull();
+    expect(terminalKeyEventPayload(keyEvent({ key: "k", metaKey: true }))).toBeNull();
+    expect(terminalKeyEventPayload(keyEvent({ key: "r", metaKey: true }))).toBeNull();
+    // Meta combined with another modifier (e.g. Cmd+Shift+Backspace, or a
+    // Windows-flag AltGr-adjacent event) stays on the default path.
+    expect(
+      terminalKeyEventPayload(keyEvent({ key: "Backspace", metaKey: true, shiftKey: true })),
+    ).toBeNull();
+    expect(
+      terminalKeyEventPayload(keyEvent({ key: "ArrowLeft", metaKey: true, altKey: true })),
+    ).toBeNull();
+    // Plain, unmodified keys never hit the mapping either.
+    expect(terminalKeyEventPayload(keyEvent({ key: "Backspace" }))).toBeNull();
+  });
+
+  it("leaves plain Enter on xterm's default path", () => {
+    expect(terminalKeyEventPayload(keyEvent({ key: "Enter" }))).toBeNull();
+  });
+
+  it("releases Shift+Enter to xterm during an IME composition", () => {
+    // xterm consults the custom handler BEFORE its CompositionHelper; claiming
+    // the key mid-conversion skips the helper's finalize path and the composed
+    // text is dropped. The payload must be null so xterm runs composition
+    // handling instead of us sending CSI-u bytes to the PTY.
+    expect(
+      terminalKeyEventPayload(keyEvent({ key: "Enter", shiftKey: true, isComposing: true })),
+    ).toBeNull();
+    // The 229 keyCode path (Safari/legacy) cannot be set through the
+    // constructor init dict, so exercise it with a stub.
+    expect(
+      terminalKeyEventPayload({
+        key: "Enter",
+        shiftKey: true,
+        keyCode: 229,
+      } as unknown as KeyboardEvent),
+    ).toBeNull();
+    // Without either composition signal the CSI-u payload still applies.
+    expect(terminalKeyEventPayload(keyEvent({ key: "Enter", shiftKey: true }))).toBe(
+      SHIFT_ENTER_CSI_U,
+    );
+  });
+
+  it("does not override other modified Enter combinations", () => {
+    expect(terminalKeyEventPayload(keyEvent({ key: "Enter", altKey: true }))).toBeNull();
+    expect(terminalKeyEventPayload(keyEvent({ key: "Enter", ctrlKey: true }))).toBeNull();
+    expect(terminalKeyEventPayload(keyEvent({ key: "Enter", metaKey: true }))).toBeNull();
+    expect(
+      terminalKeyEventPayload(keyEvent({ key: "Enter", shiftKey: true, altKey: true })),
+    ).toBeNull();
+  });
+});
+
+describe("isUnexpectedTerminalClose", () => {
+  it("treats transport-shaped close codes as reconnectable", () => {
+    // WHY: 1001/1006/1012/1013 happen TO the connection (proxy restart, dead
+    // TCP on tab thaw, service restart) rather than being a deliberate end, so
+    // a reconnect is appropriate.
+    expect(isUnexpectedTerminalClose(1001)).toBe(true);
+    expect(isUnexpectedTerminalClose(1006)).toBe(true);
+    expect(isUnexpectedTerminalClose(1012)).toBe(true);
+    expect(isUnexpectedTerminalClose(1013)).toBe(true);
+    // 1005 "no status" is the browser's other no-clean-close sentinel
+    // (mirror of 1006); a server redeploy behind an ingress surfaces as
+    // 1005. 1011/1014 are the proxy's server-error / bad-gateway codes
+    // while the backend restarts.
+    expect(isUnexpectedTerminalClose(1005)).toBe(true);
+    expect(isUnexpectedTerminalClose(1011)).toBe(true);
+    expect(isUnexpectedTerminalClose(1014)).toBe(true);
+  });
+
+  it("treats deliberate closes (normal, policy, app 4xxx) as terminal", () => {
+    // WHY: 1000 normal, 1008 policy, and the app's 4xxx codes mean the server
+    // decided the attach should end — reconnecting would loop or resurrect a
+    // terminal the user intentionally left.
+    expect(isUnexpectedTerminalClose(1000)).toBe(false);
+    expect(isUnexpectedTerminalClose(1008)).toBe(false);
+    expect(isUnexpectedTerminalClose(4404)).toBe(false);
+    expect(isUnexpectedTerminalClose(4405)).toBe(false);
+    expect(isUnexpectedTerminalClose(4500)).toBe(false);
+  });
+});
+
+describe("sgrWheelReports", () => {
+  it("encodes wheel-up as button 64 and wheel-down as 65, one report per line", () => {
+    expect(sgrWheelReports(-2, 5, 7)).toBe("\x1b[<64;5;7M\x1b[<64;5;7M");
+    expect(sgrWheelReports(1, 1, 1)).toBe("\x1b[<65;1;1M");
+  });
+
+  it("emits nothing for zero lines", () => {
+    expect(sgrWheelReports(0, 5, 7)).toBe("");
+  });
+});
+
+describe("wheelReportPayload", () => {
+  const sgrModes: WheelMouseState = { mouseTrackingMode: "vt200", sgrEncoding: true };
+  const screen: WheelScreenMetrics = {
+    left: 0,
+    top: 0,
+    cellWidth: 8,
+    cellHeight: 16,
+    cols: 80,
+    rows: 24,
+  };
+
+  /** Count occurrences of an SGR report prefix without a control-char regex. */
+  function countReports(data: string, prefix: string): number {
+    return data.split(prefix).length - 1;
+  }
+
+  function wheelEvent(
+    deltaY: number,
+    over: Partial<Pick<WheelEvent, "deltaMode" | "shiftKey" | "clientX" | "clientY">> = {},
+  ) {
+    return {
+      deltaY,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      shiftKey: false,
+      clientX: 100,
+      clientY: 100,
+      ...over,
+    };
+  }
+
+  it("defers to xterm and resets the carry when mouse tracking is off", () => {
+    // WHY: with no app tracking (a plain shell on the control transport) the
+    // wheel must scroll xterm's native scrollback, and a stale fraction from a
+    // previous tracking-on scroll must not leak into the next one.
+    const result = wheelReportPayload(
+      wheelEvent(-40),
+      { mouseTrackingMode: "none", sgrEncoding: true },
+      screen,
+      0.9,
+    );
+    expect(result).toEqual({ consume: false, data: "", partial: 0 });
+  });
+
+  it("defers to xterm when the program did not request SGR encoding", () => {
+    // WHY: synthesized reports are SGR-formatted; a program tracking the
+    // mouse with the legacy default encoding could not parse them.
+    const result = wheelReportPayload(
+      wheelEvent(-40),
+      { mouseTrackingMode: "vt200", sgrEncoding: false },
+      screen,
+      0,
+    );
+    expect(result.consume).toBe(false);
+  });
+
+  it("defers on shift-wheel, zero delta, and unmeasurable layout, keeping the carry", () => {
+    // WHY: shift-wheel mirrors xterm's built-in escape hatch; deltaY 0 is a
+    // horizontal-only tick; null screen means layout isn't measurable yet. None
+    // of these should destroy accumulated fractional scroll.
+    for (const [ev, scr] of [
+      [wheelEvent(-40, { shiftKey: true }), screen],
+      [wheelEvent(0), screen],
+      [wheelEvent(-40), null],
+    ] as const) {
+      expect(wheelReportPayload(ev, sgrModes, scr, 0.4)).toEqual({
+        consume: false,
+        data: "",
+        partial: 0.4,
+      });
+    }
+  });
+
+  it("accumulates small trackpad deltas across events into whole-line reports", () => {
+    // WHY: this is the macOS-trackpad regression this helper exists for —
+    // xterm's own conversion damps sub-50px deltas to nearly nothing. Ten 4px
+    // ticks over a 16px cell are 2.5 lines and must yield exactly 2 reports,
+    // with the remaining half line carried, and every event consumed so
+    // xterm's damped path never double-fires.
+    let partial = 0;
+    let reports = "";
+    for (let i = 0; i < 10; i++) {
+      const result = wheelReportPayload(wheelEvent(4), sgrModes, screen, partial);
+      expect(result.consume).toBe(true);
+      partial = result.partial;
+      reports += result.data;
+    }
+    expect(countReports(reports, "\x1b[<65")).toBe(2);
+    expect(partial).toBeCloseTo(0.5);
+  });
+
+  it("converts a discrete wheel notch to one report per whole line, carrying the rest", () => {
+    const result = wheelReportPayload(wheelEvent(-120), sgrModes, screen, 0);
+    expect(countReports(result.data, "\x1b[<64")).toBe(7); // 120/16 = 7.5
+    expect(result.partial).toBeCloseTo(-0.5);
+  });
+
+  it("honors line and page delta modes", () => {
+    const line = wheelReportPayload(
+      wheelEvent(3, { deltaMode: WheelEvent.DOM_DELTA_LINE }),
+      sgrModes,
+      screen,
+      0,
+    );
+    expect(countReports(line.data, "\x1b[<65")).toBe(3);
+
+    const page = wheelReportPayload(
+      wheelEvent(1, { deltaMode: WheelEvent.DOM_DELTA_PAGE }),
+      sgrModes,
+      screen,
+      0,
+    );
+    expect(countReports(page.data, "\x1b[<65")).toBe(screen.rows);
+  });
+
+  it("caps the reports for one event and discards the excess", () => {
+    // WHY: the cap bounds the input burst; discarding (not banking) the excess
+    // keeps a pathological delta from continuing to scroll long after the
+    // gesture ended.
+    const result = wheelReportPayload(wheelEvent(16 * 1000), sgrModes, screen, 0);
+    expect(countReports(result.data, "\x1b[<65")).toBe(WHEEL_REPORTS_MAX_PER_EVENT);
+    expect(result.partial).toBe(0);
+  });
+
+  it("places the report at the pointer's cell, clamped to the grid", () => {
+    // clientX 100 / 8px = col 13 (1-based); clientY 100 / 16px = row 7.
+    const at = wheelReportPayload(wheelEvent(16), sgrModes, screen, 0);
+    expect(at.data).toBe("\x1b[<65;13;7M");
+
+    // Pointer outside the grid clamps to the edges instead of emitting
+    // coordinates tmux/the app would reject.
+    const clamped = wheelReportPayload(
+      wheelEvent(16, { clientX: -50, clientY: 99999 }),
+      sgrModes,
+      screen,
+      0,
+    );
+    expect(clamped.data).toBe("\x1b[<65;1;24M");
+  });
+});
+
+describe("touchScrollPayload", () => {
+  const noTracking: WheelMouseState = { mouseTrackingMode: "none", sgrEncoding: false };
+  const sgrModes: WheelMouseState = { mouseTrackingMode: "vt200", sgrEncoding: true };
+  const screen: WheelScreenMetrics = {
+    left: 0,
+    top: 0,
+    cellWidth: 8,
+    cellHeight: 16,
+    cols: 80,
+    rows: 24,
+  };
+
+  function drag(previousY: number, currentY: number, clientX = 100) {
+    return { previousY, currentY, clientX };
+  }
+
+  it("leaves the gesture to the browser when layout is unmeasurable, keeping the carry", () => {
+    // WHY: pre-mount (or jsdom) there is no grid to convert pixels to lines;
+    // consuming the event would swallow the gesture with no effect at all.
+    expect(touchScrollPayload(drag(100, 50), noTracking, null, 0.4)).toEqual({
+      consume: false,
+      lines: 0,
+      data: "",
+      partial: 0.4,
+    });
+  });
+
+  it("scrolls xterm's scrollback when no app is tracking the mouse", () => {
+    // WHY: this is the reported bug's exact shape — a plain shell on a phone.
+    // Dragging the finger DOWN 64px over 16px cells reveals 4 older lines:
+    // negative lines (scrollLines scrolls up for negative amounts), no reports.
+    const result = touchScrollPayload(drag(100, 164), noTracking, screen, 0);
+    expect(result).toEqual({ consume: true, lines: -4, data: "", partial: 0 });
+  });
+
+  it("accumulates small drag steps across moves into whole lines", () => {
+    // WHY: touchmove fires with tiny deltas; without a carry a slow drag
+    // would floor every step to zero lines and never move at all.
+    let partial = 0;
+    let lines = 0;
+    for (let i = 0; i < 10; i++) {
+      const result = touchScrollPayload(
+        drag(100 + i * 4, 100 + (i + 1) * 4),
+        noTracking,
+        screen,
+        partial,
+      );
+      expect(result.consume).toBe(true);
+      partial = result.partial;
+      lines += result.lines;
+    }
+    // 40px total / 16px cells = 2.5 lines: 2 whole lines back, 0.5 carried.
+    expect(lines).toBe(-2);
+    expect(partial).toBeCloseTo(-0.5);
+  });
+
+  it("synthesizes SGR wheel reports at the touched cell when the app tracks the mouse", () => {
+    // WHY: a mouse-tracking TUI (e.g. Claude Code) owns scrolling; the drag
+    // must reach it as wheel reports, exactly like the wheel path. A downward
+    // 32px drag is 2 lines of "older" — wheel-up, button 64 — placed at the
+    // finger's cell (x 100/8 = col 13, y 164/16 = row 11, 1-based).
+    const result = touchScrollPayload(drag(132, 164), sgrModes, screen, 0);
+    expect(result.lines).toBe(0);
+    expect(result.data).toBe("\x1b[<64;13;11M".repeat(2));
+    expect(result.partial).toBe(0);
+  });
+
+  it("caps per-step reports and discards the excess on the tracking path", () => {
+    // WHY: same flood guard as the wheel path — a giant drag step must not
+    // bank hundreds of lines that keep scrolling after the finger stops.
+    const result = touchScrollPayload(drag(16 * 1000, 0), sgrModes, screen, 0);
+    expect(result.data.split("\x1b[<65").length - 1).toBe(WHEEL_REPORTS_MAX_PER_EVENT);
+    expect(result.partial).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TerminalSession class — wired up against a fake WebSocket + ResizeObserver.
+// The real xterm Terminal runs (it already does in jsdom for loadWebglRenderer
+// above), but the WebSocket and ResizeObserver globals are stubbed so the
+// constructor can complete and we can drive its event handlers directly.
+// ---------------------------------------------------------------------------
+
+class FakeWebSocket {
+  static OPEN = 1;
+  static CLOSED = 3;
+  static instances: FakeWebSocket[] = [];
+  readyState = 0;
+  binaryType = "blob";
+  sent: (string | Uint8Array)[] = [];
+  closed = false;
+  private listeners: Record<string, ((ev: unknown) => void)[]> = {};
+  url: string;
+
+  constructor(url: string) {
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+  }
+
+  addEventListener(type: string, fn: (ev: unknown) => void) {
+    (this.listeners[type] ??= []).push(fn);
+  }
+
+  send(data: string | Uint8Array) {
+    this.sent.push(data);
+  }
+
+  close() {
+    this.closed = true;
+    this.readyState = FakeWebSocket.CLOSED;
+  }
+
+  // Test helpers to drive the handlers the session registers.
+  emit(type: string, ev: unknown) {
+    for (const fn of this.listeners[type] ?? []) fn(ev);
+  }
+  open() {
+    this.readyState = FakeWebSocket.OPEN;
+    this.emit("open", {});
+  }
+}
+
+class FakeResizeObserver {
+  static instances: FakeResizeObserver[] = [];
+  disconnected = false;
+  observed: Element[] = [];
+  cb: () => void;
+  constructor(cb: () => void) {
+    this.cb = cb;
+    FakeResizeObserver.instances.push(this);
+  }
+  observe(el: Element) {
+    this.observed.push(el);
+  }
+  disconnect() {
+    this.disconnected = true;
+  }
+}
+
+describe("TerminalSession", () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    FakeResizeObserver.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function makeSession(
+    onActivity?: () => void,
+    onInput?: () => void,
+    clipboardEnabled = true,
+    onClipboardRequest?: (text: string) => void,
+    focusOnConnect = true,
+    adaptCodexPalette = false,
+  ) {
+    const states: ConnectionState[] = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const session = new TerminalSession(
+      container,
+      "ws://localhost/attach",
+      (s) => states.push(s),
+      false,
+      onActivity,
+      onInput,
+      clipboardEnabled,
+      onClipboardRequest,
+      focusOnConnect,
+      adaptCodexPalette,
+    );
+    return { session, states, container, socket: FakeWebSocket.instances.at(-1)! };
+  }
+
+  it("reports 'connected' and sends an initial resize on socket open", () => {
+    // WHY: the open handler must push a resize frame before the user sees the
+    // default 80x24, then surface kind:"connected" to React. readyState is
+    // OPEN by the time sendResize runs, so a JSON resize control frame is sent.
+    const { states, socket, session } = makeSession();
+
+    socket.open();
+
+    expect(states.at(-1)).toEqual({ kind: "connected" });
+    const resizeFrame = socket.sent.find(
+      (m) => typeof m === "string" && m.includes('"type":"resize"'),
+    );
+    expect(resizeFrame).toBeDefined();
+    session.dispose();
+  });
+
+  it("enables OSC 8 file links while keeping activation in the app handler", () => {
+    const { session } = makeSession();
+    const term = (session as unknown as { term: Terminal }).term;
+
+    expect(term.options.linkHandler?.allowNonHttpProtocols).toBe(true);
+    expect(term.options.linkHandler?.activate).toBeTypeOf("function");
+    session.dispose();
+  });
+
+  it("grabs keyboard focus on open when focusOnConnect is set", () => {
+    // WHY: a foreground surface should claim the keyboard as it comes up.
+    const { socket, session } = makeSession();
+    const term = (session as unknown as { term: Terminal }).term;
+    const focusSpy = vi.spyOn(term, "focus");
+
+    socket.open();
+
+    expect(focusSpy).toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it.each([false, true])(
+    "updates cached Codex input and scrollback in both theme directions (starts dark: %s)",
+    async (startsDark) => {
+      const { socket, session } = makeSession(undefined, undefined, true, undefined, true, true);
+      const term = (session as unknown as { term: Terminal }).term;
+      session.setTheme(startsDark);
+      socket.open();
+      const bytes = new TextEncoder().encode(
+        "\x1b[48;2;244;244;244mhistory\x1b[0m\r\n" +
+          "output\r\n".repeat(30) +
+          "\x1b[48;2;30;30;30munsent input\x1b[0m",
+      );
+      const data = new ArrayBuffer(bytes.length);
+      new Uint8Array(data).set(bytes);
+      socket.emit("message", { data });
+      await new Promise<void>((resolve) => {
+        term.write("", resolve);
+      });
+      const writes = vi.spyOn(term, "write");
+      const frames = [...socket.sent];
+      for (const isDark of [!startsDark, startsDark, !startsDark]) {
+        session.setTheme(isDark);
+        expect(term.options.theme?.extendedAnsi?.[239]).toBe(isDark ? "#2f3132" : "#f4f4f4");
+        expect(term.buffer.active.getLine(0)?.getCell(0)?.isBgPalette()).toBe(true);
+        expect(term.buffer.active.getLine(0)?.getCell(0)?.getBgColor()).toBe(255);
+        expect(term.buffer.active.getLine(0)?.translateToString(true)).toBe("history");
+        const input = term.buffer.active.getLine(
+          term.buffer.active.baseY + term.buffer.active.cursorY,
+        );
+        expect(input?.translateToString(true)).toBe("unsent input");
+        expect(input?.getCell(0)?.getBgColor()).toBe(255);
+        expect(socket.sent).toEqual(frames);
+        expect(socket.closed).toBe(false);
+      }
+      expect(writes).not.toHaveBeenCalled();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      session.dispose();
+    },
+  );
+
+  it.each([
+    {
+      name: "light truecolor",
+      startsDark: false,
+      stripe: "48;2;244;244;244",
+      selected: "48;2;224;224;224",
+      stripeIndex: 255,
+      selectedIndex: 254,
+    },
+    {
+      name: "light 256-color",
+      startsDark: false,
+      stripe: "48;5;255",
+      selected: "48;5;254",
+      stripeIndex: 255,
+      selectedIndex: 254,
+    },
+    {
+      name: "dark truecolor",
+      startsDark: true,
+      stripe: "48;2;31;33;35",
+      selected: "48;2;47;49;50",
+      stripeIndex: 253,
+      selectedIndex: 255,
+    },
+    {
+      name: "dark 256-color",
+      startsDark: true,
+      stripe: "48;5;234",
+      selected: "48;5;236",
+      stripeIndex: 253,
+      selectedIndex: 255,
+    },
+  ])("recolors cached $name picker rows without merging their shades", async (fixture) => {
+    const { socket, session } = makeSession(undefined, undefined, true, undefined, true, true);
+    const term = (session as unknown as { term: Terminal }).term;
+    session.setTheme(fixture.startsDark);
+    socket.open();
+    const bytes = new TextEncoder().encode(
+      `\x1b[${fixture.stripe}mother session\x1b[0m\r\n` +
+        `\x1b[${fixture.selected}mselected session\x1b[0m`,
+    );
+    const data = new ArrayBuffer(bytes.length);
+    new Uint8Array(data).set(bytes);
+    socket.emit("message", { data });
+    await new Promise<void>((resolve) => {
+      term.write("", resolve);
+    });
+    const writes = vi.spyOn(term, "write");
+    const frames = [...socket.sent];
+    const expectedColors: Record<number, { light: string; dark: string }> = {
+      253: { light: "#fafafa", dark: "#1f2123" },
+      254: { light: "#e0e0e0", dark: "#464849" },
+      255: { light: "#f4f4f4", dark: "#2f3132" },
+    };
+    for (const isDark of [fixture.startsDark, !fixture.startsDark, fixture.startsDark]) {
+      session.setTheme(isDark);
+      const stripe = term.buffer.active.getLine(0);
+      const selected = term.buffer.active.getLine(1);
+      expect(stripe?.translateToString(true)).toBe("other session");
+      expect(selected?.translateToString(true)).toBe("selected session");
+      expect(stripe?.getCell(0)?.isBgPalette()).toBe(true);
+      expect(selected?.getCell(0)?.isBgPalette()).toBe(true);
+      expect(stripe?.getCell(0)?.getBgColor()).toBe(fixture.stripeIndex);
+      expect(selected?.getCell(0)?.getBgColor()).toBe(fixture.selectedIndex);
+      const stripeColor = term.options.theme?.extendedAnsi?.[fixture.stripeIndex - 16];
+      const selectedColor = term.options.theme?.extendedAnsi?.[fixture.selectedIndex - 16];
+      expect(stripeColor).toBe(expectedColors[fixture.stripeIndex][isDark ? "dark" : "light"]);
+      expect(selectedColor).toBe(expectedColors[fixture.selectedIndex][isDark ? "dark" : "light"]);
+      expect(stripeColor).not.toBe(selectedColor);
+    }
+    expect(writes).not.toHaveBeenCalled();
+    expect(socket.sent).toEqual(frames);
+    expect(socket.closed).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    session.dispose();
+  });
+
+  it("leaves non-Codex terminal colors unchanged", async () => {
+    const { socket, session } = makeSession();
+    const term = (session as unknown as { term: Terminal }).term;
+    const bytes = new TextEncoder().encode("\x1b[48;2;244;244;244mtext");
+    const data = new ArrayBuffer(bytes.length);
+    new Uint8Array(data).set(bytes);
+    socket.emit("message", { data });
+    await new Promise<void>((resolve) => {
+      term.write("", resolve);
+    });
+    session.setTheme(true);
+    expect(term.buffer.active.getLine(0)?.getCell(0)?.isBgRGB()).toBe(true);
+    expect(term.buffer.active.getLine(0)?.getCell(0)?.getBgColor()).toBe(0xf4f4f4);
+    expect(term.options.theme?.extendedAnsi).toBeUndefined();
+    session.dispose();
+  });
+
+  it("does not grab focus on open when focusOnConnect is false", () => {
+    // WHY: the workspace-rail shell connects in the background on a session
+    // switch — it must not yank focus off the chat composer.
+    const { socket, session } = makeSession(undefined, undefined, true, undefined, false);
+    const term = (session as unknown as { term: Terminal }).term;
+    const focusSpy = vi.spyOn(term, "focus");
+
+    socket.open();
+
+    expect(focusSpy).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("does not re-send a resize when the fitted size is unchanged", () => {
+    // WHY: the WS-open handler and the ResizeObserver both drive sendResize on
+    // mount, and jsdom's fit() yields a stable size, so without deduping the
+    // control transport would receive a redundant refresh-client -C. Drive the
+    // observer callback (the real re-fit path) after open and assert exactly
+    // one resize frame total.
+    const { socket, session } = makeSession();
+    const observer = FakeResizeObserver.instances[0];
+
+    socket.open(); // first (and only distinct) resize
+    observer.cb(); // same size → must be deduped
+    observer.cb();
+
+    const resizeFrames = socket.sent.filter(
+      (m) => typeof m === "string" && m.includes('"type":"resize"'),
+    );
+    expect(resizeFrames).toHaveLength(1);
+    session.dispose();
+  });
+
+  it("surfaces close code + reason and error transitions", () => {
+    // WHY: the closed variant carries the WS code so consumers can tell a
+    // deliberate close from a transport drop; the error handler maps to
+    // kind:"error".
+    const { states, socket, session } = makeSession();
+
+    socket.emit("close", { reason: "", code: 1006 });
+    expect(states.at(-1)).toEqual({ kind: "closed", reason: "code 1006", code: 1006 });
+
+    socket.emit("error", {});
+    expect(states.at(-1)).toEqual({ kind: "error" });
+    session.dispose();
+  });
+
+  it("scrolls the scrollback when a finger drags down over the terminal", () => {
+    // WHY: xterm has no touch handling of its own, so on a phone the
+    // scrollback used to be unreachable by touch — the view stayed pinned to
+    // the live bottom. The session must translate a one-finger downward drag
+    // into scrollLines and claim the gesture from the browser.
+    const { session, container } = makeSession();
+    // jsdom has no layout, so feed the grid geometry the handler measures.
+    (session as unknown as { screenMetrics: () => WheelScreenMetrics }).screenMetrics = () => ({
+      left: 0,
+      top: 0,
+      cellWidth: 8,
+      cellHeight: 16,
+      cols: 80,
+      rows: 24,
+    });
+    const term = (session as unknown as { term: Terminal }).term;
+    const scrollSpy = vi.spyOn(term, "scrollLines");
+
+    const touchEvent = (type: string, points: { clientX: number; clientY: number }[]) => {
+      // jsdom lacks a TouchEvent constructor; a plain Event with a touches
+      // list exercises the same listener path.
+      const ev = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "touches", { value: points });
+      container.dispatchEvent(ev);
+      return ev;
+    };
+
+    touchEvent("touchstart", [{ clientX: 100, clientY: 100 }]);
+    // Finger moves down 64px (past the slop gate) over 16px cells = 4 lines
+    // of older content, including the pre-slop travel.
+    const move = touchEvent("touchmove", [{ clientX: 100, clientY: 164 }]);
+
+    expect(scrollSpy).toHaveBeenCalledWith(-4);
+    expect(move.defaultPrevented).toBe(true);
+
+    // Lifting the finger resets the drag: a later move without a start is
+    // ignored rather than jumping the view.
+    touchEvent("touchend", []);
+    scrollSpy.mockClear();
+    touchEvent("touchmove", [{ clientX: 100, clientY: 300 }]);
+    expect(scrollSpy).not.toHaveBeenCalled();
+
+    // Sub-slop jitter (a tap or the start of a long-press) stays with the
+    // browser: nothing scrolls and the default isn't prevented.
+    touchEvent("touchstart", [{ clientX: 100, clientY: 100 }]);
+    const jitter = touchEvent("touchmove", [{ clientX: 102, clientY: 103 }]);
+    expect(scrollSpy).not.toHaveBeenCalled();
+    expect(jitter.defaultPrevented).toBe(false);
+    touchEvent("touchend", []);
+
+    // A dominantly horizontal drag is abandoned to the browser — even when
+    // the finger later moves vertically in the same gesture.
+    touchEvent("touchstart", [{ clientX: 100, clientY: 100 }]);
+    touchEvent("touchmove", [{ clientX: 160, clientY: 110 }]);
+    touchEvent("touchmove", [{ clientX: 160, clientY: 200 }]);
+    expect(scrollSpy).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("writes inbound binary frames through xterm's ordered queue and fires onActivity", () => {
+    // WHY: ArrayBuffer message frames are raw pane bytes — they must reach the
+    // terminal through xterm's ordered public write queue and trigger the
+    // best-effort activity signal. Bypassing that queue can replay already-
+    // parsed ANSI chunks and corrupt cursor state.
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
+    const onActivity = vi.fn();
+    const { socket, session } = makeSession(onActivity);
+    const term = (session as unknown as { term: Terminal }).term;
+    const writeSpy = vi.spyOn(term, "write");
+
+    // Build the buffer from the global ArrayBuffer the source's
+    // `instanceof ArrayBuffer` check sees — a TextEncoder's buffer comes from
+    // Node's realm and fails that check under jsdom.
+    const data = new ArrayBuffer(5);
+    new Uint8Array(data).set([104, 101, 108, 108, 111]); // "hello"
+    socket.emit("message", { data });
+    expect(writeSpy).toHaveBeenCalledWith(expect.any(Uint8Array));
+    expect(onActivity).toHaveBeenCalledTimes(1);
+
+    socket.emit("message", { data: "text frame" });
+    expect(onActivity).toHaveBeenCalledTimes(1); // unchanged — text ignored
+    session.dispose();
+  });
+
+  it("does not trust raw pane OSC 52 clipboard writes", async () => {
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
+    const onClipboardRequest = vi.fn();
+    const { session } = makeSession(undefined, undefined, true, onClipboardRequest);
+    (session as unknown as { lastUserInputAt: number }).lastUserInputAt = 9000;
+    const term = (session as unknown as { term: Terminal }).term;
+
+    await new Promise<void>((resolve) => {
+      term.write(`\x1b]52;;${btoa("pane output")}\x07`, resolve);
+    });
+
+    expect(onClipboardRequest).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it.each([true, false])(
+    "routes browser selections through consent without a recent-input requirement (bridge enabled: %s)",
+    (clipboardEnabled) => {
+      const onClipboardRequest = vi.fn();
+      const { container, session } = makeSession(
+        undefined,
+        undefined,
+        clipboardEnabled,
+        onClipboardRequest,
+      );
+      const term = (session as unknown as { term: Terminal }).term;
+      vi.spyOn(term, "getSelection").mockReturnValue("selected text");
+      const setData = vi.fn();
+      const copy = new Event("copy", { bubbles: true, cancelable: true });
+      Object.defineProperty(copy, "clipboardData", { value: { setData } });
+      const textarea = container.querySelector("textarea")!;
+      const bypassConsent = vi.fn();
+      textarea.addEventListener("copy", bypassConsent);
+
+      textarea.dispatchEvent(copy);
+
+      expect(copy.defaultPrevented).toBe(true);
+      expect(bypassConsent).not.toHaveBeenCalled();
+      expect(setData).not.toHaveBeenCalled();
+      expect(onClipboardRequest).toHaveBeenCalledWith("selected text", copy);
+      session.dispose();
+    },
+  );
+
+  it("does not copy a browser selection without a consent handler", () => {
+    const { container, session } = makeSession();
+    const term = (session as unknown as { term: Terminal }).term;
+    vi.spyOn(term, "getSelection").mockReturnValue("selected text");
+    const setData = vi.fn();
+    const copy = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copy, "clipboardData", { value: { setData } });
+
+    container.querySelector("textarea")!.dispatchEvent(copy);
+
+    expect(copy.defaultPrevented).toBe(true);
+    expect(setData).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("leaves copying outside a terminal selection alone", () => {
+    const onClipboardRequest = vi.fn();
+    const { container, session } = makeSession(undefined, undefined, true, onClipboardRequest);
+    const copy = new Event("copy", { bubbles: true, cancelable: true });
+
+    container.dispatchEvent(copy);
+
+    expect(copy.defaultPrevented).toBe(false);
+    expect(onClipboardRequest).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("forwards validated clipboard frames only after recent input", () => {
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
+    const onClipboardRequest = vi.fn();
+    const { socket, session } = makeSession(undefined, undefined, true, onClipboardRequest);
+    (session as unknown as { lastUserInputAt: number }).lastUserInputAt = 9000;
+    const encoded = btoa("copied text");
+
+    socket.emit("message", {
+      data: JSON.stringify({ type: "clipboard-write", encoding: "base64", data: encoded }),
+    });
+    expect(onClipboardRequest).toHaveBeenCalledWith("copied text");
+
+    (session as unknown as { lastUserInputAt: number }).lastUserInputAt = 1000;
+    socket.emit("message", {
+      data: JSON.stringify({ type: "clipboard-write", encoding: "base64", data: encoded }),
+    });
+    socket.emit("message", { data: '{"type":"unknown"}' });
+    expect(onClipboardRequest).toHaveBeenCalledTimes(1);
+    session.dispose();
+  });
+
+  it("does not forward clipboard frames when the surface is disabled", () => {
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
+    const onClipboardRequest = vi.fn();
+    const { socket, session } = makeSession(undefined, undefined, false, onClipboardRequest);
+    (session as unknown as { lastUserInputAt: number }).lastUserInputAt = 9000;
+    (session as unknown as { term: Terminal }).term.focus();
+
+    socket.emit("message", {
+      data: JSON.stringify({
+        type: "clipboard-write",
+        encoding: "base64",
+        data: btoa("secret"),
+      }),
+    });
+    expect(onClipboardRequest).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("setTheme swaps the terminal theme without reconnecting", () => {
+    // WHY: theme changes must not tear down the live WebSocket; the socket
+    // stays the same instance after setTheme(true).
+    const { socket, session } = makeSession();
+    const before = socket;
+    session.setTheme(true);
+    expect(socket).toBe(before);
+    expect(socket.closed).toBe(false);
+    session.dispose();
+  });
+
+  it("setFont re-fonts + refits in place, tolerating a down socket, no reconnect", () => {
+    // WHY: a code-font change (Settings → Appearance) must re-font the LIVE
+    // terminal — mutating options in place like setTheme, never tearing down the
+    // WebSocket (xterm is a fixed-pixel widget that can't follow a CSS variable).
+    const { socket, session } = makeSession();
+    const { term } = session as unknown as { term: Terminal };
+
+    // Socket-down (pre-open): setFont still applies the options and must not
+    // throw or send — sendResize no-ops until the WS opens.
+    session.setFont({ sizePx: 16, family: "", weight: 500 });
+    expect(term.options.fontSize).toBe(16);
+    expect(term.options.fontWeight).toBe(500);
+    expect(socket.sent).toHaveLength(0);
+
+    // Once open, setFont refits the grid (sendResize) so the new glyph cell size
+    // reflows cols×rows, and applies a custom family with the mono fallback
+    // appended (an uninstalled name degrades to mono, not a serif).
+    socket.open();
+    const before = socket;
+    const sendResize = vi.spyOn(session as unknown as { sendResize: () => void }, "sendResize");
+    session.setFont({ sizePx: 18, family: "Fira Code", weight: 500 });
+    expect(sendResize).toHaveBeenCalledTimes(1);
+    expect(term.options.fontSize).toBe(18);
+    expect(term.options.fontFamily).toContain("Fira Code");
+    expect(term.options.fontWeight).toBe(500);
+    expect(term.options.fontWeightBold).toBe(800);
+    // Same socket instance, still open — a re-font never reconnects.
+    expect(socket).toBe(before);
+    expect(socket.closed).toBe(false);
+    session.dispose();
+  });
+
+  it("dispose is idempotent and tears down observer + socket once", () => {
+    // WHY: the view disposes explicitly on every re-dial and a future React
+    // upgrade would call the ref cleanup again — a second dispose must be a
+    // safe no-op, not a double close.
+    const { socket, session } = makeSession();
+    const observer = FakeResizeObserver.instances[0];
+
+    session.dispose();
+    expect(socket.closed).toBe(true);
+    expect(observer.disconnected).toBe(true);
+
+    // Second call: no throw, socket already closed.
+    socket.closed = false; // prove the second close() isn't invoked
+    session.dispose();
+    expect(socket.closed).toBe(false);
+  });
+
+  it("observes the container for resize", () => {
+    // WHY: layout changes (window resize, font load) must propagate a resize
+    // frame, so the session must register a ResizeObserver on its container.
+    const { container, session } = makeSession();
+    const observer = FakeResizeObserver.instances[0];
+    expect(observer.observed).toContain(container);
+    session.dispose();
+  });
+});

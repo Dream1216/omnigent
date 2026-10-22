@@ -1,0 +1,888 @@
+/**
+ * User identity discovery and request header injection.
+ *
+ * On app load, calls ``GET /v1/me`` to discover the current user.
+ * All subsequent API calls use ``authenticatedFetch`` which injects
+ * the ``X-Forwarded-Email`` header so session routes know who's
+ * making the request.
+ *
+ * When OIDC or accounts auth is active, the server returns 401 with
+ * a ``login_url`` if the user is unauthenticated. The frontend
+ * redirects to that URL — for accounts mode this is the SPA route
+ * ``/login`` (LoginPage), for OIDC it's the server-side
+ * ``/auth/login`` redirect. In header mode the server reports no
+ * ``login_url`` (single-user, no login), so 401s are never turned
+ * into a login redirect.
+ */
+
+import { stripBasePath, withBasePath } from "./basePath";
+import { getCachedServerInfo } from "./capabilities";
+import {
+  getOmnigentHostConfig,
+  hostFetch,
+  isDatabricksWorkspace,
+  isHostRoutingEnabled,
+} from "./host";
+import {
+  clearHostKeyless,
+  getSessionHost,
+  isHostKeyless,
+  markHostKeyless,
+  modalHostId,
+} from "@/lib/sessionHost";
+
+// Single-user sentinel from `GET /v1/me` (server's RESERVED_USER_LOCAL);
+// not a real actor, so never used as an author label.
+const RESERVED_USER_LOCAL = "local";
+
+// The SaaS password/OIDC login page stores the double-submit token here before
+// navigating into the main app. The session cookie is HttpOnly, so unsafe
+// browser requests must echo this companion token in a header for the SaaS
+// middleware to accept them. localStorage mirrors the token because the cookie
+// is browser-wide while sessionStorage is tab-local: without the mirror, a new
+// tab is authenticated for reads but its first mutation fails with 401.
+const SAAS_CSRF_STORAGE_KEY = "omnigent.saas.csrf";
+const SAAS_CSRF_HEADER = "X-CSRF-Token";
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+let currentUserId: string | null = null;
+
+// Replica-routing header, used when the server shards replicas by host. A
+// host's control tunnel and its runners' tunnels register on the same replica,
+// keyed by host_id, so a request scoped to a host (or a session running on one)
+// must carry that host_id to reach the replica holding the tunnel.
+const SLICE_KEY_HEADER = "X-Databricks-Omnigent-Slice-Key";
+
+// The request is valid but reached a replica without its host tunnel.
+// Unlike runner_unavailable, wrong_replica can recover by re-addressing.
+const WRONG_REPLICA_CODE = "wrong_replica";
+
+/**
+ * Classify a request URL for slice-key routing. A host-scoped request must key
+ * by its OWN host (or send nothing) — never by the modal fallback, which would
+ * route it to a guessed replica. Returns a discriminated result so the caller
+ * can tell the two null-looking cases apart:
+ *
+ * - ``/v1/hosts/{host_id}/...`` → ``{scoped: true, hostId}`` from the path.
+ * - ``/v1/sessions/{session_id}/...`` → ``{scoped: true, hostId}`` from
+ *   {@link getSessionHost}; ``hostId`` is ``null`` when the session hasn't been
+ *   loaded yet → send NO key (the modal host would be a wrong guess for a
+ *   specific session; a keyless miss re-addresses instead).
+ * - ``/v1/skills`` → the query's ``host_id`` or the host for ``session_id``.
+ * - everything else (session lists, ``/v1/sessions/updates``, ``/health``) is a
+ *   cross-host / DB-backed read → ``{scoped: false}``, where the modal host is a
+ *   legitimate cache-affinity hint.
+ *
+ * The host-scoped families are an ALLOWLIST of what exists today (verified:
+ * ``/v1/sessions/{id}/agent`` is under the sessions prefix, and
+ * ``/v1/runners/{id}`` isn't called from the client). A new host-scoped route
+ * must be added here to key by its own host; the regression test pins the known
+ * families so a matcher change is a conscious edit.
+ */
+type UrlHostScope = { scoped: true; hostId: string | null } | { scoped: false };
+
+function skillsParamsForUrl(url: string): URLSearchParams | null {
+  const match = url.match(/\/v1\/skills(?:\?([^#]*))?(?:#.*)?$/);
+  return match ? new URLSearchParams(match[1] ?? "") : null;
+}
+
+function hostScopeForUrl(url: string): UrlHostScope {
+  const skills = skillsParamsForUrl(url);
+  if (skills) {
+    const sessionId = skills.get("session_id");
+    return {
+      scoped: true,
+      hostId: sessionId ? getSessionHost(sessionId) : skills.get("host_id") || null,
+    };
+  }
+  const hostMatch = url.match(/\/v1\/hosts\/([^/?#]+)/);
+  if (hostMatch) return { scoped: true, hostId: decodeURIComponent(hostMatch[1]) };
+  const sessionMatch = url.match(/\/v1\/sessions\/([^/?#]+)/);
+  if (sessionMatch)
+    return { scoped: true, hostId: getSessionHost(decodeURIComponent(sessionMatch[1])) };
+  return { scoped: false };
+}
+
+// ── Session host-resolve chokepoint ─────────────────────────────────────────
+//
+// A session's runner tunnel lives on the replica keyed by its host_id, so a
+// session-scoped request must carry that key on the FIRST attempt. The key comes
+// from the session→host map (`getSessionHost`), which is seeded when a session
+// object is parsed. But on a fresh page load, ChatPage's resource hooks fire
+// their requests (`/resources/terminals`, `/resources/environments/...`,
+// `/items`, ...) concurrently with — and often before — the session snapshot
+// that would seed the map. Those early requests would read a null host and fall
+// back to the modal host (a best-effort guess = possibly the WRONG host) → land
+// on the wrong replica → 400 wrong_replica → keyless re-address. That wastes a
+// round-trip and, worse, conscripts the keyless fallback (whose real job is the
+// genuine wrong-replica case: an old CLI that dialed its tunnel keyless) to paper
+// over "we hadn't learned the host yet."
+//
+// So before a session SUB-path request whose host is still unknown, bootstrap the
+// map from a host-AGNOSTIC session snapshot (GET /v1/sessions/{id}, which reads
+// the conversation store and returns 200 on any replica), THEN let the request
+// key correctly. This generalizes the same host-first-resolve `bindStream` already
+// does for the SSE stream (store/chatStore.ts). The resolver is injected (not
+// imported) so identity.ts keeps no import dependency on sessionsApi.ts, which
+// imports `authenticatedFetch` from here — importing back would be a cycle.
+
+/** Options for resolving a session's routing host. */
+export interface SessionHostResolveOptions {
+  /** Refresh a hostless snapshot after a managed host has been assigned. */
+  force?: boolean;
+}
+
+type SessionHostResolver = (
+  sessionId: string,
+  options?: SessionHostResolveOptions,
+) => Promise<void>;
+let _sessionHostResolver: SessionHostResolver | null = null;
+
+/**
+ * Register the bootstrap host resolver (a thin wrapper over `getSessionSlim`,
+ * wired at the app entry — main.tsx / embed.tsx — NOT in a data module, so unit
+ * tests that partially-mock this module needn't stub the export). Null (the
+ * default) disables the gate, so a caller that never registers — or any
+ * pre-registration request — simply keeps the prior modal-fallback +
+ * keyless-retry behavior.
+ */
+export function setSessionHostResolver(resolver: SessionHostResolver | null): void {
+  _sessionHostResolver = resolver;
+}
+
+// Concurrent-dedup: the ~4 session-scoped requests ChatPage fires in one tick
+// share ONE in-flight resolve (cleared on settle) rather than each firing a
+// snapshot.
+const _hostResolveInFlight = new Map<string, Promise<void>>();
+const _hostRefreshInFlight = new Map<string, Promise<void>>();
+// Avoid repeated lookups for hostless sessions. A managed launch can assign
+// its host later, so an explicit routing miss may force a fresh lookup.
+const _hostResolveAttempted = new Set<string>();
+
+// A session SUB-path: /v1/sessions/{id}/<something>. The `\/[^?#]` after the id
+// (a slash then a real path char) is what separates a sub-path from the BARE
+// snapshot the bootstrap itself GETs — /v1/sessions/{id} and
+// /v1/sessions/{id}?query do NOT match, so the resolver can't recurse into
+// itself. The list (/v1/sessions?query) and create (POST /v1/sessions) have no
+// /{id} and also don't match.
+const SESSION_SUBPATH_RE = /\/v1\/sessions\/([^/?#]+)\/[^?#]/;
+
+/**
+ * Bootstrap the session→host map for one session id so its host-scoped traffic
+ * keys correctly on the first attempt. Returns the in-flight resolve to await,
+ * or `null` when there's nothing to do — callers only await a non-null result.
+ *
+ * Normal lookups require an embedded fetcher or OSS host routing and run once
+ * per session/page. A routing miss may force a fresh hostless lookup, including
+ * workspace dev mode. Known hosts are reused; resolver failures are ignored.
+ *
+ * Concurrent callers in one tick share ONE resolve: the first creates the
+ * promise synchronously through the `.set()`, the rest read and await it. Both
+ * the HTTP chokepoint ({@link beginSessionHostResolve}) and the terminal-attach
+ * WS route through here, so a terminal that mounts alongside its first HTTP
+ * request joins that request's resolve rather than firing a second snapshot.
+ */
+export function resolveSessionHost(
+  sessionId: string,
+  options: SessionHostResolveOptions = {},
+): Promise<void> | null {
+  const canResolve =
+    getOmnigentHostConfig().fetcher != null ||
+    (isDatabricksWorkspace() ? options.force === true : isHostRoutingEnabled());
+  if (_sessionHostResolver === null || !canResolve) return null;
+  if (getSessionHost(sessionId) !== null) return null;
+  const refresh = _hostRefreshInFlight.get(sessionId);
+  if (refresh !== undefined) return refresh;
+  if (!options.force && _hostResolveAttempted.has(sessionId)) return null;
+  const pending = options.force ? _hostRefreshInFlight : _hostResolveInFlight;
+  let inFlight = pending.get(sessionId);
+  if (inFlight === undefined) {
+    const resolver = _sessionHostResolver;
+    // A pre-provisioning lookup may still be running; finish it before forcing
+    // a fresh read, while concurrent routing misses share this refresh.
+    const lookup = options.force
+      ? Promise.resolve(_hostResolveInFlight.get(sessionId)).then(() =>
+          resolver(sessionId, { force: true }),
+        )
+      : resolver(sessionId);
+    inFlight = lookup
+      .then(() => {
+        _hostResolveAttempted.add(sessionId);
+      })
+      .catch(() => {
+        // Best-effort — leave the map unseeded and fall through to modal/keyless.
+        // Keep managed lookups one-shot; OSS retries on the next request.
+        if (isDatabricksWorkspace()) {
+          _hostResolveAttempted.add(sessionId);
+        }
+      })
+      .finally(() => {
+        pending.delete(sessionId);
+      });
+    pending.set(sessionId, inFlight);
+  }
+  return inFlight;
+}
+
+function sessionIdForHostResolve(url: string): string | null {
+  const skillsSessionId = skillsParamsForUrl(url)?.get("session_id");
+  if (skillsSessionId) return skillsSessionId;
+  const match = url.match(SESSION_SUBPATH_RE);
+  return match === null ? null : decodeURIComponent(match[1]);
+}
+
+/**
+ * Before a session sub-path request whose host is unknown, bootstrap the
+ * session→host map so the key stamps correctly on the first attempt. Returns
+ * the in-flight resolve to await, or `null` when there's nothing to do — the
+ * caller only awaits a non-null result, so the common no-op path adds NO
+ * microtask hop (a fetch still dispatches synchronously, as before the gate).
+ */
+function beginSessionHostResolve(url: string): Promise<void> | null {
+  const sessionId = sessionIdForHostResolve(url);
+  return sessionId === null ? null : resolveSessionHost(sessionId);
+}
+
+// Requests whose target host lives in a JSON body, not the URL, so
+// {@link hostScopeForUrl} can't see it: the session create (POST /v1/sessions)
+// and the host-mediated local import (POST /v1/imports/local[/stream]).
+const BODY_HOST_KEYED_RE = /\/v1\/(?:sessions(?:\?|$)|imports\/local(?:[/?]|$))/;
+// A managed fork keys like a managed create: its launch must run where its own
+// new host connects, never on the source session's replica.
+const FORK_RE = /\/v1\/sessions\/[^/?#]+\/fork(?:\?|$)/;
+
+function isManagedForkRequest(url: string, body: BodyInit | null | undefined): boolean {
+  if (typeof body !== "string" || !FORK_RE.test(url)) return false;
+  try {
+    return (JSON.parse(body) as { host_type?: unknown }).host_type === "managed";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recover the target host_id from a JSON request body for a body-host-keyed
+ * request ({@link isBodyHostKeyedRequest}) or a managed fork, or null when the
+ * body names none.
+ *
+ * These requests carry the host in the body, not the URL, so left unkeyed they
+ * round-robin and can miss the replica holding that host's runner tunnel. A
+ * session create fails "runner is offline" (the server notifies the runner
+ * inline over its pod-local tunnel); an import fails "host is not connected"
+ * (the import reads the host's transcripts over that same tunnel). Keying by the
+ * body host_id pins both to the right replica like every other host-scoped
+ * request. A managed-sandbox create's ``host_id`` is the id it chose for its
+ * new sandbox host, so the launch runs where that host's tunnel will land.
+ * A managed fork's ``host_id`` is the same choice. Bundled (multipart) creates
+ * are hostless here (non-string body), as is a managed create or fork without
+ * one; all yield null → unkeyed (see
+ * {@link isBodyHostKeyedRequest}).
+ */
+function hostIdFromBody(url: string, body: BodyInit | null | undefined): string | null {
+  if (typeof body !== "string") return null;
+  if (!BODY_HOST_KEYED_RE.test(url) && !FORK_RE.test(url)) return null;
+  try {
+    const hostId = (JSON.parse(body) as { host_id?: unknown }).host_id;
+    return typeof hostId === "string" && hostId ? hostId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether this request is keyable only by its own body host_id, never the modal.
+ *
+ * The modal host is a cache-affinity hint for reads, but these requests have a
+ * side effect pinned to a replica and must key by their OWN target host:
+ *
+ * - A managed create keys by the host_id it chose for its sandbox host. One
+ *   without a host_id stays unkeyed: if the new host connects elsewhere, its
+ *   first message must resolve the assigned host and re-address after
+ *   wrong_replica. A create that names a host keeps that key.
+ * - A local import reads the chosen host's transcripts over its tunnel, which is
+ *   registered on the replica keyed by that host_id — never the importing user's
+ *   modal host (null / a different host for a fresh user), which is why an
+ *   unkeyed import lands off-replica and 409s "host is not connected".
+ *
+ * A bundled (multipart) create has a non-string body and is not matched: it only
+ * writes rows and binds the runner via a separate ``POST /v1/hosts/{id}/runners``
+ * (keyed from the URL), so it spawns no replica-pinned work and may ride the modal.
+ */
+function isBodyHostKeyedRequest(url: string, body: BodyInit | null | undefined): boolean {
+  return typeof body === "string" && BODY_HOST_KEYED_RE.test(url);
+}
+
+// Admin flag from the same `/v1/me` probe. Mode-agnostic (the shared
+// `users.is_admin` column), so the SPA can gate admin chrome in EVERY
+// auth mode — including OIDC/SSO, where the accounts-only `/auth/me`
+// endpoint doesn't exist. Defaults false until the probe resolves.
+let currentIsAdmin = false;
+let identityResolved = false;
+let identityPromise: Promise<string | null> | null = null;
+// A `/v1/me` that fails in transit says nothing about the viewer, so it is
+// retried rather than cached. Retries run only while `subscribeIdentity` has
+// listeners, so an unwatched probe never leaves a timer behind.
+const IDENTITY_RETRY_INITIAL_MS = 1_000;
+const IDENTITY_RETRY_MAX_MS = 30_000;
+const identityListeners = new Set<() => void>();
+let identityRetryPending = false;
+let identityRetryDelayMs = IDENTITY_RETRY_INITIAL_MS;
+let identityRetryTimer: ReturnType<typeof setTimeout> | null = null;
+// Cache the server-provided login URL on the first /v1/me probe so
+// later session-expiry redirects in authenticatedFetch hit the right
+// path per provider — "/login" for accounts, "/auth/login" for OIDC.
+// Hardcoding "/login" here previously sent OIDC users to an accounts
+// password form that had no connection to their IdP.
+let serverLoginUrl: string | null = null;
+// Set the moment we hand the browser to the login page. Assigning
+// `location.href` starts a navigation but does NOT stop this document:
+// requests already in flight keep landing, and every 401 among them used
+// to re-assign the same URL, so one logged-out page load queued ~28
+// navigations. Boot also reads this to skip mounting the app when the
+// session is already on its way out (see `isLoginRedirectPending`).
+let loginRedirectPending = false;
+
+/**
+ * Hand the browser to `loginUrl`, at most once per document.
+ *
+ * :param loginUrl: Login path from the capabilities probe or `/v1/me`.
+ * :returns: True if this call started the navigation, False if one was
+ *     already under way.
+ */
+function redirectToLogin(loginUrl: string): boolean {
+  if (loginRedirectPending) return false;
+  loginRedirectPending = true;
+  const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.href = `${withBasePath(loginUrl)}?return_to=${returnTo}`;
+  return true;
+}
+
+/**
+ * Whether a login redirect is under way.
+ *
+ * The navigation is asynchronous, so this document keeps running until
+ * the login page commits. Boot checks this before mounting React —
+ * otherwise the app renders and fans its queries out against a session
+ * we already know is invalid, and each one 401s behind the pending
+ * navigation. Always false in header mode, which has no login page.
+ */
+export function isLoginRedirectPending(): boolean {
+  return loginRedirectPending;
+}
+
+/**
+ * Whether the current page IS the login or register page, so we
+ * shouldn't trigger another redirect on top of it. Without this,
+ * an unauthed user landing on ``/login`` would hit /v1/me → 401 →
+ * redirect to /login → reload → redirect → infinite loop. Same
+ * for ``/register?invite=...`` — invitees redeeming an invite
+ * arrive unauthed by design.
+ *
+ * Matches both the SPA routes (``/login``, ``/register``) and the
+ * OIDC server-side path (``/auth/login``) so the guard covers
+ * every mode.
+ */
+function isOnLoginPath(): boolean {
+  // Compare against base-relative paths so the guard still recognizes the
+  // login/register pages when served under a subpath proxy (e.g.
+  // `/proxy/6767/login`).
+  const path = stripBasePath(window.location.pathname);
+  return path === "/login" || path === "/register" || path.startsWith("/auth/login");
+}
+
+/**
+ * Whether a non-2xx `/v1/me` status may change on retry. A 401 or another
+ * 4xx is the server's answer (signed out, route missing); 5xx, 408, and 429
+ * come from an overloaded server or the gateway in front of it.
+ */
+function isTransientIdentityStatus(status: number): boolean {
+  return status >= 500 || status === 408 || status === 429;
+}
+
+/**
+ * Probe ``GET /v1/me`` once and record the identity it reports.
+ *
+ * :returns: True when the outcome is final, False when the request failed
+ *     in a way a retry can fix.
+ */
+async function probeIdentity(): Promise<boolean> {
+  try {
+    const res = await hostFetch("/v1/me");
+    if (res.status === 401) {
+      // OIDC / accounts mode: server requires authentication.
+      // Redirect to the login URL provided in the response body —
+      // unless we're already there (avoid an infinite reload loop
+      // when the LoginPage itself calls resolveIdentity).
+      try {
+        const data = (await res.json()) as {
+          user_id: null;
+          login_url?: string;
+        };
+        if (data.login_url) {
+          serverLoginUrl = data.login_url;
+          if (!isOnLoginPath()) {
+            redirectToLogin(data.login_url);
+          }
+        }
+      } catch {
+        // Response body was not JSON — still a signed-out answer.
+      }
+      return true;
+    }
+    if (res.ok) {
+      const data = (await res.json()) as {
+        user_id: string | null;
+        is_admin?: boolean;
+      };
+      currentUserId = data.user_id;
+      currentIsAdmin = data.is_admin ?? false;
+      return true;
+    }
+    return !isTransientIdentityStatus(res.status);
+  } catch {
+    // Server unreachable, connection dropped, or the body was cut off.
+    return false;
+  }
+}
+
+function cancelIdentityRetry(): void {
+  if (identityRetryTimer === null) return;
+  clearTimeout(identityRetryTimer);
+  identityRetryTimer = null;
+}
+
+function scheduleIdentityRetry(): void {
+  if (!identityRetryPending || identityRetryTimer !== null || identityListeners.size === 0) {
+    return;
+  }
+  identityRetryTimer = setTimeout(() => {
+    identityRetryTimer = null;
+    // Grow the delay only when a retry runs; a cancelled timer made no request.
+    identityRetryDelayMs = Math.min(identityRetryDelayMs * 2, IDENTITY_RETRY_MAX_MS);
+    void resolveIdentity();
+  }, identityRetryDelayMs);
+}
+
+/**
+ * Fetch the current user identity from the server.
+ * Called once on app load; subsequent calls return the cached value.
+ * A transient failure resolves to null without being cached: the next
+ * call probes again, and while {@link subscribeIdentity} has listeners
+ * the probe is retried with backoff.
+ *
+ * When the server returns 401 with a ``login_url`` (OIDC mode),
+ * redirects the browser to the login page.
+ */
+export async function resolveIdentity(): Promise<string | null> {
+  if (identityResolved) return currentUserId;
+  if (identityPromise) return identityPromise;
+  const attempt = probeIdentity().then((final) => {
+    identityPromise = null;
+    if (final) {
+      identityResolved = true;
+      identityRetryPending = false;
+      cancelIdentityRetry();
+    } else {
+      identityRetryPending = true;
+      scheduleIdentityRetry();
+    }
+    for (const listener of identityListeners) listener();
+    return currentUserId;
+  });
+  identityPromise = attempt;
+  return attempt;
+}
+
+/**
+ * Watch the viewer identity. The listener runs after each ``/v1/me`` probe
+ * settles; while any listener is attached, a transient failure is retried
+ * with backoff.
+ *
+ * :param listener: Called with no arguments; read {@link getCurrentUserId}.
+ * :returns: A function that detaches the listener.
+ */
+export function subscribeIdentity(listener: () => void): () => void {
+  identityListeners.add(listener);
+  scheduleIdentityRetry();
+  return () => {
+    identityListeners.delete(listener);
+    if (identityListeners.size === 0) cancelIdentityRetry();
+  };
+}
+
+/** Return the cached user ID (null before resolveIdentity completes). */
+export function getCurrentUserId(): string | null {
+  return currentUserId;
+}
+
+/**
+ * Whether the current user is an admin, per the `/v1/me` probe.
+ * Mode-agnostic — usable to gate admin chrome under header, accounts,
+ * AND OIDC. Returns false before `resolveIdentity` completes.
+ */
+export function getCurrentIsAdmin(): boolean {
+  return currentIsAdmin;
+}
+
+/**
+ * Viewer id for labeling own optimistic bubbles, the client analog of
+ * the server's `attribution_user`. Returns null before identity
+ * resolves and for the `"local"` sentinel, so those stay unlabeled.
+ */
+export function getCurrentAuthorId(): string | null {
+  if (currentUserId === null || currentUserId === RESERVED_USER_LOCAL) {
+    return null;
+  }
+  return currentUserId;
+}
+
+/**
+ * Fetch wrapper that injects ``X-Forwarded-Email`` on every request.
+ * Drop-in replacement for ``window.fetch`` — same signature.
+ *
+ * When a request returns 401 (session expired in OIDC mode),
+ * redirects to the login page.
+ */
+/**
+ * Whether a response is the server's wrong-replica signal
+ * ({@link WRONG_REPLICA_CODE}). Gated on 400 first so the body is only read
+ * on the rare failure; reads a CLONE so the original response body stays intact
+ * for the caller when this returns false.
+ *
+ * @param res The response to inspect.
+ * @returns `true` when the JSON body carries `error.code === "wrong_replica"`.
+ */
+async function _isWrongReplica(res: Response): Promise<boolean> {
+  if (res.status !== 400) return false;
+  try {
+    const body = (await res.clone().json()) as { error?: { code?: string } };
+    return body.error?.code === WRONG_REPLICA_CODE;
+  } catch {
+    // Non-JSON / empty body — not the structured wrong_replica error.
+    return false;
+  }
+}
+
+export async function authenticatedFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (currentUserId && currentUserId !== RESERVED_USER_LOCAL && !headers.has("X-Forwarded-Email")) {
+    headers.set("X-Forwarded-Email", currentUserId);
+  }
+  // Standalone SaaS browser sessions use an HttpOnly auth cookie plus a
+  // sessionStorage-backed double-submit token. Add it centrally for every
+  // same-origin unsafe request; all main-app API mutations already pass
+  // through this function. Embedded hosts own their auth transport, and an
+  // explicit caller header always wins.
+  const method = (
+    init?.method ??
+    (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET")
+  ).toUpperCase();
+  if (
+    !getOmnigentHostConfig().fetcher &&
+    UNSAFE_METHODS.has(method) &&
+    !headers.has(SAAS_CSRF_HEADER) &&
+    isSameOriginRequest(input)
+  ) {
+    const csrfToken = readSaasCsrfToken();
+    if (csrfToken !== null) headers.set(SAAS_CSRF_HEADER, csrfToken);
+  }
+  // Route host-scoped requests with that host's key; other requests may use
+  // the modal host for cache affinity. An explicit caller header wins.
+  // OSS ingress deployments opt in to this routing.
+  const url = typeof input === "string" ? input : input.toString();
+  // Resolve this session's host BEFORE deriving the slice key below, so a fresh
+  // session sub-path request keys to the right replica on the first attempt
+  // instead of guessing the modal host and self-healing via the keyless retry.
+  // Null (the common case: warm map, non-session route, or standalone) means no
+  // bootstrap is needed — we skip the await so the fetch still dispatches in the
+  // same tick, exactly as before the gate.
+  const hostResolve = beginSessionHostResolve(url);
+  if (hostResolve !== null) await hostResolve;
+  // Whether WE (not the caller) stamped the slice key on this request; only then
+  // is a keyless re-address meaningful on a wrong-replica (wrong_replica) response.
+  let stampedSliceKey = false;
+  // The host this request is FOR, even when we deliberately send it keyless
+  // (demoted). Lets the retry logic below demote/un-demote the right host.
+  let derivedHostId: string | null = null;
+  if (!headers.has(SLICE_KEY_HEADER) && isHostRoutingEnabled()) {
+    // Key by the request's OWN host when it's host-scoped; otherwise (a
+    // cross-host / DB-backed read) fall back to the modal host as a
+    // cache-affinity hint. The distinction matters: a host-scoped request whose
+    // host isn't known yet must send NO key rather than the modal — the modal
+    // is the wrong guess for a SPECIFIC session, so it would route to a replica
+    // that doesn't hold the tunnel; a keyless miss re-addresses instead. Only
+    // an unscoped route (list / updates) may ride the modal — a JSON request
+    // whose target host is in the body may not (see {@link isBodyHostKeyedRequest}):
+    // it is keyable ONLY by that body host_id (a managed create with none stays
+    // unkeyed).
+    const scope = hostScopeForUrl(url);
+    if (isManagedForkRequest(url, init?.body)) {
+      derivedHostId = hostIdFromBody(url, init?.body);
+    } else if (scope.scoped) {
+      derivedHostId = scope.hostId;
+    } else if (isBodyHostKeyedRequest(url, init?.body)) {
+      derivedHostId = hostIdFromBody(url, init?.body);
+    } else {
+      derivedHostId = modalHostId();
+    }
+    // Skip keying a host we've already PROVEN routes keyless (its tunnels dialed
+    // in without a key → they live on the default replica). This spares the long
+    // tail of control paths (approve/stop/interrupt/…) from each needing a
+    // server-side wrong-replica guard: once demoted, every request for this host
+    // goes keyless from the start and reaches the tunnel first try. A demoted
+    // host that still returns wrong_replica keyless is un-demoted below.
+    if (derivedHostId && (!isDatabricksWorkspace() || !isHostKeyless(derivedHostId))) {
+      headers.set(SLICE_KEY_HEADER, derivedHostId);
+      stampedSliceKey = true;
+    }
+  }
+  // Bypass the browser HTTP cache for all API calls. Session
+  // endpoints (GET /v1/sessions/{id}) carry volatile in-memory state
+  // (pending_elicitations) that changes between fetches without any
+  // URL change. Without no-store the browser may serve a stale
+  // cached response — e.g. one captured before an elicitation was
+  // published — causing the ApprovalCard to vanish on navigate-back.
+  let res = await hostFetch(url, {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+
+  // Wrong-replica fallback: a keyed request that reached the wrong replica comes
+  // back 400 wrong_replica. Re-address ONCE with the key removed so it routes by
+  // the default (client and host may be out of sync on which sharding strategy
+  // the host registered under, so we can't know up front — try keyed, then fall
+  // back). Only when WE stamped the key; a genuinely-offline runner returns
+  // runner_unavailable and is not re-addressed here.
+  if (isDatabricksWorkspace() && stampedSliceKey && (await _isWrongReplica(res))) {
+    // Fresh Headers for the retry — mutating the first request's `headers`
+    // object in place would also clear the key on the already-sent request
+    // (callers/tests hold it by reference).
+    const retryHeaders = new Headers(headers);
+    retryHeaders.delete(SLICE_KEY_HEADER);
+    res = await hostFetch(url, {
+      ...init,
+      headers: retryHeaders,
+      cache: "no-store",
+    });
+    // Only a successful keyless retry proves this host uses the default replica.
+    // Failed retries must preserve the host key for subsequent requests.
+    if (derivedHostId && res.ok) {
+      markHostKeyless(derivedHostId);
+    }
+  } else if (
+    derivedHostId === null &&
+    !headers.has(SLICE_KEY_HEADER) &&
+    isDatabricksWorkspace() &&
+    (await _isWrongReplica(res))
+  ) {
+    // The first managed message can outlive provisioning and acquire a host.
+    // Refresh its original hostless lookup, then retry once on that host.
+    const sessionId = sessionIdForHostResolve(url);
+    if (sessionId !== null) {
+      init?.signal?.throwIfAborted();
+      await resolveSessionHost(sessionId, { force: true });
+      init?.signal?.throwIfAborted();
+      const hostId = getSessionHost(sessionId);
+      if (hostId !== null) {
+        clearHostKeyless(hostId);
+        const retryHeaders = new Headers(headers);
+        retryHeaders.set(SLICE_KEY_HEADER, hostId);
+        res = await hostFetch(url, {
+          ...init,
+          headers: retryHeaders,
+          cache: "no-store",
+        });
+      }
+    }
+  } else if (
+    isDatabricksWorkspace() &&
+    derivedHostId &&
+    !stampedSliceKey &&
+    isHostKeyless(derivedHostId) &&
+    (await _isWrongReplica(res))
+  ) {
+    // We sent this keyless BECAUSE the host was demoted, yet it still came back
+    // wrong_replica — so keying was not the problem (e.g. the host re-registered
+    // keyed after a CLI upgrade). Clear the demotion so the next request
+    // re-evaluates by trying keyed again.
+    clearHostKeyless(derivedHostId);
+  }
+
+  if (
+    // When embedded, the host owns auth (e.g. cookie/session via
+    // workspaceFetch) and a 401 should surface to the caller, not
+    // trigger web's standalone OIDC redirect.
+    !getOmnigentHostConfig().fetcher &&
+    res.status === 401 &&
+    !input.toString().includes("/v1/me") &&
+    !input.toString().includes("/auth/") &&
+    !isOnLoginPath()
+  ) {
+    // Session expired or cookie invalid — redirect to login IFF the
+    // server actually has a login page. Don't redirect on /auth/*
+    // paths (the LoginPage POSTs /auth/login and handles 401 itself)
+    // or when we're already on a login page (avoid the loop).
+    //
+    // Source the login URL from the capabilities probe (/v1/info →
+    // login_url): "/login" for accounts, "/auth/login" for OIDC, and
+    // **null for header mode (no login)**. In header mode a stray 401
+    // must NOT bounce the user to a phantom /login form — header is
+    // the default for a bare local server, so we surface the 401 to
+    // the caller instead. (serverLoginUrl from the /v1/me probe is a
+    // fallback for the brief window before capabilities resolves.)
+    // Once-only (see redirectToLogin): a burst of 401s from one page load
+    // all reach here, and re-assigning the same URL per failure just piles
+    // up navigations to a page we're already going to.
+    const loginUrl = getCachedServerInfo()?.login_url ?? serverLoginUrl;
+    if (loginUrl) redirectToLogin(loginUrl);
+  }
+  return res;
+}
+
+export type BrowserLogoutResult = { ok: true } | { ok: false; error: string; status: number };
+
+/** Revoke the current cookie session and clear browser-only identity state. */
+export async function logoutBrowserSession(endpoint: string): Promise<BrowserLogoutResult> {
+  if (!isSameOriginRequest(endpoint)) {
+    return { ok: false, error: "The sign-out endpoint is not trusted.", status: 0 };
+  }
+  let response: Response;
+  try {
+    response = await authenticatedFetch(endpoint, { method: "POST" });
+  } catch {
+    return { ok: false, error: "Could not reach the server. Try again.", status: 0 };
+  }
+  if (!response.ok) {
+    let error = "Sign out failed. Try again.";
+    try {
+      const body = (await response.json()) as {
+        error?: string | { message?: string };
+        detail?: { message?: string };
+      };
+      if (typeof body.error === "string") error = body.error;
+      else if (typeof body.error?.message === "string") error = body.error.message;
+      else if (typeof body.detail?.message === "string") error = body.detail.message;
+    } catch {
+      // Keep the generic message for an empty or non-JSON response.
+    }
+    return { ok: false, error, status: response.status };
+  }
+
+  clearBrowserSessionIdentity();
+  return { ok: true };
+}
+
+/** Forget local authentication after the server has revoked the session. */
+export function clearBrowserSessionIdentity(): void {
+  currentUserId = null;
+  currentIsAdmin = false;
+  identityResolved = false;
+  identityPromise = null;
+  serverLoginUrl = null;
+  loginRedirectPending = false;
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.removeItem(SAAS_CSRF_STORAGE_KEY);
+    } catch {
+      // Restricted storage contexts still get the server-side revocation.
+    }
+  }
+}
+
+export type SaasPasswordVersionResult =
+  { ok: true; version: number | null } | { ok: false; error: string };
+
+/** Read the signed-in account's optimistic password version without credential material. */
+export async function getSaasPasswordVersion(): Promise<SaasPasswordVersionResult> {
+  try {
+    const response = await authenticatedFetch(withBasePath("/saas/auth/me"));
+    if (!response.ok) return { ok: false, error: "Could not load password settings." };
+    const body = (await response.json()) as { password_version?: unknown };
+    const version = body.password_version;
+    // An older SaaS server does not advertise this capability.
+    if (version == null) return { ok: true, version: null };
+    if (typeof version === "number" && Number.isSafeInteger(version) && version >= 1) {
+      return { ok: true, version };
+    }
+  } catch {
+    // Preserve the current session when status cannot be established.
+  }
+  return { ok: false, error: "Could not load password settings." };
+}
+
+/** Rotate through SaaS authority; the server checks the version and revokes every session. */
+export async function changeSaasPassword(input: {
+  currentPassword: string;
+  newPassword: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const response = await authenticatedFetch(withBasePath("/saas/password"), {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": input.idempotencyKey,
+      },
+      body: JSON.stringify({
+        current_password: input.currentPassword,
+        new_password: input.newPassword,
+        expected_version: input.expectedVersion,
+      }),
+    });
+    if (response.ok) {
+      const body = (await response.json()) as { reauthentication_required?: unknown };
+      if (body.reauthentication_required === true) return { ok: true };
+      return { ok: false, error: "Sign in again to confirm your password change." };
+    }
+    const body = (await response.json()) as { detail?: { code?: string } };
+    if (body.detail?.code === "invalid_credentials") {
+      return { ok: false, error: "Current password is incorrect." };
+    }
+    if (body.detail?.code === "credential_version_conflict") {
+      return { ok: false, error: "Your password changed. Sign in again before retrying." };
+    }
+  } catch {
+    return { ok: false, error: "Could not confirm the change. Sign in again before retrying." };
+  }
+  return { ok: false, error: "Could not change password. Try again." };
+}
+
+/** Read the browser-only SaaS CSRF token without breaking restricted storage contexts. */
+function readSaasCsrfToken(): string | null {
+  // Prefer the shared copy so a login or token rotation in another tab takes
+  // effect immediately. Fall back to the legacy tab-local copy during rolling
+  // upgrades and promote it for subsequently opened tabs.
+  try {
+    const sharedToken = window.localStorage.getItem(SAAS_CSRF_STORAGE_KEY)?.trim();
+    if (sharedToken) return sharedToken;
+  } catch {
+    // localStorage can be blocked independently of sessionStorage.
+  }
+  try {
+    const sessionToken = window.sessionStorage.getItem(SAAS_CSRF_STORAGE_KEY)?.trim();
+    if (!sessionToken) return null;
+    try {
+      window.localStorage.setItem(SAAS_CSRF_STORAGE_KEY, sessionToken);
+    } catch {
+      // The current tab can still authenticate through sessionStorage.
+    }
+    return sessionToken;
+  } catch {
+    return null;
+  }
+}
+
+/** Keep the session-bound CSRF secret on this origin even if a future caller passes an absolute URL. */
+function isSameOriginRequest(input: RequestInfo | URL): boolean {
+  try {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return new URL(raw, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}

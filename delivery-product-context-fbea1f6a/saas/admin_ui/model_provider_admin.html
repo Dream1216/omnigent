@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>平台托管模型 · Omnigent</title>
+    <link rel="stylesheet" href="/saas/admin/assets/model-provider-admin.css" />
+  </head>
+  <body>
+    <main class="shell" aria-busy="true" id="shell">
+      <header class="masthead">
+        <a class="brand" href="/">OMNIGENT</a>
+        <div class="mode"><span></span>SINGLE-OWNER BETA</div>
+      </header>
+
+      <section class="hero">
+        <div>
+          <p class="eyebrow">PLATFORM / MANAGED INFERENCE</p>
+          <h1>托管模型控制台</h1>
+          <p class="lede">
+            配置 DeepSeek 模型目录、调用预算与加密凭据。密钥只进入 OpenBao
+            和模型网关，不会下发到 Agent、Host 或浏览器回显。
+          </p>
+        </div>
+        <article class="state-card" id="state-card" data-state="not_configured">
+          <small>PROVIDER STATE</small>
+          <strong id="provider-state">LOADING</strong>
+          <span id="provider-version">VERSION —</span>
+        </article>
+      </section>
+
+      <aside class="governance">
+        <div>
+          <span>GOVERNANCE MODE</span><strong>单一 Owner 风险豁免</strong>
+        </div>
+        <p>
+          此 Beta 入口持续校验固定用户仍是固定租户的 active Owner；只开放
+          Provider 读取、配置和真实流式验证。它不是完整 Staff IdP。
+        </p>
+      </aside>
+
+      <section class="grid">
+        <form class="panel" id="configuration-form">
+          <div class="panel-heading">
+            <div>
+              <span>01</span>
+              <h2>Provider 契约</h2>
+            </div>
+            <small id="key-state">KEY REQUIRED</small>
+          </div>
+
+          <label class="switch-row">
+            <input id="enabled" type="checkbox" />
+            <span
+              ><strong>启用平台模型</strong
+              ><small>只有真实验证通过的配置才会被网关接纳。</small></span
+            >
+          </label>
+
+          <div class="fields">
+            <label
+              ><span>Provider</span><input value="DeepSeek" readonly
+            /></label>
+            <label
+              ><span>API 类型</span
+              ><input value="OpenAI Chat Completions" readonly
+            /></label>
+            <label class="wide"
+              ><span>Base URL</span
+              ><input id="base-url" value="https://api.deepseek.com" readonly
+            /></label>
+            <label class="wide"
+              ><span>API Key <em>留空则保留现有密钥</em></span
+              ><input
+                autocomplete="new-password"
+                id="api-key"
+                maxlength="4096"
+                type="password"
+                placeholder="仅在轮换时输入"
+            /></label>
+            <label class="wide"
+              ><span>允许模型 <em>每行一个</em></span
+              ><textarea id="models" rows="3">
+deepseek-flash&#10;deepseek-v4-pro</textarea>
+            </label>
+            <label
+              ><span>默认模型</span
+              ><select id="default-model"></select
+            ></label>
+            <label
+              ><span>月度 Provider 预算 / USD</span
+              ><input
+                id="monthly-budget"
+                min="0.01"
+                max="1000000"
+                step="0.01"
+                type="number"
+                value="100"
+            /></label>
+            <label
+              ><span>单租户每日 Token 上限</span
+              ><input
+                id="daily-tokens"
+                min="1"
+                max="1000000000000"
+                step="1"
+                type="number"
+                value="1000000"
+            /></label>
+          </div>
+          <button class="primary" id="save" type="submit">
+            保存加密配置 <span>↗</span>
+          </button>
+        </form>
+
+        <section class="panel verify-panel">
+          <div class="panel-heading">
+            <div>
+              <span>02</span>
+              <h2>真实流式验证</h2>
+            </div>
+            <small>NO MOCK</small>
+          </div>
+          <div class="signal">
+            <b>DS</b>
+            <div>
+              <strong>验证实际 Provider 路径</strong>
+              <p>
+                发送一条有界流式请求。只持久化模型、延迟、状态及 Request ID
+                摘要；不会保存回复或密钥。
+              </p>
+            </div>
+          </div>
+          <label
+            ><span>验证模型</span
+            ><select id="test-model"></select
+          ></label>
+          <button class="primary secondary" id="test" type="button">
+            执行真实验证 <span>↗</span>
+          </button>
+          <div class="receipt">
+            <small>VERIFICATION RECEIPT</small
+            ><strong id="verified-at">WAITING FOR VERIFIED CONFIG</strong>
+            <p>
+              修改模型目录、预算或 Key 后，状态会回退为
+              CONFIGURED，必须重新验证。
+            </p>
+          </div>
+          <div class="boundary">
+            <span>SECRET BOUNDARY</span
+            ><strong>Browser → OpenBao → Gateway</strong
+            ><small>Host / Runner 仅持有短期、会话绑定的合成令牌。</small>
+          </div>
+        </section>
+      </section>
+    </main>
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <script src="/saas/admin/assets/model-provider-admin.js" defer></script>
+  </body>
+</html>

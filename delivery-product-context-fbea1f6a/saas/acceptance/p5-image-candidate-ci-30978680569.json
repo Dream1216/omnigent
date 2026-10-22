@@ -1,0 +1,62 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 30978680569,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30978680569",
+  "job_id": 92218230552,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30978680569/job/92218230552",
+  "head_sha": "569c1d0352beebee5f069dea8bac1890b4f3304a",
+  "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+  "control_plane_schema_revision": "p5a000000001",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "794 passed, 1 platform skip",
+    "combined_warnings": 226,
+    "combined_seconds": 109.66,
+    "migration_upgrade_check_and_downgrade": "passed",
+    "patch_replay": "passed",
+    "source_intrusion_budget": "passed"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1785908232,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:5441d0a7d0af274e1cefdea603c6492d6fd353dfbfebc239031c0cbb3f6dc0c1",
+          "config_digest": "sha256:3876ffb740a2df297f618822e392f3afc3f58f33e9c5a2d149d182fdd37b7402"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:54b926564f683502c89c77f1b0f664c353dfb619263b85e3f3c6b72488e3145f",
+          "config_digest": "sha256:b62b5bcae350163c18340247e1890a702702dc762f2505c5c0633db6985c256c"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:ced58db8b876f80be30f0566eccbf7ee09c92b80b6318d6c41c3345605c73b31",
+          "config_digest": "sha256:a6a55814aaca852b10648178e5df3d755a9796b418a35a073b553e82f8a33b06"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:41d1720e44630e455e09501dfb6a619c6abf81c3f670318a0717e92eaac603ce",
+          "config_digest": "sha256:fb3075b8e092fa50a14b3c2ce00749bc0e8d64523aaec9586a6c3dd75caf063c"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "attestation_descriptors_per_build": 2
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable image facts for the exact P5a Webhook implementation revision. It does not satisfy production image promotion or the P0 image gate."
+}

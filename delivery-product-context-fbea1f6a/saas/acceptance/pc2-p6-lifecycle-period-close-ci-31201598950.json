@@ -1,0 +1,97 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31201598950,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31201598950",
+  "job_id": 92942640933,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31201598950/job/92942640933",
+  "artifact_id": 9003183991,
+  "head_sha": "2d92d02fa02b1e418967c91d67e3eccc59659540",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "conclusion": "success",
+  "verification": {
+    "combined_ci_tests": "943 passed",
+    "combined_ci_warnings": 232,
+    "combined_ci_seconds": 161.25,
+    "isolated_logical_restore_contract": "passed in 3.641 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed in 33.80 seconds",
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips in 15.40 seconds",
+    "wheel_required_artifacts": 192,
+    "patches_replayed": 2,
+    "migration_head": "p6b000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "pc2_lifecycle_slice": {
+    "platform_permission_policy_version": "2026-08-08.pc2-lifecycle",
+    "platform_permissions": 24,
+    "global_user_suspend_restore_and_session_revoke": true,
+    "tenant_suspend_restore": true,
+    "owner_recovery_preflight_and_atomic_transfer": true,
+    "fresh_auth_approval_reason_cas_and_idempotency": true,
+    "session_and_machine_credential_invalidation": true,
+    "immutable_operation_receipt_and_redacted_outbox": true,
+    "exact_user_or_tenant_target_rls": true
+  },
+  "p6_period_close_slice": {
+    "ended_exact_reconciliation_required": true,
+    "open_mismatch_and_active_reservation_fail_closed": true,
+    "periodic_entitlement_rollover_is_atomic": true,
+    "immutable_close_fact_and_deterministic_evidence_hash": true,
+    "idempotent_billing_period_closed_outbox": true,
+    "tenant_http_request_and_list_surface": true,
+    "nonempty_period_close_backup_restore_rows": 0,
+    "nonempty_period_close_backup_restore_proven": false
+  },
+  "database_isolation": {
+    "real_postgresql": "PostgreSQL 16",
+    "control_plane_forced_rls_tables": 75,
+    "runtime_forced_rls_tables": 17,
+    "platform_security_restore": "passed",
+    "post_backup_billing_authority_replay": "passed",
+    "ordinary_roles_receive_only_assignment_predicate_columns": true,
+    "assignment_force_rls_returns_zero_rows_to_ordinary_roles": true,
+    "auth_session_oidc_and_api_credential_target_select_policies": true,
+    "billing_close_facts_are_tenant_scoped_and_immutable": true
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 479,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9953,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_predecessors": [
+    {
+      "run_id": 31199941325,
+      "conclusion": "failure",
+      "failure": "PostgreSQL exposed platform-assignment predicate privileges, target-row SELECT visibility, policy-version width, and immutable reconciliation locking defects"
+    },
+    {
+      "run_id": 31199941275,
+      "conclusion": "failure",
+      "failure": "the image workflow correctly stopped on the same PostgreSQL regression before candidate construction"
+    }
+  ],
+  "fail_closed_production_state": {
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "PC2 identity-conflict case management, complete risk projection, or user and Tenant deletion manifests",
+    "P6 Provider-native receipts, completion-to-persistence kill-window recovery, signed webhooks, payments, invoices, or tax",
+    "a nonempty billing period-close backup and restore replay",
+    "PC3 governed support and signed evidence",
+    "PC4 Platform Console user interface",
+    "PC5 enterprise operations completion",
+    "production Staff IdP, deployment, cross-failure-domain recovery, commercial acceptance, or release GO"
+  ],
+  "evidence_successor_policy": "This record verifies the exact PC2/P6 implementation at 2d92d02fa02b1e418967c91d67e3eccc59659540. A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the verified implementation and must not be treated as production proof."
+}

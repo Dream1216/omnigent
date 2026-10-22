@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "candidate_id": "omnigent-saas-upstream-sync-3db749d7-2026-10-20",
+  "implementation_revision": "7c9eb6ec6e745728b1d948099c55601382accba5",
+  "evidence_revision": "7c9eb6ec6e745728b1d948099c55601382accba5",
+  "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+  "adapter_contract_version": "0.2.0",
+  "control_plane_schema_revision": "p0s000000017",
+  "deployment_scope": "single-region-multi-az",
+  "decision_registry_sha256": "74d5eafe18f856e21fcfcb69b4759b7cc4bfb006f5419c7bdfe9572707cf3619",
+  "decision_files": [
+    "saas/production/adrs/ADR-001-postgresql-topology-and-transactions.md",
+    "saas/production/adrs/ADR-002-runtime-placement-and-migration.md",
+    "saas/production/adrs/ADR-003-authorization-snapshot-and-degradation.md",
+    "saas/production/adrs/ADR-004-runner-isolation-and-responsibility.md",
+    "saas/production/adrs/ADR-005-sandbox-network-secret-supply-chain.md",
+    "saas/production/adrs/ADR-006-slo-data-class-recovery.md",
+    "saas/production/adrs/ADR-007-metering-ledgers-and-quota.md",
+    "saas/production/adrs/ADR-008-api-webhook-connector-ssrf.md",
+    "saas/production/adrs/ADR-009-single-region-production-boundary.md",
+    "saas/production/adrs/ADR-010-identity-and-management-web-security.md",
+    "saas/production/adrs/ADR-011-feature-flag-and-configuration.md"
+  ],
+  "decision_bundle_sha256": "46b5b281af1a810de99f30ac5dab7c23c916dabed8043cc22e4117c80e420a76"
+}

@@ -1,0 +1,25 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30883002639,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30883002639",
+  "head_sha": "a9adcf150e719d269a74e0d864dcee39f2f0ee25",
+  "conclusion": "success",
+  "environment": {
+    "postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium"
+  },
+  "verified_gates": [
+    "saas compatibility tests",
+    "real control-plane PostgreSQL RLS",
+    "real runtime PostgreSQL RLS",
+    "real browser Project Admin matrix",
+    "Pyrefly",
+    "Alembic upgrade-check-downgrade",
+    "wheel contents",
+    "patch queue replay",
+    "acceptance ledger",
+    "source intrusion budget"
+  ],
+  "evidence_successor_changes": "Only the acceptance ledger, this evidence record, and explanatory README text changed after the verified implementation revision."
+}

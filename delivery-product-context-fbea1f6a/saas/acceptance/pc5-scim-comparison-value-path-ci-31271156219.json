@@ -1,0 +1,99 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31271156219,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31271156219",
+  "job_id": 93137244701,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31271156219/job/93137244701",
+  "artifact_id": 9025705851,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31271156219/artifacts/9025705851",
+  "artifact_archive_sha256": "89ebc0693e043c8ea997a3eca2210cadb692c21400b39a8a51c567c4c6684230",
+  "head_sha": "53f81e1dfd9907e8b4cd592dbe51a70f86148d23",
+  "upstream_revision": "de8aee826c48d632ce335a702f2cca2f6240a6b9",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "ci_os": "ubuntu-latest",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "ci_compatibility_tests": "997 passed, 232 warnings, 177.72s",
+    "isolated_logical_restore_contract": "passed in 4.067 seconds",
+    "control_plane_forced_rls_tables": 85,
+    "runtime_forced_rls_tables": 17,
+    "enterprise_scim_restore": "passed with two Tenant-isolated fact sets",
+    "official_zygote_query_context_tests": "325 passed, 2 warnings, 60.05s",
+    "official_linux_security_tests": "39 passed, 22 skipped, 15.60s",
+    "wheel_required_artifacts": 230,
+    "patches_replayed": 2,
+    "migration_head": "pc5a00000003",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates": 11,
+    "release_decision": "NO-GO"
+  },
+  "comparison_and_value_path_contract": {
+    "filter_grammar": "bounded RFC 7644 attrPath, schema-qualified attrPath, valuePath, parenthesized not/and/or expressions, JSON strings, booleans, null and numbers",
+    "comparison_operators": [
+      "eq",
+      "ne",
+      "co",
+      "sw",
+      "ew",
+      "gt",
+      "ge",
+      "lt",
+      "le",
+      "pr"
+    ],
+    "typed_comparison_boundary": "ordering comparisons are allowed only for persisted comparable scalar attributes; Boolean ordering and numeric literals against string attributes fail with invalidFilter",
+    "group_collection_filter": "members[...] and members.value use a correlated active-membership lookup constrained to the authenticated active Directory and active SCIM User",
+    "patch_grammar": "pathless Add/Replace plus attrPath and valuePath with optional subAttr for the supported local User scalar and Group member resource model",
+    "patch_atomicity": "all operations transform an in-memory candidate before one replay-before-CAS service mutation; a later invalid operation leaves the resource and ETag unchanged",
+    "patch_noop_receipt": "duplicate Group member Add and Remove with no selected member retain the ETag while persisting an immutable secret-free no-op Event/Outbox receipt for exact replay",
+    "member_mutability": "Group member subattributes remain immutable; selection can add or remove member values but cannot rewrite a selected member identity",
+    "bulk_consistency": "Bulk PATCH delegates to the same parser, validation, mutation and idempotency implementation",
+    "negative_tests": [
+      "wrong core schema, unsupported attribute, malformed expression and over-limit nesting or comparison counts fail closed",
+      "Boolean ordering and numeric-to-string comparison fail with invalidFilter",
+      "missing PATCH target returns noTarget and immutable attributes return mutability",
+      "schema mismatch returns invalidPath and missing operation value returns invalidValue",
+      "a multi-operation failure rolls back every preceding in-memory change",
+      "cross-Directory Group member selection cannot escape the token-selected Directory"
+    ]
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 490,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.996,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "artifact_report_sha256": {
+    "upstream_delta": "530cb13b3437d95b4cf6d3e0ad1a5838cc39bfbf0181ff71f9ee26ece41e2cac",
+    "patch_replay": "758c0769d6c4a1319ff8485f1637b804fc85b2ad331007d4715869474fb9f941",
+    "postgresql_restore": "a4107da94d8ef7ec5cb67ee647af20c6b85d86813ac3e286874575c44be468af",
+    "slo_capacity": "dc48191cfaadbcb82e3a4e0c13b5b78d88e6232344017d4dd8696f6363171394",
+    "production_baseline": "176c2acb24ee9e3a10a059d34eaaab80c39938bd95353ac5cacda04987453f65",
+    "deletion": "0f568d8056eb64599bd044261192efa58194afdff605c837a87c75910b036b99",
+    "recovery": "0fd177ef34acc12418ca58367059e8261694e1bbbf741536ef7b852931698284",
+    "image_supply": "df1bb0f85424d503152f414536784efce2630d2e29a55393c54aff080fe1e0e3"
+  },
+  "restore_contract": {
+    "backup_sha256": "e45c8891df0b6f2c484ee92641537d40e69ef5290e196867529138f6763fc653",
+    "selected_content_sha256": "d20b1a33f5220666ff1e88ccd80a79b0b9d2aa1c06c45957deee84c8eaf1dfb3"
+  },
+  "not_proven_by_this_record": [
+    "every optional RFC 7643 User complex or multi-valued attribute and extension schema",
+    "SCIM discovery resources beyond the existing ServiceProviderConfig surface",
+    "production federation, Domain Claim, JIT, MFA, recovery, privacy, Legal Hold, Operations or Finance behavior",
+    "production image publication, signing, scanning, canary or N-1 rollback",
+    "completion of any of the eleven aggregate gates or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the bounded SCIM comparison, Value Path and PATCH implementation at 53f81e1dfd9907e8b4cd592dbe51a70f86148d23. A successor that changes only this evidence record, its paired image record, wheel inventory, explanatory documentation, or tests that assert those records does not alter the verified implementation."
+}

@@ -1,0 +1,179 @@
+packages:
+  - 'web'
+  - 'web/electron'
+  - '.github/ci-deps'
+  - 'editors/vscode'
+  - 'deploy/cloudflare'
+  - 'sdks/web-extension'
+  - 'examples/extensions/hello-page/web'
+
+# 7-day dependency cooldown, mirroring the Python-side exclude-newer = "P7D" in uv.toml.
+minimumReleaseAge: 10080
+
+# These exact, integrity-locked Harness artifacts were admitted with the CLI
+# fleet update. Keep the exception version-scoped so later releases still wait
+# for the full cooldown; remove entries after their seven-day window has elapsed.
+minimumReleaseAgeExclude:
+  # Security-only exception: supersedes the vulnerable <=4.2.0 line. The
+  # exact artifact remains integrity-locked and policy-verified.
+  - 'http-cache-semantics@4.3.0'
+  # Security-only exception: fixes GHSA-68fv-2mgg-jv7q. The exact artifact is
+  # integrity-locked in pnpm-lock.yaml and remains subject to lockfile policy.
+  - 'source-map-js@1.2.2'
+  # Security-only exception: fixes MCP OAuth credential redirection and
+  # cross-session task exposure (GHSA-6qxp-vccf-f47h, GHSA-22jm-h49p-29qw).
+  - '@modelcontextprotocol/sdk@1.32.0'
+  - '@moonshot-ai/kimi-code@0.43.1'
+  - '@qwen-code/audio-capture@0.23.4'
+  - '@qwen-code/qwen-code@0.23.4'
+  - 'opencode-ai@1.18.31'
+  - 'opencode-darwin-arm64@1.18.31'
+  - 'opencode-darwin-x64-baseline@1.18.31'
+  - 'opencode-darwin-x64@1.18.31'
+  - 'opencode-linux-arm64-musl@1.18.31'
+  - 'opencode-linux-arm64@1.18.31'
+  - 'opencode-linux-x64-baseline-musl@1.18.31'
+  - 'opencode-linux-x64-baseline@1.18.31'
+  - 'opencode-linux-x64-musl@1.18.31'
+  - 'opencode-linux-x64@1.18.31'
+  - 'opencode-windows-arm64@1.18.31'
+  - 'opencode-windows-x64-baseline@1.18.31'
+  - 'opencode-windows-x64@1.18.31'
+
+autoInstallPeers: false
+strictPeerDependencies: false
+
+# jest-dom doesn't declare vitest as a (peer) dependency, so under pnpm's store
+# layout its `declare module "vitest"` matcher-type augmentation can't resolve
+# vitest and silently fails to merge — `tsc` then loses every DOM matcher
+# (toBeInTheDocument, toHaveClass, …) though they work at runtime. Re-enable the
+# peer so the augmentation resolves. Drop once jest-dom ships the peer upstream.
+packageExtensions:
+  '@testing-library/jest-dom':
+    peerDependencies:
+      vitest: '*'
+
+catalog:
+  react: ^18.2.0
+  react-dom: ^18.2.0
+  shiki: 4.2.0
+
+overrides:
+  # Build-tool pins that match the legacy npm lockfile. Removing them allowed pnpm
+  # to resolve newer Vite/Tailwind patches whose new bundler/chunking produced a
+  # broken split of the Shiki bundle and lost the PDF worker asset.
+  vite: 8.1.0
+  tailwindcss: 4.3.1
+  '@tailwindcss/vite': 4.3.1
+  '@tailwindcss/node': 4.3.1
+  '@tailwindcss/postcss': 4.3.1
+  jiti: 2.7.0
+  lightningcss: 1.32.0
+  postcss: 8.5.29
+  browserslist: 4.28.8
+  fast-uri: 3.1.8
+  '@xmldom/xmldom': 0.8.15
+  qs: 6.16.0
+  query-string: 9.5.0
+  '@hono/node-server': 1.19.15
+  hono: 4.13.7
+  linkify-it: 5.0.2
+  shiki: "catalog:"
+  react: "catalog:"
+  react-dom: "catalog:"
+  dompurify: 3.4.16
+  'katex@>=0.16.0 <0.18.2': 0.18.10
+  # KaTeX 0.18.11 was accidentally published with breaking changes.
+  'katex@0.18.11': 0.18.10
+  mermaid: 11.16.1
+  tar: 7.5.21
+  'node-gyp>undici': 6.28.1
+  'undici@>=7.0.0 <8.0.0': 7.29.1
+  'undici@>=8.0.0 <9.0.0': 8.10.2
+  proxy-addr: 2.0.8
+  'brace-expansion@>=1.0.0 <2.0.0': 1.1.21
+  'brace-expansion@>=2.0.0 <3.0.0': 2.1.7
+  'brace-expansion@>=5.0.0 <6.0.0': 5.0.12
+  'postcss-selector-parser@>=6.0.0 <7.0.0': 7.1.6
+  source-map-js: 1.2.2
+  prosemirror-view: 1.42.3
+  http-cache-semantics: 4.3.0
+  '@shikijs/core': 4.2.0
+  '@shikijs/engine-javascript': 4.2.0
+  '@shikijs/engine-oniguruma': 4.2.0
+  '@shikijs/langs': 4.2.0
+  '@shikijs/themes': 4.2.0
+  '@shikijs/types': 4.2.0
+  '@shikijs/transformers': 4.2.0
+  '@tiptap/core': 3.31.4
+  '@tiptap/extension-blockquote': 3.31.4
+  '@tiptap/extension-bold': 3.31.4
+  '@tiptap/extension-bubble-menu': 3.31.4
+  '@tiptap/extension-bullet-list': 3.31.4
+  '@tiptap/extension-code': 3.31.4
+  '@tiptap/extension-code-block': 3.31.4
+  '@tiptap/extension-document': 3.31.4
+  '@tiptap/extension-dropcursor': 3.31.4
+  '@tiptap/extension-floating-menu': 3.31.4
+  '@tiptap/extension-gapcursor': 3.31.4
+  '@tiptap/extension-hard-break': 3.31.4
+  '@tiptap/extension-heading': 3.31.4
+  '@tiptap/extension-horizontal-rule': 3.31.4
+  '@tiptap/extension-image': 3.31.4
+  '@tiptap/extension-italic': 3.31.4
+  '@tiptap/extension-link': 3.31.4
+  '@tiptap/extension-list': 3.31.4
+  '@tiptap/extension-list-item': 3.31.4
+  '@tiptap/extension-list-keymap': 3.31.4
+  '@tiptap/extension-ordered-list': 3.31.4
+  '@tiptap/extension-paragraph': 3.31.4
+  '@tiptap/extension-strike': 3.31.4
+  '@tiptap/extension-table': 3.31.4
+  '@tiptap/extension-text': 3.31.4
+  '@tiptap/extension-underline': 3.31.4
+  '@tiptap/extensions': 3.31.4
+  '@tiptap/markdown': 3.31.4
+  '@tiptap/pm': 3.31.4
+  '@tiptap/react': 3.31.4
+  '@tiptap/starter-kit': 3.31.4
+  express-rate-limit>ip-address: 10.7.1
+  sharp: 0.35.5
+  '@modelcontextprotocol/sdk': 1.32.0
+
+allowBuilds:
+  '@anthropic-ai/claude-code': true
+  '@google/genai': true
+  # Kimi Code selects its integrity-locked native payload during postinstall.
+  '@moonshot-ai/kimi-code': true
+  # Qwen Code loads its pinned native audio addon when voice input is used.
+  # The package and its transitive artifacts are integrity-locked below, so
+  # permit the install script instead of leaving pnpm's interactive placeholder.
+  '@qwen-code/audio-capture': true
+  '@vscode/vsce-sign': true
+  canvas: true
+  # electron + playwright: the desktop recording lane (web/electron/e2e/) needs
+  # their postinstall scripts to run — electron downloads its ~100MB runtime
+  # binary and playwright its driver. Without these, `pnpm install` in the
+  # electron package "succeeds" but leaves the binaries absent, so the lane
+  # can't launch. Dev/test only (both are web/electron devDependencies; not
+  # bundled into the shipped app).
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  keytar: true
+  msw: true
+  # Kimi Code's interactive terminal bridge requires its integrity-locked PTY
+  # native addon; without the build the package installs but the TUI cannot run.
+  node-pty: true
+  # The pinned OpenCode wrapper selects the integrity-locked platform binary in
+  # postinstall. Without this, the CLI package is present but `opencode` cannot
+  # start in the Host image.
+  opencode-ai: true
+  playwright: true
+  protobufjs: true
+  sharp: true
+  workerd: true
+
+auditConfig: {}
+patchedDependencies:
+  '@tiptap/react@3.31.4': patches/@tiptap__react@3.31.4.patch

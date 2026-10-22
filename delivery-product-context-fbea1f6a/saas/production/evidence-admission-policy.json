@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "policy_id": "omnigent-production-evidence-admission-v1",
+  "reviewed_at": "2026-08-09",
+  "payload_type": "application/vnd.omnigent.production-evidence-admission.v1+json",
+  "signature_algorithm": "ed25519",
+  "maximum_receipt_age_days": 31,
+  "trusted_key_registry": "saas/production/evidence-admission-keys.json",
+  "receipt_directory": "saas/production/evidence-admission-receipts",
+  "evidence_sources": [
+    {
+      "kind": "baseline",
+      "path": "saas/production/baseline.json",
+      "directory": null,
+      "pattern": null
+    },
+    {
+      "kind": "image",
+      "path": "saas/acceptance/p0-production-image-evidence.json",
+      "directory": null,
+      "pattern": null
+    },
+    {
+      "kind": "deployment",
+      "path": null,
+      "directory": "saas/production/deployment-evidence",
+      "pattern": "*.json"
+    },
+    {
+      "kind": "recovery",
+      "path": null,
+      "directory": "saas/production/recovery-evidence",
+      "pattern": "*.json"
+    },
+    {
+      "kind": "slo_capacity",
+      "path": null,
+      "directory": "saas/production/slo-capacity-evidence",
+      "pattern": "*.json"
+    },
+    {
+      "kind": "deletion",
+      "path": null,
+      "directory": "saas/production/deletion-evidence",
+      "pattern": "*.json"
+    },
+    {
+      "kind": "commercial",
+      "path": null,
+      "directory": "saas/production/commercial-evidence",
+      "pattern": "*.json"
+    },
+    {
+      "kind": "enterprise",
+      "path": null,
+      "directory": "saas/production/enterprise-evidence",
+      "pattern": "*.json"
+    }
+  ]
+}

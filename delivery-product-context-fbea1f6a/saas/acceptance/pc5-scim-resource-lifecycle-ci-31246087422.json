@@ -1,0 +1,81 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31246087422,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31246087422",
+  "job_id": 93074824965,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31246087422/job/93074824965",
+  "artifact_id": 9018593020,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31246087422/artifacts/9018593020",
+  "artifact_archive_sha256": "14b2fb49f0f87b13dc19f8b561c56d5db547686ada64a9925caba67c5945a384",
+  "head_sha": "626841b1bb8544fe8d3784b828c27193f7df7396",
+  "upstream_revision": "9dab48b460f37d8a0ed294d1309cd2f843c5cafc",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "ci_os": "ubuntu-latest",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "ci_compatibility_tests": "989 passed, 232 warnings, 186.11s",
+    "isolated_logical_restore_contract": "passed in 3.798 seconds",
+    "control_plane_forced_rls_tables": 85,
+    "runtime_forced_rls_tables": 17,
+    "enterprise_scim_restore": "passed with two Tenant-isolated fact sets",
+    "official_zygote_query_context_tests": "63 passed, 2 warnings, 40.31s",
+    "official_linux_security_tests": "39 passed, 22 skipped, 17.49s",
+    "wheel_required_artifacts": 220,
+    "patches_replayed": 2,
+    "migration_head": "pc5a00000001",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates": 11,
+    "release_decision": "NO-GO"
+  },
+  "resource_lifecycle_contract": {
+    "resources": [
+      "User",
+      "Group"
+    ],
+    "replacement": "PUT requires one weak If-Match ETag and one Idempotency-Key; externalId remains immutable",
+    "deletion": "DELETE writes a retained inactive tombstone, deprovisions User authority or archives Group authority, and never physically deletes the SCIM mapping",
+    "patch": "resource-specific Add, Replace and Remove paths cover User userName/displayName/active and Group displayName/members, including exact UUID member removal",
+    "transaction_order": "authenticate exact Directory, replay immutable event by request hash, lock exact resource row, compare version CAS, derive the next source version, converge state and persist event/outbox in one transaction",
+    "lost_response_retry": "the same key, payload and old ETag replays the committed response before version CAS without a second mutation",
+    "conflict_rules": "the same key with a different payload returns conflict; a different key with a stale ETag returns precondition failed",
+    "postgresql_concurrency": "two transactions competing on the same User version produce exactly one applied mutation and one scim_etag_mismatch",
+    "negative_tests": [
+      "cross-Directory bearer authority remains denied by token-scoped RLS",
+      "externalId replacement is rejected",
+      "PATCH active rejects non-Boolean values",
+      "required attributes cannot be removed",
+      "invalid member values and unsupported paths fail closed",
+      "SCIM event mutation remains rejected by the PostgreSQL immutability trigger"
+    ]
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 485,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9959,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "artifact_report_sha256": {
+    "upstream_delta": "d05de0b4f6a4c94fb30687f3eedf7f3d5b583b65d905d5c66b96ec6712cf6ab2",
+    "patch_replay": "04e7a2ae5efc33d10e996f0a859476d3ee7d1afea4b5856a1752c514334f0d57",
+    "postgresql_restore": "5eeb7d5c6202c1fd4449d903d6b14541e1a3d5eaf95445839b124396ec72fc9a"
+  },
+  "not_proven_by_this_record": [
+    "SCIM Bulk, general or compound filters, sorting, or the complete RFC PATCH path and value grammar",
+    "scheduled or overlapping credential rotation with a dual-token grace window",
+    "production IdP federation, MFA, privacy, Legal Hold, Operations or Finance behavior",
+    "production image publication, signing, scanning, canary or N-1 rollback",
+    "completion of any of the eleven aggregate gates or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the bounded SCIM resource lifecycle implementation at 626841b1bb8544fe8d3784b828c27193f7df7396. A successor that changes only this evidence record, its paired image record, wheel inventory, explanatory documentation, or tests that assert those records does not alter the verified implementation."
+}

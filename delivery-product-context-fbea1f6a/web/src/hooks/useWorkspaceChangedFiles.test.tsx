@@ -1,0 +1,1746 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
+import type { ReactNode } from "react";
+
+vi.mock("@/hooks/RunnerHealthProvider", () => ({
+  useSessionRunnerOnline: vi.fn(),
+  useSessionHostOnline: vi.fn(),
+}));
+vi.mock("@/store/chatStore", () => ({
+  useChatStore: vi.fn(),
+}));
+vi.mock("@/hooks/useSession", () => ({
+  useSession: vi.fn(),
+}));
+
+import { useSessionHostOnline, useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
+import { useSession } from "@/hooks/useSession";
+import { useChatStore } from "@/store/chatStore";
+import type { Session } from "@/lib/types";
+import {
+  type WorkspaceEnvironment,
+  MAX_RUNNER_OFFLINE_RETRIES,
+  RunnerOfflineError,
+  browseLocationBase,
+  browseLocationSegment,
+  isRunnerUnavailable503,
+  looksLikeWorkspaceFilePath,
+  relativizeToWorkspace,
+  resolveChatFilePath,
+  runnerOfflineRetryDelay,
+  shouldRetryRunnerOffline,
+  useWorkspaceAllFiles,
+  useWorkspaceChangedFiles,
+  useWorkspaceDirectory,
+  useWorkspaceEnvironment,
+  useWorkspaceFileExists,
+  useWorkspaceFileSearch,
+} from "./useWorkspaceChangedFiles";
+
+const onlineMock = vi.mocked(useSessionRunnerOnline);
+const hostOnlineMock = vi.mocked(useSessionHostOnline);
+const sessionMock = vi.mocked(useSession);
+const chatStoreMock = vi.mocked(useChatStore);
+const fetchMock = vi.fn();
+
+function stubSession(opts: { hostId?: string | null; createdAtSecondsAgo?: number } | null) {
+  if (opts === null) {
+    sessionMock.mockReturnValue({ session: null, isLoading: false, error: null });
+    return;
+  }
+  const createdAt = Math.floor(Date.now() / 1000) - (opts.createdAtSecondsAgo ?? 0);
+  sessionMock.mockReturnValue({
+    session: {
+      hostId: opts.hostId ?? "host_1",
+      permissionLevel: null,
+      createdAt,
+    } as Session,
+    isLoading: false,
+    error: null,
+  });
+}
+
+type StubStatus = "idle" | "running" | "waiting" | "failed";
+
+function stubChatStore(conversationId: string | null = null, sessionStatus: StubStatus = "idle") {
+  chatStoreMock.mockImplementation((selector: unknown) => {
+    if (typeof selector === "function") {
+      return (
+        selector as (s: { conversationId: string | null; sessionStatus: StubStatus }) => unknown
+      )({ conversationId, sessionStatus });
+    }
+    return undefined;
+  });
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? "OK" : "Error",
+    json: async () => body,
+  } as unknown as Response;
+}
+
+function environmentResponse(root = "/workspace"): Response {
+  return jsonResponse({ metadata: { root } });
+}
+
+function changedFilesResponse(): Response {
+  return jsonResponse({ object: "list", data: [], has_more: false });
+}
+
+function filesystemListResponse(): Response {
+  return jsonResponse({ object: "list", data: [], has_more: false });
+}
+
+function Wrap({ children }: { children: ReactNode }) {
+  // retry: false — otherwise mocked 503s spin past the assertion
+  // window. staleTime: 0 — force re-eval of `enabled` per render.
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+  });
+  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+}
+
+function ChangedFilesProbe({ id }: { id: string | undefined }) {
+  useWorkspaceChangedFiles(id);
+  return null;
+}
+
+function AllFilesProbe({ id }: { id: string | undefined }) {
+  useWorkspaceAllFiles(id);
+  return null;
+}
+
+function DisabledAllFilesProbe({ id }: { id: string | undefined }) {
+  useWorkspaceAllFiles(id, { enabled: false });
+  return null;
+}
+
+function DisabledChangedFilesProbe({ id }: { id: string | undefined }) {
+  useWorkspaceChangedFiles(id, { enabled: false });
+  return null;
+}
+
+function EnvironmentProbe({ id }: { id: string | undefined }) {
+  useWorkspaceEnvironment(id);
+  return null;
+}
+
+function EnvironmentDataProbe({
+  id,
+  onData,
+}: {
+  id: string | undefined;
+  onData: (data: WorkspaceEnvironment) => void;
+}) {
+  const query = useWorkspaceEnvironment(id);
+  useEffect(() => {
+    if (query.isSuccess) onData(query.data);
+  }, [query.isSuccess, query.data, onData]);
+  return null;
+}
+
+function DisabledEnvironmentProbe({ id }: { id: string | undefined }) {
+  useWorkspaceEnvironment(id, { enabled: false });
+  return null;
+}
+
+function DirectoryProbe({ id, path }: { id: string | undefined; path: string | null }) {
+  useWorkspaceDirectory(id, path);
+  return null;
+}
+
+function FileSearchProbe({
+  id,
+  query,
+  include,
+  exclude,
+  enabled = true,
+}: {
+  id: string | undefined;
+  query: string;
+  include?: string;
+  exclude?: string;
+  enabled?: boolean;
+}) {
+  useWorkspaceFileSearch(id, query, include, exclude, { enabled });
+  return null;
+}
+
+function FileSearchTruncatedProbe({ id, query }: { id: string; query: string }) {
+  const { data } = useWorkspaceFileSearch(id, query);
+  return (
+    <output data-testid="truncated">
+      {data === undefined ? "pending" : String(data.truncated)}
+    </output>
+  );
+}
+
+function AllFilesPathsProbe({
+  id,
+  location,
+  onPaths,
+}: {
+  id: string;
+  location: string;
+  onPaths: (paths: string[]) => void;
+}) {
+  const query = useWorkspaceAllFiles(id, {}, location);
+  useEffect(() => {
+    if (query.isSuccess) onPaths(query.data.data.map((f) => f.path));
+  }, [query.isSuccess, query.data, onPaths]);
+  return null;
+}
+
+function DirectoryPathsProbe({
+  id,
+  path,
+  location,
+  onPaths,
+}: {
+  id: string;
+  path: string;
+  location: string;
+  onPaths: (paths: string[]) => void;
+}) {
+  const query = useWorkspaceDirectory(id, path, location);
+  useEffect(() => {
+    if (query.isSuccess) onPaths(query.data.map((f) => f.path));
+  }, [query.isSuccess, query.data, onPaths]);
+  return null;
+}
+
+function AllFilesProbeAt({ id, location }: { id: string; location: string }) {
+  useWorkspaceAllFiles(id, {}, location);
+  return null;
+}
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  // Default: no focused conversation, idle session. Existing tests
+  // assume sessionActive is false (initial fetch from `enabled`, no
+  // polling). The trailing-invalidate test overrides per-call.
+  stubChatStore();
+  hostOnlineMock.mockReturnValue(null);
+  stubSession(null);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.resetAllMocks();
+});
+
+describe("useWorkspaceChangedFiles gating", () => {
+  it("does not fetch when the runner is offline and the host is also down", async () => {
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(false);
+    fetchMock.mockResolvedValue(jsonResponse({ object: "list", data: [] }));
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id="conv_dead" />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches when the runner is offline but the host can serve the workspace", async () => {
+    // Runner-offline no longer disables the panel: the server reads the
+    // workspace over the host tunnel, so the query must still fire.
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(true);
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(changedFilesResponse());
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id="conv_asleep" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/v1/sessions/conv_asleep/resources/environments/default/changes",
+    );
+  });
+
+  it("fetches when the runner is offline but host liveness is still unknown", async () => {
+    // Transient window (e.g. a stream push flipped the runner before host
+    // liveness resolved): host `undefined` stays "unknown → serve" so the
+    // query fires rather than blanking the panel; if the host is really
+    // down it just 503s and shows the reconnect hint.
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(undefined);
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(changedFilesResponse());
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id="conv_unknown_host" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("fetches when the runner is online", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(changedFilesResponse());
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id="conv_live" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default/changes",
+    );
+  });
+
+  it("aborts the prior conversation's changed-files request", async () => {
+    onlineMock.mockReturnValue(true);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0 } },
+    });
+    let priorSignal: AbortSignal | undefined;
+    let nextSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/resources/environments/default")) {
+        return Promise.resolve(environmentResponse());
+      }
+      if (url.includes("/conv_prior/") && url.endsWith("/changes")) {
+        priorSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }
+      if (url.includes("/conv_next/") && url.endsWith("/changes")) {
+        nextSignal = init?.signal ?? undefined;
+      }
+      return Promise.resolve(changedFilesResponse());
+    });
+
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <ChangedFilesProbe id="conv_prior" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(priorSignal).toBeDefined());
+    expect(priorSignal?.aborted).toBe(false);
+
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChangedFilesProbe id="conv_next" />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(priorSignal?.aborted).toBe(true));
+    await waitFor(() => expect(nextSignal).toBeDefined());
+    expect(nextSignal?.aborted).toBe(false);
+  });
+
+  it("fetches when status is unknown (undefined)", async () => {
+    // Don't block first render of healthy sessions before the
+    // sidebar's /health batch has reported.
+    onlineMock.mockReturnValue(undefined);
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(changedFilesResponse());
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id="conv_unknown" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_unknown/resources/environments/default",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/v1/sessions/conv_unknown/resources/environments/default/changes",
+    );
+  });
+
+  it("does not fetch changed files when the default environment is unavailable", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ metadata: {} }));
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id="conv_no_fs" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await flushMicrotasks();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_no_fs/resources/environments/default",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("only preflights the environment when the runner is unavailable", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id="conv_asleep" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await flushMicrotasks();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_asleep/resources/environments/default",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fetch when conversationId is undefined", async () => {
+    onlineMock.mockReturnValue(true);
+
+    render(
+      <Wrap>
+        <ChangedFilesProbe id={undefined} />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the session's reach so the panel knows where it may navigate", async () => {
+    // The panel decides whether to offer navigation at all from this field;
+    // if it were dropped the control would never appear.
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        metadata: {
+          root: "/home/u/ws",
+          home: "/home/u",
+          reachable: {
+            unconfined: true,
+            roots: [{ path: "/home/u/ws", access: "write", origin: "cwd" }],
+          },
+        },
+      }),
+    );
+    const results: WorkspaceEnvironment[] = [];
+
+    render(
+      <Wrap>
+        <EnvironmentDataProbe id="conv_live" onData={(data) => results.push(data)} />
+      </Wrap>,
+    );
+    await waitFor(() =>
+      expect(results.at(-1)?.reachable).toEqual({
+        unconfined: true,
+        roots: [{ path: "/home/u/ws", access: "write", origin: "cwd" }],
+      }),
+    );
+  });
+
+  it("does not fetch when disabled by the caller", async () => {
+    onlineMock.mockReturnValue(true);
+
+    render(
+      <Wrap>
+        <DisabledChangedFilesProbe id="conv_live" />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useWorkspaceAllFiles gating", () => {
+  it("does not fetch when the runner is offline and the host is also down", async () => {
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(false);
+
+    render(
+      <Wrap>
+        <AllFilesProbe id="conv_dead" />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches the filesystem listing when the runner is online", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(filesystemListResponse());
+
+    render(
+      <Wrap>
+        <AllFilesProbe id="conv_live" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default/filesystem?limit=1000&order=asc",
+    );
+  });
+
+  it("does not fetch the filesystem listing when the default environment is unavailable", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ metadata: {} }));
+
+    render(
+      <Wrap>
+        <AllFilesProbe id="conv_no_fs" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await flushMicrotasks();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_no_fs/resources/environments/default",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not poll the root filesystem listing while the session is active", async () => {
+    onlineMock.mockReturnValue(true);
+    stubChatStore("conv_live", "running");
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(filesystemListResponse());
+
+    render(
+      <Wrap>
+        <AllFilesProbe id="conv_live" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    try {
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(10_500);
+    } finally {
+      vi.useRealTimers();
+    }
+    await flushMicrotasks();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not fetch when disabled by the caller", async () => {
+    onlineMock.mockReturnValue(true);
+
+    render(
+      <Wrap>
+        <DisabledAllFilesProbe id="conv_live" />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useWorkspaceEnvironment gating", () => {
+  it("fetches the default environment when the runner is online", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ metadata: { root: "/workspace" } }));
+
+    render(
+      <Wrap>
+        <EnvironmentProbe id="conv_live" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default",
+    );
+  });
+
+  it("marks the environment unavailable when the server omits metadata.root", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ metadata: {} }));
+    const results: WorkspaceEnvironment[] = [];
+
+    render(
+      <Wrap>
+        <EnvironmentDataProbe id="conv_live" onData={(data) => results.push(data)} />
+      </Wrap>,
+    );
+    await waitFor(() =>
+      expect(results.at(-1)).toEqual({
+        available: false,
+        root: null,
+        home: null,
+        reachable: null,
+      }),
+    );
+  });
+
+  it("surfaces metadata.home alongside root when the server reports it", async () => {
+    // home drives "~" expansion for chat path-links; it must round-trip from
+    // the environment payload into the query result.
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ metadata: { root: "/home/u/ws", home: "/home/u" } }),
+    );
+    const results: WorkspaceEnvironment[] = [];
+
+    render(
+      <Wrap>
+        <EnvironmentDataProbe id="conv_live" onData={(data) => results.push(data)} />
+      </Wrap>,
+    );
+    await waitFor(() =>
+      expect(results.at(-1)).toEqual({
+        available: true,
+        root: "/home/u/ws",
+        home: "/home/u",
+        reachable: null,
+      }),
+    );
+  });
+
+  it("does not fetch when disabled by the caller", async () => {
+    onlineMock.mockReturnValue(true);
+
+    render(
+      <Wrap>
+        <DisabledEnvironmentProbe id="conv_live" />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch when the runner is offline and the host is also down", async () => {
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(false);
+
+    render(
+      <Wrap>
+        <EnvironmentProbe id="conv_dead" />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useWorkspaceDirectory gating", () => {
+  it("does not fetch when the runner is offline and the host is also down (on-demand expand)", async () => {
+    // Lazy expand path — not poll spam, but still unserveable when both
+    // the runner and host are down. Gated like the other workspace hooks.
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(false);
+
+    render(
+      <Wrap>
+        <DirectoryProbe id="conv_dead" path="src" />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches the directory contents when the runner is online", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ object: "list", data: [] }));
+
+    render(
+      <Wrap>
+        <DirectoryProbe id="conv_live" path="src/inner" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default/filesystem/src/inner?limit=1000&order=asc",
+    );
+  });
+
+  it("does not fetch when path is null (pre-existing gate)", async () => {
+    onlineMock.mockReturnValue(true);
+
+    render(
+      <Wrap>
+        <DirectoryProbe id="conv_live" path={null} />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useWorkspaceFileSearch gating", () => {
+  it("does not fetch when disabled by the caller", async () => {
+    onlineMock.mockReturnValue(true);
+
+    render(
+      <Wrap>
+        <FileSearchProbe id="conv_live" query="main" enabled={false} />
+      </Wrap>,
+    );
+    await flushMicrotasks();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches search results with query and glob filters when enabled", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ object: "list", data: [], has_more: false }));
+
+    render(
+      <Wrap>
+        <FileSearchProbe
+          id="conv_live"
+          query=" main "
+          include=" *.ts "
+          exclude=" **/node_modules "
+        />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default/search?limit=500&q=main&include=*.ts&exclude=**%2Fnode_modules",
+    );
+  });
+});
+
+describe("useWorkspaceFileSearch truncation", () => {
+  it("surfaces the server's truncated flag so a miss is not shown as definitive", async () => {
+    // The server already reported that its scan budget ran out; the hook used
+    // to drop that and hand the panel a bare empty list.
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ object: "list", data: [], has_more: false, truncated: true }),
+    );
+
+    render(
+      <Wrap>
+        <FileSearchTruncatedProbe id="conv_live" query="reyden" />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("truncated")).toHaveTextContent("true"));
+  });
+});
+
+describe("useWorkspaceChangedFiles trailing-edge invalidate", () => {
+  it("refetches once when the focused session transitions running → idle", async () => {
+    // Repro: a prior change cut polling on idle, but the agent's last writes
+    // may have landed in the runner registry after the most recent poll.
+    // Without a trailing refetch, the panel stays stuck on stale data
+    // until the user reloads the page.
+    onlineMock.mockReturnValue(true);
+    stubChatStore("conv_live", "running");
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValue(changedFilesResponse());
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0 } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <ChangedFilesProbe id="conv_live" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    // Status flips to idle: trailing invalidate should fire one more fetch.
+    stubChatStore("conv_live", "idle");
+    rerender(
+      <QueryClientProvider client={qc}>
+        <ChangedFilesProbe id="conv_live" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "/v1/sessions/conv_live/resources/environments/default/changes",
+    );
+  });
+
+  it("does not invalidate when status stays idle across renders", async () => {
+    // Guard against a spurious refetch on every render — the trailing
+    // edge only triggers on the active → idle transition.
+    onlineMock.mockReturnValue(true);
+    stubChatStore("conv_live", "idle");
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValue(changedFilesResponse());
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0 } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <ChangedFilesProbe id="conv_live" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    rerender(
+      <QueryClientProvider client={qc}>
+        <ChangedFilesProbe id="conv_live" />
+      </QueryClientProvider>,
+    );
+    await flushMicrotasks();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("isRunnerUnavailable503", () => {
+  // The crux of distinguishing "runner asleep" from other 503s: a 503 is
+  // only treated as the offline runner when the body carries the app's
+  // runner_unavailable code. A new session whose runner is still
+  // connecting 503s with this same code, but the hook's retries let it
+  // resolve before the hint shows — see the retry config.
+  it("is true for the app's runner_unavailable error body", async () => {
+    const res = jsonResponse({ error: { code: "runner_unavailable" } }, 503);
+    expect(await isRunnerUnavailable503(res)).toBe(true);
+  });
+
+  it("is false for a different app error code at 503", async () => {
+    // e.g. runner_capability_mismatch is also 503 but is not "offline".
+    const res = jsonResponse({ error: { code: "runner_capability_mismatch" } }, 503);
+    expect(await isRunnerUnavailable503(res)).toBe(false);
+  });
+
+  it("is false for a non-JSON 503 (gateway / front-door restart)", async () => {
+    // The Databricks Apps front door returns 503 with an HTML body while
+    // the app restarts — must NOT be read as the runner being offline.
+    const res = {
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      json: async () => {
+        throw new SyntaxError("Unexpected token < in JSON");
+      },
+    } as unknown as Response;
+    expect(await isRunnerUnavailable503(res)).toBe(false);
+  });
+
+  it("does not consume a non-503 response body", async () => {
+    const json = vi.fn(async () => {
+      throw new Error("body must not be read");
+    });
+    const res = { ok: true, status: 200, statusText: "OK", json } as unknown as Response;
+
+    expect(await isRunnerUnavailable503(res)).toBe(false);
+    expect(json).not.toHaveBeenCalled();
+  });
+});
+
+describe("looksLikeWorkspaceFilePath", () => {
+  it.each([
+    // [input, expected, why]
+    ["projects/dais-2026-outlines/foo.md", true, "nested relative path"],
+    ["src/app/main.ts", true, "relative path with extension"],
+    ["a/b", true, "minimal interior slash"],
+    ["docs/Design Notes.md", true, "space inside a later segment is a valid filename"],
+    ["", false, "empty string"],
+    ["README", false, "bare filename, no directory segment"],
+    ["git status", false, "command, no slash"],
+    ["npm run build", false, "command, no slash"],
+    ["git diff src/app", false, "whitespace before the first slash → command, not a path"],
+    ["a/b?c=d", false, "query string → not a plain path"],
+    ["a/b#frag", false, "fragment → not a plain path"],
+    ["/etc/hosts", false, "absolute path (FileViewer rejects these)"],
+    ["https://example.com/x", false, "URL"],
+    ["file://a/b", false, "URL scheme"],
+    ["a/", false, "trailing slash → empty basename"],
+    ["a/b/", false, "trailing slash → empty final segment"],
+    ["a//b", false, "empty interior segment"],
+    ["../x/y", false, "parent-traversal segment"],
+    ["a/./b", false, "current-dir segment"],
+    ["/a", false, "leading slash → no parent segment"],
+  ])("returns %o → %s (%s)", (input, expected) => {
+    expect(looksLikeWorkspaceFilePath(input as string)).toBe(expected);
+  });
+});
+
+describe("relativizeToWorkspace", () => {
+  // The wire form decides the authorization level the server applies: an
+  // absolute location is owner-gated (it can name any path on the host), a
+  // relative one is not. So a folder INSIDE the workspace must go out
+  // relative, or every collaborator browsing their own workspace gets a 403.
+  it.each([
+    [null, "/work/proj", "", "the root is the empty location"],
+    ["/work/proj", "/work/proj", "", "the root itself normalizes to empty"],
+    ["/work/proj/", "/work/proj", "", "a trailing slash on the root still matches"],
+    ["/work/proj/src", "/work/proj", "src", "a child goes out relative"],
+    ["/work/proj/src/ui", "/work/proj", "src/ui", "a deep child keeps its subpath"],
+    ["/etc", "/work/proj", "/etc", "an outside path stays absolute"],
+    ["/work/proj-old", "/work/proj", "/work/proj-old", "a name-prefixed sibling is NOT a child"],
+    ["/work/proj", null, "/work/proj", "an unknown root cannot be relativized"],
+  ])("%s under %s -> %s (%s)", (browsed, root, expected, why) => {
+    expect(relativizeToWorkspace(browsed, root), why).toBe(expected);
+  });
+});
+
+describe("resolveChatFilePath", () => {
+  const ROOT = "/home/u/ws";
+  const HOME = "/home/u";
+  const rel = (path: string) => ({ path, trusted: false });
+  const abs = (path: string) => ({ path, trusted: true });
+  it.each([
+    // [text, root, home, expected, why]
+    ["src/app.ts", ROOT, HOME, rel("src/app.ts"), "plain relative path → unchanged"],
+    ["foo.md", ROOT, HOME, rel("foo.md"), "bare relative basename → unchanged"],
+    ["~/ws/foo.md", ROOT, HOME, abs("foo.md"), "tilde under root → root-level relative"],
+    ["~/ws/src/app.ts", ROOT, HOME, abs("src/app.ts"), "tilde under root → nested relative"],
+    ["/home/u/ws/src/app.ts", ROOT, HOME, abs("src/app.ts"), "absolute under root → relative"],
+    ["/home/u/ws/foo.md", ROOT, HOME, abs("foo.md"), "absolute under root → root-level relative"],
+    // Outside the workspace, a path stays host-absolute — the FileViewer and
+    // filesystem API open those via base=host (files-panel browse-anywhere).
+    ["/etc/hosts", ROOT, HOME, abs("/etc/hosts"), "absolute outside root → host-absolute"],
+    ["~/other/x.md", ROOT, HOME, abs("/home/u/other/x.md"), "tilde outside root → host-absolute"],
+    [
+      "/home/u/ws-old/x.md",
+      ROOT,
+      HOME,
+      abs("/home/u/ws-old/x.md"),
+      "root-name-prefixed sibling is outside",
+    ],
+    ["/home/u/ws", ROOT, HOME, null, "the root dir itself, not a file"],
+    ["/", ROOT, HOME, null, "the filesystem root, not a file"],
+    ["~/ws", ROOT, HOME, null, "tilde expands to the root dir itself"],
+    ["~/ws/foo.md", ROOT, null, null, "tilde with no home → unresolvable"],
+    ["/home/u/ws/foo.md", null, HOME, null, "absolute with unknown root → unresolvable"],
+    ["", ROOT, HOME, null, "empty string"],
+    ["~/ws/foo.md", "/home/u/ws/", HOME, abs("foo.md"), "trailing-slash root tolerated"],
+    // Interior traversal could land the fetch/FileViewer URL somewhere other
+    // than the cited text claims — inside or outside the workspace alike.
+    ["/home/u/ws/../etc/hosts", ROOT, HOME, null, "absolute with interior .. → unresolvable"],
+    ["/home/u/ws/a/../../etc", ROOT, HOME, null, "absolute climbing above root → unresolvable"],
+    ["/home/u/ws/./foo.md", ROOT, HOME, null, "absolute with '.' segment → unresolvable"],
+    ["/home/u/ws/sub//foo.md", ROOT, HOME, null, "absolute with empty segment → unresolvable"],
+    ["/etc/../home/u/secret", ROOT, HOME, null, "outside path with '..' → unresolvable"],
+    ["/etc//hosts", ROOT, HOME, null, "outside path with empty segment → unresolvable"],
+    ["/etc/ssl/", ROOT, HOME, null, "outside path with trailing slash → a directory form"],
+    ["~/ws/../secret.md", ROOT, HOME, null, "tilde with interior .. → unresolvable"],
+    ["a/../b.md", ROOT, HOME, null, "relative with '..' segment → unresolvable"],
+    // URLs / query / fragment can't name a workspace file — rejected up-front
+    // so a trusted absolute path doesn't strip to a non-matching candidate.
+    ["/home/u/ws/foo.md#L12", ROOT, HOME, null, "absolute with #fragment → unresolvable"],
+    ["/home/u/ws/foo.md?x=1", ROOT, HOME, null, "absolute with ?query → unresolvable"],
+    ["/etc/hosts#L1", ROOT, HOME, null, "outside path with #fragment → unresolvable"],
+    ["https://example.com/x", ROOT, HOME, null, "URL → unresolvable"],
+    ["C:\\Users\\u\\ws\\a.ts", ROOT, HOME, null, "Windows drive path → unresolvable"],
+    ["C:/Users/u/ws/a.ts", ROOT, HOME, null, "Windows drive path, forward slashes"],
+    ["\\\\host\\share\\a.ts", ROOT, HOME, null, "Windows UNC path → unresolvable"],
+  ])("%o (root=%o, home=%o) → %o (%s)", (text, root, home, expected, _why) => {
+    expect(
+      resolveChatFilePath(text as string, root as string | null, home as string | null),
+    ).toEqual(expected);
+  });
+
+  it("expands a root-user home ('/') without doubling the slash", () => {
+    // home "/" + "/ws/foo.md" must not become "//ws/foo.md" (which wouldn't
+    // match root "/ws"). Guards the trailing-slash strip on home expansion.
+    expect(resolveChatFilePath("~/ws/foo.md", "/ws", "/")).toEqual(abs("foo.md"));
+  });
+});
+
+function dirEntry(path: string, type: "file" | "directory" = "file") {
+  return {
+    id: path,
+    name: path.split("/").pop(),
+    path,
+    type,
+    bytes: type === "file" ? 5 : null,
+    modified_at: 1,
+  };
+}
+
+function FileExistsProbe({
+  id,
+  path,
+  trusted = false,
+  onResult,
+}: {
+  id: string | undefined;
+  path: string | null;
+  trusted?: boolean;
+  onResult: (exists: boolean) => void;
+}) {
+  // Report from an effect, not during render: invoking onResult mid-render is
+  // a side effect that double-fires under StrictMode and risks flaky probes.
+  const { exists } = useWorkspaceFileExists(id, path, trusted);
+  useEffect(() => {
+    onResult(exists);
+  }, [exists, onResult]);
+  return null;
+}
+
+function FileExistenceProbe({
+  id,
+  path,
+  trusted = false,
+  onResult,
+}: {
+  id: string | undefined;
+  path: string | null;
+  trusted?: boolean;
+  onResult: (result: { exists: boolean; settled: boolean }) => void;
+}) {
+  const result = useWorkspaceFileExists(id, path, trusted);
+  useEffect(() => {
+    onResult(result);
+  }, [result, onResult]);
+  return null;
+}
+
+describe("useWorkspaceFileExists", () => {
+  beforeEach(() => {
+    onlineMock.mockReturnValue(true);
+  });
+
+  it("lists the parent directory and reports an existing file as present", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [dirEntry("projects/out/foo.md"), dirEntry("projects/out/bar.md")],
+        has_more: false,
+      }),
+    );
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe id="conv_1" path="projects/out/foo.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    // Resolves true once the parent listing arrives.
+    await waitFor(() => expect(results.at(-1)).toBe(true));
+    // Existence is checked via the PARENT directory listing, not a content
+    // read or a recursive /search walk.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      "/resources/environments/default/filesystem/projects/out?",
+    );
+  });
+
+  it("finds a file on a later page of a large parent directory", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          object: "list",
+          data: [dirEntry("docs/first.md")],
+          last_id: "docs/first.md",
+          has_more: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          object: "list",
+          data: [dirEntry("docs/target.md")],
+          last_id: "docs/target.md",
+          has_more: false,
+        }),
+      );
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="docs/target.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(results.at(-1)).toEqual({ exists: true, settled: true }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toContain("after=docs%2Ffirst.md");
+  });
+
+  it.each(["HTTP 500", "malformed JSON"])(
+    "keeps confirmed files when a later page fails with %s",
+    async (failure) => {
+      const failedPage =
+        failure === "HTTP 500"
+          ? jsonResponse({ error: {} }, 500)
+          : Object.assign(jsonResponse({}), {
+              json: async () => {
+                throw new SyntaxError("Invalid JSON");
+              },
+            });
+      fetchMock
+        .mockResolvedValueOnce(
+          jsonResponse({
+            object: "list",
+            data: [dirEntry("docs/target.md")],
+            last_id: "docs/target.md",
+            has_more: true,
+          }),
+        )
+        .mockResolvedValueOnce(failedPage);
+      const found: { exists: boolean; settled: boolean }[] = [];
+      const missing: { exists: boolean; settled: boolean }[] = [];
+      render(
+        <Wrap>
+          <FileExistenceProbe id="conv_1" path="docs/target.md" onResult={(r) => found.push(r)} />
+          <FileExistenceProbe id="conv_1" path="docs/unseen.md" onResult={(r) => missing.push(r)} />
+        </Wrap>,
+      );
+
+      await waitFor(() => expect(found.at(-1)).toEqual({ exists: true, settled: true }));
+      expect(missing.at(-1)).toEqual({ exists: false, settled: false });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("leaves absence unverified after scanning 10,000 entries", async () => {
+    let pageIndex = 0;
+    fetchMock.mockImplementation(() => {
+      const index = pageIndex++;
+      const data = Array.from({ length: 1000 }, (_, i) =>
+        dirEntry(`docs/${String(index * 1000 + i).padStart(5, "0")}.md`),
+      );
+      return Promise.resolve(
+        jsonResponse({ object: "list", data, last_id: data.at(-1)?.id, has_more: true }),
+      );
+    });
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="docs/target.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(10));
+    await flushMicrotasks();
+    expect(results.at(-1)).toEqual({ exists: false, settled: false });
+  });
+
+  it("reports false when the file is absent from the parent listing", async () => {
+    // Sibling exists, target does not → must not be treated as present.
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [dirEntry("projects/out/other.md")],
+        has_more: false,
+      }),
+    );
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe
+          id="conv_1"
+          path="projects/out/missing.md"
+          onResult={(r) => results.push(r)}
+        />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await flushMicrotasks();
+    // The listing was actually consulted (parent dir, not a content read) —
+    // proves the false result comes from a resolved-but-no-match query, not
+    // from the query never running.
+    expect(fetchMock.mock.calls[0][0]).toContain("/filesystem/projects/out?");
+    // Never flips true — the basename isn't in the listing.
+    expect(results.length).toBeGreaterThan(0);
+    expect(results).not.toContain(true);
+    expect(results.at(-1)).toBe(false);
+  });
+
+  it("reports false (and 404-tolerant) when the parent directory is missing", async () => {
+    // 404 = directory/env absent. fetchDirEntriesTolerant swallows it as an
+    // empty listing rather than throwing, so existence is simply false.
+    fetchMock.mockResolvedValue(jsonResponse({ error: {} }, 404));
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe id="conv_1" path="ghost/dir/file.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await flushMicrotasks();
+    expect(results.length).toBeGreaterThan(0);
+    expect(results).not.toContain(true);
+    expect(results.at(-1)).toBe(false);
+  });
+
+  it("reports false without retrying when the runner is offline", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe id="conv_1" path="projects/out/foo.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await flushMicrotasks();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(results).not.toContain(true);
+    expect(results.at(-1)).toBe(false);
+  });
+
+  it("checks a trusted root-level basename against the workspace root listing", async () => {
+    // A path resolved from an absolute/"~" form can be a bare basename
+    // ("foo.md", no slash) that looksLikeWorkspaceFilePath rejects. With
+    // trusted=true it's checked anyway, listing the ROOT via bare /filesystem
+    // (parent dir is "").
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [dirEntry("foo.md"), dirEntry("README.md")],
+        has_more: false,
+      }),
+    );
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe id="conv_1" path="foo.md" trusted onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    // Resolves true once the root listing arrives — proves the trusted bypass
+    // and the root-level ("" parent) endpoint both work.
+    await waitFor(() => expect(results.at(-1)).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Bare /filesystem (no /<dir> suffix) is the workspace root listing.
+    expect(fetchMock.mock.calls[0][0]).toContain("/environments/default/filesystem?");
+  });
+
+  it("does not check an untrusted bare basename (heuristic still gates)", async () => {
+    // Without trusted=true, a slashless string fails looksLikeWorkspaceFilePath
+    // → no listing fires. Guards against the trusted bypass leaking to the
+    // default path and linkifying every bare word.
+    fetchMock.mockResolvedValue(jsonResponse({ object: "list", data: [] }));
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe id="conv_1" path="foo.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await flushMicrotasks();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(results.at(-1)).toBe(false);
+  });
+
+  it("does not fetch for null or non-path candidates", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ object: "list", data: [] }));
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe id="conv_1" path={null} onResult={(r) => results.push(r)} />
+        <FileExistsProbe id="conv_1" path="git status" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await flushMicrotasks();
+    // Neither a null path nor a non-path-shaped string triggers a listing.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(results.length).toBeGreaterThan(0);
+    expect(results).not.toContain(true);
+    expect(results.at(-1)).toBe(false);
+  });
+
+  it("checks a host-absolute path against its absolute parent via base=host", async () => {
+    // A trusted outside-workspace path ("/etc/hosts") lists its absolute
+    // parent through the slash-merge-safe wire form: slashless segment plus
+    // base=host, never a leading %2F a proxy would collapse. Entries of an
+    // absolute listing echo back base-relative names (the real wire shape);
+    // the fetch re-attaches the listed dir so the comparison matches.
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        base: "/etc",
+        data: [dirEntry("hosts"), dirEntry("ssl", "directory")],
+        has_more: false,
+      }),
+    );
+    const results: boolean[] = [];
+    render(
+      <Wrap>
+        <FileExistsProbe id="conv_1" path="/etc/hosts" trusted onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(results.at(-1)).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/environments/default/filesystem/etc?");
+    expect(url).toContain("base=host");
+    expect(url).not.toContain("%2F");
+  });
+
+  it("reports false (and 403-tolerant) when an absolute parent is out of reach", async () => {
+    // 403 = outside a confined session's grants, or below the owner level
+    // absolute browsing requires. For linkification that reads as "no such
+    // openable file", not an error to surface.
+    fetchMock.mockResolvedValue(jsonResponse({ error: {} }, 403));
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe
+          id="conv_1"
+          path="/root/secret.txt"
+          trusted
+          onResult={(r) => results.push(r)}
+        />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(results.at(-1)?.settled).toBe(true));
+    // Settles as a definitive "absent" (success with no entries), not an error.
+    expect(results.at(-1)).toEqual({ exists: false, settled: true });
+  });
+
+  it("stays unsettled while the listing is in flight, then settles", async () => {
+    // "settled" is what lets a renderer distinguish "definitively absent"
+    // (give feedback) from "not verified yet" (stay inert).
+    let release: (value: Response) => void = () => {};
+    fetchMock.mockReturnValue(
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+    );
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="docs/notes.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(results.at(-1)).toEqual({ exists: false, settled: false });
+
+    release(
+      jsonResponse({
+        object: "list",
+        data: [dirEntry("docs/notes.md")],
+        has_more: false,
+      }),
+    );
+    await waitFor(() => expect(results.at(-1)).toEqual({ exists: true, settled: true }));
+  });
+
+  it("never settles a check it skipped (bare basename, untrusted)", async () => {
+    // Not path-shaped and not trusted → no listing ever runs. Skipped means
+    // "unknown", not "verified absent": reporting it settled turned real
+    // root-level files cited by bare basename (README.md, Makefile) into
+    // dead links with a false "not found" toast.
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="README.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await flushMicrotasks();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(results.at(-1)).toEqual({ exists: false, settled: false });
+  });
+
+  it("does not settle a miss on a truncated (has_more) listing", async () => {
+    // The parent page was cut off at the listing limit, so a file missing
+    // from it may simply live past the limit — absence is unproven and the
+    // link must stay inert rather than toast a false "not found".
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [dirEntry("docs/other.md")],
+        has_more: true,
+      }),
+    );
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="docs/notes.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await flushMicrotasks();
+    expect(results.at(-1)).toEqual({ exists: false, settled: false });
+  });
+
+  it("settles a hit even on a truncated listing", async () => {
+    // Truncation only leaves absence open; a file present on the page is
+    // affirmatively confirmed regardless of what fell past the limit.
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [dirEntry("docs/notes.md")],
+        has_more: true,
+      }),
+    );
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="docs/notes.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(results.at(-1)).toEqual({ exists: true, settled: true }));
+  });
+
+  it("does not settle on a listing error", async () => {
+    // Only a listing that actually completed proves absence; a transient 500
+    // (or gateway/network failure) leaves the answer open rather than
+    // declaring an otherwise-openable file dead.
+    fetchMock.mockResolvedValue(jsonResponse({ error: {} }, 500));
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="docs/notes.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await flushMicrotasks();
+    expect(results.at(-1)).toEqual({ exists: false, settled: false });
+  });
+
+  it("does not settle while the runner is unavailable", async () => {
+    // runner_unavailable 503 answers "couldn't check right now", not "the
+    // directory is empty" — a parked runner must not verify absence.
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+    const results: { exists: boolean; settled: boolean }[] = [];
+    render(
+      <Wrap>
+        <FileExistenceProbe id="conv_1" path="docs/notes.md" onResult={(r) => results.push(r)} />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await flushMicrotasks();
+    expect(results.at(-1)).toEqual({ exists: false, settled: false });
+  });
+});
+
+describe("shouldRetryRunnerOffline", () => {
+  it("retries a still-connecting runner up to the cap, then stops", () => {
+    // A new session whose runner is still booting answers RunnerOfflineError
+    // (the app's runner_unavailable 503). ~2 minutes of backoff must outlast
+    // a cold boot; beyond the cap the runner is genuinely offline and the
+    // reconnect hint should show instead of retrying forever.
+    const err = new RunnerOfflineError();
+    expect(shouldRetryRunnerOffline(1, err)).toBe(true);
+    expect(shouldRetryRunnerOffline(MAX_RUNNER_OFFLINE_RETRIES, err)).toBe(true);
+    expect(shouldRetryRunnerOffline(MAX_RUNNER_OFFLINE_RETRIES + 1, err)).toBe(false);
+  });
+
+  it("fails fast on any non-runner-offline error", () => {
+    // A generic failure (500, parse error, transport) is a real answer, not
+    // a not-ready signal — retrying would only delay surfacing it.
+    expect(shouldRetryRunnerOffline(1, new Error("boom"))).toBe(false);
+  });
+});
+
+describe("runnerOfflineRetryDelay", () => {
+  it("doubles per attempt then caps at 15s", () => {
+    // Climbs (so a flapping runner isn't hammered) and caps (so late retries
+    // stay responsive once the runner is nearly up).
+    expect(runnerOfflineRetryDelay(0)).toBe(1000);
+    expect(runnerOfflineRetryDelay(1)).toBe(2000);
+    expect(runnerOfflineRetryDelay(2)).toBe(4000);
+    expect(runnerOfflineRetryDelay(3)).toBe(8000);
+    expect(runnerOfflineRetryDelay(4)).toBe(15_000);
+    expect(runnerOfflineRetryDelay(10)).toBe(15_000);
+  });
+});
+
+describe("runner-offline retry liveness gate", () => {
+  function renderEnvironment(id: string) {
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 0 } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <EnvironmentProbe id={id} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("does not retry a 503 from a stale-online runner", async () => {
+    vi.useFakeTimers();
+    onlineMock.mockReturnValue(true);
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+
+    renderEnvironment("conv_stuck");
+    await vi.advanceTimersByTimeAsync(130_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a 503 for an old session with unknown liveness", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-23T00:00:00Z"));
+    onlineMock.mockReturnValue(undefined);
+    stubSession({ createdAtSecondsAgo: 3600 });
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+
+    renderEnvironment("conv_old");
+    await vi.advanceTimersByTimeAsync(130_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries while a fresh session is cold-booting", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-23T00:00:00Z"));
+    onlineMock.mockReturnValue(undefined);
+    stubSession({ createdAtSecondsAgo: 1 });
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+
+    renderEnvironment("conv_fresh");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("retries while the session snapshot is loading", async () => {
+    vi.useFakeTimers();
+    onlineMock.mockReturnValue(undefined);
+    sessionMock.mockReturnValue({ session: null, isLoading: true, error: null });
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+
+    renderEnvironment("conv_loading");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("retries while an active turn relaunches an offline runner", async () => {
+    vi.useFakeTimers();
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(true);
+    stubSession({ createdAtSecondsAgo: 3600 });
+    stubChatStore("conv_relaunch", "running");
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+
+    renderEnvironment("conv_relaunch");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stops retrying once the loaded snapshot shows the sandbox asleep", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-23T00:00:00Z"));
+    // Page load: the first 503 lands while the snapshot is still loading.
+    onlineMock.mockReturnValue(undefined);
+    sessionMock.mockReturnValue({ session: null, isLoading: true, error: null });
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "runner_unavailable" } }, 503));
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 0 } } });
+    const tree = () => (
+      <QueryClientProvider client={qc}>
+        <EnvironmentProbe id="conv_asleep" />
+      </QueryClientProvider>
+    );
+
+    const view = render(tree());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The snapshot lands: an idle-stopped managed sandbox with both tunnels down.
+    sessionMock.mockReturnValue({
+      session: {
+        hostId: "host_1",
+        hostResumable: true,
+        permissionLevel: null,
+        createdAt: Math.floor(Date.now() / 1000) - 3600,
+      } as Session,
+      isLoading: false,
+      error: null,
+    });
+    onlineMock.mockReturnValue(false);
+    hostOnlineMock.mockReturnValue(false);
+    view.rerender(tree());
+    await vi.advanceTimersByTimeAsync(130_000);
+
+    // The retry already scheduled at the first failure still runs; none after it.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("browse-location listings normalize to paths relative to the location", () => {
+  // The runner answers the two wire forms with DIFFERENT path shapes: a
+  // relative location is echoed back as a prefix on every entry, an absolute
+  // one is not. The panel picks the wire form on authorization grounds, so it
+  // must not also inherit a shape change -- an un-stripped prefix renders the
+  // browsed folder as an extra level inside its own tree.
+  function entries(...paths: string[]): Response {
+    return jsonResponse({
+      object: "list",
+      data: paths.map((path) => ({
+        id: path,
+        name: path.split("/").pop(),
+        path,
+        type: "file",
+        bytes: 1,
+        modified_at: null,
+      })),
+      has_more: false,
+    });
+  }
+
+  beforeEach(() => {
+    onlineMock.mockReturnValue(true);
+  });
+
+  it("strips the echoed prefix a relative location comes back with", async () => {
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(entries("reports/summary.md", "reports/q3.csv"));
+    const onPaths = vi.fn();
+
+    render(
+      <Wrap>
+        <AllFilesPathsProbe id="conv_rel" location="reports" onPaths={onPaths} />
+      </Wrap>,
+    );
+    await waitFor(() => expect(onPaths).toHaveBeenCalled());
+
+    expect(onPaths).toHaveBeenLastCalledWith(["summary.md", "q3.csv"]);
+  });
+
+  it("leaves an absolute location's already-bare paths alone", async () => {
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(entries("summary.md"));
+    const onPaths = vi.fn();
+
+    render(
+      <Wrap>
+        <AllFilesPathsProbe id="conv_abs" location="/elsewhere/reports" onPaths={onPaths} />
+      </Wrap>,
+    );
+    await waitFor(() => expect(onPaths).toHaveBeenCalled());
+
+    expect(onPaths).toHaveBeenLastCalledWith(["summary.md"]);
+  });
+
+  it.each([
+    ["reports", "reports/quarterly/q3.csv", "a relative location echoes the whole target"],
+    ["/elsewhere/reports", "q3.csv", "an absolute one lists bare"],
+  ])("roots a lazily-expanded directory's children under it (%s)", async (location, wirePath) => {
+    // Children address themselves relative to the tree's root, not to the
+    // directory that was listed -- otherwise expanding one level deeper
+    // would request the wrong path.
+    fetchMock.mockResolvedValueOnce(entries(wirePath));
+    const onPaths = vi.fn();
+
+    render(
+      <Wrap>
+        <DirectoryPathsProbe id="conv_dir" path="quarterly" location={location} onPaths={onPaths} />
+      </Wrap>,
+    );
+    await waitFor(() => expect(onPaths).toHaveBeenCalled());
+
+    expect(onPaths).toHaveBeenLastCalledWith(["quarterly/q3.csv"]);
+  });
+});
+
+describe("browse-location wire form (survives a slash-merging proxy)", () => {
+  // The absolute/relative distinction must NOT ride on a leading "%2F" in the
+  // path: that decodes to a "//" which reverse proxies (the Databricks Apps
+  // front door) merge to a single "/", turning an absolute path into a
+  // workspace-relative one. Paths go out with literal slashes and no leading
+  // "%2F"; the base is named out of band via `?base=host`.
+  describe("browseLocationSegment", () => {
+    it.each([
+      ["", "", "root is empty"],
+      ["/", "", "filesystem root is empty (base names it)"],
+      ["src/app.ts", "src/app.ts", "relative path is bare"],
+      ["/Users/me", "Users/me", "absolute path drops its leading slash"],
+      ["/a/b/c", "a/b/c", "deep absolute path drops only the leading slash"],
+      ["/my docs/f", "my%20docs/f", "segments are still percent-encoded"],
+    ])("%s -> %s (%s)", (location, expected) => {
+      const seg = browseLocationSegment(location);
+      expect(seg, expected).toBe(expected);
+      expect(seg.includes("%2F"), "no %2F leading marker").toBe(false);
+    });
+  });
+
+  describe("browseLocationBase", () => {
+    it.each([
+      ["", null],
+      ["src/app.ts", null],
+      ["/", "host"],
+      ["/Users/me", "host"],
+    ])("%s -> %s", (location, expected) => {
+      expect(browseLocationBase(location)).toBe(expected);
+    });
+  });
+
+  it("requests an absolute location with a bare path plus base=host", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(jsonResponse({ object: "list", data: [], has_more: false }));
+
+    render(
+      <Wrap>
+        <AllFilesProbeAt id="conv_abs_url" location="/Users/me/reports" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const url = String(fetchMock.mock.calls[1][0]);
+    expect(url).toContain("/filesystem/Users/me/reports?");
+    expect(url).toContain("base=host");
+    expect(url.includes("%2F"), "no %2F in the absolute request").toBe(false);
+  });
+
+  it("requests a workspace-relative location with no base param", async () => {
+    onlineMock.mockReturnValue(true);
+    fetchMock
+      .mockResolvedValueOnce(environmentResponse())
+      .mockResolvedValueOnce(jsonResponse({ object: "list", data: [], has_more: false }));
+
+    render(
+      <Wrap>
+        <AllFilesProbeAt id="conv_rel_url" location="src/inner" />
+      </Wrap>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const url = String(fetchMock.mock.calls[1][0]);
+    expect(url).toContain("/filesystem/src/inner?");
+    expect(url).not.toContain("base=");
+  });
+});

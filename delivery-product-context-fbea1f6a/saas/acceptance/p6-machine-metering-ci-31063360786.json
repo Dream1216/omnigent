@@ -1,0 +1,91 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31063360786,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31063360786",
+  "job_id": 92495818361,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31063360786/job/92495818361",
+  "head_sha": "b2285a70b0c78131b043200c4b1cc1ca8536877f",
+  "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
+  "conclusion": "success",
+  "verification": {
+    "combined_ci_tests": "889 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 144.76,
+    "isolated_logical_restore_contract": "passed in 3.134 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed in 34.33 seconds",
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips in 15.14 seconds",
+    "wheel_required_artifacts": 177,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000009",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "machine_metering_authority_contract": {
+    "dedicated_non_human_database_role": "saas_metering NOBYPASSRLS",
+    "caller_supplied_tenant_space_project_actor_session_and_price_rejected": true,
+    "scope_and_price_derived_from_current_server_authority": true,
+    "current_runner_connection_and_certificate_required": true,
+    "current_capability_dispatch_generation_run_lease_and_fence_required": true,
+    "fixed_point_customer_charge_derived_from_versioned_pricing": true,
+    "usage_receipt_and_secret_free_outbox_persisted_in_one_transaction": true,
+    "receipt_binds_runner_certificate_capability_dispatch_run_fence_and_request_hash": true,
+    "receipt_and_usage_idempotency_replay_is_stable": true,
+    "metering_receipts_are_immutable": true
+  },
+  "internal_transport_contract": {
+    "protocol": "bounded HTTP/1.1 over TLS 1.3 mutual authentication",
+    "route": "POST /internal/v1/billing/usage",
+    "runner_identity": "one exact spiffe://omnigent/runner/{uuid} URI SAN",
+    "durable_certificate_purpose": "billing_metering",
+    "certificate_fingerprint_derived_from_presented_der": true,
+    "durable_certificate_lifecycle_rechecked_per_request": true,
+    "strict_request_head_limit_bytes": 16384,
+    "strict_request_and_response_body_limit_bytes": 8192,
+    "duplicate_or_unknown_json_members_rejected": true,
+    "response_limit_enforced_while_streaming": true,
+    "caller_owned_idempotency_and_no_hidden_retry": true
+  },
+  "postgresql_and_recovery_contract": {
+    "database": "PostgreSQL 16",
+    "control_plane_forced_rls_tables": 68,
+    "runtime_forced_rls_tables": 17,
+    "restored_machine_metering_receipts": 2,
+    "cross_tenant_negative_probe": "passed",
+    "cross_workspace_negative_probe": "passed",
+    "cross_tenant_billing_receipt_negative_probe": "passed",
+    "machine_metering_receipt_restore": "passed",
+    "restored_receipt_usage_run_capability_certificate_and_runner_links": true,
+    "restored_receipt_immutable_trigger": true,
+    "post_backup_billing_authority_replay": "passed",
+    "temporary_restore_databases_dropped": true
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "d05e52b595d8349eea987303dc2c79d0353bb09b",
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9953,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "the official Runtime Provider execution path invoking the machine metering client",
+    "live Provider tool-call token and cost metering under production traffic",
+    "period rollover credit expiry proration overdue suspension or payment and invoice lifecycle",
+    "signed deduplicated out-of-order replayable payment-provider webhooks",
+    "a real provider invoice and customer financial export reconciliation",
+    "production billing SLO capacity incident response tax privacy or commercial acceptance",
+    "completion of the aggregate P6 billing gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the exact machine-metering authority and internal transport implementation at b2285a70b0c78131b043200c4b1cc1ca8536877f. A successor that changes only this evidence record, the still-pending acceptance gate evidence list, wheel inventory, README, tests that assert those records, or plan documentation does not alter the verified implementation. It deliberately does not prove official Runtime Provider integration, live production metering, provider payment and invoice integration, production operation, the aggregate P6 billing gate, or release GO."
+}

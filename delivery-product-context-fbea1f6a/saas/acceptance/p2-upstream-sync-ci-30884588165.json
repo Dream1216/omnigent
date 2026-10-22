@@ -1,0 +1,43 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30884588165,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30884588165",
+  "head_sha": "435f307ca381a214251aa5a0cc6acdebe1899a75",
+  "conclusion": "success",
+  "upstream": {
+    "previous_revision": "ab4bcaa7525ce45749271cb7d53403d2f240f523",
+    "verified_revision": "15dd7becff2bda8ee2b9afd5d16abc4feafb9552",
+    "commits_advanced": 2,
+    "merge_conflicts": 0
+  },
+  "environment": {
+    "ci_postgresql": "16",
+    "local_postgresql": "18.4",
+    "python": "3.12",
+    "browser": "chromium"
+  },
+  "verification": {
+    "local_tests": "599 passed",
+    "official_cli_runner_managed_host_and_archive_regressions_included": true,
+    "wheel_required_artifacts": 38,
+    "patches_replayed": 2,
+    "pending_acceptance_gates": 17,
+    "release_decision": "NO-GO"
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 5,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 124,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9928,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "upstream_changes_verified": [
+    "CLI --profile support for headless Databricks service-principal authentication",
+    "managed-host wake launch-stage reporting"
+  ],
+  "evidence_successor_policy": "This record verifies the implementation and upstream-merge revision. A successor that changes only the acceptance ledger, this record's packaging assertion, or explanatory documentation does not alter the verified runtime or control-plane implementation."
+}

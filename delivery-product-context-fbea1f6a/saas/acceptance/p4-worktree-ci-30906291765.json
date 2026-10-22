@@ -1,0 +1,93 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30906291765,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30906291765",
+  "job_id": 91982030142,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30906291765/job/91982030142",
+  "head_sha": "bbec3f723e5ffdbe32a8734ed0d9ad00bb5a871a",
+  "upstream_revision": "45eab11d531f3224eb59b39da7d8cb18256e21a1",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "local_postgresql": "18.4",
+    "python": "3.12",
+    "browser": "chromium"
+  },
+  "verification": {
+    "ci_tests": "648 passed",
+    "real_postgresql_tests": "15 passed",
+    "official_cli_runner_managed_host_and_archive_regressions_included": true,
+    "wheel_required_artifacts": 69,
+    "patches_replayed": 2,
+    "migration_head": "p4b000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "local_postgresql_upgrade_downgrade_p4a_and_reupgrade": "passed",
+    "local_p4b_function_count_after_downgrade": 0,
+    "local_p4b_function_count_after_reupgrade": 4,
+    "type_check": "passed",
+    "local_full_precommit": "passed",
+    "pending_acceptance_gates_before_this_record": 12,
+    "release_decision": "NO-GO"
+  },
+  "repository_and_changeset_authority": {
+    "credential_free_repository_source_binding": true,
+    "client_url_and_physical_path_rejected": true,
+    "atomic_multi_repository_changeset_group": true,
+    "one_changeset_per_repository_in_group": true,
+    "immutable_repository_scope_source_and_changeset_base_revision": true,
+    "single_active_writer_partial_unique_index": true,
+    "readonly_worktree_cannot_become_dirty": true,
+    "group_completion_requires_all_changesets_committed": true
+  },
+  "worktree_authority": {
+    "server_generated_opaque_runtime_key": true,
+    "physical_host_path_absent_from_control_plane": true,
+    "hashed_one_time_lease_token": true,
+    "tenant_space_project_run_runner_and_generation_binding": true,
+    "run_fence_and_runner_connection_generation_enforced": true,
+    "scheduling_capability_relocked_and_revalidated_in_allocation_transaction": true,
+    "transactional_instance_writer_storage_quota_counters": true,
+    "dirty_checkpoint_release_rebuild_quarantine_gc_lifecycle": true,
+    "dirty_recovery_requires_rebuild_pending_chain": true,
+    "stale_token_fence_and_generation_rejected": true,
+    "gc_skip_locked_and_exact_deletion_confirmation": true,
+    "append_only_lifecycle_event_and_outbox_in_same_transaction": true
+  },
+  "member_removal_preflight": {
+    "open_checkpointed_or_quarantined_changeset_blocks_removal": true,
+    "active_rebuild_pending_or_quarantined_worktree_blocks_removal": true,
+    "missing_required_impact_domain_fails_closed": true
+  },
+  "postgresql_rls": {
+    "protected_control_plane_tables": 44,
+    "new_repository_changeset_worktree_tables": 6,
+    "enable_and_force_rls": true,
+    "missing_context_and_cross_tenant_rows_hidden": true,
+    "governance_scoped_select_only": true,
+    "executor_cannot_update_repository_binding": true,
+    "changeset_base_revision_trigger_enforced": true,
+    "worktree_event_append_only_trigger_enforced": true,
+    "concurrent_single_writer_enforced": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 389,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9885,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "physical Git clone checkout commit checkpoint and rebuild operations",
+    "canonical host paths plus symlink reparse-point and mount-boundary enforcement",
+    "opaque runtime key deletion against a real Runner filesystem",
+    "Sandbox Secret Egress and Preview isolation",
+    "two independent infrastructure failure domains",
+    "network partition and N-1 rollback",
+    "signed vulnerability-cleared production image promotion"
+  ],
+  "evidence_successor_policy": "This record verifies the Repository ChangeSet and Worktree control-plane implementation at the exact implementation revision. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, or explanatory documentation does not alter the verified implementation."
+}

@@ -1,0 +1,101 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30980110086,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30980110086",
+  "job_id": 92222537304,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30980110086/job/92222537304",
+  "head_sha": "d8f47804b767c6d24bc71694fa9c5e1882abc114",
+  "webhook_implementation_sha": "569c1d0352beebee5f069dea8bac1890b4f3304a",
+  "gateway_clock_stabilization_sha": "d8f47804b767c6d24bc71694fa9c5e1882abc114",
+  "webhook_predecessor_sha": "aea65723aae1c8e8270c243260e6138915bd873e",
+  "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap",
+    "webhook_transport": "HTTPS POST with original-host TLS verification, per-attempt DNS validation, and a pinned public address"
+  },
+  "verification": {
+    "combined_ci_tests": "795 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 105.92,
+    "webhook_delivery_contract_tests": "14 passed within the combined suite",
+    "official_zygote_and_query_context_regressions": "56 passed",
+    "official_zygote_and_query_context_seconds": 30.06,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 12.15,
+    "wheel_required_artifacts": 119,
+    "patches_replayed": 2,
+    "migration_head": "p5a000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates_before_this_record": 12,
+    "pending_acceptance_gates_after_this_record": 11,
+    "release_decision": "NO-GO"
+  },
+  "durable_delivery_authority": {
+    "event_payload_hash_and_delivery_identity_are_immutable": true,
+    "concurrent_enqueue_is_idempotent_for_one_endpoint_and_event": true,
+    "stable_delivery_and_event_ids_survive_retry_and_manual_replay": true,
+    "dispatcher_claims_use_skip_locked_bounded_leases_without_network_io_under_row_locks": true,
+    "retry_attempt_lease_and_dlq_transitions_are_monotonic": true,
+    "authorized_manual_replay_increments_generation_and_emits_an_outbox_audit_fact": true,
+    "response_headers_and_body_metadata_are_bounded_and_secret_free": true
+  },
+  "signature_and_secret_policy": {
+    "endpoint_rows_store_only_secret_references_and_versions": true,
+    "raw_webhook_secrets_never_enter_postgresql_outbox_or_logs": true,
+    "hmac_sha256_signatures_are_versioned_and_cover_delivery_event_timestamp_and_payload": true,
+    "secret_rotation_can_emit_old_and_new_signatures_during_a_bounded_overlap": true,
+    "secret_provider_calls_occur_outside_database_row_locks": true
+  },
+  "ssrf_and_transport_policy": {
+    "only_canonical_https_urls_are_accepted": true,
+    "userinfo_fragments_backslashes_controls_invalid_percent_encoding_and_unsafe_dns_labels_are_rejected": true,
+    "every_attempt_resolves_the_complete_a_and_aaaa_set_and_rejects_on_any_non_public_answer": true,
+    "loopback_private_link_local_metadata_cgnat_ipv4_mapped_nat64_teredo_and_6to4_targets_are_rejected": true,
+    "one_validated_address_is_pinned_while_tls_sni_host_and_certificate_checks_use_the_original_hostname": true,
+    "tls_requires_certificate_validation_hostname_validation_and_version_1_2_or_newer": true,
+    "redirects_environment_proxies_and_non_post_methods_are_disabled": true
+  },
+  "postgresql_and_replica_policy": {
+    "endpoint_and_delivery_tables_use_forced_rls": true,
+    "global_dispatcher_access_is_bound_to_a_dedicated_postgresql_role": true,
+    "dispatcher_can_select_endpoints_and_select_or_update_deliveries_but_cannot_modify_endpoints": true,
+    "tenant_application_roles_cannot_claim_global_delivery_work": true,
+    "two_dispatchers_competing_for_one_delivery_produce_one_claim_and_one_send": true,
+    "database_triggers_reject_delivery_fact_rewrite_lifecycle_reversal_and_unauthorized_replay": true
+  },
+  "runtime_clock_stabilization": {
+    "initial_candidate_run_30978680709_is_not_acceptance_evidence": true,
+    "initial_failure_was_a_preview_gateway_authority_clock_mix_under_a_300ms_test_lease": true,
+    "gateway_runtime_now_supplies_one_injected_clock_to_all_directory_and_certificate_lifecycle_calls": true,
+    "regression_delays_wall_time_beyond_the_lease_without_advancing_authority_time": true,
+    "exact_successor_ci_revalidated_the_complete_suite": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 434,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9931,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "production DNS resolver pinning egress proxy or firewall enforcement",
+    "external Vault KMS secret rotation compromise recovery or access audit",
+    "receiver-side signature replay window and idempotency conformance",
+    "production webhook throughput queue depth SLO backpressure or circuit-breaker capacity",
+    "multi-AZ dispatcher recovery PostgreSQL PITR or isolated backup restore",
+    "tenant deletion export retention and webhook endpoint erasure proof",
+    "a registry-published signed vulnerability-cleared immutable production image",
+    "two failure domains production canary or N-1 rollback"
+  ],
+  "evidence_successor_policy": "This record verifies the exact downstream durable signed Webhook delivery, forced PostgreSQL RLS, least-privilege dispatcher, replica race, DLQ/manual replay, Secret-reference, per-attempt DNS, SSRF, and TLS pinning contract on Linux CI and PostgreSQL 16. It does not prove production DNS or egress enforcement, external Secret/KMS operations, receiver conformance, capacity/SLO, disaster recovery, deletion, signed image promotion, or multi-AZ deployment. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, README, or plan documentation does not alter the verified implementation."
+}

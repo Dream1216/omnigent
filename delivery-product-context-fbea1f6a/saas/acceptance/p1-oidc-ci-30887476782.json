@@ -1,0 +1,52 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30887476782,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30887476782",
+  "head_sha": "bf0f23a8a18baddc0edf7175f7052959cb64f7b4",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "local_postgresql": "18.4",
+    "python": "3.12",
+    "browser": "chromium"
+  },
+  "verification": {
+    "ci_tests": "608 passed",
+    "local_full_matrix_before_final_azp_case": "607 passed",
+    "local_oidc_matrix_after_final_azp_case": "9 passed",
+    "wheel_required_artifacts": 39,
+    "patches_replayed": 2,
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed",
+    "release_decision": "NO-GO"
+  },
+  "oidc_security": {
+    "authorization_code_and_s256_pkce": true,
+    "one_time_persisted_state_nonce_and_browser_binding": true,
+    "pinned_issuer_client_audience_redirect_and_algorithms": true,
+    "signature_exp_iat_nbf_nonce_and_authorized_party": true,
+    "jwks_rotation": true,
+    "algorithm_downgrade_rejected": true,
+    "same_email_auto_merge_rejected": true,
+    "explicit_recent_reauthentication_confirmation": true,
+    "replica_independent_transaction_authority": true
+  },
+  "postgresql_rls": {
+    "forced_control_plane_tables": 23,
+    "oidc_transactions_authenticator_only": true,
+    "identity_conflicts_authenticator_only": true,
+    "application_role_negative_probe": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 5,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 124,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9935,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "evidence_successor_policy": "This record verifies the OIDC and identity-conflict implementation. A successor that changes only this evidence record, the acceptance ledger, or explanatory documentation does not alter the verified implementation."
+}

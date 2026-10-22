@@ -1,0 +1,858 @@
+"""In-memory registry of live host WebSocket connections.
+
+Each server replica maintains one :class:`HostRegistry` tracking
+hosts with active WebSocket tunnels on this replica. The persistent
+``hosts`` DB table (queried by ``HostStore``) is the cross-replica
+source of truth for which hosts exist; this registry only tracks
+which hosts are live *here*.
+
+Simpler than :class:`TunnelRegistry` because the host tunnel
+carries only control frames (launch/stop runner), not HTTP
+request/response traffic. No per-request reassembly queues needed.
+
+The registry also holds what connected hosts *report* about themselves and
+nothing persists — today the per-family gateway-inference map (see
+:mod:`omnigent.gateway_inference`) and interactive-shell inventory. They are
+delivered on the connect handshake, so a replica that has never seen a host
+simply knows nothing about them until the host reconnects and re-reports.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import threading
+import time
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from cachetools import TTLCache
+
+from omnigent._platform import normalize_interactive_shells
+from omnigent.db.account_authority import (
+    AccountAuthority,
+    account_generation,
+    current_account_user,
+)
+from omnigent.db.db_models import InvalidUuidError, current_workspace_id, uuid_to_bytes
+from omnigent.host.frames import (
+    CAP_CODEX_SIDE_CHAT,
+    HostHelloFrame,
+    HostMcpServersResultFrame,
+    HostMcpToolsResultFrame,
+    HostPluginsResultFrame,
+    HostSkillContentResultFrame,
+    HostSkillsResultFrame,
+)
+from omnigent.host.harness_startup import HarnessStartup
+from omnigent.runner.transports.ws_tunnel.diagnostics import OutboundFrame, TunnelDiagnostics
+
+_logger = logging.getLogger(__name__)
+
+_expected_host_owner: ContextVar[AccountAuthority | None] = ContextVar(
+    "expected_host_owner", default=None
+)
+
+
+@contextmanager
+def host_owner_scope(user_id: str | None, generation: str | None) -> Iterator[None]:
+    """Restrict scheduled host RPCs to their saved owner's registration."""
+    owner = AccountAuthority(user_id, generation, current_workspace_id()) if user_id else None
+    token = _expected_host_owner.set(owner)
+    try:
+        yield
+    finally:
+        _expected_host_owner.reset(token)
+
+
+def _canonical_host_id(host_id: str) -> str:
+    """Reduce a host id to the canonical bare-hex form used as the key.
+
+    Host ids reach the registry in every spelling ``uuid_to_bytes``
+    accepts: the bare 32-char hex the tunnel route registers under,
+    the legacy ``host_<hex>`` form that pre-migration clients still
+    send in REST paths, and the dashed uuid form. The DB layer
+    normalizes all of them (``Uuid16``), so the registry must key on
+    the same canonical form — otherwise a legacy-form lookup misses a
+    live tunnel and runner launches 409 "host is offline" while
+    ``GET /v1/hosts`` reports the host online. Ids that aren't
+    uuid-shaped at all are keyed verbatim so they simply miss.
+
+    :param host_id: A host id in any accepted spelling, e.g.
+        ``"host_a1b2..."``, ``"a1b2..."``, or the dashed uuid.
+    :returns: The bare-hex form, or *host_id* unchanged when it is
+        not uuid-shaped.
+    """
+    try:
+        return uuid_to_bytes(host_id).hex()
+    except InvalidUuidError:
+        return host_id
+
+
+def _fail_pending_harness_startup(conn: HostConnection) -> None:
+    """Settle launch settings requests when their tunnel can no longer reply."""
+    while conn.pending_harness_startup:
+        _, future = conn.pending_harness_startup.popitem()
+        if not future.done():
+            future.set_result(None)
+
+
+def _fail_pending_imports(conn: HostConnection) -> None:
+    """Fail the connection's in-flight import streams immediately.
+
+    A dead tunnel can never deliver another session frame; without this
+    signal the import request only learns of the drop by waiting out its
+    per-frame timeout (60s of "Importing…" in the UI).
+    """
+    while conn.pending_import_local:
+        _request_id, queue = conn.pending_import_local.popitem()
+        queue.put_nowait(
+            (
+                "done",
+                {
+                    "status": "failed",
+                    "error": f"host '{conn.host_id}' disconnected mid-import",
+                },
+            )
+        )
+
+
+def _fail_pending_plugins(conn: HostConnection) -> None:
+    """Fail plugin requests as soon as their tunnel disconnects or is replaced."""
+    while conn.pending_plugins:
+        _request_id, future = conn.pending_plugins.popitem()
+        if not future.done():
+            future.set_exception(ConnectionError(f"host '{conn.host_id}' disconnected"))
+
+
+def _fail_pending_skill_content(conn: HostConnection) -> None:
+    """Settle lookups immediately when their host connection disappears."""
+    while conn.pending_skill_content:
+        _request_id, future = conn.pending_skill_content.popitem()
+        if not future.done():
+            future.set_exception(ConnectionError("host disconnected"))
+
+
+def _fail_pending_mcp_tools(conn: HostConnection) -> None:
+    """Settle probes immediately when their host connection disappears."""
+    while conn.pending_mcp_tools:
+        _request_id, future = conn.pending_mcp_tools.popitem()
+        if not future.done():
+            future.set_exception(ConnectionError("host disconnected"))
+
+
+def _fail_pending_inventory(pending: dict[str, asyncio.Future[Any]], host_id: str) -> None:
+    """Fail inventory waiters on their owner loops and clear the retired map."""
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    while True:
+        try:
+            _request_id, future = pending.popitem()
+        except KeyError:
+            break
+        if future.done():
+            continue
+        try:
+            owner_loop = future.get_loop()
+            if owner_loop.is_closed():
+                continue
+
+            def settle(future: asyncio.Future[Any] = future, host_id: str = host_id) -> None:
+                if not future.done():
+                    future.set_exception(ConnectionError(f"host '{host_id}' disconnected"))
+
+            if owner_loop is current_loop:
+                settle()
+            else:
+                owner_loop.call_soon_threadsafe(settle)
+        except RuntimeError:
+            # The owner loop can close between the check and scheduling. The
+            # pending map is already retired, so there is nothing to wake.
+            continue
+
+
+def _fail_pending_skills(conn: HostConnection) -> None:
+    """Fail skill-discovery requests as soon as their host disappears."""
+    _fail_pending_inventory(conn.pending_skills, conn.host_id)
+
+
+def _fail_pending_mcp_servers(conn: HostConnection) -> None:
+    """Fail MCP inventory requests as soon as their host disappears."""
+    _fail_pending_inventory(conn.pending_mcp_servers, conn.host_id)
+
+
+# How long a runner exit report stays answerable, and how many are kept.
+# Reports only matter while a client is still waiting for the runner to
+# come online (a 60s window today); 10 minutes covers slow retries with
+# margin. Runner ids are unique per launch, so entries never need
+# invalidation — the TTL is purely a memory bound.
+_EXIT_REPORT_TTL_S = 600.0
+_EXIT_REPORT_MAX_ENTRIES = 1024
+
+
+@dataclass
+class RunnerExitReport:
+    """A host daemon's report that a spawned runner died unexpectedly.
+
+    :param error: Human-readable cause composed by the daemon (exit
+        code, host-side log path, log tail), e.g.
+        ``"runner process exited with code 1 (log on host: ~/...)"``.
+    :param owner: User who owns the host tunnel the report arrived on,
+        e.g. ``"alice@example.com"``. ``None`` when auth is disabled.
+        Gates visibility: only the owner may read the report (the log
+        tail can contain agent output).
+    :param had_connected: Host evidence that the runner connected at least once,
+        or ``None`` when unavailable.
+    """
+
+    error: str
+    owner: str | None
+    had_connected: bool | None = None
+
+
+class RunnerExitReports:
+    """Thread-safe, TTL-bounded store of runner exit reports.
+
+    Written by the host tunnel when a ``host.runner_exited`` frame
+    arrives; read by the runner status endpoint so a client polling a
+    never-connecting runner learns *why* instead of timing out.
+    In-memory and per-replica, same posture as :class:`HostRegistry` —
+    the report and the status poll meet on the replica holding the
+    host tunnel.
+    """
+
+    def __init__(self) -> None:
+        """Initialize an empty report store."""
+        self._lock = threading.Lock()
+        self._reports: TTLCache[str, RunnerExitReport] = TTLCache(
+            maxsize=_EXIT_REPORT_MAX_ENTRIES,
+            ttl=_EXIT_REPORT_TTL_S,
+        )
+
+    def record(
+        self, runner_id: str, error: str, owner: str | None, *, had_connected: bool | None = None
+    ) -> None:
+        """Store a runner exit report.
+
+        :param runner_id: The dead runner, e.g. ``"runner_abc123"``.
+        :param error: Human-readable cause from the host daemon.
+        :param owner: Owner of the reporting host tunnel, or ``None``
+            when auth is disabled.
+        :param had_connected: First-connect evidence supplied by the host.
+        """
+        with self._lock:
+            self._reports[runner_id] = RunnerExitReport(
+                error=error, owner=owner, had_connected=had_connected
+            )
+
+    def was_connected(self, runner_id: str) -> bool:
+        """Return whether the host's exit report proves this runner had connected.
+
+        :param runner_id: Runner whose lifetime evidence is needed.
+        :returns: ``True`` only for a report with affirmative connection evidence.
+        """
+        with self._lock:
+            report = self._reports.get(runner_id)
+        return report is not None and report.had_connected is True
+
+    def get(self, runner_id: str) -> str | None:
+        """Look up a report's error without owner scoping.
+
+        For callers that have already authorized access by another
+        means (e.g. the session snapshot, gated on session permission):
+        the report pertains to that session's own runner, so no
+        separate owner check is needed. The runner status endpoint —
+        keyed only by ``runner_id`` with no session-level auth — must
+        use :meth:`get_visible` instead.
+
+        :param runner_id: Runner id, e.g. ``"runner_abc123"``.
+        :returns: The error message, or ``None`` when no report exists.
+        """
+        with self._lock:
+            report: RunnerExitReport | None = self._reports.get(runner_id)
+        return report.error if report is not None else None
+
+    def get_visible(self, runner_id: str, user_id: str | None) -> str | None:
+        """Look up a report, scoped to its owner.
+
+        :param runner_id: Runner id, e.g. ``"runner_abc123"``.
+        :param user_id: The requesting user, or ``None`` when auth is
+            disabled.
+        :returns: The error message, or ``None`` when no report exists
+            or the caller doesn't own it (W6-2 posture: other users'
+            runners reveal nothing).
+        """
+        with self._lock:
+            report: RunnerExitReport | None = self._reports.get(runner_id)
+        if report is None:
+            return None
+        if user_id is not None and report.owner is not None and report.owner != user_id:
+            return None
+        return report.error
+
+
+class WebSocketLike(Protocol):
+    """Minimal WebSocket protocol for the host tunnel.
+
+    Both Starlette's ``WebSocket`` and test fakes implement this.
+    """
+
+    async def send_text(self, data: str) -> None:
+        """Send a text frame."""
+        ...
+
+    async def receive_text(self) -> str:
+        """Receive a text frame."""
+        ...
+
+
+@dataclass
+class HostConnection:
+    """Per-host state while the tunnel is open.
+
+    :param workspace_id: Tenant partition the tunnel belongs to,
+        mirroring the ``hosts`` table's ``(workspace_id, host_id)`` PK.
+        Captured at register time so ``send_text``'s replaced-connection
+        guard keys on the full ``(workspace_id, host_id)`` without
+        reading request context from the long-lived sender loop.
+    :param host_id: Stable host identifier, e.g.
+        ``"host_a1b2c3d4..."``.
+    :param ws: The live WebSocket to this host.
+    :param hello: The hello frame the host sent on connect.
+    :param owner: Authenticated user who established the tunnel,
+        e.g. ``"alice@example.com"``. ``None`` when auth is
+        disabled (single-user mode).
+    :param outbound_queue: Queue consumed by the WebSocket route's
+        sender task. Control frames are enqueued here rather than
+        calling ``ws.send_text`` directly, since the caller may
+        be on a different thread.
+    :param connected_at: Unix epoch float of connect time.
+    :param last_frame_at: Unix epoch float of the most recent
+        frame from this host.
+    :param last_frame_monotonic: Monotonic timestamp of the last frame,
+        used for watchdog inactivity checks across wall-clock corrections.
+    :param pending_launches: Per-``request_id`` futures for
+        in-flight ``host.launch_runner`` requests. Resolved when
+        the host sends ``host.launch_runner_result``.
+    :param pending_stops: Per-``request_id`` futures for
+        in-flight ``host.stop_runner`` requests. Resolved when
+        the host sends ``host.stop_runner_result``.
+    :param pending_runner_status: Per-``request_id`` futures for
+        in-flight ``host.runner_status`` queries. Resolved when the
+        host sends ``host.runner_status_result``. Values carry the
+        single ``status`` field (``"alive"`` / ``"dead"`` /
+        ``"unknown"``).
+    :param pending_stats: Per-``request_id`` futures for in-flight
+        ``host.stat`` requests. Resolved when the host sends
+        ``host.stat_result``. The dict values carry the full
+        stat-result fields (``status``, ``exists``, ``type``,
+        ``canonical_path``, ``error``); typed as ``Any`` because
+        Python ``dict`` parametric types here would force every
+        callsite to cast.
+    :param pending_list_dirs: Per-``request_id`` futures for
+        in-flight ``host.list_dir`` requests. Resolved when the
+        host sends ``host.list_dir_result``. Values carry the
+        listing fields (``status``, ``entries`` as list of
+        dicts, ``has_more``, ``error``). Same ``Any`` typing
+        rationale as ``pending_stats``.
+    :param pending_create_worktrees: Per-``request_id`` futures for
+        in-flight ``host.create_worktree`` requests. Resolved when
+        the host sends ``host.create_worktree_result``. Values
+        carry the result fields (``status``, ``worktree_path``,
+        ``branch``, ``error``). Same ``Any`` typing rationale as
+        ``pending_stats``.
+    :param pending_remove_worktrees: Per-``request_id`` futures for
+        in-flight ``host.remove_worktree`` requests. Resolved when
+        the host sends ``host.remove_worktree_result``. Values
+        carry ``status`` and ``error``.
+    :param pending_create_dirs: Per-``request_id`` futures for
+        in-flight ``host.create_dir`` requests. Resolved when the
+        host sends ``host.create_dir_result``. Values carry the
+        result fields (``status``, ``path``, ``error``). Same
+        ``Any`` typing rationale as ``pending_stats``.
+    :param pending_installs: Per-``request_id`` futures for in-flight
+        ``host.install_harness`` requests. Resolved when the host sends
+        ``host.install_harness_result``. Values carry the result fields
+        (``status``, ``configured_harnesses``, ``gateway_inference``,
+        ``error``). Same ``Any`` typing rationale as ``pending_stats``.
+    :param pending_harness_refreshes: Per-``request_id`` futures for forced
+        harness readiness probes. Values carry ``status``,
+        ``configured_harnesses``, ``gateway_inference``, and ``error``.
+    :param inflight_installs: Install tasks used to coalesce concurrent
+        install requests for the same harness family (a double-click, or
+        two spellings of one npm package) onto one in-flight install, so
+        npm's non-race-safe global writes never run twice at once. Keyed by
+        the resolved install key (not ``request_id``) and cleared when the
+        install completes.
+    :param pending_secret_writes: Per-``request_id`` futures for in-flight
+        ``host.store_secret`` requests (a UI-driven harness credential write).
+        Resolved when the host sends ``host.store_secret_result``. Values carry
+        the result fields (``status``, ``configured_harnesses``,
+        ``gateway_inference``, ``error``) — never the secret. Same ``Any``
+        typing rationale as ``pending_stats``.
+    :param credential_write_lock: Serializes credential writes to this host so
+        two overlapping requests (a double-click, or key + gateway in quick
+        succession) can't interleave the daemon's non-atomic
+        load→merge→save of ``config.yaml`` and clobber a sibling ``providers:``
+        entry. Held around the whole store-secret round-trip.
+    :param pending_fs_requests: Per-``request_id`` futures for
+        in-flight ``host.fs_request`` reads (the workspace file
+        panel served from the host while the runner is offline).
+        Resolved when the host sends ``host.fs_result``. Values
+        carry ``status``, ``payload``, ``error_status``,
+        ``error_code``, and ``error``.
+    :param pending_model_options: Per-``request_id`` futures for pre-launch
+        model catalogs resolved by the selected host.
+    :param pending_skills: Per-``request_id`` futures for sessionless skill discovery.
+    :param pending_mcp_servers: Per-``request_id`` futures for MCP inventory requests.
+    :param pending_skill_content: Per-request futures for transient SKILL.md reads.
+    :param pending_mcp_tools: Per-request futures for lazy MCP discovery.
+    """
+
+    workspace_id: int
+    host_id: str
+    ws: WebSocketLike
+    hello: HostHelloFrame
+    owner: str | None
+    outbound_queue: asyncio.Queue[OutboundFrame | None]
+    connected_at: float
+    last_frame_at: float
+    last_frame_monotonic: float = field(default_factory=time.monotonic, kw_only=True)
+    diagnostics: TunnelDiagnostics = field(default_factory=TunnelDiagnostics)
+    retirement_reason: str | None = None
+    sender_end_reason: str | None = None
+    close_requested_code: int | None = None
+    close_requested_reason: str | None = None
+    account_generation: str | None = None
+    # True when this tunnel authenticated with a valid managed-sandbox launch
+    # token, i.e. a server-provisioned sandbox proving itself on connect — not a
+    # user machine reusing a managed host's id under ordinary login. Read by the
+    # default-public policy so only genuine sandboxes count as managed.
+    registered_with_managed_token: bool = False
+    pending_launches: dict[str, asyncio.Future[dict[str, str | None]]] = field(
+        default_factory=dict,
+    )
+    pending_stops: dict[str, asyncio.Future[dict[str, str | None]]] = field(
+        default_factory=dict,
+    )
+    pending_runner_status: dict[str, asyncio.Future[dict[str, str | None]]] = field(
+        default_factory=dict,
+    )
+    pending_stats: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_list_dirs: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_create_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_remove_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_list_worktrees: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_create_dirs: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_installs: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_harness_refreshes: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    inflight_installs: dict[str, asyncio.Task[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_secret_writes: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_credential_detects: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    credential_write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    pending_fs_requests: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_model_options: dict[str, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict,
+    )
+    pending_skills: dict[str, asyncio.Future[HostSkillsResultFrame]] = field(
+        default_factory=dict,
+    )
+    pending_harness_startup: dict[str, asyncio.Future[HarnessStartup | None]] = field(
+        default_factory=dict
+    )
+    pending_plugins: dict[str, asyncio.Future[HostPluginsResultFrame]] = field(
+        default_factory=dict
+    )
+    pending_skill_content: dict[str, asyncio.Future[HostSkillContentResultFrame]] = field(
+        default_factory=dict
+    )
+    pending_mcp_tools: dict[str, asyncio.Future[HostMcpToolsResultFrame]] = field(
+        default_factory=dict
+    )
+    pending_mcp_servers: dict[str, asyncio.Future[HostMcpServersResultFrame]] = field(
+        default_factory=dict,
+    )
+    # Import streams one session per frame, so the tunnel pushes each onto a
+    # per-request queue the /imports/local handler drains (vs a single future).
+    # Each item is a ("session", dict) or ("done", dict) tuple.
+    pending_import_local: dict[str, asyncio.Queue[tuple[str, dict[str, Any]]]] = field(
+        default_factory=dict,
+    )
+
+    def enqueue(self, data: str, *, app_ping_ts: int | None = None) -> None:
+        """Queue a frame on the socket loop, retaining local timing metadata."""
+        queued_at = self.diagnostics.timestamp()
+        frame = OutboundFrame(data, queued_at=queued_at, app_ping_ts=app_ping_ts)
+        self.outbound_queue.put_nowait(frame)
+        try:
+            self.diagnostics.enqueued(frame, self.outbound_queue.qsize(), queued_at)
+        except Exception:
+            _logger.exception("Host %s outbound queue diagnostics failed", self.host_id)
+
+
+class HostRegistry:
+    """Thread-safe registry of live host WebSocket connections.
+
+    All public methods acquire ``_lock`` so callers on different
+    threads (e.g. REST route handlers vs. WebSocket event loops)
+    don't race.
+    """
+
+    def __init__(self) -> None:
+        """Initialize an empty host registry."""
+        self._lock = threading.RLock()
+        # Keyed by (workspace_id, host_id) to mirror the hosts-table PK:
+        # one stable host_id can be live in more than one workspace.
+        self._hosts: dict[tuple[int, str], HostConnection] = {}
+        # Last gateway-inference map each host reported, keyed by canonical
+        # host_id alone: the map describes the machine's local config, so the
+        # same machine connected to two workspaces reports the same answer.
+        # Kept across a host disconnect (a tunnel flap shouldn't blank a known
+        # answer) and lost with the process, which is the point — a restarted
+        # server re-learns it from the reconnect handshake.
+        self._gateway_inference: dict[str, dict[str, bool]] = {}
+        self._interactive_shells: dict[str, list[str]] = {}
+        self.launch_authorizer: (
+            Callable[[str, str, str | None, str | None, bool, str | None], None] | None
+        ) = None
+
+    def register(
+        self,
+        host_id: str,
+        ws: WebSocketLike,
+        hello: HostHelloFrame,
+        owner: str | None,
+        workspace_id: int | None = None,
+        registered_with_managed_token: bool = False,
+    ) -> HostConnection:
+        """Register a host connection (newest wins).
+
+        If ``(workspace_id, host_id)`` is already registered (stale
+        connection), the old connection is replaced and its outbound
+        queue is poisoned with ``None`` so the sender loop exits.
+
+        Scoping the key by workspace means the same stable ``host_id``
+        (a laptop's config id) connecting to two workspaces is tracked
+        as two independent connections rather than one evicting the
+        other — matching the ``hosts`` table's ``(workspace_id,
+        host_id)`` PK.
+
+        :param host_id: Stable host identifier, e.g.
+            ``"host_a1b2c3d4..."``.
+        :param ws: The live WebSocket.
+        :param hello: The hello frame from the host.
+        :param owner: Authenticated user ID, or ``None``.
+        :param workspace_id: Tenant partition the connection belongs to.
+            Defaults to the request-bound :func:`current_workspace_id`
+            (``0`` in single-tenant deployments); captured into the
+            connection so ``send_text`` need not read request context
+            from the sender loop.
+        :param registered_with_managed_token: ``True`` when the tunnel
+            authenticated with a valid managed-sandbox launch token, so
+            the default-public policy can treat it as a genuine sandbox.
+        :returns: The new :class:`HostConnection`. Its ``host_id`` is
+            the canonical form (see :func:`_canonical_host_id`).
+        """
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        host_id = _canonical_host_id(host_id)
+        now = time.time()
+        conn = HostConnection(
+            workspace_id=ws_id,
+            host_id=host_id,
+            ws=ws,
+            hello=hello,
+            owner=owner,
+            account_generation=account_generation(owner) if owner else None,
+            outbound_queue=asyncio.Queue(),
+            connected_at=now,
+            last_frame_at=now,
+            last_frame_monotonic=time.monotonic(),
+            registered_with_managed_token=registered_with_managed_token,
+        )
+        with self._lock:
+            key = (ws_id, host_id)
+            old = self._hosts.get(key)
+            if old is not None:
+                _logger.info(
+                    "replacing stale host connection: ws=%s host=%s",
+                    ws_id,
+                    host_id,
+                )
+                old.retirement_reason = "replaced"
+                old.outbound_queue.put_nowait(None)
+                _fail_pending_imports(old)
+                _fail_pending_harness_startup(old)
+                _fail_pending_plugins(old)
+                _fail_pending_skill_content(old)
+                _fail_pending_mcp_tools(old)
+                _fail_pending_skills(old)
+                _fail_pending_mcp_servers(old)
+            self._hosts[key] = conn
+            if hello.interactive_shells is not None:
+                self._interactive_shells[host_id] = normalize_interactive_shells(
+                    hello.interactive_shells
+                )
+            else:
+                self._interactive_shells.pop(host_id, None)
+        return conn
+
+    def deregister(
+        self,
+        host_id: str,
+        workspace_id: int | None = None,
+        conn: HostConnection | None = None,
+    ) -> bool:
+        """Remove a host connection and end its sender loop.
+
+        No-op if ``(workspace_id, host_id)`` is not registered.
+
+        :param host_id: Host identifier to remove, in any accepted
+            spelling (see :func:`_canonical_host_id`).
+        :param workspace_id: Tenant partition; defaults to
+            :func:`current_workspace_id`.
+        :param conn: Optional generation guard, as on
+            :meth:`TunnelRegistry.deregister`. When given, the entry is
+            removed only if it is still this exact connection.
+        :returns: ``True`` when an entry was removed. ``False`` means
+            nothing was registered or the guard did not match, so the
+            caller is superseded and must not flip the host's durable
+            row offline — that row describes the live reconnect.
+        """
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        with self._lock:
+            key = (ws_id, _canonical_host_id(host_id))
+            current = self._hosts.get(key)
+            if current is None or (conn is not None and current is not conn):
+                return False
+            removed = self._hosts.pop(key)
+        # Without this the route handler's loops keep running and its ping loop
+        # keeps the host row online, even though the host is now unreachable.
+        removed.retirement_reason = "deregistered"
+        removed.outbound_queue.put_nowait(None)
+        _fail_pending_imports(removed)
+        _fail_pending_harness_startup(removed)
+        _fail_pending_plugins(removed)
+        _fail_pending_skill_content(removed)
+        _fail_pending_mcp_tools(removed)
+        _fail_pending_skills(removed)
+        _fail_pending_mcp_servers(removed)
+        return True
+
+    def mark_frame_seen(self, conn: HostConnection) -> bool:
+        """Record that a frame arrived for ``conn``.
+
+        :param conn: Connection that received the frame.
+        :returns: ``True`` if the connection is still current,
+            ``False`` if it has been replaced or deregistered.
+        """
+        with self._lock:
+            if self._hosts.get((conn.workspace_id, conn.host_id)) is not conn:
+                return False
+            conn.last_frame_at = time.time()
+            conn.last_frame_monotonic = time.monotonic()
+            return True
+
+    def get(self, host_id: str, workspace_id: int | None = None) -> HostConnection | None:
+        """Look up a live host connection.
+
+        :param host_id: Host identifier, in any accepted spelling
+            (see :func:`_canonical_host_id`).
+        :param workspace_id: Tenant partition; defaults to
+            :func:`current_workspace_id`.
+        :returns: The :class:`HostConnection` if online,
+            otherwise ``None``.
+        """
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        with self._lock:
+            return self._hosts.get((ws_id, _canonical_host_id(host_id)))
+
+    def online_host_ids(self, workspace_id: int | None = None) -> list[str]:
+        """Return IDs of all hosts connected in one workspace.
+
+        :param workspace_id: Tenant partition; defaults to
+            :func:`current_workspace_id`.
+        :returns: List of host_id strings live in the workspace.
+        """
+        ws_id = current_workspace_id() if workspace_id is None else workspace_id
+        with self._lock:
+            return [hid for (ws, hid) in self._hosts if ws == ws_id]
+
+    def is_host_telemetry_opted_out(self, host_id: str, workspace_id: int | None = None) -> bool:
+        """Return whether the host has opted out of telemetry.
+
+        :param host_id: Host identifier, e.g. ``"host_a1b2c3d4..."``.
+        :param workspace_id: Tenant partition; defaults to
+            :func:`current_workspace_id`.
+        :returns: ``True`` when the host sent ``telemetry_opt_out=True``
+            in its hello frame.  Defaults to ``False`` when the host is
+            offline or unknown.
+        """
+        conn = self.get(host_id, workspace_id)
+        if conn is None:
+            return False
+        return conn.hello.telemetry_opt_out
+
+    def get_host_installation_id(
+        self, host_id: str, workspace_id: int | None = None
+    ) -> str | None:
+        """Return the installation ID the host advertised in its hello frame.
+
+        :param host_id: Host identifier, e.g. ``"host_a1b2c3d4..."``.
+        :param workspace_id: Tenant partition; defaults to
+            :func:`current_workspace_id`.
+        :returns: The host's installation ID, or ``None`` when offline or
+            not set.
+        """
+        conn = self.get(host_id, workspace_id)
+        if conn is None:
+            return None
+        return conn.hello.installation_id
+
+    def host_supports_codex_side_chat(self, host_id: str, workspace_id: int | None = None) -> bool:
+        """Whether the connected host's build can fork a codex `/side` chat.
+
+        Reads the capability the host advertised in its hello frame. An older
+        host that predates the feature sends no such token, so it reads as
+        unsupported with no version check. Fails OPEN (``True``) only when the
+        host is offline/unknown — we then can't prove it's too old, and the
+        forward will surface any real connection failure on its own.
+
+        :param host_id: Host identifier, e.g. ``"host_a1b2c3d4..."``.
+        :param workspace_id: Tenant partition; defaults to
+            :func:`current_workspace_id`.
+        :returns: ``False`` only for a connected host that did not advertise the
+            codex side-chat capability.
+        """
+        conn = self.get(host_id, workspace_id)
+        if conn is None:
+            return True
+        return CAP_CODEX_SIDE_CHAT in conn.hello.capabilities
+
+    def record_gateway_inference(
+        self,
+        host_id: str,
+        gateway_inference: Mapping[str, bool] | None,
+    ) -> None:
+        """Store the gateway-inference map a host just reported.
+
+        Called for every frame that carries the map — the connect handshake and
+        each readiness refresh — so the server's view is delivered rather than
+        persisted. ``None`` (a host that cannot evaluate the map at all) clears
+        the entry back to unknown instead of recording "nothing is backed".
+
+        :param host_id: Host identifier, in any accepted spelling (see
+            :func:`_canonical_host_id`).
+        :param gateway_inference: Harness spelling → gateway-backed flag, e.g.
+            ``{"claude-native": True, "codex": False}``, or ``None``.
+        """
+        key = _canonical_host_id(host_id)
+        with self._lock:
+            if gateway_inference is None:
+                self._gateway_inference.pop(key, None)
+            else:
+                self._gateway_inference[key] = dict(gateway_inference)
+
+    def gateway_inference(self, host_id: str) -> dict[str, bool] | None:
+        """Return the gateway-inference map *host_id* last reported here.
+
+        :param host_id: Host identifier, in any accepted spelling.
+        :returns: A copy of the reported map, or ``None`` when this replica has
+            never had a report from the host — unknown, which readers treat as
+            gateway-backed rather than unavailable.
+        """
+        with self._lock:
+            reported = self._gateway_inference.get(_canonical_host_id(host_id))
+        return dict(reported) if reported is not None else None
+
+    def interactive_shells(self, host_id: str) -> list[str] | None:
+        """Return the ordered shell inventory last reported by *host_id*."""
+        with self._lock:
+            reported = self._interactive_shells.get(_canonical_host_id(host_id))
+        return list(reported) if reported is not None else None
+
+    async def admit_launch(
+        self,
+        conn: HostConnection,
+        session_id: str,
+        *,
+        allow_unbound: bool = False,
+        transfer_from_host_id: str | None = None,
+    ) -> None:
+        """Reauthorize immediately before a new runner binding is created."""
+        if self.launch_authorizer is not None:
+            await asyncio.to_thread(
+                self.launch_authorizer,
+                conn.host_id,
+                session_id,
+                conn.owner,
+                conn.account_generation,
+                allow_unbound,
+                transfer_from_host_id,
+            )
+
+    def send_text(self, conn: HostConnection, data: str) -> None:
+        """Enqueue a text frame for sending to the host.
+
+        Must be called on the host WebSocket's owning event loop.
+        ``asyncio.Queue`` is coroutine-safe within a single loop, NOT
+        thread-safe — ``put_nowait`` mutates the underlying deque
+        without a lock. Every current caller (REST handlers, the WS
+        receive loop, the ping loop) runs on the uvicorn event loop,
+        so the call below is safe. A caller on another thread must use
+        ``loop.call_soon_threadsafe(conn.enqueue, data)`` instead.
+
+        :param conn: The target host connection.
+        :param data: JSON-encoded frame text.
+        :raises ConnectionError: If the connection has been
+            replaced or its owner does not match captured authority.
+        """
+        expected = _expected_host_owner.get()
+        if (
+            expected is not None
+            and expected.workspace_id == current_workspace_id()
+            and (conn.workspace_id, conn.owner, conn.account_generation)
+            != (expected.workspace_id, expected.user_id, expected.generation)
+        ):
+            raise ConnectionError(f"host {conn.host_id!r} account ownership changed")
+        actor = current_account_user()
+        if (
+            actor is not None
+            and actor == conn.owner
+            and account_generation(actor) != conn.account_generation
+        ):
+            raise ConnectionError(f"host {conn.host_id!r} account registration changed")
+        with self._lock:
+            current = self._hosts.get((conn.workspace_id, conn.host_id))
+            if current is not conn:
+                raise ConnectionError(f"host {conn.host_id!r} connection was replaced")
+
+        conn.enqueue(data)

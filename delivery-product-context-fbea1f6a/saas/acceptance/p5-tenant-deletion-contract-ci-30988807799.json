@@ -1,0 +1,108 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30988807799,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30988807799",
+  "job_id": 92249767276,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30988807799/job/92249767276",
+  "head_sha": "cd681559684377a5d5b0a25c23c23749eeb85d48",
+  "upstream_revision": "8e17c9ec081fc0219c71db773cc7bb0cb516633a",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "combined_ci_tests": "817 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 128.87,
+    "tenant_deletion_contract_tests": "8 passed within the combined suite",
+    "official_zygote_and_query_context_regressions": "56 passed",
+    "official_zygote_and_query_context_seconds": 39.79,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.64,
+    "isolated_logical_restore_contract": "passed in 2.99 seconds",
+    "wheel_required_artifacts": 133,
+    "patches_replayed": 2,
+    "migration_head": "p5a000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "manifest_and_revision_contract": {
+    "exact_upstream_adapter_schema_and_product_revisions_are_required": true,
+    "only_production_tenant_deletion_evidence_can_qualify": true,
+    "maximum_evidence_age_is_90_days": true,
+    "canonical_record_sha256_detects_record_mutation": true,
+    "undeclared_record_request_surface_artifact_and_attestation_fields_are_rejected": true,
+    "raw_tenant_identity_and_customer_content_fields_are_not_allowed": true,
+    "immutable_artifact_and_dsse_envelope_are_required": true,
+    "privacy_security_and_data_owner_attestations_are_required": true
+  },
+  "complete_surface_contract": {
+    "required_surface_count": 13,
+    "control_plane_and_runtime_databases": "erase",
+    "object_artifact_vector_search_cache_queue_and_dlq": "erase",
+    "provider_connector_runner_worktree_recovery_and_webhook_state": "erase",
+    "secret_and_kms_references": "cryptographic_erase",
+    "logs_and_traces": "redact_and_retain for at most 30 days",
+    "immutable_audit_and_ledger": "anonymize_and_retain for at most 2555 days",
+    "backups_and_snapshots": "runtime-inaccessible tombstone then expire within 35 days",
+    "retention_deadline_overrun_blocks_readiness": true,
+    "unresolved_legal_hold_blocks_completion": true
+  },
+  "precondition_and_reconciliation_contract": {
+    "tenant_pending_deletion_and_new_admission_disabled_are_required": true,
+    "active_runs_must_be_terminal_or_quarantined": true,
+    "sessions_tokens_grants_and_memberships_must_be_revoked": true,
+    "deletion_request_must_be_persisted_through_outbox": true,
+    "both_forced_rls_layers_and_cross_tenant_canary_are_checked": true,
+    "object_search_cache_queue_dlq_webhook_provider_runner_and_kms_checks_are_complete": true,
+    "backup_tombstone_replay_and_non_resurrection_after_restore_are_required": true,
+    "customer_export_must_be_completed_or_explicitly_waived": true
+  },
+  "fail_closed_evidence_state": {
+    "production_evidence_record_count": 0,
+    "qualified_record_count": 0,
+    "required_surface_count": 13,
+    "readiness_blocker_count": 1,
+    "structural_status": "pass",
+    "production_readiness": "blocked",
+    "blocker": "no current qualifying production tenant deletion evidence",
+    "ci_local_synthetic_job_success_or_database_row_counts_do_not_qualify": true
+  },
+  "negative_matrix": {
+    "policy_or_revision_drift_fails": true,
+    "unsafe_evidence_directory_fails": true,
+    "record_tampering_fails": true,
+    "missing_surface_or_ci_evidence_kind_fails": true,
+    "unknown_raw_identity_field_fails": true,
+    "legal_hold_direct_identifier_retention_or_overdue_backup_blocks": true,
+    "stale_or_different_release_record_is_blocked": true,
+    "duplicate_record_or_incomplete_attestations_fail_closed": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 446,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9932,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "a production tenant deletion execution or any deleted production data",
+    "deployed adapters that enumerate and erase every database object index cache queue log provider or Runner surface",
+    "a production legal-hold customer-export notification or approval workflow",
+    "actual external KMS cryptographic erasure immutable artifact publication or DSSE verification infrastructure",
+    "backup retention expiry purge or restore-tombstone reconciliation against production data",
+    "production deletion duration capacity SLO alerting retry compensation or incident response",
+    "P5 aggregate deletion capacity SLO or production foundation readiness"
+  ],
+  "evidence_successor_policy": "This record verifies the exact fail-closed tenant-deletion policy, thirteen-surface manifest, strict field schema, canonical hash, retention and tombstone rules, reconciliation matrix, negative cases, wheel packaging, and compatibility gate. It deliberately records zero production deletion evidence and a blocked readiness result. It does not prove execution against any production store, production retention expiry, external immutable evidence/signing, deletion capacity/SLO, or the aggregate P5 gate. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, or plan documentation does not alter the verified implementation."
+}

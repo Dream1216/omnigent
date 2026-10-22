@@ -1,0 +1,66 @@
+{
+  "workflow": "SaaS image candidate",
+  "run_id": 31064837882,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31064837882",
+  "job_id": 92500446352,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31064837882/job/92500446352",
+  "artifact_id": 8953884496,
+  "artifact_sha256": "6ffcd57a4b045f3545a613500424cedffa14a8f0571ade5e97b173e1d2968371",
+  "head_sha": "f75be5a62813b00740334ba701be9633b1dab9e3",
+  "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
+  "control_plane_schema_revision": "p6a000000009",
+  "adapter_contract_version": "0.2.0",
+  "conclusion": "success",
+  "regression": {
+    "combined_tests": "888 passed, 1 platform skip",
+    "combined_warnings": 226,
+    "combined_seconds": 153.92,
+    "migration_upgrade_check_and_downgrade": "passed",
+    "patch_replay": "passed with 2 patches",
+    "source_intrusion_budget": "passed at 8 files, 451 lines, and 0.9953 isolated ratio"
+  },
+  "candidate_evidence": {
+    "status": "pass",
+    "source_date_epoch": 1785982194,
+    "repeated_builds_match_platform_manifest_and_config": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "images": {
+      "omnigent-saas-server": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:5411f9dce8706c3fede4fc1368e56b85bc7d9707c69cde71bc0d2072ba11b81c",
+          "config_digest": "sha256:e19725e3c42444fa068abf5c7a3dace0850fd708048d87bd0e7c0a35a24860cc"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:1c9de20beddd356746336ca690467c470b40abca7bb24c4a33a9d3013994ece0",
+          "config_digest": "sha256:7b2cfe7f11348ecae82f902178ce398e524acb2549b4140b589d15ab44bda562"
+        }
+      },
+      "omnigent-saas-host": {
+        "linux/amd64": {
+          "manifest_digest": "sha256:c967657f299282d783dc75ee59bc4a5ed5f2afb553a6f1791f90705e8b09880a",
+          "config_digest": "sha256:c61dd13152cf98f783c2cc4e008c565950affdfb59f9493d03147ba6b3680410"
+        },
+        "linux/arm64": {
+          "manifest_digest": "sha256:6ee72df17291955f3ef6334bf60909f31cb3a121a948c1653d35050f5270abb3",
+          "config_digest": "sha256:3611107450b376f21c5ec7df0bba98c8aa6ed682feb4a2be4ce7201743f86564"
+        }
+      }
+    },
+    "required_labels_match_exact_revisions": true,
+    "baseline_derived_schema_label_used_by_all_four_builds": true,
+    "attestation_descriptors_per_build": 2
+  },
+  "production_ready": false,
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "acceptance_boundary": "This proves reproducible executable Server and Host image facts with the authoritative p6a000000009 machine-metering schema label at f75be5a62813b00740334ba701be9633b1dab9e3. It does not prove registry promotion, production signatures, vulnerability admission, official Runtime Provider invocation, live Provider billing, the P0 production image gate, the P6 billing aggregate, or release GO.",
+  "evidence_successor_policy": "A successor that changes only this evidence record, the still-pending acceptance gate evidence list, wheel inventory, README, tests that assert those records, or plan documentation does not alter the executable image facts verified at f75be5a62813b00740334ba701be9633b1dab9e3."
+}

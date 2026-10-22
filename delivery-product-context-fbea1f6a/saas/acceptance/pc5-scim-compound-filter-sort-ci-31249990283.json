@@ -1,0 +1,107 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31249990283,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31249990283",
+  "job_id": 93084712462,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31249990283/job/93084712462",
+  "artifact_id": 9019748005,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31249990283/artifacts/9019748005",
+  "artifact_archive_sha256": "62fd99742e5d563ef16c774e9e511fde4dcac4b5855da612122babb99de39d24",
+  "head_sha": "3d1f56778f61090fa3b0e0f26a100e14f8279bab",
+  "upstream_revision": "9dab48b460f37d8a0ed294d1309cd2f843c5cafc",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "ci_os": "ubuntu-latest",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "ci_compatibility_tests": "989 passed, 232 warnings, 186.16s",
+    "isolated_logical_restore_contract": "passed in 3.895 seconds",
+    "control_plane_forced_rls_tables": 85,
+    "runtime_forced_rls_tables": 17,
+    "enterprise_scim_restore": "passed with two Tenant-isolated fact sets",
+    "official_zygote_query_context_tests": "63 passed, 2 warnings, 39.75s",
+    "official_linux_security_tests": "39 passed, 22 skipped, 18.27s",
+    "wheel_required_artifacts": 222,
+    "patches_replayed": 2,
+    "migration_head": "pc5a00000001",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates": 11,
+    "release_decision": "NO-GO"
+  },
+  "bounded_filter_sort_contract": {
+    "parser_limits": {
+      "maximum_filter_characters": 1024,
+      "maximum_comparison_terms": 16,
+      "maximum_parenthesis_levels": 4
+    },
+    "logical_operators": [
+      "and",
+      "or",
+      "not"
+    ],
+    "attribute_operators": [
+      "eq",
+      "ne",
+      "co",
+      "sw",
+      "ew",
+      "pr"
+    ],
+    "resource_specific_attributes": {
+      "User": [
+        "id",
+        "externalId",
+        "userName",
+        "displayName",
+        "active"
+      ],
+      "Group": [
+        "id",
+        "externalId",
+        "displayName",
+        "active"
+      ]
+    },
+    "sorting": "allowlisted sortBy with ascending or descending order, deterministic UUID tie-breaking, and RFC-compatible missing-value placement",
+    "null_semantics": "nullable predicates are coalesced to false before logical composition so filters remain two-valued",
+    "wildcard_safety": "LIKE wildcard and escape characters from client strings are escaped before comparison",
+    "directory_isolation": "every list query remains scoped to the exact authenticated SCIM Directory",
+    "negative_tests": [
+      "malformed, over-length, over-term and over-depth filters fail closed",
+      "resource-mismatched filter and sort attributes fail closed",
+      "unsupported operators and attribute combinations fail closed",
+      "sortOrder without sortBy fails closed",
+      "missing nullable values do not become an implicit match under direct ne"
+    ]
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 485,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9959,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "artifact_report_sha256": {
+    "upstream_delta": "f983258889b90faebd9a441c162d9a2640b1c0400e027362d8e7a429ea80c28f",
+    "patch_replay": "04e7a2ae5efc33d10e996f0a859476d3ee7d1afea4b5856a1752c514334f0d57",
+    "postgresql_restore": "cc94215630cffbd134e6f635c418aa43807e938926b3ce8b4bcf734dcbe2394f"
+  },
+  "not_proven_by_this_record": [
+    "SCIM Bulk, gt/ge/lt/le, complex or multi-valued value-path filters, or the complete RFC filter grammar",
+    "the complete RFC PATCH path and value grammar",
+    "scheduled or overlapping credential rotation with a dual-token grace window",
+    "production IdP federation, Domain Claim, JIT, MFA, recovery, privacy, Legal Hold, Operations or Finance behavior",
+    "production image publication, signing, scanning, canary or N-1 rollback",
+    "completion of any of the eleven aggregate gates or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the bounded compound filter and deterministic sorting implementation at 3d1f56778f61090fa3b0e0f26a100e14f8279bab. A successor that changes only this evidence record, its paired image record, wheel inventory, explanatory documentation, or tests that assert those records does not alter the verified implementation."
+}

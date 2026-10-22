@@ -1,0 +1,137 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30918608868,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30918608868",
+  "job_id": 92023030197,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30918608868/job/92023030197",
+  "head_sha": "0bf50f61258be8966e36746d285f307a955a3201",
+  "implementation_root_sha": "76b03cb32245fb169f22b7577b1a16634f3ebcec",
+  "upstream_revision": "a47a9ee3bf7287f7e70fc0f599f241e43275ecfc",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap",
+    "user_namespace_prerequisite": "official-workflow AppArmor sysctl on the ephemeral runner"
+  },
+  "verification": {
+    "combined_ci_tests": "662 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 100.8,
+    "official_hard_sandbox_acceptance": "13 passed, 17 platform skips",
+    "official_hard_sandbox_seconds": 11.88,
+    "wheel_required_artifacts": 78,
+    "patches_replayed": 2,
+    "migration_head": "p4c000000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "production_baseline_structure": "passed",
+    "image_supply_chain_structure": "passed with zero promoted production images",
+    "pending_acceptance_gates_before_this_record": 11,
+    "pending_acceptance_gates_after_this_record": 11,
+    "release_decision": "NO-GO"
+  },
+  "control_plane_authority": {
+    "server_selected_hard_sandbox_profile": true,
+    "default_deny_tool_policy": true,
+    "default_deny_proxy_only_egress": true,
+    "private_metadata_loopback_and_ip_literal_destinations_rejected": true,
+    "secret_bindings_store_vault_references_not_plaintext": true,
+    "secret_host_must_be_allowed_by_active_egress_policy": true,
+    "one_time_launch_grant_is_hashed_and_fenced": true,
+    "one_time_secret_lease_is_hashed_and_fenced": true,
+    "preview_lease_uses_exact_host_token_and_distributed_fences": true,
+    "tenant_space_project_run_runner_worktree_and_changeset_binding_rechecked": true,
+    "outbox_payloads_exclude_plaintext_secrets": true
+  },
+  "postgresql_isolation": {
+    "migration": "p4c000000001_isolation_secret_preview.py",
+    "force_rls_tables": 6,
+    "roles": [
+      "saas_secret_broker",
+      "saas_preview_gateway"
+    ],
+    "roles_are_nologin_nosuperuser_nobypassrls": true,
+    "exact_token_policies_ignore_arbitrary_tenant_context": true,
+    "secret_broker_dependencies_are_exact_lease_bound": true,
+    "preview_dependencies_are_exact_lease_bound": true,
+    "legacy_run_and_worktree_scope_policies_hardened_for_service_roles": true,
+    "redeemed_secret_lease_cannot_reactivate": true,
+    "revoked_preview_lease_cannot_reactivate": true,
+    "authority_bindings_are_immutable": true,
+    "downgrade_removes_tables_policies_and_guards_then_reupgrade_passes": true
+  },
+  "runner_adapter": {
+    "isolated_downstream_adapter": "saas/runner_adapter/isolation.py",
+    "official_sandbox_primitives_used": true,
+    "client_sandbox_overrides_absent": true,
+    "external_containment_verifier_required": true,
+    "physical_worktree_and_fences_rechecked": true,
+    "git_metadata_masked": true,
+    "ambient_environment_passthrough_disabled": true,
+    "direct_network_disabled": true,
+    "official_editable_asset_links_are_allowroot_validated_and_readonly": true,
+    "credential_sources_are_outside_worktree": true,
+    "credential_source_directory_mode": "0700",
+    "credential_source_file_mode": "0600",
+    "credential_sources_are_not_mounted_into_sandbox": true,
+    "credential_sources_remain_only_for_prepared_lifecycle_and_helper_restart": true,
+    "credential_sources_removed_on_close_or_failed_start": true,
+    "real_secret_absent_from_sandbox_environment": true,
+    "synthetic_credential_placeholder_verified": true,
+    "sandbox_contract_tamper_fingerprint_verified": true
+  },
+  "preview_gateway": {
+    "independent_fastapi_application": true,
+    "preview_root_outside_primary_cookie_domain": true,
+    "token_absent_from_url": true,
+    "host_only_secure_httponly_samesite_strict_cookie": true,
+    "ambient_cookie_and_authorization_rejected": true,
+    "host_path_smuggling_rejected": true,
+    "chunked_request_body_is_bounded_while_streaming": true,
+    "hop_by_hop_forwarded_and_upstream_cookie_headers_stripped": true,
+    "control_plane_csp_coop_corp_referrer_and_frame_headers_override_upstream": true,
+    "tunnel_failures_collapse_to_secretless_502": true
+  },
+  "ci_failures_resolved_before_success": [
+    {
+      "run_id": 30917086785,
+      "cause": "AppArmor restricted bubblewrap user and network namespaces",
+      "resolution": "match the official Omnigent ephemeral-runner user-namespace prerequisite"
+    },
+    {
+      "run_id": 30917530662,
+      "cause": "editable official resource links escaped the mounted package root",
+      "resolution": "mount only targets validated under the fixed official examples asset root"
+    },
+    {
+      "run_id": 30918147168,
+      "cause": "credential source was deleted before the official helper's transparent restart",
+      "resolution": "retain parent-only source files until the Prepared isolation lifecycle closes"
+    }
+  ],
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 403,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9901,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "a production outer cgroup container or microVM containment implementation behind ContainmentVerifier",
+    "production DNS resolution pinning and rebinding denial plus malicious exfiltration acceptance",
+    "a deployed mutually authenticated Secret Broker transport between separate processes or hosts",
+    "a deployed mutually authenticated streaming Preview tunnel to a Runner",
+    "crash-recovery cleanup of lifecycle-bound credential source files",
+    "WebSocket Preview forwarding custom domains and abuse controls",
+    "two independent infrastructure failure domains network partition and N-1 rollback",
+    "signed vulnerability-cleared digest-pinned production image promotion"
+  ],
+  "evidence_successor_policy": "This record verifies the P4 isolation control-plane contract, PostgreSQL token RLS, downstream Runner adapter, independent Preview gateway, and official Linux hard-sandbox compatibility at the exact implementation revision. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, README, or plan documentation does not alter the verified implementation."
+}

@@ -1,0 +1,376 @@
+"""Two-tier agent cache — disk + in-memory — backed by ArtifactStore."""
+
+from __future__ import annotations
+
+import contextlib
+import errno
+import logging
+import os
+import shutil
+import tempfile
+from collections.abc import Iterator
+from pathlib import Path
+
+from filelock import FileLock
+
+from omnigent.debug_logging import debug_event
+from omnigent.entities import LoadedAgent
+from omnigent.spec import AgentSpec
+from omnigent.spec import load as load_spec
+from omnigent.stores.artifact_store import ArtifactStore
+
+_logger = logging.getLogger(__name__)
+
+# Written into each published directory: the bundle location it was extracted from.
+_LOCATION_MARKER = ".omnigent-bundle-location"
+
+
+def _cleanup_staging_dir(path: Path) -> None:
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass  # Successful publication moved this staging directory into the cache.
+    except OSError as exc:
+        _logger.warning("Could not clean agent cache staging directory %s: %s", path, exc)
+
+
+def _published_location(workdir: Path) -> str | None:
+    """Return the bundle location a cache directory holds, or ``None`` if unknown."""
+    try:
+        return (workdir / _LOCATION_MARKER).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+class AgentCache:
+    """
+    Two-tier cache for loaded agents.
+
+    Tier 1 (in-memory): parsed AgentSpec objects keyed by agent_id.
+    Tier 2 (disk): extracted agent directories under cache_dir/<agent_id>/.
+    Source of truth: ArtifactStore (tarball bytes).
+
+    Both tiers remember the bundle location they were built from, so a
+    caller naming a newer location (a reinstall or edit made by another
+    process sharing the cache directory) rebuilds instead of reading a
+    stale spec.
+
+    On cache miss the bundle is downloaded from the ArtifactStore,
+    extracted to disk, parsed, validated, and stored in both tiers.
+
+    This is an **execution** load path, so it loads with
+    ``prune_invalid_sub_agents=True``: a sub-agent that fails
+    validation here means this server is older than whatever produced
+    the bundle and can't run that sub-agent (version skew), so it is
+    dropped (with a WARNING) and the parent agent still dispatches.
+    Authoring/upload validation stays strict elsewhere
+    (:func:`omnigent.server.bundles.validate_agent_bundle`). See
+    :func:`omnigent.spec.load`.
+    """
+
+    def __init__(self, artifact_store: ArtifactStore, cache_dir: Path) -> None:
+        """
+        Initialize the two-tier agent cache.
+
+        :param artifact_store: The ArtifactStore holding agent
+            bundle tarballs (source of truth).
+        :param cache_dir: Root directory for the disk cache.
+            Each agent is extracted to
+            ``<cache_dir>/<agent_id>/``.
+        """
+        self._artifact_store = artifact_store
+        self._cache_dir = cache_dir
+        self._specs: dict[str, tuple[str, AgentSpec]] = {}  # agent_id → (location, spec)
+
+    def _cache_path(self, agent_id: str) -> Path:
+        """Return a direct child of the cache root for an agent id."""
+        component = os.path.basename(agent_id)
+        if (
+            not component
+            or component in {".", ".."}
+            or component.casefold() == ".staging"
+            or component != agent_id
+            or "\\" in component
+            or "\x00" in component
+        ):
+            raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
+        cache_root = self._cache_dir.resolve(strict=False)
+        normalized_path = os.path.normpath(cache_root / component)
+        if not normalized_path.startswith(os.path.join(cache_root, "")):
+            raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
+        path = Path(normalized_path)
+        if path.parent != cache_root or path.resolve(strict=False) != path:
+            raise ValueError(f"unsafe agent id for cache path: {agent_id!r}")
+        return path
+
+    def load(
+        self,
+        agent_id: str,
+        bundle_location: str,
+        *,
+        expand_env: bool = False,
+    ) -> LoadedAgent:
+        """
+        Load an agent, populating caches on miss.
+
+        Raises KeyError if the agent bundle does not exist in the
+        ArtifactStore. Raises ValueError if the spec is invalid.
+
+        :param agent_id: Unique agent identifier,
+            e.g. ``"ag_abc123"``.
+        :param bundle_location: Artifact store key for the bundle,
+            e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
+        :param expand_env: Whether to expand ``${VAR}`` references in
+            the spec against the server process environment. Defaults
+            to ``False`` and MUST stay ``False`` for tenant-supplied
+            (session-scoped) agents: expanding their ``${VAR}``
+            against the server env leaks secrets into a spec-controlled
+            MCP/LLM connection. Callers pass
+            ``expand_env=True`` only for operator-authored template
+            agents (``Agent.operator_authored``: ``--agent`` /
+            built-ins). The default is fail-safe: a caller that
+            forgets the flag gets no expansion (a template agent may
+            fail to resolve, loudly) rather than a silent leak.
+        :returns: A LoadedAgent with the parsed spec and the
+            on-disk working directory.
+        """
+        workdir = self._cache_path(agent_id)
+
+        # Tier 1: in-memory spec. The cached spec was parsed with the
+        # *expand_env* value of whichever caller populated it first.
+        # That is consistent across callers because *expand_env* is
+        # derived from the agent's immutable provenance, which never
+        # changes for a given ``agent_id``.
+        cached = self._specs.get(agent_id)
+        if cached is not None and cached[0] == bundle_location:
+            return LoadedAgent(spec=cached[1], workdir=workdir)
+
+        # Tier 2: rebuild stale, missing, or corrupt extracted specs from the stored bundle.
+        if workdir.is_dir():
+            if _published_location(workdir) != bundle_location:
+                return self._recover_disk_entry(agent_id, bundle_location, expand_env=expand_env)
+            try:
+                spec = load_spec(workdir, expand_env=expand_env, prune_invalid_sub_agents=True)
+            except Exception:
+                return self._recover_disk_entry(agent_id, bundle_location, expand_env=expand_env)
+            else:
+                self._specs[agent_id] = (bundle_location, spec)
+                return LoadedAgent(spec=spec, workdir=workdir)
+
+        # Cache miss — validate privately before publishing the disk entry.
+        bundle_bytes = self._artifact_store.get(bundle_location)
+        return self._extract_and_cache(
+            agent_id, bundle_location, bundle_bytes, expand_env=expand_env
+        )
+
+    def _recover_disk_entry(
+        self, agent_id: str, bundle_location: str, *, expand_env: bool
+    ) -> LoadedAgent:
+        """Recheck and rebuild under a shared lock so late failures cannot evict repairs."""
+        lock_path = self._staging_root() / "repair.lock"
+        if lock_path.resolve(strict=False) != lock_path:
+            raise ValueError(f"unsafe cache repair lock: {lock_path}")
+        with FileLock(lock_path, timeout=30):
+            workdir = self._cache_path(agent_id)
+            try:
+                if _published_location(workdir) != bundle_location:
+                    raise LookupError("cached directory holds another bundle")
+                spec = load_spec(workdir, expand_env=expand_env, prune_invalid_sub_agents=True)
+            except Exception as exc:
+                _logger.warning(
+                    "Rebuilding unreadable agent cache entry",
+                    extra=debug_event(
+                        "agent_cache_rebuild_started",
+                        agent_id=agent_id,
+                        exception_type=type(exc).__name__,
+                    ),
+                )
+            else:
+                self._specs[agent_id] = (bundle_location, spec)
+                return LoadedAgent(spec=spec, workdir=workdir)
+
+            try:
+                bundle_bytes = self._artifact_store.get(bundle_location)
+                workdir = self._cache_path(agent_id)
+                with contextlib.suppress(FileNotFoundError):
+                    shutil.rmtree(workdir)
+                loaded = self._extract_and_cache(
+                    agent_id, bundle_location, bundle_bytes, expand_env=expand_env, repairing=True
+                )
+            except Exception as exc:
+                _logger.warning(
+                    "Agent cache rebuild failed",
+                    extra=debug_event(
+                        "agent_cache_rebuild_failed",
+                        agent_id=agent_id,
+                        exception_type=type(exc).__name__,
+                    ),
+                )
+                raise
+            _logger.info(
+                "Rebuilt agent cache entry",
+                extra=debug_event("agent_cache_rebuild_completed", agent_id=agent_id),
+            )
+            return loaded
+
+    def replace(
+        self,
+        agent_id: str,
+        bundle_location: str,
+        bundle_bytes: bytes,
+        *,
+        expand_env: bool = False,
+    ) -> LoadedAgent:
+        """
+        Warm-swap an agent's cached spec and disk directory.
+
+        Validates the new bundle in a temporary directory before
+        replacing the disk directory and updating the in-memory spec.
+        Restores the previous directory if publication fails; if rollback
+        also fails, retains the backup path in the error's notes.
+        Callers must coordinate replacement with concurrent use of
+        this agent; the disk swap and memory update are not atomic.
+
+        :param agent_id: Unique agent identifier,
+            e.g. ``"ag_abc123"``.
+        :param bundle_location: New artifact store key, recorded with
+            the cached entry, e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
+        :param bundle_bytes: Raw bytes of the new ``.tar.gz``
+            bundle.
+        :param expand_env: Whether to expand ``${VAR}`` references
+            against the server process environment. Defaults to
+            ``False`` (fail-safe); pass ``True`` only for
+            operator-authored template agents. See :meth:`load` for
+            the full rationale.
+        :returns: A LoadedAgent with the new spec and working
+            directory.
+        """
+        workdir = self._cache_path(agent_id)
+        with self._staging_dir() as staging_dir:
+            spec = load_spec(
+                bundle_bytes,
+                dest=staging_dir,
+                expand_env=expand_env,
+                prune_invalid_sub_agents=True,
+            )
+            (staging_dir / _LOCATION_MARKER).write_text(bundle_location, encoding="utf-8")
+            workdir = self._cache_path(agent_id)
+            backup_dir: Path | None = None
+            published = False
+            try:
+                if workdir.is_dir():
+                    backup_dir = Path(tempfile.mkdtemp(prefix="backup-", dir=staging_dir.parent))
+                    workdir.rename(backup_dir / "previous")
+                try:
+                    staging_dir.rename(workdir)
+                except OSError as publish_error:
+                    if backup_dir is not None:
+                        try:
+                            (backup_dir / "previous").rename(workdir)
+                        except OSError as restore_error:
+                            self._specs.pop(agent_id, None)
+                            restore_error.add_note(
+                                f"Previous cached bundle retained at {backup_dir / 'previous'}"
+                            )
+                            # Surface failed recovery, preserving the publish error as its cause.
+                            raise restore_error from publish_error
+                    raise
+                published = True
+            finally:
+                # A failed rollback retains its backup for manual recovery/cleanup.
+                # Crash remnants also need manual cleanup; no automatic reaper runs.
+                if backup_dir is not None and (
+                    published or not (backup_dir / "previous").exists()
+                ):
+                    _cleanup_staging_dir(backup_dir)
+        self._specs[agent_id] = (bundle_location, spec)
+        return LoadedAgent(spec=spec, workdir=workdir)
+
+    def evict(self, agent_id: str) -> None:
+        """
+        Remove an agent from both cache tiers. Called when an
+        agent is deleted. No-op if the agent is not cached.
+
+        :param agent_id: Unique agent identifier,
+            e.g. ``"ag_abc123"``.
+        """
+        workdir = self._cache_path(agent_id)
+        self._specs.pop(agent_id, None)
+        if workdir.is_dir():
+            shutil.rmtree(workdir)
+
+    def _staging_root(self) -> Path:
+        """Return the reserved staging namespace on the cache filesystem."""
+        cache_root = self._cache_dir.resolve(strict=False)
+        cache_root.mkdir(parents=True, exist_ok=True)
+        staging_root = cache_root / ".staging"
+        if staging_root.resolve(strict=False) != staging_root:
+            raise ValueError(f"unsafe staging root: {staging_root}")
+        staging_root.mkdir(mode=0o700, exist_ok=True)
+        return staging_root
+
+    @contextlib.contextmanager
+    def _staging_dir(self) -> Iterator[Path]:
+        """Stage on the cache filesystem in a reserved, symlink-checked namespace."""
+        staging_dir = Path(tempfile.mkdtemp(prefix="bundle-", dir=self._staging_root()))
+        try:
+            yield staging_dir
+        finally:
+            _cleanup_staging_dir(staging_dir)
+
+    def _extract_and_cache(
+        self,
+        agent_id: str,
+        bundle_location: str,
+        bundle_bytes: bytes,
+        *,
+        expand_env: bool = False,
+        repairing: bool = False,
+    ) -> LoadedAgent:
+        """
+        Extract bundle bytes to disk and populate both cache tiers.
+
+        :param agent_id: Unique agent identifier.
+        :param bundle_location: Artifact store key *bundle_bytes* came from.
+        :param bundle_bytes: Raw bytes of the ``.tar.gz`` bundle.
+        :param expand_env: Whether to expand ``${VAR}`` references
+            against the server process environment. Forwarded from
+            :meth:`load`; defaults to ``False`` (fail-safe). See
+            :meth:`load` for the rationale.
+        :param repairing: Called from :meth:`_recover_disk_entry`, which
+            already holds the repair lock.
+        :returns: A LoadedAgent with the parsed spec and workdir.
+        """
+        with self._staging_dir() as staging_dir:
+            spec = load_spec(
+                bundle_bytes,
+                dest=staging_dir,
+                expand_env=expand_env,
+                prune_invalid_sub_agents=True,
+            )
+            (staging_dir / _LOCATION_MARKER).write_text(bundle_location, encoding="utf-8")
+            workdir = self._cache_path(agent_id)
+            try:
+                staging_dir.rename(workdir)
+            except OSError as exc:
+                if exc.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                    raise
+                workdir = self._cache_path(agent_id)
+                if not workdir.is_dir():
+                    raise
+                if _published_location(workdir) != bundle_location:
+                    if repairing:
+                        raise
+                    # Another loader published a different bundle. Rebuild ours under the
+                    # repair lock: the spec parsed here points into this staging directory.
+                    return self._recover_disk_entry(
+                        agent_id, bundle_location, expand_env=expand_env
+                    )
+                # Another cold loader published first; use its complete bundle.
+                spec = load_spec(
+                    workdir,
+                    expand_env=expand_env,
+                    prune_invalid_sub_agents=True,
+                )
+        self._specs[agent_id] = (bundle_location, spec)
+        return LoadedAgent(spec=spec, workdir=workdir)

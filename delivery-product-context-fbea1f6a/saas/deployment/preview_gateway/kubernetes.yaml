@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: omnigent-preview-gateway-config
+    data:
+      gateway.json: |
+        {
+          "adapter_contract_version": "0.2.0",
+          "bind_host": "0.0.0.0",
+          "bind_port": 9443,
+          "connect_host": "replace-with-server-selected-internal-endpoint",
+          "connect_port": 9443,
+          "drain_timeout_seconds": 30,
+          "failure_domain": "replace-with-failure-domain",
+          "health_host": "127.0.0.1",
+          "health_port": 9080,
+          "heartbeat_seconds": 15,
+          "instance_id_prefix": "preview-gateway",
+          "lease_seconds": 45,
+          "readiness_timeout_seconds": 10,
+          "renewal_before_seconds": 600,
+          "rotation_overlap_seconds": 300,
+          "server_name": "replace-with-server-selected-internal-endpoint",
+          "source_revision": "replace-with-exact-source-sha"
+        }
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: omnigent-preview-gateway
+    spec:
+      # Do not increase until every Pod receives a unique directly routable endpoint.
+      replicas: 1
+      selector:
+        matchLabels:
+          app: omnigent-preview-gateway
+      template:
+        metadata:
+          labels:
+            app: omnigent-preview-gateway
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 45
+          containers:
+            - name: preview-gateway
+              image: replace-with-signed-immutable-image-digest
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: OMNIGENT_PREVIEW_GATEWAY_FACTORY
+                  value: replace.with.deployment.factory:factory
+              args:
+                - --config
+                - /etc/omnigent/preview-gateway/gateway.json
+                - --factory
+                - $(OMNIGENT_PREVIEW_GATEWAY_FACTORY)
+              ports:
+                - name: relay
+                  containerPort: 9443
+                  protocol: TCP
+              readinessProbe:
+                exec:
+                  command:
+                    - omnigent-saas-preview-gateway
+                    - --probe
+                    - ready
+                    - --health-host
+                    - 127.0.0.1
+                    - --health-port
+                    - "9080"
+                initialDelaySeconds: 1
+                periodSeconds: 3
+                timeoutSeconds: 2
+                failureThreshold: 3
+              livenessProbe:
+                exec:
+                  command:
+                    - omnigent-saas-preview-gateway
+                    - --probe
+                    - live
+                    - --health-host
+                    - 127.0.0.1
+                    - --health-port
+                    - "9080"
+                initialDelaySeconds: 1
+                periodSeconds: 10
+                timeoutSeconds: 2
+                failureThreshold: 3
+              resources:
+                requests:
+                  cpu: replace-with-capacity-baseline
+                  memory: replace-with-capacity-baseline
+                limits:
+                  cpu: replace-with-capacity-limit
+                  memory: replace-with-capacity-limit
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/omnigent/preview-gateway
+                  readOnly: true
+                - name: runtime
+                  mountPath: /run/omnigent-preview-gateway
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchLabels:
+                  app: omnigent-preview-gateway
+          volumes:
+            - name: config
+              configMap:
+                name: omnigent-preview-gateway-config
+                defaultMode: 0444
+            - name: runtime
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Mi
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: omnigent-preview-gateway
+    spec:
+      minAvailable: 1
+      selector:
+        matchLabels:
+          app: omnigent-preview-gateway
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: omnigent-preview-gateway-default-deny
+    spec:
+      podSelector:
+        matchLabels:
+          app: omnigent-preview-gateway
+      policyTypes: ["Ingress", "Egress"]
+      ingress: []
+      egress: []

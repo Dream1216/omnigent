@@ -1,0 +1,93 @@
+import Foundation
+import WebKit
+
+/// Host-based authentication classification, independent of workspace mount discovery.
+enum ServerAuthentication: Equatable {
+  case databricksWorkspace
+  case databricksApp
+  case oidc
+
+  init(origin: String?) {
+    self.init(host: origin.flatMap { URL(string: $0)?.host })
+  }
+
+  init(host: String?) {
+    guard let host = host?.lowercased() else {
+      self = .oidc
+      return
+    }
+    if Self.workspaceDomains.contains(where: { Self.matches(host, domain: $0) }) {
+      self = .databricksWorkspace
+    } else if Self.matches(host, domain: Self.appsDomain) {
+      self = .databricksApp
+    } else {
+      self = .oidc
+    }
+  }
+
+  /// Databricks Apps retain inline SSO; workspace login is handled natively.
+  var usesInWebViewAuth: Bool {
+    switch self {
+    case .databricksApp: true
+    case .databricksWorkspace, .oidc: false
+    }
+  }
+
+  private static let workspaceDomains = ["databricks.com", "azuredatabricks.net"]
+  private static let appsDomain = "databricksapps.com"
+
+  private static func matches(_ host: String, domain: String) -> Bool {
+    host == domain || host.hasSuffix(".\(domain)")
+  }
+}
+
+extension URL {
+  var omnigentOrigin: String? {
+    guard let scheme, let host else { return nil }
+    var components = URLComponents()
+    components.scheme = scheme.lowercased()
+    components.host = host.lowercased()
+    components.port = port
+    return components.url?.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+  }
+
+  /// `routePath` (absolute, e.g. `/auth/login`) under this server URL's mount, without its
+  /// query or fragment: `https://h/omnigent/` + `/v1/me` is `https://h/omnigent/v1/me`.
+  func omnigentEndpoint(_ routePath: String) -> URL? {
+    guard routePath.hasPrefix("/"),
+      let encodedRoute = routePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+      var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+    else { return nil }
+    var mount = Substring(components.percentEncodedPath)
+    while mount.hasSuffix("/") { mount = mount.dropLast() }
+    components.percentEncodedPath = String(mount) + encodedRoute
+    components.percentEncodedQuery = nil
+    components.percentEncodedFragment = nil
+    return components.url
+  }
+
+  var omnigentHostLabel: String {
+    guard let host else { return absoluteString }
+    if let port {
+      return "\(host):\(port)"
+    }
+    return host
+  }
+}
+
+extension WKSecurityOrigin {
+  var omnigentOrigin: String? {
+    guard !self.protocol.isEmpty, !host.isEmpty else { return nil }
+    var components = URLComponents()
+    components.scheme = self.protocol.lowercased()
+    components.host = host.lowercased()
+    if port > 0 && !Self.isDefaultPort(port, for: self.protocol) {
+      components.port = port
+    }
+    return components.url?.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+  }
+
+  private static func isDefaultPort(_ port: Int, for scheme: String) -> Bool {
+    (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+  }
+}

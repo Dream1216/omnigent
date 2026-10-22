@@ -1,0 +1,132 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31008792059,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31008792059",
+  "job_id": 92315303091,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31008792059/job/92315303091",
+  "head_sha": "85e4399de928bc7cffb76dbe763f9a2e3b1641a6",
+  "upstream_revision": "559504d9fe2c2794e7a1c487dcfc8c47455cb633",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "combined_ci_tests": "852 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 131.89,
+    "enterprise_group_custom_role_tests": "8 passed within the combined suite",
+    "isolated_logical_restore_contract": "passed in 2.954 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed",
+    "official_zygote_and_query_context_seconds": 39.0,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.27,
+    "wheel_required_artifacts": 150,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000002",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "enterprise_group_contract": {
+    "scope": "tenant",
+    "membership_requires_existing_active_tenant_member": true,
+    "membership_alone_grants_permissions": false,
+    "membership_expiry_fails_closed": true,
+    "tenant_owner_and_admin_can_manage": true,
+    "security_auditor_is_read_only": true,
+    "ordinary_tenant_member_can_enumerate_groups": false,
+    "member_removal_revokes_group_membership_atomically": true,
+    "direct_group_member_removal_revokes_sessions_and_increments_security_version": true
+  },
+  "custom_role_contract": {
+    "scope": "project",
+    "permissions_compile_only_from_canonical_catalog": true,
+    "non_project_permissions_are_rejected": true,
+    "critical_permissions_are_rejected": true,
+    "grant_manage_and_custom_role_manage_are_not_delegable": true,
+    "manager_must_hold_grant_manage_custom_role_manage_and_every_delegated_permission": true,
+    "group_assignment_is_additive": true,
+    "assignment_expiry_fails_closed": true,
+    "role_and_assignment_versions_are_exposed_in_authorization_sources": true,
+    "role_update_or_assignment_revoke_increments_project_authorization_version": true
+  },
+  "http_and_outbox_contract": {
+    "internal_prefix": "/saas",
+    "authentication": "server_side_revocable_cookie",
+    "unsafe_methods_require_trusted_origin_and_csrf": true,
+    "stable_action_level_permission_registry": true,
+    "opaque_uuid_keyset_cursor": true,
+    "maximum_page_size": 100,
+    "database_query_is_bounded_to_page_size_plus_one": true,
+    "mutations_are_tenant_scoped_idempotent": true,
+    "outbox_payload_contains_secret_material": false,
+    "all_optional_saas_routers_are_registered_by_the_official_composition_root": true
+  },
+  "member_removal_impact_contract": {
+    "enterprise_access_provider_is_registered_as_a_required_domain": true,
+    "preview_is_secret_free": true,
+    "preview_lists_group_membership_and_project_role_assignment_facts": true,
+    "stale_preview_hash_is_rejected": true,
+    "tenant_member_removal_revokes_all_active_group_memberships": true,
+    "space_only_removal_does_not_revoke_tenant_wide_group_membership": true,
+    "affected_project_authorization_versions_are_incremented": true
+  },
+  "postgresql_and_recovery_contract": {
+    "control_plane_forced_rls_tables": 56,
+    "runtime_forced_rls_tables": 17,
+    "enterprise_tables": [
+      "saas_enterprise_groups",
+      "saas_enterprise_group_memberships",
+      "saas_enterprise_custom_roles",
+      "saas_enterprise_group_role_assignments"
+    ],
+    "application_and_governance_roles_are_nosuperuser_nobypassrls": true,
+    "missing_or_cross_tenant_context_is_denied": true,
+    "cross_tenant_write_is_denied": true,
+    "concurrent_group_member_removal_has_one_winner": true,
+    "restored_enterprise_group_rows": 2,
+    "restored_enterprise_group_membership_rows": 2,
+    "restored_enterprise_custom_role_rows": 2,
+    "restored_enterprise_group_role_assignment_rows": 2,
+    "cross_tenant_negative_probe": "passed",
+    "cross_workspace_negative_probe": "passed",
+    "post_backup_group_membership_and_assignment_revocation_replay": "passed"
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "559504d9fe2c2794e7a1c487dcfc8c47455cb633",
+    "patch_replay_content_mismatches": [],
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9941,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "production_baseline_blockers": 22,
+    "production_recovery_blockers": 2,
+    "production_tenant_deletion_blockers": 1,
+    "production_slo_capacity_blockers": 7,
+    "production_image_supply_chain_blockers": 1,
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "production enterprise group or custom-role operation",
+    "group archival role retirement bulk membership import or directory synchronization",
+    "SAML OIDC enterprise federation SCIM or identity-provider lifecycle",
+    "complete audit export platform console privacy deletion or public API and SDK capability",
+    "production multi-AZ recovery deletion SLO capacity signed image or commercial acceptance",
+    "completion of the aggregate P6 enterprise gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the exact Tenant group, project custom-role, Cookie and CSRF admin API, secret-free Outbox, immediate revocation, member-removal impact, PostgreSQL forced-RLS, logical restore, latest-official-upstream replay, packaging, and compatibility implementation at 85e4399de928bc7cffb76dbe763f9a2e3b1641a6. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, tests that assert the ledger, or plan documentation does not alter the verified implementation. It deliberately does not prove production operation or the aggregate P6 gates."
+}

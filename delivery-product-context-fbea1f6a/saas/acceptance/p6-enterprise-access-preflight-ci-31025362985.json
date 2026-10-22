@@ -1,0 +1,111 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31025362985,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31025362985",
+  "job_id": 92372285946,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31025362985/job/92372285946",
+  "head_sha": "7f3350ffad677e7249ef5eda6ad4fb738e617503",
+  "upstream_revision": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+  "conclusion": "success",
+  "environment": {
+    "ci_runner": "ubuntu-latest",
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "combined_ci_tests": "859 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 132.04,
+    "isolated_logical_restore_contract": "passed in 2.948 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed",
+    "official_zygote_and_query_context_seconds": 38.75,
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips",
+    "official_hard_sandbox_seconds": 17.43,
+    "wheel_required_artifacts": 157,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000004",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "preflight_contract": {
+    "group_create_action": "POST /saas/tenants/{tenant}/groups/{group}/archive-preflights",
+    "group_decision_action": "POST /saas/tenants/{tenant}/groups/{group}/archive-preflights/{preflight}/decisions",
+    "role_create_action": "POST /saas/tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}/retire-preflights",
+    "role_decision_action": "POST /saas/tenants/{tenant}/spaces/{space}/projects/{project}/custom-roles/{role}/retire-preflights/{preflight}/decisions",
+    "cookie_origin_csrf_and_action_permission_required": true,
+    "fresh_authentication_required": true,
+    "maximum_lifetime_minutes": 15,
+    "requester_target_version_reason_and_scope_are_bound": true,
+    "exact_impact_snapshot_is_sha256_bound": true,
+    "only_impact_summary_is_returned_or_emitted": true,
+    "requester_cannot_decide": true,
+    "different_currently_authorized_principal_required": true,
+    "idempotent_create_and_decision_replay_repeat_side_effects": false
+  },
+  "execution_contract": {
+    "archive_and_retire_require_approved_preflight_over_http": true,
+    "only_original_requester_can_execute": true,
+    "same_preflight_operation_target_version_and_reason_required": true,
+    "fresh_authentication_is_rechecked": true,
+    "impact_hash_is_recomputed_under_lock": true,
+    "approver_permission_is_rechecked": true,
+    "approval_and_enterprise_mutation_are_consumed_atomically": true,
+    "expired_rejected_stale_or_mismatched_preflight_fails_closed": true,
+    "approver_permission_loss_fails_closed": true,
+    "executed_preflight_cannot_be_reused": true
+  },
+  "concurrency_and_rls_contract": {
+    "postgresql_tenant_scoped_transaction_advisory_lock": true,
+    "concurrent_approval_has_one_winner": true,
+    "cross_tenant_preflight_is_invisible_to_application_role": true,
+    "forced_rls_select_insert_and_update_policies": true,
+    "control_plane_forced_rls_tables": 57,
+    "runtime_forced_rls_tables": 17
+  },
+  "migration_and_recovery_contract": {
+    "migration_head": "p6a000000004",
+    "restored_enterprise_access_preflight_rows": 2,
+    "cross_tenant_negative_probe": "passed",
+    "cross_workspace_negative_probe": "passed",
+    "post_backup_enterprise_approval_replay": "passed",
+    "post_backup_enterprise_lifecycle_replay": "passed",
+    "temporary_restore_databases_dropped": true
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+    "patch_replay_content_mismatches": [],
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9944,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "production_baseline_blockers": 22,
+    "production_recovery_blockers": 2,
+    "production_tenant_deletion_blockers": 1,
+    "production_slo_capacity_blockers": 7,
+    "production_image_supply_chain_blockers": 1,
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "production Group Archive or custom-role Retire approval operation",
+    "productized approval inbox confirmation user interface notification or escalation",
+    "directory synchronization SCIM enterprise federation or identity-provider lifecycle",
+    "high-cardinality production impact-snapshot latency and capacity",
+    "complete audit export platform console privacy deletion or public API and SDK capability",
+    "production PITR multi-AZ recovery deletion SLO capacity signed image or commercial acceptance",
+    "completion of the aggregate P6 enterprise gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the exact Group Archive and custom-role Retire impact snapshot, different-principal approval, fresh-authentication, drift and permission revalidation, Cookie Admin API, secret-free Outbox, PostgreSQL forced-RLS and concurrent-decision isolation, logical restore, latest-official-upstream replay, packaging, and compatibility implementation at 7f3350ffad677e7249ef5eda6ad4fb738e617503. A successor that changes only this evidence record, the acceptance ledger, wheel inventory, README, tests that assert the ledger, or plan documentation does not alter the verified implementation. It deliberately does not prove production operation, a productized approval UI, or the aggregate P6 gates."
+}

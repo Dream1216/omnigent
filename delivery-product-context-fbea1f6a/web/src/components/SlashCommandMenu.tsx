@@ -1,0 +1,347 @@
+import { useEffect, useRef } from "react";
+import { CommandIcon, LoaderCircleIcon, WandSparklesIcon } from "lucide-react";
+import type { SkillsStatus } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+/**
+ * Built-in slash commands the web UI recognises directly. Each entry
+ * maps a command name (lower-case, with leading slash) to a
+ * human-readable description shown in the suggestions menu and
+ * ``/help`` listing. The full set surfaced in the menu also
+ * includes ``/skill-name`` entries derived from the session's
+ * available skills (see ``buildSlashCommandMap`` in ChatPage). Lives
+ * here (not ChatPage) so the menu can section rows into Commands vs
+ * Skills without importing ChatPage — which imports NewChatDialog,
+ * which imports this menu.
+ */
+export const BUILTIN_SLASH_COMMANDS: Record<string, string> = {
+  "/compact": "Compact conversation context to free up space",
+  "/context": "Show context window usage for this session",
+  "/effort": "Set reasoning effort: /effort low | medium | high | default",
+  "/model": "Switch the model for this session: /model <name>",
+  "/new": "Start a blank session in the same project",
+  "/btw": "Ask a side question — answered in a dismissable overlay, not saved to the conversation",
+  "/side":
+    "Start a side chat: an ephemeral fork opened as its own sub-agent chat, kept out of this conversation",
+  "/help": "Show available slash commands",
+};
+
+const DEFAULT_BUILTIN_NAMES = new Set(Object.keys(BUILTIN_SLASH_COMMANDS));
+// First token must read as a command name (`/cross-review`,
+// `/dev-productivity:simplify`) — letters/digits then word chars, `:`, `-`.
+// The leading `/` is the only slash allowed IN THE NAME, so file paths like
+// `/etc/hosts` don't match — but anything may follow the first whitespace,
+// so args carrying paths or URLs (`/review-pr https://github.com/...`) do.
+const SLASH_COMMAND_RE = /^\/[A-Za-z0-9][\w:-]*(\s|$)/;
+
+/**
+ * True when a user message reads as a slash-command invocation by shape: the
+ * single guard shared by the composer's submit routing and highlight overlay.
+ */
+export function isSlashCommandText(text: string): boolean {
+  return SLASH_COMMAND_RE.test(text.trim());
+}
+
+/**
+ * The known command or skill `text` invokes, split from its arguments, or null.
+ * Skill names may contain spaces, so the longest key in `commands` (prefix and
+ * exact case included) that prefixes the text at a word boundary wins.
+ */
+export function matchSlashCommandInvocation(
+  text: string,
+  commands: Iterable<string>,
+): { command: string; args: string } | null {
+  const trimmed = text.trim();
+  let command: string | null = null;
+  for (const candidate of commands) {
+    if (command !== null && candidate.length <= command.length) continue;
+    if (!trimmed.startsWith(candidate)) continue;
+    const rest = trimmed.slice(candidate.length);
+    if (rest === "" || /^\s/.test(rest)) command = candidate;
+  }
+  if (command === null) return null;
+  return { command, args: trimmed.slice(command.length).trim() };
+}
+
+/**
+ * True when `query` is a case-insensitive substring of the command name
+ * (sans the leading `/`) or of the skill's display `label`. Never matches
+ * the description, so a match is always explained by the row's name or
+ * label. `name` is expected to carry the leading `/`.
+ */
+export function slashCommandMatches(name: string, query: string, label?: string): boolean {
+  const q = query.toLowerCase();
+  return name.slice(1).toLowerCase().includes(q) || Boolean(label?.toLowerCase().includes(q));
+}
+
+/**
+ * Display names keyed by prefixed command, for skills whose label differs
+ * from the command, e.g. `{"/asd-ste100": "Simplified Technical English"}`.
+ */
+export function skillDisplayNames(
+  skills: readonly { name: string; display_name?: string | null }[],
+  prefix: string,
+): Record<string, string> {
+  return Object.fromEntries(
+    skills.flatMap((skill) => {
+      const label = skill.display_name?.trim();
+      return label && label !== skill.name ? [[`${prefix}${skill.name}`, label]] : [];
+    }),
+  );
+}
+
+/**
+ * Inline menu text for a skill: its frontmatter display name, when that
+ * differs from the typed command, ahead of the description. A skill in
+ * `asd-ste100/` named "Simplified Technical English (ASD-STE100)" is typed
+ * as `/asd-ste100` but labelled with its display name.
+ */
+export function skillMenuDescription(skill: {
+  name: string;
+  description: string;
+  display_name?: string | null;
+}): string {
+  const label = skill.display_name?.trim();
+  if (!label || label === skill.name) return skill.description;
+  return skill.description ? `${label} — ${skill.description}` : label;
+}
+
+/**
+ * Filter `commands` to those matching `query`, then rank them for display:
+ * built-in commands before skills (so the "Commands" section stays above
+ * "Skills" and the flat keyboard index walks the same order that's
+ * rendered), and within each group, name-prefix matches before mid-string
+ * matches, then matches on only the display `labels`. The sort is stable, so
+ * commands that tie keep their insertion order. Returns the ranked,
+ * slash-prefixed names.
+ *
+ * Prefix-priority matters because the first match is auto-highlighted and
+ * Tab completes it and Enter can execute no-arg built-ins. Without
+ * it a short query like `e` would highlight `/context` (it contains "e")
+ * ahead of `/effort` (a prefix), so Enter could run an unrelated command
+ * as a side effect. Shared by the menu render filter here and the two
+ * composers' keyboard-nav filters (ChatPage `menuMatches`, NewChatDialog
+ * `slashMenuMatches`) so the visible list and the keyboard index stay
+ * aligned.
+ */
+export function rankedSlashCommandNames(
+  commands: Record<string, string>,
+  query: string,
+  builtinNames: ReadonlySet<string> = DEFAULT_BUILTIN_NAMES,
+  labels: Readonly<Record<string, string>> = {},
+): string[] {
+  const q = query.toLowerCase();
+  // Built-ins rank before skills; within each, name prefix, then name
+  // substring, then label-only matches, so Tab never prefers a label hit.
+  const rank = (name: string): number => {
+    const group = builtinNames.has(name) ? 0 : 3;
+    const body = name.slice(1).toLowerCase();
+    return group + (body.startsWith(q) ? 0 : body.includes(q) ? 1 : 2);
+  };
+  return Object.keys(commands)
+    .filter((name) => slashCommandMatches(name, query, labels[name]))
+    .sort((a, b) => rank(a) - rank(b));
+}
+
+interface SlashCommandMenuProps {
+  /** The text typed after the leading ``/``, used to filter suggestions. */
+  query: string;
+  /** Index of the currently highlighted suggestion (-1 = none). */
+  activeIndex: number;
+  /** Called when the user selects a command (click or keyboard). */
+  onSelect: (cmd: string) => void;
+  /**
+   * Full command map to filter against — built-ins merged with the
+   * session's available skills. Order is preserved by insertion and
+   * drives the caller's keyboard navigation, so built-ins must come
+   * first (skills after) for the section split below to stay aligned
+   * with the flat match order.
+   */
+  commands: Record<string, string>;
+  builtinNames?: ReadonlySet<string>;
+  /** Skill display names by prefixed command; matched alongside the name. */
+  labels?: Readonly<Record<string, string>>;
+  /** Absent for menus without asynchronous skill discovery. */
+  skillsStatus?: SkillsStatus | null;
+  /** Context-specific guidance when discovery cannot run yet. */
+  skillsUnavailableMessage?: string;
+  onRetrySkills?: () => void;
+}
+
+/** One filtered menu row, carrying its index in the flat match order. */
+interface MenuRow {
+  /** Slash-prefixed command name, e.g. ``"/review-pr"``. */
+  name: string;
+  /** One-line description shown in the detail card when active. */
+  description: string;
+  /** Index into the flat ``matches`` list — the caller's keyboard index. */
+  flatIndex: number;
+  isBuiltin: boolean;
+}
+
+/** A row inside a section list ("Commands" or "Skills"). */
+function MenuRowButton({
+  row,
+  active,
+  onSelect,
+}: {
+  /** The row to render. */
+  row: MenuRow;
+  /** Whether this row is the keyboard-highlighted one. */
+  active: boolean;
+  /** Selection callback, called with the slash-prefixed name. */
+  onSelect: (cmd: string) => void;
+}) {
+  const isBuiltin = row.isBuiltin;
+  // Wand in pink for skills (per design feedback — distinct from the
+  // info-blue slash-command tint, and from plain Sparkles which marks
+  // thinking/reasoning blocks), the ⌘ glyph in slate for built-ins.
+  const Icon = isBuiltin ? CommandIcon : WandSparklesIcon;
+  return (
+    <button
+      type="button"
+      data-testid={`slash-menu-item-${row.name.slice(1)}`}
+      data-active={active ? "true" : undefined}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-ui text-foreground hover:bg-muted dark:hover:bg-muted/50",
+        active && "bg-muted dark:bg-muted/50",
+      )}
+      // preventDefault keeps the textarea focused while the user clicks.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => onSelect(row.name)}
+    >
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <Icon
+          className={cn(
+            "size-3.5",
+            isBuiltin ? "text-slate-500 dark:text-slate-400" : "text-pink-500 dark:text-pink-400",
+          )}
+        />
+      </span>
+      <span className="shrink-0">{row.name}</span>
+      {/* Description inline (matching the "+" tray), so the menu is
+          self-describing without a separate detail card. */}
+      {row.description && (
+        <span className="truncate text-xs leading-4 text-muted-foreground">{row.description}</span>
+      )}
+    </button>
+  );
+}
+
+/**
+ * Floating suggestions menu rendered above the composer when the user
+ * starts a slash command, shared by the in-session composer (ChatPage)
+ * and the new-chat landing composer (NewChatDialog). Cursor-style
+ * layout: a narrow panel with "Commands" / "Skills" section headers and
+ * icon + name rows, plus a detail card beside the panel showing the
+ * highlighted entry's full description (hidden on small screens).
+ * Only commands whose name (sans ``/``) contains the current query as a
+ * case-insensitive substring are shown.
+ * Positioned via ``absolute bottom-full`` relative to the rounded
+ * composer container. Exported for direct unit testing.
+ */
+export function SlashCommandMenu({
+  query,
+  activeIndex,
+  onSelect,
+  commands,
+  builtinNames = DEFAULT_BUILTIN_NAMES,
+  labels,
+  skillsStatus,
+  skillsUnavailableMessage = "Skills unavailable while disconnected.",
+  onRetrySkills,
+}: SlashCommandMenuProps) {
+  const matchedNames = rankedSlashCommandNames(commands, query, builtinNames, labels);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Keep the keyboard-highlighted row visible as the user arrows past the
+  // visible window of this capped-height, scrollable list. Without this the
+  // selection silently moves off-screen. Mirrors the WorkspacePathField
+  // dropdown pattern (``data-active`` + ``scrollIntoView({ block: "nearest" })``).
+  useEffect(() => {
+    if (activeIndex < 0 || !listRef.current) return;
+    listRef.current.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+  if (matchedNames.length === 0 && skillsStatus == null) return null;
+
+  // The flat match order (from rankedSlashCommandNames) drives the caller's
+  // keyboard index. It ranks built-ins before skills, so the partition below
+  // stays contiguous and rendering Commands above Skills preserves the
+  // visual = keyboard order.
+  const rows: MenuRow[] = matchedNames.map((name, flatIndex) => ({
+    name,
+    description: commands[name] ?? "",
+    flatIndex,
+    isBuiltin: builtinNames.has(name),
+  }));
+  const builtinRows = rows.filter((r) => r.isBuiltin);
+  const skillRows = rows.filter((r) => !r.isBuiltin);
+
+  const sectionHeader = (label: string) => (
+    <div className="px-2 py-1 text-xs leading-4 text-muted-foreground">{label}</div>
+  );
+
+  // Grouped-tray layout (matching the composer "+" tray): a single wide panel
+  // with section headers and icon + name + inline description rows. No separate
+  // detail card — each row is self-describing.
+  return (
+    <div
+      data-testid="slash-command-menu"
+      className="absolute bottom-full left-0 z-10 mb-2 w-[28rem] max-w-[calc(100vw-24px)] overflow-hidden rounded-[16px] border border-border bg-popover p-2 shadow-menu dark:backdrop-blur-xl dark:backdrop-saturate-150"
+    >
+      <div ref={listRef} className="max-h-80 overflow-y-auto">
+        {builtinRows.length > 0 && sectionHeader("Commands")}
+        {builtinRows.map((row) => (
+          <MenuRowButton
+            key={row.name}
+            row={row}
+            active={row.flatIndex === activeIndex}
+            onSelect={onSelect}
+          />
+        ))}
+        {(skillRows.length > 0 || skillsStatus != null) && sectionHeader("Skills")}
+        {skillsStatus === "loading" && (
+          <div
+            role="status"
+            className="flex items-center gap-2 px-1.5 py-1 text-ui text-muted-foreground"
+          >
+            <LoaderCircleIcon aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
+            Loading skills…
+          </div>
+        )}
+        {skillsStatus === "error" && (
+          <div role="status" className="px-1.5 py-1 text-ui text-muted-foreground">
+            Couldn’t load skills.{" "}
+            {onRetrySkills && (
+              <button
+                type="button"
+                className="underline hover:text-foreground"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={onRetrySkills}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+        {skillsStatus === "unavailable" && (
+          <div role="status" className="px-1.5 py-1 text-ui text-muted-foreground">
+            {skillsUnavailableMessage}
+          </div>
+        )}
+        {skillsStatus === "ready" && skillRows.length === 0 && (
+          <div role="status" className="px-1.5 py-1 text-ui text-muted-foreground">
+            {query ? "No matching skills" : "No skills available"}
+          </div>
+        )}
+        {skillRows.map((row) => (
+          <MenuRowButton
+            key={row.name}
+            row={row}
+            active={row.flatIndex === activeIndex}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}

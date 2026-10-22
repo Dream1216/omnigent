@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN" data-notification-realm="staff">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Platform Notification Operations</title>
+    <link rel="stylesheet" href="./platform-notification-ops/assets/notification-ops.css">
+    <script src="./platform-notification-ops/assets/notification-ops.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#operations-main">跳至运营区</a>
+    <div class="signal-shell staff-shell" id="notification-ops-shell" aria-busy="true">
+      <header class="signal-header">
+        <div class="signal-identity"><span class="realm-beacon" aria-hidden="true"></span><div><p class="eyebrow">STAFF REALM · PLATFORM SIGNAL DESK</p><h1>平台通知与审批中心</h1></div></div>
+        <div class="clock-block" aria-label="数据安全边界"><span>CONTENT ACCESS</span><strong>NONE</strong></div>
+      </header>
+      <nav class="desk-nav" aria-label="运营区切换">
+        <button class="nav-key is-active" type="button" data-panel-target="approvals">01 审批</button>
+        <button class="nav-key" type="button" data-panel-target="delivery">02 投递</button>
+        <button class="nav-key" type="button" data-panel-target="policy">03 偏好与模板</button>
+      </nav>
+      <main id="operations-main">
+        <section class="metric-strip" aria-label="当前运营指标">
+          <article><span>待处理</span><strong data-metric="pending">—</strong></article><article><span>高风险</span><strong data-metric="critical">—</strong></article><article><span>死信</span><strong data-metric="dead_letter">—</strong></article><article><span>已选择</span><strong data-metric="selected">0</strong></article>
+        </section>
+        <section class="desk-panel is-visible" data-panel="approvals" aria-labelledby="approvals-title">
+          <div class="panel-heading"><div><p class="section-index">01 / STAFF APPROVAL QUEUE</p><h2 id="approvals-title">平台审批收件箱</h2></div><button type="button" class="secondary-action" data-open-delegation>建立委派</button></div>
+          <p class="guard-note">Staff Realm 与租户会话完全隔离；只展示内容盲操作投影。</p>
+          <div class="work-grid" data-inbox-list aria-live="polite"></div><div class="empty-state" data-inbox-empty hidden>当前筛选没有可处理工单。</div><div class="subsection-head"><h3>当前委派</h3><span>我发起 / 委派给我</span></div><div class="delegation-list" data-delegation-list></div>
+        </section>
+        <section class="desk-panel" data-panel="delivery" aria-labelledby="delivery-title" hidden>
+          <div class="panel-heading"><div><p class="section-index">02 / DELIVERY WATCH</p><h2 id="delivery-title">全局投递与死信</h2></div><span class="status-key"><i></i> 内容盲运维</span></div>
+          <div class="delivery-list" data-delivery-list aria-live="polite"></div><div class="empty-state" data-delivery-empty hidden>没有待观察的投递记录。</div>
+        </section>
+        <section class="desk-panel" data-panel="policy" aria-labelledby="policy-title" hidden>
+          <div class="panel-heading"><div><p class="section-index">03 / PLATFORM POLICY</p><h2 id="policy-title">Staff 偏好与模板治理</h2></div><button class="secondary-action" type="button" data-open-template>发布模板版本</button></div>
+          <div class="policy-grid"><article class="policy-column"><h3>通知偏好</h3><div data-preference-list></div></article><article class="policy-column"><h3>模板版本</h3><div data-template-list></div></article></div>
+        </section>
+      </main>
+      <aside class="batch-rail" data-batch-rail aria-label="批量审批" hidden>
+        <div><p class="section-index">BATCH CONTROL</p><strong><span data-selected-count>0</span> 项已锁定</strong></div><label>决策码<input data-decision-code value="staff_verified" maxlength="128"></label><label>审计原因<input data-batch-reason type="password" autocomplete="off" maxlength="1024" aria-label="批量决策审计原因"></label>
+        <div class="rail-actions"><button type="button" class="primary-action" data-batch-preview="approve">预检通过</button><button type="button" class="danger-action" data-batch-preview="reject">预检拒绝</button><button type="button" class="primary-action execute" data-batch-execute hidden>执行批次</button><button type="button" class="text-action" data-clear-selection>清除</button></div><p class="rail-result" data-batch-result role="status"></p>
+      </aside>
+      <dialog class="delegation-dialog decision-dialog" data-decision-dialog aria-labelledby="decision-title"><form method="dialog" data-decision-form><div class="dialog-head"><div><p class="section-index">SOURCE AUTHORITY</p><h2 id="decision-title">提交审批决策</h2></div><button type="button" data-close-decision aria-label="关闭">×</button></div><p class="guard-note">审计原因仅瞬时提交至源权威，不在收件箱或前端状态中保留。</p><label>决策码<input data-single-decision-code value="staff_verified" maxlength="128" required></label><label>审计原因<textarea data-single-reason maxlength="1024" required></textarea></label><button class="primary-action" type="submit" data-decision-submit>提交决策</button><p data-decision-result role="status"></p></form></dialog>
+      <dialog class="delegation-dialog" data-delegation-dialog aria-labelledby="delegation-title"><form method="dialog" data-delegation-form><div class="dialog-head"><div><p class="section-index">TIME-BOXED</p><h2 id="delegation-title">建立审批委派</h2></div><button type="button" data-close-dialog aria-label="关闭">×</button></div><p class="guard-note">权限和作用域由所选工单派生，不能由客户端扩大。</p><label>工单<select data-delegation-work required></select></label><label>受托 Staff ID<input data-delegate-id type="text" required></label><div class="field-pair"><label>开始时间<input data-delegation-start type="datetime-local" required></label><label>结束时间<input data-delegation-end type="datetime-local" required></label></div><label>审计原因<textarea data-delegation-reason maxlength="1024" required></textarea></label><button class="primary-action" type="submit">创建时限委派</button><p data-delegation-result role="status"></p></form></dialog>
+      <dialog class="delegation-dialog template-dialog" data-template-dialog aria-labelledby="template-title"><form method="dialog" data-template-form><div class="dialog-head"><div><p class="section-index">IMMUTABLE VERSION</p><h2 id="template-title">发布模板版本</h2></div><button type="button" data-close-template aria-label="关闭">×</button></div><p class="guard-note">控制台不回显内容包标识或摘要。</p><label>模板键<input data-template-key required maxlength="128"></label><div class="field-pair"><label>渠道<select data-template-channel><option value="in_app">in_app</option><option value="email">email</option></select></label><label>语言<input data-template-locale value="zh-CN" required></label></div><label>版本<input data-template-version type="number" min="1" value="1" required></label><label>内容包标识<input data-template-handle type="password" autocomplete="off" required></label><label>内容 SHA-256<input data-template-sha type="password" autocomplete="off" minlength="64" maxlength="64" required></label><label>变量 Schema SHA-256<input data-template-schema-sha type="password" autocomplete="off" minlength="64" maxlength="64" required></label><button class="primary-action" type="submit">发布不可变版本</button><p data-template-result role="status"></p></form></dialog>
+      <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
+    </div>
+  </body>
+</html>

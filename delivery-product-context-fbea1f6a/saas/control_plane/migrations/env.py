@@ -1,0 +1,115 @@
+"""Alembic environment for the independent SaaS control-plane schema."""
+
+from __future__ import annotations
+
+import os
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import Connection, engine_from_config, pool
+
+from saas.control_plane import api_credential_models as _api_credential_models  # noqa: F401
+from saas.control_plane import billing_models as _billing_models  # noqa: F401
+from saas.control_plane import certificate_models as _certificate_models  # noqa: F401
+from saas.control_plane import (
+    enterprise_identity_models as _enterprise_identity_models,  # noqa: F401
+)
+from saas.control_plane import execution_models as _execution_models  # noqa: F401
+from saas.control_plane import gateway_models as _gateway_models  # noqa: F401
+from saas.control_plane import isolation_models as _isolation_models  # noqa: F401
+from saas.control_plane import onboarding_models as _onboarding_models  # noqa: F401
+from saas.control_plane import outbox_delivery_models as _outbox_delivery_models  # noqa: F401
+from saas.control_plane import placement_models as _placement_models  # noqa: F401
+from saas.control_plane import platform_governed_models as _platform_governed_models  # noqa: F401
+from saas.control_plane import platform_models as _platform_models  # noqa: F401
+from saas.control_plane import preview_models as _preview_models  # noqa: F401
+from saas.control_plane import privacy_models as _privacy_models  # noqa: F401
+from saas.control_plane import public_api_models as _public_api_models  # noqa: F401
+from saas.control_plane import scheduling_models as _scheduling_models  # noqa: F401
+from saas.control_plane import webhook_models as _webhook_models  # noqa: F401
+from saas.control_plane import worktree_models as _worktree_models  # noqa: F401
+from saas.control_plane.db_models import SaasBase
+from saas.control_plane.migrations.schema_metadata import control_plane_migration_metadata
+
+config = context.config
+target_metadata = control_plane_migration_metadata(SaasBase.metadata)
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
+    # A production migration receipt is captured from the Kubernetes Job log.
+    # Keep the successful Alembic path silent so that log is one JSON document,
+    # while WARNING/ERROR still surface on stderr and fail the Job.
+    import logging as _logging  # local: env.py executes inside Alembic
+
+    if not _logging.getLogger().isEnabledFor(_logging.DEBUG):
+        _logging.getLogger("alembic").setLevel(_logging.WARNING)
+
+db_url = os.environ.get("OMNIGENT_SAAS_DB_URL")
+if db_url:
+    config.set_main_option("sqlalchemy.url", db_url)
+
+
+def _configure(connection: Connection) -> None:
+    sqlite = connection.dialect.name == "sqlite"
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,
+        version_table="saas_alembic_version",
+        transactional_ddl=True if sqlite else None,
+    )
+    with context.begin_transaction():
+        deferred = None
+        if sqlite:
+            driver = connection.connection.driver_connection
+            if driver is None:
+                raise RuntimeError("SQLite migration connection is unavailable")
+            if not driver.in_transaction:
+                connection.exec_driver_sql("BEGIN")
+            deferred = connection.exec_driver_sql("PRAGMA defer_foreign_keys").scalar_one()
+            connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
+        context.run_migrations()
+        if sqlite:
+            if connection.exec_driver_sql("PRAGMA foreign_key_check").fetchmany(1):
+                raise RuntimeError("SQLite migration would retain invalid foreign keys")
+            # Rebuilt parent names are valid again; clear SQLite's deferred DDL count.
+            connection.exec_driver_sql("PRAGMA defer_foreign_keys=OFF")
+            if deferred:
+                connection.exec_driver_sql("PRAGMA defer_foreign_keys=ON")
+
+
+def run_migrations_offline() -> None:
+    """Emit migration SQL without opening a database connection."""
+
+    context.configure(
+        url=config.get_main_option("sqlalchemy.url"),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        version_table="saas_alembic_version",
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Apply migrations using a supplied transaction or an isolated engine."""
+
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        _configure(connection)
+        return
+
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as opened_connection:
+        _configure(opened_connection)
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

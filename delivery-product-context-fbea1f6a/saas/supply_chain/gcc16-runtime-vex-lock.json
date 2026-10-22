@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "component": "gcc-16-runtime",
+  "source_version": "16.2.0-3",
+  "production_admission": true,
+  "statements": [
+    {
+      "vulnerability": "CVE-2026-102010",
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "evidence": "The affected PBDS development header is absent from the final runtime image."
+    },
+    {
+      "vulnerability": "CVE-2026-95619",
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "upstream_regression_commit": "59d235ffa5a69231eb42e5290d52dc8c90d28b7a",
+      "evidence": "A binary compiled by GCC 16 and rerun against the final libstdc++ rejects all nine upstream aligned-allocation overflow cases."
+    }
+  ],
+  "applies_to": ["gcc-16-base", "libgcc-s1", "libstdc++6"],
+  "architectures": ["amd64", "arm64"]
+}

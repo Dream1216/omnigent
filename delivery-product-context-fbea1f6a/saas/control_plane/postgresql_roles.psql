@@ -1,0 +1,8 @@
+\set ON_ERROR_STOP on
+
+-- This is the only supported psql entrypoint for the control-plane authority
+-- body.  Any rejected preflight aborts the transaction and prevents later ACL
+-- statements from being committed.
+BEGIN;
+\ir postgresql_roles.sql
+COMMIT;

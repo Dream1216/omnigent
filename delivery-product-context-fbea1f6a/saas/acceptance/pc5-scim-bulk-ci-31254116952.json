@@ -1,0 +1,103 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31254116952,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31254116952",
+  "job_id": 93094806667,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31254116952/job/93094806667",
+  "artifact_id": 9020926068,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31254116952/artifacts/9020926068",
+  "artifact_archive_sha256": "55cb74ad63d1418a85d274875fb6facf9698d99f682b7161e00cac21b709a933",
+  "head_sha": "a484bcfe9e88fca50e4faa6a792d0f64b1800491",
+  "upstream_revision": "9dab48b460f37d8a0ed294d1309cd2f843c5cafc",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "ci_os": "ubuntu-latest",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "ci_compatibility_tests": "991 passed, 232 warnings, 171.74s",
+    "isolated_logical_restore_contract": "passed in 3.842 seconds",
+    "control_plane_forced_rls_tables": 85,
+    "runtime_forced_rls_tables": 17,
+    "enterprise_scim_restore": "passed with two Tenant-isolated fact sets",
+    "official_zygote_query_context_tests": "63 passed, 2 warnings, 33.90s",
+    "official_linux_security_tests": "39 passed, 22 skipped, 14.74s",
+    "wheel_required_artifacts": 225,
+    "patches_replayed": 2,
+    "migration_head": "pc5a00000002",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates": 11,
+    "release_decision": "NO-GO"
+  },
+  "bounded_bulk_contract": {
+    "service_provider_limits": {
+      "maximum_operations": 32,
+      "maximum_payload_bytes": 1048576
+    },
+    "resource_methods": {
+      "User": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ],
+      "Group": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ]
+    },
+    "reference_resolution": "dependency scheduling resolves forward and backward bulkId references while preserving client operation order in the response",
+    "failure_model": "per-operation status and SCIM error responses, failOnErrors threshold, and explicit 409 circular or unresolved dependency results",
+    "request_identity": "required Idempotency-Key bound to the complete normalized BulkRequest hash",
+    "receipt_model": "immutable requested and completed Bulk Events plus deterministic child Event IDs provide exact replay and interrupted-request resume",
+    "postgresql_serialization": "one session advisory lock per Directory and idempotency key is held on a dedicated connection across request receipt, child commits, and final receipt",
+    "rls_boundary": "Directory bearer authentication and Tenant forced RLS remain authoritative for every receipt and resource operation",
+    "negative_tests": [
+      "a reused idempotency key with a changed request fails closed",
+      "unknown and circular bulkId dependencies return per-operation 409 results",
+      "missing POST bulkId and malformed request shapes fail with SCIM invalidSyntax or invalidValue",
+      "more than 32 operations or more than 1048576 payload bytes fail with 413 and the advertised limit",
+      "two PostgreSQL sessions cannot execute the same Directory and idempotency key concurrently"
+    ]
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 485,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9959,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "artifact_report_sha256": {
+    "upstream_delta": "d6879a55ff141e063316f3a78787ff1557caf49156db1e7a667b95b907b7119d",
+    "patch_replay": "04e7a2ae5efc33d10e996f0a859476d3ee7d1afea4b5856a1752c514334f0d57",
+    "postgresql_restore": "e4c9bb56924d938044aa94acf33f211316d56ac60a64bcab8c307c7bcc193651",
+    "slo_capacity": "dc48191cfaadbcb82e3a4e0c13b5b78d88e6232344017d4dd8696f6363171394",
+    "production_baseline": "176c2acb24ee9e3a10a059d34eaaab80c39938bd95353ac5cacda04987453f65",
+    "deletion": "0f568d8056eb64599bd044261192efa58194afdff605c837a87b75910b036b99",
+    "recovery": "0fd177ef34acc12418ca58367059e8261694e1bbbf741536ef7b852931698284",
+    "image_supply": "df1bb0f85424d503152f414536784efce2630d2e29a55393c54aff080fe1e0e3"
+  },
+  "restore_contract": {
+    "backup_sha256": "03141489784ea7b9f0377a2bcb8acd671150624a5526499cd8596b264c89000f",
+    "selected_content_sha256": "06bb8f7c52de07756b7fc722ddb0ffb839c85725b6dc53e540ce12c1a941baf6"
+  },
+  "not_proven_by_this_record": [
+    "SCIM gt/ge/lt/le, complex or multi-valued value-path filters, or the complete RFC filter grammar",
+    "the complete RFC PATCH path and value grammar",
+    "scheduled or overlapping credential rotation with a dual-token grace window",
+    "production IdP federation, Domain Claim, JIT, MFA, recovery, privacy, Legal Hold, Operations or Finance behavior",
+    "production image publication, signing, scanning, canary or N-1 rollback",
+    "completion of any of the eleven aggregate gates or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the bounded SCIM Bulk implementation at a484bcfe9e88fca50e4faa6a792d0f64b1800491. A successor that changes only this evidence record, its paired image record, wheel inventory, explanatory documentation, or tests that assert those records does not alter the verified implementation."
+}

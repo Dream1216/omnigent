@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "matrix_id": "omnigent-enterprise-scim-compliance-v1",
+  "assessed_at": "2026-08-10",
+  "implementation_revision": "working-tree-candidate",
+  "standards": [
+    {
+      "id": "RFC7643",
+      "title": "System for Cross-domain Identity Management: Core Schema"
+    },
+    {
+      "id": "RFC7644",
+      "title": "System for Cross-domain Identity Management: Protocol"
+    }
+  ],
+  "status_values": [
+    "implemented_tested_locally",
+    "partially_implemented",
+    "not_implemented",
+    "pending_external_evidence",
+    "blocked_external_prerequisite"
+  ],
+  "capabilities": [
+    {
+      "id": "discovery.service_provider_config",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/ServiceProviderConfig",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "discovery.resource_types",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/ResourceTypes",
+      "evidence": ["saas/scim_schema_catalog.py", "tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "discovery.schemas",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Schemas",
+      "evidence": ["saas/scim_schema_catalog.py", "tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "resource.user_crud_etag",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "resource.group_crud_members",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Groups",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "schema.enterprise_user",
+      "standard": "RFC7643",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users",
+      "evidence": ["saas/control_plane/migrations/versions/pc5a00000004_scim_schema_extensions.py", "tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "schema.optional_complex_attributes",
+      "standard": "RFC7643",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users",
+      "notes": "name, emails, phoneNumbers, addresses and enterprise manager are persisted and replaceable; manager.displayName remains readOnly",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "protocol.patch_value_path",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users/{id}",
+      "notes": "Supports core and enterprise paths plus valuePath mutation for User multi-valued attributes",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "protocol.bulk",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Bulk",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "protocol.filter_scalar_compound",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users",
+      "notes": "Core scalar, name sub-attributes and enterprise scalar or manager sub-attributes are supported",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "protocol.filter_user_multivalue_value_path",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users",
+      "notes": "Supports bounded valuePath and direct sub-attribute filters for emails, phoneNumbers and addresses on SQLite and PostgreSQL",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py", "tests/saas/test_enterprise_identity_postgresql.py"]
+    },
+    {
+      "id": "protocol.attribute_projection",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users",
+      "notes": "attributes and excludedAttributes support core, extension, complex and multi-valued sub-attributes while always retaining schemas, id and meta",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "idp.configuration_product",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/configuration",
+      "notes": "CAS, fresh authentication, replay-safe update, content-blind read and discovery URLs",
+      "evidence": ["tests/saas/test_enterprise_scim_http.py"]
+    },
+    {
+      "id": "security.exact_directory_postgresql_rls",
+      "standard": "RFC7644",
+      "status": "implemented_tested_locally",
+      "endpoint": "/scim/v2/Users",
+      "notes": "Governance role reads and writes require tenant context plus a bearer digest bound to the row Directory; a second Directory token sees zero rows",
+      "evidence": ["saas/control_plane/migrations/versions/pc5a00000004_scim_schema_extensions.py", "tests/saas/test_enterprise_identity_postgresql.py"]
+    }
+  ],
+  "idp_profiles": [
+    {
+      "provider": "generic",
+      "configuration_status": "implemented_tested_locally",
+      "external_conformance_status": "pending_external_evidence"
+    },
+    {
+      "provider": "microsoft_entra",
+      "configuration_status": "implemented_tested_locally",
+      "external_conformance_status": "pending_external_evidence",
+      "external_method": "Microsoft Entra enterprise application Test Connection, on-demand provisioning and scheduled sync"
+    },
+    {
+      "provider": "okta",
+      "configuration_status": "implemented_tested_locally",
+      "external_conformance_status": "pending_external_evidence",
+      "external_method": "Okta private SCIM 2.0 integration plus provider CRUD and lifecycle tests"
+    },
+    {
+      "provider": "google_workspace",
+      "configuration_status": "implemented_tested_locally",
+      "external_conformance_status": "blocked_external_prerequisite",
+      "external_method": "Google catalog auto-provisioning integration or an approved Google Directory connector/broker",
+      "provider_constraint": "Google Workspace does not expose generic outbound SCIM configuration for an arbitrary custom SAML application"
+    }
+  ],
+  "release_gates": [
+    "fresh_postgresql_upgrade_and_downgrade_refusal",
+    "real_postgresql_rls_cross_directory_negative",
+    "packaged_matrix_and_schema_catalog",
+    "microsoft_entra_provisioning_e2e",
+    "okta_provisioning_e2e",
+    "google_workspace_provisioning_e2e",
+    "protected_enterprise_idp_admission",
+    "external_scim_conformance_suite"
+  ],
+  "release_admission": "NO_GO_UNTIL_EXTERNAL_AND_PRODUCTION_EVIDENCE"
+}

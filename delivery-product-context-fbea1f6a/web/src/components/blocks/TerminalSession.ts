@@ -1,0 +1,1093 @@
+// Pure-JS session that bridges an xterm.js terminal to an agent's
+// tmux WebSocket. Lives outside React so the wire protocol, listener
+// wiring, and resource cleanup don't have to ride the render cycle.
+// `TerminalView` mounts a session via a callback ref and tears it
+// down on the matching detach.
+//
+// Wire protocol (mirrors `omnigent/server/routes/terminal_attach.py`):
+//   - Server → client: binary pane output → `term.write`; text frames for
+//     JSON control messages (currently tmux clipboard writes).
+//   - Client → server: binary frames for keystrokes (`term.onData`);
+//     text frames for JSON control messages (currently only resize).
+
+import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { type FontWeight, type ITheme, Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import { withBasePath } from "@/lib/basePath";
+import { type CodeFont, codeFontFamilyForEditor, readCodeFont } from "@/lib/codeFontPreferences";
+import { splitWorkspaceFileCitation } from "@/components/ai-elements/streamdown-security";
+import { resolveChatFilePath } from "@/hooks/useWorkspaceChangedFiles";
+import { CodexTerminalPalette, codexTerminalTheme } from "./CodexTerminalPalette";
+import { TerminalLinkProvider } from "./TerminalLinkProvider";
+
+// Card background colors derived from the app's CSS palette.
+// Light: --card: oklch(1.000 0 0) = pure white.
+// Dark:  --card: oklch(0.195 0.004 240) ≈ rgb(19, 21, 23) via OKLab → sRGB.
+const CARD_LIGHT = "#ffffff";
+const CARD_DARK = "#131517";
+const TERMINAL_BOLD_WEIGHT_OFFSET = 300;
+
+function terminalFontOptions({ sizePx, family, weight }: CodeFont) {
+  return {
+    fontFamily: codeFontFamilyForEditor(family),
+    fontSize: sizePx,
+    fontWeight: weight as FontWeight,
+    fontWeightBold: (weight + TERMINAL_BOLD_WEIGHT_OFFSET) as FontWeight,
+  };
+}
+
+// WebSocket close codes (RFC 6455 reserves 4xxx).
+// 4400 signals wrong-replica routing: the keyed request reached the wrong
+// replica (the ``?omnigent_slice_key=`` doesn't match where the tunnel lives).
+// Mirrors ``ws_common.py`` ``WS_CLOSE_WRONG_REPLICA``.
+export const WS_CLOSE_WRONG_REPLICA = 4400;
+
+/**
+ * Return an xterm `ITheme` object matched to the app's light or dark palette.
+ */
+export function terminalTheme(isDark: boolean): ITheme {
+  const bg = isDark ? CARD_DARK : CARD_LIGHT;
+  return isDark
+    ? {
+        background: bg,
+        foreground: "#e4e4e7",
+        cursor: "#22d3ee",
+        cursorAccent: bg,
+        selectionBackground: "#22d3ee33",
+        black: "#09090b",
+        brightBlack: "#71717a",
+      }
+    : {
+        background: bg,
+        foreground: "#18181b",
+        cursor: "#0891b2",
+        cursorAccent: bg,
+        selectionBackground: "#0891b233",
+        black: "#18181b",
+        brightBlack: "#e4e4e7",
+        // CLIs that assume a dark terminal paint primary text with ANSI
+        // white / bright-white. On the white card background those slots
+        // must be dark tones, or the text renders white-on-white and
+        // vanishes. brightWhite is the most emphasized text, so it maps to
+        // the strongest (darkest) tone; white is a slightly muted gray.
+        white: "#3f3f46",
+        brightWhite: "#18181b",
+      };
+}
+
+/**
+ * Activation handler for clickable links in terminal output.
+ *
+ * Wired into {@link TerminalLinkProvider}. Suppresses the default
+ * navigation (which would replace the SPA — and the live terminal
+ * session — with the link target) and opens the URL in a new tab
+ * instead. ``noopener,noreferrer`` denies the opened page a handle
+ * back to this window and strips the ``Referer`` header.
+ *
+ * Exported for direct unit testing; production code passes it to the
+ * link provider rather than calling it directly.
+ *
+ * :param event: The DOM mouse event from the link click. Its default
+ *     navigation is prevented.
+ * :param uri: The URL detected in the terminal output,
+ *     e.g. ``"https://example.com/foo"``.
+ */
+export type TerminalFileLinkListener = (uri: string) => boolean;
+
+export interface TerminalWorkspaceFileTarget {
+  path: string;
+  line: number | null;
+}
+
+/** Resolve an OSC 8 local-file URI to a workspace-relative viewer target. */
+export function resolveTerminalWorkspaceFileLink(
+  uri: string,
+  root: string | null,
+  home: string | null,
+): TerminalWorkspaceFileTarget | null {
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "file:" || url.hostname || url.search) return null;
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+  const citation = splitWorkspaceFileCitation(`${decodedPath}${url.hash}`);
+  if (url.hash && !citation.hasPosition) return null;
+  const path = resolveChatFilePath(citation.path, root, home)?.path ?? null;
+  return path === null || path.startsWith("/") ? null : { path, line: citation.line };
+}
+
+export function openTerminalLink(
+  event: MouseEvent,
+  uri: string,
+  onFileLink?: TerminalFileLinkListener,
+): void {
+  event.preventDefault();
+  if (onFileLink?.(uri)) return;
+  const sameOriginSessionPath = sameOriginSessionLink(uri);
+  if (sameOriginSessionPath) {
+    // A terminal-printed session link may be unprefixed (`/c/<id>`); rebase it
+    // so client-side navigation stays under the router basename. withBasePath
+    // is idempotent, so an already-prefixed link is left unchanged.
+    const target = withBasePath(sameOriginSessionPath);
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (target !== currentPath) {
+      window.history.pushState(null, "", target);
+      window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
+    }
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(uri, window.location.href);
+  } catch {
+    return;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return;
+  window.open(uri, "_blank", "noopener,noreferrer");
+}
+
+function sameOriginSessionLink(uri: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(uri, window.location.href);
+  } catch {
+    return null;
+  }
+  if (url.origin !== window.location.origin) return null;
+  if (!/(^|\/)c\/[^/]+\/?$/.test(url.pathname)) return null;
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+/**
+ * Lifecycle state of the bridge, surfaced to React for the
+ * connecting / closed / error overlays.
+ *
+ * The ``closed`` variant carries the WebSocket close code alongside
+ * the human-readable reason so consumers can distinguish deliberate
+ * server closes (the 4xxx app codes) from transport-level drops —
+ * see {@link isUnexpectedTerminalClose}.
+ */
+export type ConnectionState =
+  | { kind: "connecting" }
+  | { kind: "connected" }
+  | { kind: "closed"; reason: string; code: number }
+  | { kind: "error" };
+
+/**
+ * Decide whether a WebSocket close code represents a transport-level
+ * drop worth auto-reconnecting, rather than a deliberate close.
+ *
+ * Deliberate closes — normal closure (1000), auth/policy rejections
+ * (1008), and the app's own 4xxx codes (4404 terminal-not-found,
+ * 4405 terminal-detached, 4500 internal error; see
+ * ``omnigent/terminals/ws_common.py``) — mean the server decided the
+ * attach should end, so re-dialing would either loop on the same
+ * answer or resurrect a terminal the user intentionally left.
+ *
+ * Transport-shaped closes happen *to* the connection rather than
+ * being decided by either end's terminal logic:
+ *
+ * - 1005 / 1006: the browser's own "closed without a clean app code"
+ *   sentinels — 1005 is "no status code" (a Close frame with an empty
+ *   payload, e.g. a fronting proxy collapsing the close of a backend
+ *   that went away), 1006 is "no close frame at all" (a dead TCP
+ *   connection discovered on tab thaw). Neither is a code any endpoint
+ *   sets deliberately, so both are always a transport drop. A server
+ *   redeploy behind an ingress surfaces as 1005 here.
+ * - 1001: "going away" — a server or proxy restarting.
+ * - 1012 / 1013: service restart / try again later.
+ * - 1011 / 1014: server internal error / bad gateway — the fronting
+ *   proxy (e.g. Databricks Apps) emits these while the backend is
+ *   mid-restart. The app's OWN internal error is the explicit 4500, so
+ *   a raw 1011/1014 is infrastructure, not a deliberate terminal end.
+ *
+ * Pure helper — exported for direct unit testing.
+ *
+ * :param code: The WebSocket close code from the ``close`` event,
+ *     e.g. ``1006``.
+ * :returns: ``true`` when the close is transport-shaped and a
+ *     reconnect attempt is appropriate.
+ */
+export function isUnexpectedTerminalClose(code: number): boolean {
+  return (
+    code === 1001 ||
+    code === 1005 ||
+    code === 1006 ||
+    code === 1011 ||
+    code === 1012 ||
+    code === 1013 ||
+    code === 1014
+  );
+}
+
+/** Listener for `ConnectionState` transitions. */
+export type ConnectionStateListener = (state: ConnectionState) => void;
+
+/** Listener for terminal output activity from the server. */
+export type TerminalActivityListener = () => void;
+/** Listener for user keyboard input sent to the terminal. */
+export type TerminalInputListener = () => void;
+
+/** Kitty Keyboard Protocol / CSI-u encoding for Shift+Enter. */
+export const SHIFT_ENTER_CSI_U = "\x1b[13;2u";
+
+/** Readline line-editing bytes for the macOS Cmd key mappings below. */
+export const CMD_BACKSPACE_LINE_KILL = "\x15"; // Ctrl-U: kill to line start
+export const CMD_LEFT_LINE_START = "\x01"; // Ctrl-A: cursor to line start
+export const CMD_RIGHT_LINE_END = "\x05"; // Ctrl-E: cursor to line end
+
+/**
+ * Return the terminal bytes to send for a browser key event.
+ *
+ * Two key families need synthesized bytes because neither xterm.js nor the
+ * browser produces them:
+ *
+ * - **Shift+Enter** — xterm does not emit Kitty Keyboard Protocol sequences
+ *   for it, so the browser attach path synthesizes the CSI-u sequence,
+ *   mirroring native terminals that support CSI-u while keeping plain Enter
+ *   and modified Enter variants on xterm's default path.
+ * - **macOS Cmd+Backspace / Cmd+Left / Cmd+Right** — the standard
+ *   readline-style line shortcuts. The Option (Alt) equivalents work because
+ *   xterm encodes Alt-modified keys as ESC-prefixed sequences that
+ *   readline/zsh read as word operations; Cmd (metaKey) combos get no
+ *   encoding at all — the browser eats them and nothing reaches the PTY.
+ *   Each maps to the Ctrl control character a native terminal sends. Only
+ *   bare Cmd combos are mapped: Cmd+C/V/K/R and friends keep their
+ *   browser/xterm meaning (copy/paste/clear/reload).
+ *
+ * :param event: Browser keyboard event from xterm's custom key handler.
+ * :returns: Bytes to send instead of xterm's default handling, or ``null``
+ *     to let xterm handle the event normally.
+ */
+export function terminalKeyEventPayload(event: KeyboardEvent): string | null {
+  // An in-flight IME composition owns the keyboard: xterm consults this
+  // handler BEFORE its CompositionHelper, so claiming a key mid-conversion
+  // would drop the composed text. Return null so xterm runs composition
+  // handling (keyCode 229 is the legacy composition signal).
+  if (event.isComposing || event.keyCode === 229) {
+    return null;
+  }
+  if (
+    event.key === "Enter" &&
+    event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey
+  ) {
+    return SHIFT_ENTER_CSI_U;
+  }
+  if (event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey) {
+    if (event.key === "Backspace") return CMD_BACKSPACE_LINE_KILL;
+    if (event.key === "ArrowLeft") return CMD_LEFT_LINE_START;
+    if (event.key === "ArrowRight") return CMD_RIGHT_LINE_END;
+  }
+  return null;
+}
+
+// Reused across keystrokes — allocating a fresh TextEncoder per keypress
+// is needless churn on the input hot path.
+const INPUT_ENCODER = new TextEncoder();
+
+/**
+ * Structural view of xterm's internal mouse service. The public modes API
+ * exposes tracking but not the active encoding.
+ */
+interface TerminalCore {
+  _core?: {
+    coreMouseService?: { activeEncoding?: string };
+  };
+}
+
+/**
+ * Load the WebGL renderer onto *term*, returning the addon or ``null``
+ * when WebGL is unavailable and the DOM renderer stays in use.
+ *
+ * xterm's default DOM renderer rebuilds spans on every paint, which
+ * dominates the main thread on heavy output (large ``cat``, build logs,
+ * a redrawing TUI); the WebGL renderer rasterizes glyphs on the GPU and
+ * is dramatically faster for those bursts. Loaded *after*
+ * {@link Terminal.open} because it needs the mounted ``<canvas>``. Both
+ * the no-GPU and context-lost paths fall back to the DOM renderer rather
+ * than freezing the canvas — see the inline comments below.
+ */
+export function loadWebglRenderer(term: Terminal): WebglAddon | null {
+  let addon: WebglAddon;
+  try {
+    addon = new WebglAddon();
+  } catch {
+    return null;
+  }
+  // Dispose on context loss so xterm reverts to the DOM renderer; a
+  // disposed WebGL addon left attached would freeze on its last frame.
+  addon.onContextLoss(() => addon.dispose());
+  try {
+    term.loadAddon(addon);
+  } catch {
+    // WebGL unsupported in this environment (no GPU context, jsdom).
+    // The DOM renderer stays active; correctness is unaffected.
+    addon.dispose();
+    return null;
+  }
+  return addon;
+}
+
+/**
+ * Populate the clipboard from a terminal text selection on a browser
+ * ``copy`` event.
+ *
+ * xterm renders terminal selections in its own layer rather than a DOM range,
+ * so the browser's default copy is unreliable — we feed
+ * ``term.getSelection()`` into the event's ``clipboardData`` ourselves.
+ * ``getSelection()`` already
+ * rejoins soft-wrapped rows, so a paragraph the terminal wrapped across
+ * several rows copies back as one logical line.
+ *
+ * We never remap Ctrl+C — in a terminal it must stay SIGINT — so on
+ * Linux/Windows this fires via right-click → Copy (and Edit → Copy); on
+ * macOS ⌘C also dispatches a browser ``copy`` event.
+ *
+ * Called only after the terminal view authorizes the copy gesture.
+ *
+ * :param event: The browser ``copy`` event.
+ * :param selection: The current terminal selection text ("" if none).
+ * :returns: ``true`` if the clipboard was populated, ``false`` when there
+ *     was no selection to copy (the event is left untouched so the
+ *     browser's default copy behavior still applies elsewhere).
+ */
+export function applyTerminalCopy(
+  event: Pick<ClipboardEvent, "clipboardData" | "preventDefault">,
+  selection: string,
+): boolean {
+  if (!selection) return false;
+  event.clipboardData?.setData("text/plain", selection);
+  event.preventDefault();
+  return true;
+}
+
+/** Largest tmux selection accepted for a browser clipboard write. */
+export const TERMINAL_CLIPBOARD_MAX_BYTES = 1024 * 1024;
+/** A tmux copy notification must closely follow input on this attachment. */
+export const TERMINAL_CLIPBOARD_INPUT_WINDOW_MS = 5000;
+
+const STRICT_BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+/** Decode one bounded, canonical base64 terminal clipboard payload. */
+export function decodeTerminalClipboardBase64(encoded: string): string | null {
+  if (
+    encoded.length === 0 ||
+    encoded.length > Math.ceil(TERMINAL_CLIPBOARD_MAX_BYTES / 3) * 4 ||
+    encoded.length % 4 !== 0 ||
+    !STRICT_BASE64_RE.test(encoded)
+  ) {
+    return null;
+  }
+  let binary: string;
+  try {
+    binary = atob(encoded);
+  } catch {
+    return null;
+  }
+  if (binary.length === 0 || binary.length > TERMINAL_CLIPBOARD_MAX_BYTES) return null;
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+/** Parse the strict server→browser clipboard control-message schema. */
+export function parseTerminalClipboardMessage(message: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(message);
+  } catch {
+    return null;
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    (value as { type?: unknown }).type !== "clipboard-write" ||
+    (value as { encoding?: unknown }).encoding !== "base64" ||
+    typeof (value as { data?: unknown }).data !== "string"
+  ) {
+    return null;
+  }
+  return decodeTerminalClipboardBase64((value as { data: string }).data);
+}
+
+/** Whether a clipboard event is attributable to recent input on this attach. */
+export function hadRecentTerminalInput(lastInputAt: number, now: number): boolean {
+  return (
+    lastInputAt > 0 && now >= lastInputAt && now - lastInputAt <= TERMINAL_CLIPBOARD_INPUT_WINDOW_MS
+  );
+}
+
+/** Browser selection gestures carry their native event; program requests do not. */
+export type TerminalClipboardListener = (text: string, copyEvent?: ClipboardEvent) => void;
+
+/**
+ * Ceiling on synthesized wheel reports for a single DOM wheel event, so a
+ * page-mode or pathological delta can't flood the input channel.
+ */
+export const WHEEL_REPORTS_MAX_PER_EVENT = 50;
+
+/**
+ * Mouse state consulted by {@link wheelReportPayload}. ``mouseTrackingMode``
+ * comes from the public ``term.modes``; ``sgrEncoding`` is whether the pane
+ * program requested SGR mouse encoding (``?1006h``) — the public ``IModes``
+ * does not expose the encoding, so the session feature-detects it from
+ * xterm's core mouse service (see ``TerminalSession.sgrMouseEncodingActive``).
+ */
+export interface WheelMouseState {
+  mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any";
+  sgrEncoding: boolean;
+}
+
+/** Screen geometry needed to place and scale a wheel report. */
+export interface WheelScreenMetrics {
+  /** Viewport coordinates of the character grid's top-left corner. */
+  left: number;
+  top: number;
+  /** Size of one character cell in CSS pixels. */
+  cellWidth: number;
+  cellHeight: number;
+  cols: number;
+  rows: number;
+}
+
+/**
+ * Build SGR mouse-wheel reports for *lines* scroll steps at cell
+ * (*col*, *row*), 1-based. Negative lines scroll up (button 64),
+ * positive down (button 65); 0 yields "".
+ */
+export function sgrWheelReports(lines: number, col: number, row: number): string {
+  if (lines === 0) return "";
+  const button = lines < 0 ? 64 : 65;
+  return `\x1b[<${button};${col};${row}M`.repeat(Math.abs(lines));
+}
+
+/**
+ * Decide how one DOM wheel event over the terminal becomes SGR mouse-wheel
+ * reports, carrying fractional scroll across events.
+ *
+ * xterm's built-in wheel→report conversion is unusable with macOS
+ * trackpads: it damps sub-50px pixel deltas by ×0.3 and emits at most one
+ * report per DOM event regardless of magnitude, so two-finger scrolling
+ * over a mouse-tracking TUI (such as Claude Code) barely moves. This helper
+ * replaces that path: deltas convert to lines at face
+ * value, the fractional remainder accumulates in *partial* so a run of
+ * small trackpad deltas still adds up, and one report is emitted per whole
+ * line (capped at {@link WHEEL_REPORTS_MAX_PER_EVENT}; the excess is
+ * discarded rather than banked so a giant delta can't keep scrolling long
+ * after the gesture).
+ *
+ * The event is only consumed when the pane program is tracking the mouse
+ * with SGR encoding, such as Claude Code on the control transport. Otherwise
+ * the caller must let xterm handle the wheel natively so, e.g., a plain shell
+ * scrolls xterm's own scrollback. Shift-wheel is
+ * also left to xterm, mirroring its built-in escape hatch.
+ *
+ * Pure helper — exported for direct unit testing; production code calls it
+ * from the session's custom wheel handler.
+ *
+ * :param event: The DOM wheel event fields consulted.
+ * :param mouse: Current mouse tracking mode + SGR-encoding flag.
+ * :param screen: Character-grid geometry, or ``null`` when layout isn't
+ *     measurable yet (event is left to xterm).
+ * :param partial: Fractional lines carried over from previous events.
+ * :returns: ``consume`` — whether the caller owns the event (prevent
+ *     default, return ``false`` to xterm); ``data`` — SGR reports to feed
+ *     to the terminal ("" when the accumulator hasn't reached a whole
+ *     line); ``partial`` — the new carry.
+ */
+export function wheelReportPayload(
+  event: Pick<WheelEvent, "deltaY" | "deltaMode" | "shiftKey" | "clientX" | "clientY">,
+  mouse: WheelMouseState,
+  screen: WheelScreenMetrics | null,
+  partial: number,
+): { consume: boolean; data: string; partial: number } {
+  if (mouse.mouseTrackingMode === "none" || !mouse.sgrEncoding) {
+    // Tracking off (or an encoding we don't synthesize): xterm's native
+    // handling is correct. Drop the carry so a stale fraction can't leak
+    // into the next tracking-on scroll.
+    return { consume: false, data: "", partial: 0 };
+  }
+  if (event.shiftKey || event.deltaY === 0 || screen === null) {
+    return { consume: false, data: "", partial };
+  }
+  let lines: number;
+  switch (event.deltaMode) {
+    case WheelEvent.DOM_DELTA_LINE:
+      lines = event.deltaY;
+      break;
+    case WheelEvent.DOM_DELTA_PAGE:
+      lines = event.deltaY * screen.rows;
+      break;
+    default:
+      lines = event.deltaY / screen.cellHeight;
+  }
+  const total = partial + lines;
+  const whole = Math.trunc(total);
+  const capped = Math.max(
+    -WHEEL_REPORTS_MAX_PER_EVENT,
+    Math.min(WHEEL_REPORTS_MAX_PER_EVENT, whole),
+  );
+  const clamp = (v: number, max: number) => Math.min(Math.max(v, 1), max);
+  const col = clamp(Math.floor((event.clientX - screen.left) / screen.cellWidth) + 1, screen.cols);
+  const row = clamp(Math.floor((event.clientY - screen.top) / screen.cellHeight) + 1, screen.rows);
+  return {
+    consume: true,
+    data: sgrWheelReports(capped, col, row),
+    partial: capped === whole ? total - whole : 0,
+  };
+}
+
+/**
+ * Decide how one step of a one-finger vertical drag over the terminal
+ * becomes scrollback movement or SGR mouse-wheel reports, carrying the
+ * fractional-line remainder across steps.
+ *
+ * xterm has no built-in touch handling, so without this a finger drag on a
+ * phone leaves the view pinned to the live bottom — the scrollback is
+ * unreachable by touch even though wheel scrolling works. Dragging the
+ * finger *down* reveals older content (the native scroll gesture), which
+ * maps to negative lines: xterm's ``scrollLines`` scrolls up for negative
+ * amounts, and {@link sgrWheelReports} emits wheel-up (button 64) reports.
+ *
+ * When the pane program is tracking the mouse with SGR encoding (for
+ * example Claude Code on the control transport), the drag synthesizes
+ * wheel reports at the touched cell — mirroring {@link wheelReportPayload}
+ * — capped at {@link WHEEL_REPORTS_MAX_PER_EVENT} per step. Otherwise the
+ * drag moves xterm's own scrollback via ``lines``.
+ *
+ * Pure helper — exported for direct unit testing; production code calls it
+ * from the session's touch listeners.
+ *
+ * :param move: Finger positions — previous and current Y, and the X used
+ *     to place a report column.
+ * :param mouse: Current mouse tracking mode + SGR-encoding flag.
+ * :param screen: Character-grid geometry, or ``null`` when layout isn't
+ *     measurable yet (the drag is left to the browser).
+ * :param partial: Fractional lines carried over from previous steps.
+ * :returns: ``consume`` — whether the caller owns the gesture step
+ *     (prevent default so the browser doesn't pan); ``lines`` — whole
+ *     lines to feed ``term.scrollLines`` (0 when reports are emitted
+ *     instead); ``data`` — SGR reports to feed to the terminal ("" on the
+ *     scrollback path); ``partial`` — the new carry.
+ */
+/**
+ * Finger travel (CSS px) before a one-finger touch is treated as a scroll
+ * drag. Below this the gesture is left to the browser, so taps and the
+ * start of a long-press (text selection) aren't swallowed by jitter; at or
+ * beyond it the dominant axis decides — vertical locks into scrolling,
+ * horizontal abandons the gesture to the browser.
+ */
+export const TOUCH_SCROLL_SLOP_PX = 8;
+
+export function touchScrollPayload(
+  move: { previousY: number; currentY: number; clientX: number },
+  mouse: WheelMouseState,
+  screen: WheelScreenMetrics | null,
+  partial: number,
+): { consume: boolean; lines: number; data: string; partial: number } {
+  if (screen === null || screen.cellHeight <= 0) {
+    return { consume: false, lines: 0, data: "", partial };
+  }
+  const total = partial + (move.previousY - move.currentY) / screen.cellHeight;
+  const whole = Math.trunc(total);
+  if (mouse.mouseTrackingMode === "none" || !mouse.sgrEncoding) {
+    // Unlike the wheel path (which defers non-SGR tracking to xterm's
+    // native handler), touch has no native fallback — scroll the buffer,
+    // a harmless no-op on an alt-screen TUI with empty scrollback.
+    return { consume: true, lines: whole, data: "", partial: total - whole };
+  }
+  const capped = Math.max(
+    -WHEEL_REPORTS_MAX_PER_EVENT,
+    Math.min(WHEEL_REPORTS_MAX_PER_EVENT, whole),
+  );
+  const clamp = (v: number, max: number) => Math.min(Math.max(v, 1), max);
+  const col = clamp(Math.floor((move.clientX - screen.left) / screen.cellWidth) + 1, screen.cols);
+  const row = clamp(Math.floor((move.currentY - screen.top) / screen.cellHeight) + 1, screen.rows);
+  return {
+    consume: true,
+    lines: 0,
+    data: sgrWheelReports(capped, col, row),
+    // Discard the over-cap excess (like the wheel path) so a giant drag
+    // step can't keep scrolling long after the gesture.
+    partial: capped === whole ? total - whole : 0,
+  };
+}
+
+/**
+ * One xterm ↔ tmux WebSocket bridge tied to a single DOM container.
+ *
+ * The constructor performs all the setup synchronously — open the
+ * terminal on the container, open the WebSocket, wire up listeners,
+ * attach a ResizeObserver. {@link dispose} tears them all down in
+ * the same order callers expect: abort listeners first (so the
+ * close event doesn't fire stale state into a remounted view),
+ * disconnect the observer, dispose the xterm data subscription,
+ * close the WS, dispose the terminal.
+ */
+export class TerminalSession {
+  private readonly term: Terminal;
+  private readonly fit: FitAddon;
+  /** WebGL renderer addon, or ``null`` when WebGL is unavailable. */
+  private readonly webgl: WebglAddon | null;
+  private readonly ws: WebSocket;
+  private readonly listenerCtl: AbortController;
+  private readonly resizeObserver: ResizeObserver;
+  private readonly dataDispose: { dispose: () => void };
+  private readonly osc52Dispose: { dispose: () => void };
+  private readonly codexPalette: CodexTerminalPalette | null;
+  private readonly onClipboardRequest?: TerminalClipboardListener;
+  /** Whether this visible, interactive attach may write the local clipboard. */
+  private clipboardEnabled: boolean;
+  /**
+   * Whether to grab keyboard focus when the WS opens. True for a primary
+   * interactive surface the user is looking at; false for a secondary attach
+   * (the workspace-rail shell) so a background connect never yanks focus off
+   * the chat composer. See {@link focus} for the explicit-focus path.
+   */
+  private focusOnConnect: boolean;
+  /** ``performance.now()`` of the last keystroke; gates clipboard writes. */
+  private lastUserInputAt = 0;
+  /** Guards {@link dispose} so calling it twice is a safe no-op. */
+  private disposed = false;
+  /**
+   * Last ``cols×rows`` actually sent to the server, or ``null`` before the
+   * first resize. {@link sendResize} skips a send when the fitted dimensions
+   * are unchanged so the WS-open + ResizeObserver double-fire on mount (and a
+   * transient re-fit) don't emit a redundant resize — which, on the tmux
+   * control transport, would otherwise be an avoidable ``refresh-client -C``.
+   */
+  private lastSentSize: { cols: number; rows: number } | null = null;
+  /** Fractional wheel lines carried across events (see {@link wheelReportPayload}). */
+  private wheelPartialLines = 0;
+  /** Start of the tracked one-finger touch, or ``null`` when none is active. */
+  private touchStart: { x: number; y: number } | null = null;
+  /** Whether the tracked touch passed the slop gate and owns scrolling. */
+  private touchScrolling = false;
+  /** Y of the last processed drag step (valid while {@link touchScrolling}). */
+  private touchLastY = 0;
+  /** Fractional touch lines carried across moves (see {@link touchScrollPayload}). */
+  private touchPartialLines = 0;
+
+  /**
+   * Construct, attach to the DOM, and open the WebSocket.
+   *
+   * :param container: DOM node to mount the xterm Terminal under.
+   * :param url: Fully-qualified ``ws(s)://`` URL for the
+   *     ``.../resources/terminals/{id}/attach`` endpoint.
+   * :param onState: Called with each state transition so React can
+   *     render the connecting / closed / error overlay. Invoked
+   *     synchronously from WS event handlers.
+   * :param onActivity: Called whenever terminal output arrives from the
+   *     server. This is a best-effort UI activity signal, not a shell
+   *     job-state oracle.
+   * :param onInput: Called when user input is sent to the terminal.
+   * :param clipboardEnabled: Whether tmux copies may write the local clipboard.
+   * :param onClipboardRequest: Authorizes browser selections and validated tmux copies.
+   * :param focusOnConnect: Whether to grab keyboard focus on WS-open.
+   * :param onFileLink: Handles OSC 8 local-file links inside the app.
+   */
+  constructor(
+    container: HTMLElement,
+    url: string,
+    onState: ConnectionStateListener,
+    isDark = false,
+    onActivity?: TerminalActivityListener,
+    onInput?: TerminalInputListener,
+    clipboardEnabled = true,
+    onClipboardRequest?: TerminalClipboardListener,
+    focusOnConnect = true,
+    adaptCodexPalette = false,
+    onFileLink?: TerminalFileLinkListener,
+  ) {
+    this.codexPalette = adaptCodexPalette ? new CodexTerminalPalette() : null;
+    this.clipboardEnabled = clipboardEnabled;
+    this.focusOnConnect = focusOnConnect;
+    this.onClipboardRequest = onClipboardRequest;
+    // Read the user's code-font preference (Settings → Appearance) at
+    // construction; a mid-session change is applied live via setFont(). The
+    // xterm.js defaults (15px, no theme) feel out of place inside the app
+    // chrome, so an unset family falls back to the shared mono stack.
+    const activateLink = (event: MouseEvent, uri: string) =>
+      openTerminalLink(event, uri, onFileLink);
+    this.term = new Terminal({
+      ...terminalFontOptions(readCodeFont()),
+      scrollback: 20000,
+      cursorBlink: true,
+      theme: this.theme(isDark),
+      // Keep fixed-color CLI text readable against each cell's background
+      // without replacing its syntax palette.
+      minimumContrastRatio: 4.5,
+      // Opt into xterm's proposed APIs, matching openui's terminal setup.
+      allowProposedApi: true,
+      // xterm ignores OSC 8 file:// links unless non-HTTP protocols are
+      // enabled. openTerminalLink keeps activation safe by consuming local
+      // workspace files and refusing every non-HTTP fallback.
+      linkHandler: { activate: activateLink, allowNonHttpProtocols: true },
+    });
+    // Control mode forwards raw pane output. Consume pane OSC 52 so clipboard
+    // writes can only arrive through validated tmux `clipboard-write` frames.
+    this.osc52Dispose = this.term.parser.registerOscHandler(52, () => true);
+    this.fit = new FitAddon();
+    this.term.loadAddon(this.fit);
+    // Turn bare URLs in terminal output into clickable links; xterm alone
+    // renders them as plain text.
+    this.term.registerLinkProvider(new TerminalLinkProvider(this.term, activateLink));
+    this.term.open(container);
+    // Load the GPU renderer after open() (it needs the mounted canvas).
+    // Falls back to the DOM renderer when WebGL is unavailable.
+    this.webgl = loadWebglRenderer(this.term);
+    try {
+      this.fit.fit();
+    } catch (err) {
+      console.warn("[terminal-attach] initial fit failed, falling back to 80x24", err);
+      this.term.resize(80, 24);
+    }
+
+    this.ws = new WebSocket(url);
+    // Default is Blob, which forces an async read per chunk. ArrayBuffer
+    // keeps the path synchronous and matches xterm.js's preferred input.
+    this.ws.binaryType = "arraybuffer";
+
+    // AbortController-scoped listeners so the cleanup's ws.close()
+    // can't fire stale `close`/`error` events into the next mount —
+    // under React StrictMode this otherwise flickers a "Bridge
+    // closed" overlay on top of the freshly-connecting terminal.
+    this.listenerCtl = new AbortController();
+    const { signal } = this.listenerCtl;
+
+    // Capture browser copy gestures before xterm's own listener can write.
+    // Selections and program requests share consent; Ctrl+C stays SIGINT.
+    container.addEventListener(
+      "copy",
+      (event) => {
+        const selection = this.term.getSelection();
+        if (!selection) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.onClipboardRequest?.(selection, event);
+      },
+      { capture: true, signal },
+    );
+
+    this.ws.addEventListener(
+      "open",
+      () => {
+        // Send the size first so tmux re-renders at the right
+        // dimensions before the user sees the default 80×24 followed
+        // by a reflow.
+        this.sendResize();
+        if (this.focusOnConnect) this.term.focus();
+        onState({ kind: "connected" });
+      },
+      { signal },
+    );
+
+    // Throttle activity notifications so rapid output (e.g. `yes`, large
+    // `cat`) doesn't re-arm the 1.5 s idle timer on every WS frame.
+    let lastActivityTs = 0;
+    this.ws.addEventListener(
+      "message",
+      (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          const bytes = new Uint8Array(ev.data);
+          this.term.write(this.codexPalette?.write(bytes) ?? bytes);
+          const now = performance.now();
+          if (now - lastActivityTs > 300) {
+            lastActivityTs = now;
+            onActivity?.();
+          }
+        } else if (typeof ev.data === "string") {
+          const text = parseTerminalClipboardMessage(ev.data);
+          if (text !== null) this.requestClipboardWrite(text);
+          // Unknown text frames stay ignored for protocol forward compatibility.
+        }
+      },
+      { signal },
+    );
+
+    this.ws.addEventListener(
+      "close",
+      (ev) => {
+        onState({ kind: "closed", reason: ev.reason || `code ${ev.code}`, code: ev.code });
+      },
+      { signal },
+    );
+
+    this.ws.addEventListener(
+      "error",
+      () => {
+        onState({ kind: "error" });
+      },
+      { signal },
+    );
+
+    this.dataDispose = this.term.onData((d) => {
+      onInput?.();
+      // Stamp before the readyState guard so clipboard trust still reflects
+      // local input during a momentary WebSocket hiccup.
+      this.lastUserInputAt = performance.now();
+      if (this.ws.readyState !== WebSocket.OPEN) return;
+      this.ws.send(INPUT_ENCODER.encode(d));
+    });
+
+    this.term.attachCustomKeyEventHandler((e) => {
+      const payload = terminalKeyEventPayload(e);
+      if (payload === null) return true;
+      // xterm invokes this handler for keydown, keypress, and keyup.
+      // Suppress all three so xterm cannot also send a bare Enter; emit
+      // the CSI-u sequence once, on keydown.
+      if (e.type === "keydown") {
+        e.preventDefault();
+        onInput?.();
+        this.lastUserInputAt = performance.now();
+        if (this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(INPUT_ENCODER.encode(payload));
+        }
+      }
+      return false;
+    });
+
+    // Replace xterm's lossy wheel→mouse-report conversion (trackpad deltas
+    // are damped and capped to one report per event, which reads as
+    // "scrolling doesn't work" on macOS trackpads) with the accumulating
+    // synthesis in wheelReportPayload. term.input routes the reports
+    // through the normal onData path above, so they hit the WS send and
+    // the input-activity bookkeeping like any keystroke.
+    this.term.attachCustomWheelEventHandler((e) => {
+      const result = wheelReportPayload(
+        e,
+        {
+          mouseTrackingMode: this.term.modes.mouseTrackingMode,
+          sgrEncoding: this.sgrMouseEncodingActive(),
+        },
+        this.screenMetrics(),
+        this.wheelPartialLines,
+      );
+      this.wheelPartialLines = result.partial;
+      if (!result.consume) return true;
+      if (result.data) this.term.input(result.data, true);
+      e.preventDefault();
+      return false;
+    });
+
+    // xterm has no touch support, so on a phone a finger drag would
+    // otherwise leave the view pinned to the live bottom with the
+    // scrollback unreachable. Translate one-finger vertical drags into
+    // scrollback movement (or SGR wheel reports when the pane program is
+    // tracking the mouse), mirroring the wheel path above. Multi-touch
+    // (pinch) is left to the browser.
+    container.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length !== 1) {
+          this.touchStart = null;
+          this.touchScrolling = false;
+          return;
+        }
+        this.touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        this.touchScrolling = false;
+        this.touchPartialLines = 0;
+      },
+      { signal },
+    );
+    container.addEventListener(
+      "touchmove",
+      (e) => {
+        if (this.touchStart === null || e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        if (!this.touchScrolling) {
+          // Slop gate: taps and long-press jitter stay with the browser.
+          // Past the slop, the dominant axis decides — a mostly-horizontal
+          // drag is abandoned so browser gestures/selection still work.
+          const dx = Math.abs(touch.clientX - this.touchStart.x);
+          const dy = Math.abs(touch.clientY - this.touchStart.y);
+          if (Math.max(dx, dy) < TOUCH_SCROLL_SLOP_PX) return;
+          if (dx > dy) {
+            this.touchStart = null;
+            return;
+          }
+          // Lock in: the pre-slop travel feeds the first step so the view
+          // doesn't visibly "jump the gate".
+          this.touchScrolling = true;
+          this.touchLastY = this.touchStart.y;
+        }
+        const result = touchScrollPayload(
+          { previousY: this.touchLastY, currentY: touch.clientY, clientX: touch.clientX },
+          {
+            mouseTrackingMode: this.term.modes.mouseTrackingMode,
+            sgrEncoding: this.sgrMouseEncodingActive(),
+          },
+          this.screenMetrics(),
+          this.touchPartialLines,
+        );
+        // Advance even on an unmeasurable (non-consumed) step so the next
+        // measurable one resumes from the current finger position.
+        this.touchLastY = touch.clientY;
+        this.touchPartialLines = result.partial;
+        if (!result.consume) return;
+        // The drag is ours — stop the browser from panning ancestors.
+        if (e.cancelable) e.preventDefault();
+        if (result.data) this.term.input(result.data, true);
+        if (result.lines !== 0) this.term.scrollLines(result.lines);
+      },
+      // Explicitly non-passive so preventDefault() above is honored.
+      { passive: false, signal },
+    );
+    const endTouch = () => {
+      this.touchStart = null;
+      this.touchScrolling = false;
+      this.touchPartialLines = 0;
+    };
+    container.addEventListener("touchend", endTouch, { signal });
+    container.addEventListener("touchcancel", endTouch, { signal });
+
+    // ResizeObserver fires on any layout-affecting change (window
+    // resize, font load, CSS class change). tmux deduplicates same-
+    // size events server-side, so no throttle needed here.
+    this.resizeObserver = new ResizeObserver(() => this.sendResize());
+    this.resizeObserver.observe(container);
+  }
+
+  /**
+   * Update the terminal's color theme without reconnecting the WebSocket.
+   * Safe to call at any point after construction.
+   */
+  setTheme(isDark: boolean): void {
+    this.term.options.theme = this.theme(isDark);
+  }
+
+  private theme(isDark: boolean): ITheme {
+    const theme = terminalTheme(isDark);
+    return this.codexPalette ? codexTerminalTheme(theme, isDark) : theme;
+  }
+
+  /** Enable clipboard bridging only for the visible, interactive surface. */
+  setClipboardEnabled(enabled: boolean): void {
+    this.clipboardEnabled = enabled;
+  }
+
+  /**
+   * Give the terminal keyboard focus. The WS-open handler focuses
+   * automatically, but that call is a browser no-op while the surface is
+   * hidden (a pre-warmed attach behind the chat view), so the view calls
+   * this when the surface is revealed.
+   */
+  focus(): void {
+    this.term.focus();
+  }
+
+  /**
+   * Update the terminal's code font without reconnecting —
+   * mirrors {@link setTheme}, mutating options in place. A new glyph size
+   * changes the character-cell dimensions, so this re-fits the grid to the
+   * container and pushes the resulting cols×rows to tmux via {@link sendResize}
+   * (which no-ops the send while the socket is down; the reconnect re-fits on
+   * open). An empty family falls back to the shared mono stack. Safe to call at
+   * any point after construction.
+   */
+  setFont(font: CodeFont): void {
+    Object.assign(this.term.options, terminalFontOptions(font));
+    this.sendResize();
+  }
+
+  /**
+   * Tear down the bridge. Order matters: abort listeners FIRST so
+   * the cleanup's ``ws.close()`` can't fire a stale ``close``
+   * event into the next mount.
+   *
+   * Idempotent: the view disposes the outgoing session explicitly on
+   * every re-dial (React 18 ignores callback-ref cleanups), and a
+   * future React upgrade would have the ref cleanup call this again.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.listenerCtl.abort();
+    this.resizeObserver.disconnect();
+    this.dataDispose.dispose();
+    this.osc52Dispose.dispose();
+    try {
+      this.ws.close();
+    } catch {
+      /* noop */
+    }
+    // Dispose the WebGL renderer before the terminal so its canvas and
+    // GL context are released while the terminal still owns them.
+    this.webgl?.dispose();
+    this.term.dispose();
+  }
+
+  private requestClipboardWrite(text: string): void {
+    if (
+      !this.clipboardEnabled ||
+      !hadRecentTerminalInput(this.lastUserInputAt, performance.now())
+    ) {
+      return;
+    }
+    this.onClipboardRequest?.(text);
+  }
+
+  /**
+   * Whether the pane program requested SGR mouse encoding (``?1006h``).
+   *
+   * The public ``IModes`` exposes the tracking mode but not the encoding,
+   * so this feature-detects xterm's core mouse service. When a pane program
+   * requests SGR tracking (for example Claude Code on the control transport),
+   * reports are synthesized; otherwise the wheel handler defers to xterm.
+   */
+  private sgrMouseEncodingActive(): boolean {
+    // eslint-disable-next-line no-underscore-dangle
+    const core = (this.term as unknown as TerminalCore)._core;
+    return core?.coreMouseService?.activeEncoding === "SGR";
+  }
+
+  /**
+   * Measure the character grid for wheel-report placement, or ``null``
+   * when layout isn't available (pre-mount, jsdom). Reads the
+   * ``.xterm-screen`` element because the outer container includes
+   * padding that would skew the per-cell math.
+   */
+  private screenMetrics(): WheelScreenMetrics | null {
+    const { cols, rows } = this.term;
+    const rect = this.term.element?.querySelector(".xterm-screen")?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0 || cols <= 0 || rows <= 0) return null;
+    return {
+      left: rect.left,
+      top: rect.top,
+      cellWidth: rect.width / cols,
+      cellHeight: rect.height / rows,
+      cols,
+      rows,
+    };
+  }
+
+  private sendResize(): void {
+    if (this.ws.readyState !== WebSocket.OPEN) return;
+    try {
+      this.fit.fit();
+    } catch {
+      return;
+    }
+    const { cols, rows } = this.term;
+    // Skip a no-op resize: the WS-open handler and the ResizeObserver both
+    // call this on mount, and a transient re-fit can land the same size. On
+    // the control transport an unchanged size is a wasted round-trip (tmux
+    // recomputes layout for the new value regardless), so dedupe here.
+    if (this.lastSentSize && this.lastSentSize.cols === cols && this.lastSentSize.rows === rows) {
+      return;
+    }
+    this.lastSentSize = { cols, rows };
+    this.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+  }
+}

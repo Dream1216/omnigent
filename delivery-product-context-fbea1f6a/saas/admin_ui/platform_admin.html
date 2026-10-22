@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Omnigent · Platform Operations</title>
+    <link rel="stylesheet" href="/platform-admin/assets/platform-admin.css">
+    <link rel="stylesheet" href="/platform-admin/assets/platform-privacy.css">
+    <script src="/platform-admin/assets/platform-admin.js" defer></script>
+    <script src="/platform-admin/assets/platform-privacy.js" defer></script>
+  </head>
+  <body>
+    <div class="signal-grid" aria-hidden="true"></div>
+    <header class="command-bar">
+      <a class="brand" href="/platform-admin" aria-label="Omnigent Platform Operations">
+        <span class="brand-sigil">O</span>
+        <span><strong>OMNIGENT</strong><small>PLATFORM OPERATIONS</small></span>
+      </a>
+      <div class="realm-lock" data-testid="realm-lock">
+        <span class="realm-pulse" aria-hidden="true"></span>
+        <span>STAFF REALM</span>
+        <code id="policy-version">POLICY / VERIFYING</code>
+      </div>
+      <div class="command-actions">
+        <button class="quiet-button" data-testid="operations-toggle" id="operations-toggle" type="button">
+          OPERATIONS <span id="operations-count">00</span>
+        </button>
+        <button class="quiet-button" data-testid="logout-button" id="logout-button" type="button">LOG OUT ↗</button>
+      </div>
+    </header>
+
+    <div class="console-shell" id="console-shell" aria-busy="true">
+      <aside class="navigation-rail">
+        <div class="identity-block">
+          <span class="kicker">AUTHENTICATED PRINCIPAL</span>
+          <strong id="principal-short">VERIFYING</strong>
+          <code id="principal-id">—</code>
+          <div class="role-list" data-testid="role-list" id="role-list"></div>
+        </div>
+
+        <nav class="console-nav" aria-label="平台管理模块">
+          <button class="active" data-testid="nav-overview" data-view="overview" type="button">
+            <span>01</span><strong>OVERVIEW</strong><small>态势总览</small>
+          </button>
+          <button data-testid="nav-users" data-permission="platform.user.read" data-view="users" type="button">
+            <span>02</span><strong>USERS</strong><small>全局用户</small>
+          </button>
+          <button data-testid="nav-tenants" data-permission="platform.tenant.read" data-view="tenants" type="button">
+            <span>03</span><strong>TENANTS</strong><small>租户治理</small>
+          </button>
+          <button data-testid="nav-access" data-permission="platform.identity_conflict.read" data-view="access" type="button">
+            <span>04</span><strong>ACCESS</strong><small>身份与授权</small>
+          </button>
+          <button data-testid="nav-support" data-permission="platform.support.read" data-view="support" type="button">
+            <span>05</span><strong>SUPPORT</strong><small>受控支持</small>
+          </button>
+          <button data-testid="nav-privacy" data-permission="platform.privacy.read" data-view="privacy" type="button">
+            <span>06</span><strong>PRIVACY</strong><small>数据生命周期</small>
+          </button>
+          <button data-testid="nav-audit" data-permission="platform.audit.read" data-view="audit" type="button">
+            <span>07</span><strong>AUDIT</strong><small>审计与导出</small>
+          </button>
+          <button id="notification-operations-link" data-testid="nav-notifications" data-permission="platform.notification.read" type="button" hidden>
+            <span>08</span><strong>NOTIFY OPS</strong><small>审批与投递</small>
+          </button>
+          <button id="email-configuration-link" data-testid="nav-email" data-permission="platform.email_configuration.read" data-view="email" type="button" hidden>
+            <span>09</span><strong>EMAIL</strong><small>SMTP 投递</small>
+          </button>
+          <button id="model-provider-link" data-testid="nav-model-provider" data-permission="platform.model_provider.read" data-view="models" type="button" hidden>
+            <span>10</span><strong>MODELS</strong><small>平台托管模型</small>
+          </button>
+        </nav>
+
+        <div class="boundary-note">
+          <span>CONTENT BOUNDARY</span>
+          <strong>METADATA ONLY</strong>
+          <p>没有有效 Grant 时，Prompt、代码、Artifact 与 Secret 永不进入本控制台。</p>
+        </div>
+      </aside>
+
+      <main class="view-stage">
+        <section class="console-view active" data-testid="view-overview" data-view-panel="overview">
+          <header class="view-heading hero-heading">
+            <div>
+              <p class="kicker">01 / CONTROL PLANE PULSE</p>
+              <h1>平台态势，<br><em>不是客户内容。</em></h1>
+            </div>
+            <div class="clock-card"><span>UTC / LIVE</span><strong id="utc-clock">--:--:--</strong></div>
+          </header>
+
+          <div class="metric-grid" data-testid="overview-metrics">
+            <article><span>TENANTS</span><strong id="metric-tenants">—</strong><small id="metric-tenants-note">授权后加载</small></article>
+            <article><span>GLOBAL USERS</span><strong id="metric-users">—</strong><small id="metric-users-note">内容盲投影</small></article>
+            <article><span>OPEN SUPPORT</span><strong id="metric-support">—</strong><small id="metric-support-note">受控授权</small></article>
+            <article class="signal-metric"><span>PENDING OPS</span><strong id="metric-operations">—</strong><small id="metric-operations-note">等待处理</small></article>
+          </div>
+
+          <div class="overview-grid">
+            <article class="briefing-panel">
+              <div class="panel-heading"><span>AUTHORIZATION POSTURE</span><small id="permission-count">0 PERMISSIONS</small></div>
+              <div class="posture-bars" id="posture-bars"></div>
+            </article>
+            <article class="briefing-panel incident-panel">
+              <div class="panel-heading"><span>ATTENTION QUEUE</span><button data-view-link="support" type="button">OPEN QUEUE ↗</button></div>
+              <ol class="attention-list" data-testid="attention-list" id="attention-list"></ol>
+            </article>
+          </div>
+
+          <div class="access-denied" data-testid="no-platform-access" id="no-platform-access" hidden>
+            <strong>NO PLATFORM ROLE ASSIGNED</strong>
+            <p>会话已通过 Staff Realm 认证，但当前没有任何平台权限。联系 Platform Security 管理员分配受控角色。</p>
+          </div>
+        </section>
+
+        <section class="console-view" data-testid="view-users" data-view-panel="users" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">02 / GLOBAL DIRECTORY</p><h1>用户治理</h1><p>只显示脱敏身份与安全状态；生命周期动作在提交前重新读取权威版本。</p></div>
+            <span class="view-total" id="users-total">00</span>
+          </header>
+          <form class="filter-strip" id="users-filter-form">
+            <input data-testid="users-search" id="users-search" type="search" placeholder="姓名 / 脱敏邮箱 / User ID">
+            <select data-testid="users-status" id="users-status"><option value="">ALL STATUS</option><option value="active">ACTIVE</option><option value="suspended">SUSPENDED</option><option value="deleted">DELETED</option></select>
+            <button type="submit">FILTER ↗</button>
+          </form>
+          <div class="record-list" data-testid="users-list" id="users-list"></div>
+          <button class="load-more" data-testid="users-more" id="users-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+        </section>
+
+        <section class="console-view" data-testid="view-tenants" data-view-panel="tenants" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">03 / TENANT DIRECTORY</p><h1>租户治理</h1><p>跨租户只读安全投影；暂停、恢复与 Owner Recovery 均走新鲜认证、外部批准与 CAS。</p></div>
+            <span class="view-total" id="tenants-total">00</span>
+          </header>
+          <form class="filter-strip" id="tenants-filter-form">
+            <input data-testid="tenants-search" id="tenants-search" type="search" placeholder="名称 / Slug / Tenant ID">
+            <select data-testid="tenants-status" id="tenants-status"><option value="">ALL STATUS</option><option value="trial">TRIAL</option><option value="active">ACTIVE</option><option value="suspended">SUSPENDED</option></select>
+            <button type="submit">FILTER ↗</button>
+          </form>
+          <div class="record-list tenant-records" data-testid="tenants-list" id="tenants-list"></div>
+          <button class="load-more" data-testid="tenants-more" id="tenants-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+        </section>
+
+        <section class="console-view" data-testid="view-access" data-view-panel="access" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">04 / IDENTITY SECURITY</p><h1>访问治理</h1><p>身份冲突只显示内容盲 Case。平台可指派候选或阻断，但不能直接创建 Identity Connection。</p></div>
+            <span class="view-total" id="conflicts-total">00</span>
+          </header>
+          <div class="split-layout">
+            <article class="work-panel">
+              <div class="panel-heading"><span>IDENTITY CONFLICT CASES</span><button id="conflicts-refresh" type="button">REFRESH ↻</button></div>
+              <div class="record-list" data-testid="conflicts-list" id="conflicts-list"></div>
+            </article>
+            <article class="work-panel catalog-panel">
+              <div class="panel-heading"><span>MY PLATFORM CAPABILITIES</span><small id="risk-summary">—</small></div>
+              <div class="permission-matrix" data-testid="permission-matrix" id="permission-matrix"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="console-view" data-testid="view-support" data-view-panel="support" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">05 / GOVERNED SUPPORT</p><h1>受控支持</h1><p>标准支持先经 Tenant 批准；Break-glass 必须绑定 Incident。每个 Session 都是一次披露、最小范围、短期有效。</p></div>
+            <span class="view-total" id="support-total">00</span>
+          </header>
+          <div class="split-layout support-layout">
+            <form class="work-panel support-request" data-testid="support-request-form" id="support-request-form">
+              <div class="panel-heading"><span>REQUEST JIT ACCESS</span><small>MAX 60 / 15 MIN</small></div>
+              <label><span>TENANT ID</span><input data-testid="support-tenant-id" id="support-tenant-id" required></label>
+              <label><span>MODE</span><select data-testid="support-mode" id="support-mode"><option value="standard">STANDARD / TENANT APPROVAL</option><option value="break_glass">BREAK-GLASS / INCIDENT</option></select></label>
+              <label><span>SCOPES</span><input data-testid="support-scopes" id="support-scopes" value="runtime.diagnostics.read" required></label>
+              <label><span>PROJECT IDS (OPTIONAL)</span><input data-testid="support-project-ids" id="support-project-ids" placeholder="UUID, UUID"></label>
+              <label><span>EXPIRES AT</span><input data-testid="support-expires-at" id="support-expires-at" type="datetime-local" required></label>
+              <label><span>INCIDENT REF</span><input data-testid="support-incident-ref" id="support-incident-ref" placeholder="Required for break-glass"></label>
+              <label><span>REASON</span><textarea data-testid="support-reason" id="support-reason" maxlength="1024" required></textarea></label>
+              <button class="primary-action" data-testid="support-request-submit" type="submit">SUBMIT GOVERNED REQUEST ↗</button>
+            </form>
+            <article class="work-panel">
+              <div class="panel-heading"><span>GRANT LEDGER</span><button id="support-refresh" type="button">REFRESH ↻</button></div>
+              <div class="record-list" data-testid="support-list" id="support-list"></div>
+              <button class="load-more" data-testid="support-more" id="support-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+            </article>
+          </div>
+        </section>
+
+        <section class="console-view" data-testid="view-privacy" data-view-panel="privacy" hidden>
+          <header class="view-heading privacy-heading">
+            <div><p class="kicker">06 / DATA LIFECYCLE COMMAND</p><h1>隐私证据台</h1><p>把审批、删除队列、重试 / DLQ、备份清除与 DSSE 验证串成一条可审计作业链。浏览器保持内容盲，只接收状态、版本和不可逆摘要。</p></div>
+            <div class="privacy-mode"><span>PRODUCTION CONTROL</span><strong>GOVERNED LIVE</strong><small>精确目标 · 双人审批 · Executor 隔离</small></div>
+          </header>
+
+          <form class="privacy-target-form" data-testid="privacy-target-form" id="privacy-target-form">
+            <label><span>TARGET TYPE</span><select data-testid="privacy-target-type" id="privacy-target-type"><option value="global_user">GLOBAL USER</option><option value="tenant">TENANT</option></select></label>
+            <label><span>EXACT TARGET ID</span><input data-testid="privacy-target-id" id="privacy-target-id" required placeholder="00000000-0000-0000-0000-000000000000"></label>
+            <button data-testid="privacy-inspect" id="privacy-inspect" type="submit">BIND TARGET ↗</button>
+          </form>
+          <p class="privacy-message" data-testid="privacy-message" id="privacy-message" aria-live="polite"></p>
+
+          <div class="privacy-empty-state" data-testid="privacy-empty" id="privacy-empty">
+            <span>NO TARGET BOUND</span><strong>先锁定对象，再打开证据舱。</strong>
+            <p>不提供跨租户全表搜索。每次查询和决策均重新校验 Staff Assignment、精确目标 RLS、CSRF 与新鲜认证状态。</p>
+          </div>
+
+          <div data-testid="privacy-workbench" id="privacy-workbench" hidden>
+            <code class="privacy-result-target" data-testid="privacy-result-target" id="privacy-result-target">TARGET / —</code>
+            <div class="privacy-fact-grid">
+              <article><span>TARGET STATE</span><strong id="privacy-target-state">—</strong><small id="privacy-target-version">VERSION —</small></article>
+              <article><span>ACTIVE BLOCKERS</span><strong id="privacy-blocker-count">—</strong><small id="privacy-target-blockers">尚未读取</small></article>
+              <article><span>LEGAL HOLDS</span><strong id="privacy-hold-count">—</strong><small>逾期只升级，不自动释放</small></article>
+              <article class="privacy-signal"><span>EXECUTION / DSSE</span><strong id="privacy-surface-progress">—</strong><small id="privacy-execution-note">选择 Manifest 查看执行证据</small></article>
+            </div>
+
+            <section class="privacy-command-deck" aria-labelledby="privacy-command-title">
+              <div>
+                <span class="privacy-eyebrow">TWO-PERSON DESTRUCTIVE GATE</span>
+                <h2 id="privacy-command-title">审批不是按钮，是删除执行的前置证据。</h2>
+                <p>发起人只能提交精确快照；另一名具备批准权限且认证新鲜的 Staff 才能批准或拒绝。审批完成前不会创建、重放或终结删除作业。</p>
+              </div>
+              <div class="privacy-command-actions">
+                <button data-testid="privacy-request-deletion" id="privacy-request-deletion" type="button">REQUEST DELETION</button>
+                <button data-testid="privacy-request-finalization" id="privacy-request-finalization" type="button" disabled>REQUEST FINALIZATION</button>
+              </div>
+            </section>
+
+            <article class="privacy-approval-panel">
+              <div class="panel-heading"><span>01 / APPROVAL RAIL</span><small id="privacy-operation-count">0 OPERATIONS</small></div>
+              <div class="privacy-operation-list" data-testid="privacy-operation-list" id="privacy-operation-list" aria-live="polite"></div>
+              <button class="load-more" data-testid="privacy-operations-more" id="privacy-operations-more" type="button" hidden>LOAD OLDER OPERATIONS ↓</button>
+            </article>
+
+            <div class="privacy-layout">
+              <article class="work-panel privacy-impact-panel">
+                <div class="panel-heading"><span>AUTHORITATIVE PREVIEW</span><small id="privacy-preview-hash">HASH / —</small></div>
+                <div class="privacy-impact-list" data-testid="privacy-impact-counts" id="privacy-impact-counts"></div>
+              </article>
+              <article class="work-panel privacy-hold-panel">
+                <div class="panel-heading"><span>LEGAL HOLD INTERLOCK</span><small id="privacy-hold-page-state">0 LOADED</small></div>
+                <div class="record-list" data-testid="privacy-holds-list" id="privacy-holds-list"></div>
+                <button class="load-more" data-testid="privacy-holds-more" id="privacy-holds-more" type="button" hidden>LOAD OLDER HOLDS ↓</button>
+              </article>
+            </div>
+
+            <article class="privacy-manifest-ledger">
+              <div class="panel-heading"><span>02 / MANIFEST LEDGER</span><small id="privacy-manifest-count">0 LOADED</small></div>
+              <div class="privacy-manifest-list" data-testid="privacy-manifests-list" id="privacy-manifests-list"></div>
+              <button class="load-more" data-testid="privacy-manifests-more" id="privacy-manifests-more" type="button" hidden>LOAD OLDER MANIFESTS ↓</button>
+            </article>
+
+            <article class="privacy-evidence-panel" data-testid="privacy-manifest-detail" id="privacy-manifest-detail" hidden>
+              <div class="privacy-evidence-heading">
+                <div><span>03 / SELECTED MANIFEST</span><h2 id="privacy-manifest-title">—</h2><code id="privacy-manifest-hash">MANIFEST HASH / PENDING</code></div>
+                <div class="privacy-evidence-legend" aria-label="Evidence status legend"><span data-tone="success">VERIFIED</span><span data-tone="retained">RETENTION</span><span data-tone="pending">PENDING</span><span data-tone="failure">DLQ / BLOCKED</span></div>
+              </div>
+
+              <ol class="privacy-stage-rail" aria-label="Deletion evidence stages">
+                <li id="privacy-stage-approval"><span>01</span><strong>APPROVAL</strong><small>EXACT SNAPSHOT</small></li>
+                <li id="privacy-stage-erasure"><span>02</span><strong>ERASURE</strong><small>15 SURFACES</small></li>
+                <li id="privacy-stage-dsse"><span>03</span><strong>DSSE</strong><small>CRYPTO VERIFIED</small></li>
+                <li id="privacy-stage-retention"><span>04</span><strong>RETENTION</strong><small>BACKUP PURGE</small></li>
+              </ol>
+
+              <div class="privacy-execution-grid">
+                <article><span>WORK QUEUE</span><strong id="privacy-work-summary">—</strong><small>LEASED / RETRY / DLQ</small></article>
+                <article><span>ATTEMPTS</span><strong id="privacy-attempt-summary">—</strong><small>APPEND-ONLY RECEIPTS</small></article>
+                <article><span>DSSE VERIFIED</span><strong id="privacy-attestation-summary">—</strong><small>PAYLOAD + ENVELOPE</small></article>
+                <article><span>BACKUP PURGE</span><strong id="privacy-backup-summary">—</strong><small>LOCK / HOLD / DUE</small></article>
+              </div>
+
+              <div class="privacy-operations-grid" id="privacy-resource-deck" aria-busy="false">
+                <section class="privacy-resource-panel" aria-labelledby="privacy-work-title">
+                  <div class="privacy-resource-heading"><div><span>04 / EXECUTOR QUEUE</span><h3 id="privacy-work-title">Surface work items</h3></div><small id="privacy-work-count">0 ITEMS</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-work-items" id="privacy-work-items"></div>
+                  <button class="load-more" data-kind="workItems" data-testid="privacy-work-more" id="privacy-work-more" type="button" hidden>LOAD MORE WORK ITEMS ↓</button>
+                </section>
+
+                <section class="privacy-resource-panel" aria-labelledby="privacy-attempt-title">
+                  <div class="privacy-resource-heading"><div><span>05 / RETRY &amp; DLQ</span><h3 id="privacy-attempt-title">Attempt ledger</h3></div><small id="privacy-attempt-count">0 ATTEMPTS</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-attempts" id="privacy-attempts"></div>
+                  <button class="load-more" data-kind="attempts" data-testid="privacy-attempt-more" id="privacy-attempt-more" type="button" hidden>LOAD MORE ATTEMPTS ↓</button>
+                </section>
+
+                <section class="privacy-resource-panel privacy-backup-panel" aria-labelledby="privacy-backup-title">
+                  <div class="privacy-resource-heading"><div><span>06 / RETENTION TAIL</span><h3 id="privacy-backup-title">Backup purge</h3></div><small id="privacy-backup-count">0 OBJECTS</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-backups" id="privacy-backups"></div>
+                  <button class="load-more" data-kind="backups" data-testid="privacy-backup-more" id="privacy-backup-more" type="button" hidden>LOAD MORE BACKUPS ↓</button>
+                </section>
+
+                <section class="privacy-resource-panel privacy-dsse-panel" aria-labelledby="privacy-dsse-title">
+                  <div class="privacy-resource-heading"><div><span>07 / SIGNED EVIDENCE</span><h3 id="privacy-dsse-title">DSSE attestations</h3></div><small id="privacy-attestation-count">0 ENVELOPES</small></div>
+                  <div class="privacy-resource-list" data-testid="privacy-attestations" id="privacy-attestations"></div>
+                  <button class="load-more" data-kind="attestations" data-testid="privacy-attestation-more" id="privacy-attestation-more" type="button" hidden>LOAD MORE ATTESTATIONS ↓</button>
+                </section>
+              </div>
+
+              <details class="privacy-surface-disclosure" open>
+                <summary>08 / SIGNED SURFACE PROJECTION <span>15 ADAPTER CONTRACTS</span></summary>
+                <div class="privacy-surface-grid" data-testid="privacy-surface-grid" id="privacy-surface-grid"></div>
+              </details>
+            </article>
+
+            <aside class="privacy-boundary" data-testid="privacy-production-boundary">
+              <strong>CONTROL-PLANE MANIFEST ≠ PRODUCTION DELETION PROOF</strong>
+              <p>只有执行 Attempt、通过密码学验证的 DSSE、不可变存储 / KMS Receipt，以及备份到期后的 Purge Evidence 共同闭环，才构成生产证据。Pending Retention、Retry 与 DLQ 永远不会被渲染成“彻底删除”。</p>
+            </aside>
+          </div>
+        </section>
+
+        <section class="console-view" data-testid="view-audit" data-view-panel="audit" hidden>
+          <header class="view-heading">
+            <div><p class="kicker">07 / IMMUTABLE EVIDENCE</p><h1>审计链</h1><p>事件按全局序号连续验证。Tenant 导出仅含该 Tenant 明细，其他租户只保留最小链证明。</p></div>
+            <span class="view-total" id="audit-total">00</span>
+          </header>
+          <form class="audit-filter" id="audit-filter-form">
+            <label><span>TENANT ID / OPTIONAL</span><input data-testid="audit-tenant-id" id="audit-tenant-id"></label>
+            <label><span>AFTER SEQUENCE</span><input data-testid="audit-after" id="audit-after" type="number" min="0" value="0"></label>
+            <button type="submit">QUERY CHAIN ↗</button>
+            <button data-testid="audit-export-open" id="audit-export-open" type="button">REQUEST SIGNED EXPORT</button>
+          </form>
+          <div class="audit-ledger" data-testid="audit-list" id="audit-list"></div>
+          <button class="load-more" data-testid="audit-more" id="audit-more" type="button" hidden>CONTINUE CHAIN ↓</button>
+        </section>
+
+        <section class="console-view email-configuration-view" data-testid="view-email" data-view-panel="email" hidden>
+          <header class="view-heading email-heading">
+            <div><p class="kicker">09 / DELIVERY INFRASTRUCTURE</p><h1>邮件投递</h1><p>配置注册验证邮件使用的 SMTP Transport。密码只写入一次并由 KMS / Vault 加密，后台永不回显；Worker 每次投递读取当前启用版本。</p></div>
+            <div class="email-state-card"><span>ACTIVE TRANSPORT</span><strong id="email-transport-state">NOT CONFIGURED</strong><small id="email-version">VERSION 0</small></div>
+          </header>
+
+          <div class="email-boundary-strip" data-testid="email-security-boundary">
+            <div><span>TLS POLICY</span><strong>STARTTLS / IMPLICIT TLS ONLY</strong></div>
+            <div><span>SECRET POSTURE</span><strong>WRITE-ONLY · NON-EXPORTING</strong></div>
+            <div><span>DELIVERY SEMANTICS</span><strong>OUTBOX · STABLE MESSAGE-ID</strong></div>
+          </div>
+
+          <div class="email-configuration-layout">
+            <form class="work-panel email-configuration-form" data-testid="email-configuration-form" id="email-configuration-form">
+              <div class="panel-heading"><span>SMTP CONNECTION</span><small id="email-password-state">PASSWORD NOT SET</small></div>
+              <label class="email-enable-row"><input data-testid="email-enabled" id="email-enabled" type="checkbox"><span><strong>ENABLE SMTP</strong><small>启用后，新的注册验证邮件由该配置投递。</small></span></label>
+              <div class="email-form-grid">
+                <label class="email-wide"><span>SMTP HOST</span><input autocomplete="off" data-testid="email-host" id="email-host" maxlength="253" placeholder="smtp.example.com" required></label>
+                <label><span>PORT</span><input data-testid="email-port" id="email-port" max="65535" min="1" type="number" value="587" required></label>
+                <label><span>SECURITY</span><select data-testid="email-security" id="email-security"><option value="starttls">STARTTLS</option><option value="tls">IMPLICIT TLS</option></select></label>
+                <label class="email-wide"><span>USERNAME</span><input autocomplete="off" data-testid="email-username" id="email-username" maxlength="320" required></label>
+                <label class="email-wide"><span>PASSWORD / LEAVE EMPTY TO PRESERVE</span><input autocomplete="new-password" data-testid="email-password" id="email-password" maxlength="4096" type="password"></label>
+                <label><span>FROM ADDRESS</span><input autocomplete="off" data-testid="email-from" id="email-from" maxlength="320" placeholder="verify@example.com" required type="email"></label>
+                <label><span>REPLY-TO / OPTIONAL</span><input autocomplete="off" data-testid="email-reply-to" id="email-reply-to" maxlength="320" type="email"></label>
+                <label><span>TIMEOUT / SECONDS</span><input data-testid="email-timeout" id="email-timeout" max="30" min="0.1" step="0.1" type="number" value="10" required></label>
+              </div>
+              <button class="primary-action" data-testid="email-save" id="email-save" type="submit">SAVE ENCRYPTED CONFIGURATION ↗</button>
+            </form>
+
+            <form class="work-panel email-test-panel" data-testid="email-test-form" id="email-test-form">
+              <div class="panel-heading"><span>LIVE DELIVERY TEST</span><small>FRESH AUTH REQUIRED</small></div>
+              <div class="email-test-signal"><span id="email-test-index">01</span><div><strong>验证真实投递路径</strong><p>测试会连接当前 SMTP、完成 TLS 与认证并发送一封不含注册 Token 的诊断邮件。收件人仅以 SHA-256 写入 Receipt。</p></div></div>
+              <label><span>TEST RECIPIENT</span><input autocomplete="off" data-testid="email-test-recipient" id="email-test-recipient" maxlength="320" placeholder="you@example.com" required type="email"></label>
+              <button class="primary-action" data-testid="email-test-send" id="email-test-send" type="submit">SEND CONFIGURATION TEST ↗</button>
+              <aside class="email-warning"><strong>SMTP IDEMPOTENCY BOUNDARY</strong><p>SMTP 协议没有供应商级幂等键。系统使用稳定 Message-ID 降低重复投递概率，但网络结果不确定时仍按 Outbox 至少一次语义处理。</p></aside>
+            </form>
+          </div>
+        </section>
+
+        <section class="console-view model-provider-view" data-testid="view-model-provider" data-view-panel="models" hidden>
+          <header class="view-heading model-provider-heading">
+            <div><p class="kicker">10 / MANAGED INFERENCE RAIL</p><h1>平台托管模型</h1><p>统一配置 DeepSeek 的兼容接口、模型目录与预算策略。普通用户只选择 Agent / 模型；真实 Key 仅由 KMS / Vault 加密保存，并通过 Host 的 Credential Proxy 在出站时替换。</p></div>
+            <div class="model-provider-state-card"><span>CONFIGURATION STATE</span><strong id="model-provider-state">NOT CONFIGURED</strong><small id="model-provider-version">VERSION 0</small></div>
+          </header>
+
+          <div class="model-provider-boundary" data-testid="model-provider-security-boundary">
+            <div><span>MODE</span><strong>PLATFORM MANAGED</strong><small>BYOK remains tenant scoped</small></div>
+            <div><span>SECRET PATH</span><strong>WRITE-ONLY → KMS → PROXY</strong><small>Never rendered to Agent</small></div>
+            <div><span>EGRESS</span><strong>API.DEEPSEEK.COM:443</strong><small>Exact-host allowlist</small></div>
+            <div><span>ACCOUNTING</span><strong>METERING REQUIRED</strong><small>Tenant / Run / Model attribution</small></div>
+          </div>
+
+          <div class="model-provider-layout">
+            <form class="work-panel model-provider-form" data-testid="model-provider-form" id="model-provider-form">
+              <div class="panel-heading"><span>PROVIDER CONTRACT</span><small id="model-provider-key-state">KEY REQUIRED</small></div>
+              <label class="model-provider-enable"><input data-testid="model-provider-enabled" id="model-provider-enabled" type="checkbox"><span><strong>ENABLE PLATFORM MODEL</strong><small>只有完成真实流式验证的版本才允许进入运行时。</small></span></label>
+              <div class="model-provider-form-grid">
+                <label><span>PROVIDER</span><input value="DEEPSEEK" disabled></label>
+                <label><span>API TYPE</span><select data-testid="model-provider-api-type" id="model-provider-api-type"><option value="openai_chat_completions">OPENAI CHAT COMPLETIONS</option></select></label>
+                <label class="model-provider-wide"><span>BASE URL / PINNED</span><input data-testid="model-provider-base-url" id="model-provider-base-url" value="https://api.deepseek.com" readonly required></label>
+                <label class="model-provider-wide"><span>API KEY / LEAVE EMPTY TO PRESERVE</span><input autocomplete="new-password" data-testid="model-provider-api-key" id="model-provider-api-key" maxlength="4096" type="password"></label>
+                <label class="model-provider-wide"><span>ALLOWED MODEL CATALOG / ONE PER LINE</span><textarea data-testid="model-provider-models" id="model-provider-models" rows="4" required>deepseek-flash&#10;deepseek-v4-pro</textarea></label>
+                <label><span>DEFAULT MODEL</span><select data-testid="model-provider-default-model" id="model-provider-default-model" required><option value="deepseek-flash">deepseek-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option></select></label>
+                <label><span>MONTHLY SPEND POLICY / USD</span><input data-testid="model-provider-monthly-budget" id="model-provider-monthly-budget" min="0.01" max="1000000" step="0.01" type="number" value="100" required></label>
+                <label><span>TENANT DAILY TOKEN POLICY</span><input data-testid="model-provider-daily-tokens" id="model-provider-daily-tokens" min="1" max="1000000000000" step="1" type="number" value="1000000" required></label>
+              </div>
+              <button class="primary-action" data-testid="model-provider-save" id="model-provider-save" type="submit">SAVE ENCRYPTED PROVIDER ↗</button>
+            </form>
+
+            <form class="work-panel model-provider-test-panel" data-testid="model-provider-test-form" id="model-provider-test-form">
+              <div class="panel-heading"><span>LIVE STREAM VERIFICATION</span><small>NO MOCK ACCEPTED</small></div>
+              <div class="model-provider-test-signal"><span>DS</span><div><strong>验证真实 Provider 路径</strong><p>发起一次有界流式请求，只记录状态、模型、延迟和 Provider Request ID 摘要；回复内容与 Key 均不写入 Receipt。</p></div></div>
+              <label><span>MODEL TO VERIFY</span><select data-testid="model-provider-test-model" id="model-provider-test-model" required><option value="deepseek-flash">deepseek-flash</option><option value="deepseek-v4-pro">deepseek-v4-pro</option></select></label>
+              <button class="primary-action" data-testid="model-provider-test" id="model-provider-test" type="submit">RUN REAL STREAM TEST ↗</button>
+              <div class="model-provider-verification"><span>VERIFICATION RECEIPT</span><strong id="model-provider-verified-at">LIVE VERIFICATION PENDING</strong><p>配置变更或 Key 轮换后状态会回退为 CONFIGURED，必须重新验证才可进入 Host 激活流程。</p></div>
+            </form>
+          </div>
+
+          <aside class="model-provider-activation-note"><strong>ACTIVATION BOUNDARY</strong><p>后台保存和流式验证都不等于已投产。此处预算值是待绑定策略；只有执行准入预留、Provider 成本对账、Credential Proxy、用量 Metering、签名镜像与 GitOps digest 全部绑定后，用户端才显示“平台模型可用”。</p></aside>
+        </section>
+      </main>
+
+      <dialog aria-labelledby="operations-title" aria-modal="true" class="operations-drawer" data-testid="operations-drawer" id="operations-drawer" role="dialog">
+        <header><div><span>LIVE LEDGER</span><h2 id="operations-title">ADMIN OPERATIONS</h2></div><button id="operations-close" type="button" aria-label="关闭 Operations Drawer">×</button></header>
+        <p>长操作与高风险动作以服务端 Receipt 为准。关闭抽屉不会取消任务。</p>
+        <div class="record-list" data-testid="operations-list" id="operations-list"></div>
+        <button class="load-more" data-testid="operations-more" id="operations-more" type="button" hidden>LOAD NEXT CURSOR ↓</button>
+      </dialog>
+    </div>
+
+    <dialog class="action-dialog" data-testid="action-dialog" id="action-dialog">
+      <form method="dialog" id="action-dialog-form">
+        <div class="dialog-index">CONTROLLED ACTION / <span id="dialog-risk">HIGH</span></div>
+        <h2 id="dialog-title">确认操作</h2>
+        <p id="dialog-summary"></p>
+        <div class="dialog-fields" id="dialog-fields"></div>
+        <div class="dialog-actions"><button value="cancel" type="button" id="dialog-cancel">CANCEL</button><button class="danger-action" data-testid="dialog-confirm" id="dialog-confirm" type="submit">CONFIRM</button></div>
+      </form>
+    </dialog>
+
+    <dialog aria-labelledby="privacy-dialog-title" class="privacy-command-dialog" data-testid="privacy-command-dialog" id="privacy-command-dialog">
+      <form id="privacy-command-form">
+        <header>
+          <div><span id="privacy-dialog-index">PRIVACY OPERATION / CRITICAL</span><h2 id="privacy-dialog-title">Governed request</h2></div>
+          <button aria-label="Close privacy operation dialog" id="privacy-dialog-close" type="button">×</button>
+        </header>
+        <p id="privacy-dialog-summary">The server will bind this command to an exact, expiring snapshot.</p>
+        <div class="privacy-dialog-fingerprint"><span>CONTENT-BLIND BINDING</span><code id="privacy-dialog-fingerprint">—</code></div>
+        <div class="privacy-dialog-fields" id="privacy-request-fields">
+          <label><span>REASON CODE</span><select id="privacy-reason-code" required><option value="data_subject_request">DATA SUBJECT REQUEST</option><option value="contract_expiry">CONTRACT EXPIRY</option><option value="tenant_termination">TENANT TERMINATION</option><option value="legal_authority">LEGAL AUTHORITY</option><option value="security_response">SECURITY RESPONSE</option><option value="verified_operational_replay">VERIFIED OPERATIONAL REPLAY</option></select></label>
+          <label><span>CASE REFERENCE</span><input autocomplete="off" id="privacy-case-reference" maxlength="256" required></label>
+          <label><span>REQUEST EXPIRES AT</span><input id="privacy-expires-at" required type="datetime-local"></label>
+        </div>
+        <div class="privacy-dialog-fields" id="privacy-decision-fields" hidden>
+          <label><span>DECISION CODE</span><select id="privacy-decision-code" required><option value="policy_confirmed">POLICY CONFIRMED</option><option value="verified_replay">VERIFIED REPLAY</option><option value="scope_rejected">SCOPE REJECTED</option><option value="stale_request">STALE REQUEST</option></select></label>
+          <div class="privacy-separation-note"><strong>SEPARATION OF DUTIES</strong><span id="privacy-separation-copy">The requester cannot decide their own operation.</span></div>
+        </div>
+        <div class="privacy-dialog-actions"><button id="privacy-dialog-cancel" type="button">CANCEL</button><button data-testid="privacy-dialog-confirm" id="privacy-dialog-confirm" type="submit">SUBMIT GOVERNED REQUEST</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="token-dialog" data-testid="token-dialog" id="token-dialog">
+      <div class="dialog-index">ONE-TIME DISCLOSURE</div>
+      <h2>Support Session Token</h2>
+      <code data-testid="support-one-time-token" id="support-one-time-token"></code>
+      <p>关闭后无法再次读取。请只交付给绑定的 Staff 会话，不得写入日志或工单正文。</p>
+      <button id="token-dismiss" type="button">I HAVE STORED IT SECURELY ×</button>
+    </dialog>
+
+    <div class="toast-stack" aria-live="polite" data-testid="toast-stack" id="toast-stack"></div>
+  </body>
+</html>

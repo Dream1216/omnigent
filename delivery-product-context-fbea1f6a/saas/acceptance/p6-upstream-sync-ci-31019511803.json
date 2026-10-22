@@ -1,0 +1,78 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31019511803,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31019511803",
+  "job_id": 92352269543,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31019511803/job/92352269543",
+  "head_sha": "6121663028d8d5501b1a41f284146ec8ce3b4e40",
+  "conclusion": "success",
+  "upstream": {
+    "previous_revision": "d794ef4f9f641f5b1f07dd586fae9ecac505a733",
+    "verified_revision": "8c191ac06b55cde1ce2f299170595975bdd5cd52",
+    "commits_advanced": 2,
+    "files_changed": 5,
+    "merge_commit": "d64eb67d3f9eac07043417f8f2de5a060995fd1f",
+    "merge_conflicts": 0
+  },
+  "failed_attempt": {
+    "run_id": 31018890417,
+    "head_sha": "acaa17558b3298d6fcf4a05407bec5d1a9ad7e74",
+    "conclusion": "failure",
+    "failed_tests": 2,
+    "root_cause": "The upstream manifest advanced without atomically advancing the Runtime compatibility policy test and production baseline recovery deletion SLO revision contracts.",
+    "resolution": "Bind every current revision contract and the logical restore report to 8c191ac0 before rerunning the exact matrix."
+  },
+  "environment": {
+    "ci_postgresql": "16",
+    "python": "3.12",
+    "browser": "chromium",
+    "ci_os": "ubuntu-latest",
+    "hard_sandbox": "linux_bwrap"
+  },
+  "verification": {
+    "ci_compatibility_tests": "856 passed, 226 warnings, 130.26s",
+    "isolated_logical_restore_contract": "passed in 2.923 seconds",
+    "official_zygote_query_context_tests": "57 passed, 38.60s",
+    "official_linux_security_tests": "36 passed, 22 skipped, 17.83s",
+    "wheel_required_artifacts": 155,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000003",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "pending_acceptance_gates": 11,
+    "release_decision": "NO-GO"
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 449,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9942,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "upstream_changes_verified": [
+    "Claude SDK replay-redaction test helper correction",
+    "issue prioritization severity-to-score-to-priority design",
+    "repository area ownership and weight configuration",
+    "issue prioritization scoring prototype"
+  ],
+  "consecutive_sync_contract": {
+    "first_current_p6_sync_evidence": "saas/acceptance/p6-upstream-sync-ci-31011047850.json",
+    "second_later_p6_sync_evidence": "saas/acceptance/p6-upstream-sync-ci-31019511803.json",
+    "strictly_later_upstream_revision": true,
+    "both_exact_compatibility_runs_passed": true,
+    "both_source_intrusion_results_within_budget": true,
+    "two_consecutive_upstream_sync_condition_satisfied": true,
+    "commercial_gate_satisfied": false
+  },
+  "not_proven_by_this_record": [
+    "commercial pricing billing reconciliation or customer acceptance",
+    "production image signing promotion canary or rollback",
+    "production recovery SLO deletion enterprise identity or privacy acceptance",
+    "completion of the combined P6 commercial gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the second strictly later P6-era official sync from d794ef4f9f641f5b1f07dd586fae9ecac505a733 to 8c191ac06b55cde1ce2f299170595975bdd5cd52, including a fail-closed first attempt, atomic revision-contract correction, and the complete compatibility, PostgreSQL restore, official regression, Linux security, migration, patch, packaging, and source-intrusion matrix at 6121663028d8d5501b1a41f284146ec8ce3b4e40. A documentation-only evidence successor does not alter the verified implementation or close the remaining commercial requirements."
+}

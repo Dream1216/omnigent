@@ -1,0 +1,1134 @@
+// Bridge between the web app and the optional native shells.
+//
+// The SAME `web` bundle runs in two places:
+//   1. A normal browser tab (served by the Omnigent server).
+//   2. Inside the Electron desktop wrapper (`web/electron`), which loads
+//      that exact server-served bundle in a Chromium BrowserWindow.
+//   3. Inside the iOS wrapper (`web/ios`), which loads the same bundle in
+//      a WKWebView.
+//
+// In native cases we can do better than the Web platform: fire OS-native
+// notifications and paint an app badge count via a small injected bridge. In
+// case (1) none of that exists, so every function here degrades to a no-op /
+// `false` and the caller falls back to the Web Notifications path it already
+// has.
+//
+// Design notes:
+//   * Detection is feature-based (an injected `window.omnigentNative` or the
+//     legacy Electron `window.omnigentDesktop` object), never a build flag —
+//     one bundle, multiple runtimes, decided at runtime.
+//   * This module never throws: a broken/old shell must not take down
+//     notifications in the browser path.
+
+/**
+ * Phase of a native sidebar-drag gesture (see `onSidebarDrag`). `begin` and
+ * `move` are live drag frames carrying an open fraction; `open` and `close`
+ * are the settle decision the shell made on release.
+ */
+export type SidebarDragPhase = "begin" | "move" | "open" | "close";
+
+export interface BrowserRecentSessionInput {
+  type: "keydown" | "keyup";
+  key: "Tab" | "Control" | "Escape";
+  code: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  repeat: boolean;
+}
+
+/**
+ * Extra hints for the badge on shells that render it as a tappable OS
+ * notification. Android has no numeric icon badge, so the count is surfaced as
+ * a notification — without these it's a dead, generic "N pending" toast. They
+ * let that notification open a target and carry descriptive text. Ignored by
+ * shells with a real icon badge (Electron dock, iOS app icon).
+ */
+export interface BadgeActivation {
+  /** In-app path to open when the badge notification is tapped, e.g. "/inbox". */
+  navigatePath?: string;
+  /** Notification title; falls back to the app name when absent. */
+  title?: string;
+  /** Notification body; falls back to a generic "N pending" when absent. */
+  body?: string;
+}
+
+/**
+ * Minimal API surface exposed by native shells. Electron exposes the legacy
+ * `window.omnigentDesktop`; newer shells expose `window.omnigentNative`.
+ * Kept intentionally tiny and string/number only so it survives bridge
+ * serialization.
+ */
+interface NativeShellApi {
+  /** Discriminator so feature detection is unambiguous. */
+  kind: "electron" | "ios" | "android";
+  /**
+   * Paint the dock/taskbar badge; 0 clears it. `activation` is consumed only by
+   * the Android shell, which renders the badge as a tray notification and needs
+   * a tap target + descriptive text; Electron/iOS paint a real icon badge and
+   * ignore it.
+   */
+  setBadgeCount: (count: number, activation?: BadgeActivation) => void;
+  /** Tell the shell which theme source the user selected. */
+  setColorScheme?: (scheme: "light" | "dark" | "system") => void;
+  /** Fire an OS notification; resolves true when it was shown. */
+  notify: (params: NativeNotifyParams) => Promise<boolean>;
+  // Optional: a shell older than this SPA may lack notification-click routing,
+  // in which case clicking a native toast only focuses the app (the prior
+  // behavior) instead of also navigating.
+  /**
+   * Subscribe to OS-notification clicks. The main process sends the in-app
+   * path the notification carried (its `navigatePath`); returns an unsubscribe.
+   */
+  onNotificationActivated?: (callback: (path: string) => void) => () => void;
+  /**
+   * Subscribe to in-app navigation from the desktop shell. Native menu actions
+   * and same-server deep links send a basename-less path so the SPA can route
+   * in place without reloading. Absent on older shells / outside Electron;
+   * returns an unsubscribe.
+   */
+  onOpenPath?: (callback: (path: string) => void) => () => void;
+  /**
+   * Subscribe to native sidebar-drag events. The iOS shell streams a left-edge
+   * swipe here (the gesture it repurposed from back-navigation) so the renderer
+   * can drive its sidebar as an interactive drawer: `begin`/`move` carry a 0→1
+   * open fraction the sidebar should track live (no transition), and
+   * `open`/`close` are the settle decision on release (animate to that resting
+   * state). Returns an unsubscribe.
+   */
+  onSidebarDrag?: (callback: (phase: SidebarDragPhase, progress: number) => void) => () => void;
+  /**
+   * Let native chrome react to web UI state. The iOS shell uses this to show
+   * its floating server switcher only when the chat transcript is visible.
+   */
+  setServerSwitcherHidden?: (hidden: boolean) => void;
+  /**
+   * Legacy iOS bridge name from the sidebar-only implementation. Kept as a
+   * fallback so a newer SPA can still ask an older shell to hide the switcher.
+   */
+  setSidebarOpen?: (open: boolean) => void;
+  /** Control root-document scrolling; nested web scrollers remain independent. */
+  setDocumentScrollEnabled?: (enabled: boolean) => void;
+  /**
+   * Current server origin + managed/recent choices, or null on a foreign page.
+   * Optional: shells older than the sidebar server picker lack it — the SPA
+   * then falls back to that shell's own selection chrome (the floating pill on
+   * older iOS shells).
+   */
+  getServerPicker?: () => Promise<ServerPickerInfo | null>;
+  /** Re-point this window/shell to a server URL returned by the picker. */
+  switchServer?: (url: string) => Promise<void>;
+  /** Sign the window's server out. Absent on shells that predate it. */
+  signOutOfServer?: () => Promise<boolean>;
+  /** Return to the shell's "connect to server" setup page. */
+  openServerSetup?: () => void;
+  /**
+   * Drive the native Chat/Terminal bar's visibility (iOS). The web app owns
+   * the truth and only ever pushes it hidden now that the switcher lives in
+   * the header. Absent on older shells.
+   */
+  setViewMode?: (params: NativeViewModeParams) => void;
+  /**
+   * Subscribe to taps on the native switcher; returns an unsubscribe. Still
+   * exposed by the shell, but unused now that the pill is kept hidden.
+   */
+  onViewModeChanged?: (callback: (mode: NativeViewMode) => void) => () => void;
+  /**
+   * Subscribe to the footprint (CSS px, excluding the OS safe area) of the
+   * native floating bars. The shell pushes this whenever it changes — and
+   * immediately on subscribe, since it caches the last value — so the web
+   * layer can fold the real bar dimensions into its inset variables instead of
+   * hardcoding them. Absent on older shells. Returns an unsubscribe.
+   */
+  onNativeInsets?: (callback: (insets: NativeInsets) => void) => () => void;
+  /** Area above the docked iOS keyboard; floating keyboard controls do not shrink it. */
+  getKeyboardViewport?: () => { width: number; height: number } | null;
+  onKeyboardViewportChanged?: (callback: () => void) => () => void;
+}
+
+export type ThemeSource = "light" | "dark" | "system";
+
+/** Footprints (CSS px) of the native floating bars, reported by the shell. */
+export interface NativeInsets {
+  /** Server switcher pill height + its top padding. */
+  topBar: number;
+  /** Chat/Terminal bar capsule height + its bottom padding. */
+  bottomBar: number;
+}
+
+export type NativeViewMode = "chat" | "terminal";
+
+export interface NativeViewModeParams {
+  /** Currently selected view. */
+  mode: NativeViewMode;
+  /** Whether the Terminal option is selectable (a reachable PTY exists). */
+  terminalEnabled: boolean;
+  /** Terminal is booting but not yet openable — drives a spinner. */
+  terminalStartingUp?: boolean;
+  /** Whether the switcher should be shown at all right now. */
+  visible: boolean;
+}
+
+/**
+ * Electron-specific bridge. The server-picker trio is optional: the SPA is
+ * server-served and may be newer than the installed shell, whose preload then
+ * lacks these methods.
+ */
+interface ElectronDesktopApi extends NativeShellApi {
+  kind: "electron";
+  /** The runner picked during onboarding for this server, returned once. */
+  takeOnboardingRunner?: () => Promise<"local" | "remote" | null>;
+  /**
+   * Desktop auto-update bridge — CONFIG ONLY on current shells. Update
+   * notifications are shell-owned (native corner overlay + Server menu); this
+   * bridge is used for update preferences (mode, auto-install) + check. The
+   * shell delivers it "banner-safe": status values that would trigger the
+   * in-page UpdateBanner (available/downloaded/error-security) are collapsed to
+   * idle, so the web never shows a (duplicate) banner. Absent on older shells.
+   */
+  updates?: ElectronUpdateBridge;
+  /** Reveal one of this machine's files in the OS file manager. */
+  revealFile?: (hostId: string, path: string) => Promise<boolean>;
+  /** This machine's identity (CLI installed + host id) — fast, no subprocess. */
+  getHostIdentity?: () => Promise<HostIdentity | null>;
+  /** Start / stop / restart this machine's host daemon for the window's server. */
+  controlHost?: (action: HostControlAction) => Promise<HostActionResult>;
+  /** Subscribe to host status-change pings (re-read on fire); returns an unsubscribe. */
+  onHostStatusChanged?: (callback: () => void) => () => void;
+  /** Desktop feature gates (MDM-managed); absent on older shells. */
+  getDesktopFeatures?: () => Promise<DesktopFeatures | null>;
+  /** Connect the user's Arca instance to the window's server as a host. */
+  connectArcaHost?: () => Promise<ArcaConnectResult>;
+  /** Extend this machine's running Arca instance with an approved mode. */
+  extendArca?: (mode: ArcaExtendMode) => Promise<ArcaExtendResult>;
+  /** Renew this machine's dbcert; Arca Companion copies it to the user's Arca and Arclets. */
+  refreshDbcert?: () => Promise<DbcertRefreshResult>;
+
+  /** The local `omni` CLI status (installed, resolved path, version, source). */
+  getCliStatus?: () => Promise<CliStatus | null>;
+  /** Clear the CLI-path override (revert to auto-detection); resolves status. */
+  resetCliPath?: () => Promise<CliStatus | null>;
+  /**
+   * Open/navigate a conversation's embedded browser view. Present only on
+   * desktop shells new enough to ship the embedded browser feature — its
+   * presence is the capability marker the whole `browser*` suite ships with.
+   */
+  browserOpenOrNavigate?: (
+    conversationId: string,
+    url: string,
+    bounds?: unknown,
+    opts?: {
+      force?: boolean;
+      agent?: boolean;
+      sourceHostId?: string;
+      rememberedArcaHostId?: string;
+      sourceIsArcaHost?: boolean;
+    },
+  ) => Promise<{ ok: boolean; created?: boolean; error?: string }>;
+  /**
+   * Hide/show the active embedded browser view while a DOM overlay is open.
+   * The native view paints above the renderer, so this is how overlays
+   * (dialogs, menus, tooltips, toasts) avoid being covered. Absent on shells
+   * predating the feature — callers must optional-chain.
+   */
+  browserSetSuppressed?: (suppressed: boolean) => Promise<{ ok: boolean; error?: string }>;
+  /** Forward the recent-session gesture from a focused embedded Browser page. */
+  onBrowserRecentSessionInput?: (
+    callback: (input: BrowserRecentSessionInput) => void,
+  ) => () => void;
+  /** Enable native input interception only while this renderer supports it. */
+  browserSetRecentSessionSwitchSupported?: (
+    supported: boolean,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  /** Clear native key interception when the recent-session gesture was declined. */
+  browserCancelRecentSessionSwitch?: () => Promise<{ ok: boolean; error?: string }>;
+}
+
+/** A lifecycle action for the host daemon. */
+export type HostControlAction = "start" | "stop" | "restart";
+
+export type ArcaExtendMode = "overnight" | "workweek";
+export type ArcaExtendResult =
+  { ok: true; shutdownAt: number | null } | { ok: false; error: string };
+export type DbcertRefreshResult = { ok: true } | { ok: false; error: string };
+
+/** Result of connecting the Arca instance as a host, from the desktop shell. */
+export interface ArcaConnectResult extends HostActionResult {
+  /** Actual daemon identity captured on Arca for this selected server target. */
+  identity?: { serverUrl: string; hostId: string };
+  /**
+   * The box's host daemon was already connected to this server (the command
+   * reused it) — so no new host will appear in the host list.
+   */
+  alreadyRunning?: boolean;
+  /**
+   * The user deliberately declined or dismissed the connect console (before
+   * or during the run) — not a failure; UIs should stay silent.
+   */
+  canceled?: boolean;
+  /**
+   * The outcome (success or failure) was already displayed in the connect
+   * console's terminal — UIs must not echo it a second time.
+   */
+  shownInConsole?: boolean;
+}
+
+/**
+ * Desktop-shell feature gates the server can't know about, sourced from MDM
+ * managed preferences. All fields optional: an older shell reports fewer.
+ */
+export interface DesktopFeatures {
+  /**
+   * Databricks-internal features (e.g. the Arca host option) are enabled.
+   * Already scoped by the shell: true only when the MDM flag is set AND the
+   * window's server is Databricks-managed.
+   */
+  databricksInternalFeatures?: boolean;
+  /** This window may offer one-click Arca extension. */
+  canExtendArca?: boolean;
+  /** This window may renew the laptop's dbcert. */
+  canRefreshDbcert?: boolean;
+  /** Shell can restore Arca preview identity after a desktop restart. */
+  arcaPreviewRecovery?: boolean;
+}
+
+/** Status of the local `omni` CLI, from the desktop shell. */
+export interface CliStatus {
+  /** Whether the CLI was found and is runnable. */
+  installed: boolean;
+  /** The resolved binary path (configured override or auto-detected), or null. */
+  path: string | null;
+  /** The CLI's reported version, or null. */
+  version: string | null;
+  /** How the path was resolved: an explicit override, PATH, or a known location. */
+  source: "configured" | "path" | "candidate" | null;
+  /** The install one-liner to show when the CLI is missing. */
+  installCommand: string;
+  /** Whether a just-submitted path was accepted (present on pick/set results). */
+  accepted?: boolean;
+  /** MDM policy disables set/browse/reset of custom CLI paths. */
+  customizationDisabled?: boolean;
+}
+
+/** This machine's identity, read from local config (fast — no subprocess). */
+export interface HostIdentity {
+  /** Whether the `omnigent` CLI was found and is runnable. */
+  cliInstalled: boolean;
+  /** This machine's host id, or null if it has none yet. */
+  hostId: string | null;
+}
+
+/** Result of a host control action from the desktop shell. */
+export interface HostActionResult {
+  ok: boolean;
+  error?: string;
+  /**
+   * True when the failure was an authentication/sign-in problem — e.g. the
+   * server needs a Databricks/OIDC login the desktop couldn't complete
+   * headlessly — so the UI can offer a sign-in/retry affordance rather than a
+   * generic error. Set by the desktop's `omnigent:host-control` handler.
+   */
+  authError?: boolean;
+}
+
+export type UpdateMode = "none" | "manual" | "start" | "default";
+
+export interface UpdateConfig {
+  mode: UpdateMode;
+  autoInstall: boolean;
+  skippedVersion: string | null;
+}
+
+export type UpdateStatus = {
+  /** Installed Electron app version; absent on older desktop shells. */
+  currentVersion?: string;
+} & (
+  | {
+      state: "idle" | "checking" | "none";
+      info?: undefined;
+      progress?: undefined;
+      lastError?: string;
+    }
+  | {
+      state: "available" | "downloaded";
+      info?: { version: string; releaseNotes?: string };
+      progress?: undefined;
+      lastError?: string;
+    }
+  | {
+      state: "downloading";
+      info?: { version: string; releaseNotes?: string };
+      progress?: { percent: number };
+      lastError?: string;
+    }
+  | {
+      state: "error-security";
+      info?: { version: string; releaseNotes?: string };
+      progress?: undefined;
+      lastError?: string;
+    }
+);
+
+export interface ElectronUpdateBridge {
+  getConfig: () => Promise<UpdateConfig>;
+  getStatus: () => Promise<UpdateStatus>;
+  check: () => Promise<void>;
+  download: () => Promise<void>;
+  installNow: () => Promise<void>;
+  setConfig: (patch: Partial<UpdateConfig>) => Promise<UpdateConfig>;
+  onStatus: (callback: (status: UpdateStatus) => void) => () => void;
+  /** Shell-owned update card height; optional on older desktop builds. */
+  getOverlayHeight?: () => Promise<number>;
+  /** Subscribe to shell-owned update card height changes. */
+  onOverlayHeight?: (callback: (height: number) => void) => () => void;
+}
+
+/** Data backing the title-bar server picker, from the Electron shell. */
+export interface ServerPickerInfo {
+  /** Origin this window is connected to, e.g. `"http://localhost:8000"`. */
+  currentOrigin: string;
+  /**
+   * The server URL the user picked when sign-in moved to `currentOrigin`'s host
+   * (it may carry a workspace `?o=` selector), else null. Absent on older shells.
+   */
+  currentServer?: string | null;
+  /** Recent URL → the server URL the user picked for it, for display. Absent on older shells. */
+  recentLabels?: Record<string, string>;
+  /**
+   * Server URLs supplied through macOS Managed Preferences. Optional because a
+   * newer server-served SPA can run inside a desktop shell that predates MDM.
+   */
+  managedServers?: string[];
+  /** Display names for managed servers, server URL → name. Absent on older shells. */
+  managedServerNames?: Record<string, string>;
+  /**
+   * Whether the shell owns this server's sign-in (Databricks or OIDC browser
+   * sign-in) and can sign it out. Absent on older shells.
+   */
+  canSignOut?: boolean;
+  /**
+   * Names servers gave themselves in their manifest, origin → name. Display
+   * only (a server can call itself anything), so show the host alongside.
+   * Absent on older shells.
+   */
+  serverNames?: Record<string, string>;
+  /** Recently-connected server URLs, most recent first. */
+  recentServers: string[];
+  /**
+   * The connected server's version manifest (`/.well-known/omnigent.json`),
+   * forwarded by the shell. Optional: shells older than the manifest simply
+   * don't send it — see {@link serverManifestOf}, which supplies the
+   * pre-manifest baseline so callers never handle `undefined`.
+   */
+  serverManifest?: ServerManifest;
+}
+
+/**
+ * The server's version manifest, as forwarded by the desktop shell from
+ * `GET /.well-known/omnigent.json`.
+ *
+ * Read it through {@link serverManifestOf} and gate on `manifestVersion >= N`,
+ * never `=== N`: a newer server must keep working with an older client, which
+ * is the entire point of the document.
+ */
+export interface ServerManifest {
+  /**
+   * Envelope version. `0` is the pre-manifest baseline — a server older than
+   * the manifest route, or one the shell could not read — so the ordinary
+   * `>= 1` gate excludes it without callers testing for null.
+   */
+  manifestVersion: number;
+  /** Installed omnigent package version. Display only, never gate on it. */
+  serverVersion: string | null;
+  /** Oldest supported desktop build, or null for no floor (the normal case). */
+  minDesktopVersion: string | null;
+  /**
+   * Where server-driven chrome lives. `server_picker` is `"sidebar"` on builds
+   * that dock the picker at the sidebar's bottom, `"titlebar"` on older ones.
+   * Loosely typed on purpose: unknown keys are the extension point, so a newer
+   * server can add shapes this build has never heard of.
+   */
+  ui: Record<string, unknown>;
+}
+
+/**
+ * The pre-manifest baseline: what a server implies when it has no manifest —
+ * every server older than the route — or when the shell is too old to forward
+ * one. `manifestVersion: 0` fails every `>= 1` gate, so callers fall back to
+ * existing behavior without distinguishing "absent" from "unreadable".
+ */
+export const PRE_MANIFEST_BASELINE: ServerManifest = {
+  manifestVersion: 0,
+  serverVersion: null,
+  minDesktopVersion: null,
+  ui: {},
+};
+
+/**
+ * The manifest carried by a picker payload, or the pre-manifest baseline.
+ *
+ * Use this rather than reading `info.serverManifest` directly: the field is
+ * absent on older shells, and this collapses that case into a real manifest so
+ * every caller can gate on `manifestVersion` unconditionally.
+ *
+ * @param info A payload from {@link getServerPicker}, or null off-shell.
+ */
+export function serverManifestOf(info: ServerPickerInfo | null): ServerManifest {
+  const manifest = info?.serverManifest;
+  // Validate rather than trust: this crosses the IPC boundary from a shell
+  // whose version is unknown, so a malformed/partial object degrades to the
+  // baseline instead of yielding NaN comparisons downstream.
+  if (!manifest || typeof manifest.manifestVersion !== "number") return PRE_MANIFEST_BASELINE;
+  return manifest;
+}
+
+/** The Electron preload bridge, or undefined outside the Electron shell. */
+function electronApi(): ElectronDesktopApi | undefined {
+  if (typeof window === "undefined") return undefined;
+  const api = (window as unknown as { omnigentDesktop?: ElectronDesktopApi }).omnigentDesktop;
+  return api?.kind === "electron" ? api : undefined;
+}
+
+/** The native shell bridge, or undefined outside any native shell. */
+function nativeApi(): NativeShellApi | undefined {
+  if (typeof window === "undefined") return undefined;
+  const api = (window as unknown as { omnigentNative?: NativeShellApi }).omnigentNative;
+  if (api?.kind === "ios" || api?.kind === "android" || api?.kind === "electron") return api;
+  return electronApi();
+}
+
+function callSetColorScheme(scheme: ThemeSource): boolean {
+  const native = nativeApi();
+  if (!native?.setColorScheme) return false;
+  try {
+    native.setColorScheme(scheme);
+  } catch (err) {
+    console.warn("[nativeBridge] setColorScheme failed:", err);
+    return false;
+  }
+  return true;
+}
+
+/** True when running inside the Electron desktop shell. */
+export function isElectronShell(): boolean {
+  return electronApi() !== undefined;
+}
+
+/** Desktop auto-update bridge, or undefined outside Electron / older shells. */
+export function updateBridge(): ElectronUpdateBridge | undefined {
+  return electronApi()?.updates;
+}
+
+/**
+ * True when the desktop shell is new enough to host the embedded browser pane.
+ * Older installed builds expose `omnigentDesktop` but predate the `browser*`
+ * bridge, so `isElectronShell()` alone would surface a dead Browser tab whose
+ * calls no-op. Probes the foundational browser method (the suite ships
+ * together); false in a plain browser and on shells without the feature.
+ */
+export function supportsBrowser(): boolean {
+  return typeof electronApi()?.browserOpenOrNavigate === "function";
+}
+
+/** Subscribe to recent-session key events forwarded from an embedded Browser page. */
+export function onBrowserRecentSessionInput(
+  callback: (input: BrowserRecentSessionInput) => void,
+): () => void {
+  const electron = electronApi();
+  if (!electron?.onBrowserRecentSessionInput) return () => {};
+  try {
+    return electron.onBrowserRecentSessionInput(callback);
+  } catch (err) {
+    console.warn("[nativeBridge] browser recent-session input subscription failed:", err);
+    return () => {};
+  }
+}
+
+/** Advertise whether this renderer can handle embedded-page Ctrl+Tab events. */
+export async function setBrowserRecentSessionSwitchSupported(supported: boolean): Promise<void> {
+  const electron = electronApi();
+  if (!electron?.browserSetRecentSessionSwitchSupported) return;
+  try {
+    await electron.browserSetRecentSessionSwitchSupported(supported);
+  } catch (err) {
+    console.warn("[nativeBridge] browser recent-session support update failed:", err);
+  }
+}
+
+/** Tell Electron that a forwarded Ctrl+Tab did not open the session switcher. */
+export async function cancelBrowserRecentSessionSwitch(): Promise<void> {
+  const electron = electronApi();
+  if (!electron?.browserCancelRecentSessionSwitch) return;
+  try {
+    await electron.browserCancelRecentSessionSwitch();
+  } catch (err) {
+    console.warn("[nativeBridge] browser recent-session cancellation failed:", err);
+  }
+}
+
+/**
+ * True when running inside the Electron desktop shell on macOS — the one
+ * platform where the shell hides the native title bar (titleBarStyle
+ * "hiddenInset") and the web layer must reserve space for the traffic
+ * lights and supply a window-drag strip (see the `[data-electron-mac]`
+ * rules in index.css).
+ */
+export function isMacElectronShell(): boolean {
+  return isElectronShell() && navigator.userAgent.includes("Macintosh");
+}
+
+/**
+ * Mark `<html>` with `data-electron-mac` so the `[data-electron-mac]` rules
+ * reach portals outside AppShell. The shell never changes at runtime, so call
+ * once before first paint.
+ */
+export function applyMacElectronShellAttribute(): void {
+  if (isMacElectronShell()) document.documentElement.dataset.electronMac = "true";
+}
+
+/** True when running inside the iOS WKWebView native shell. */
+export function isIOSShell(): boolean {
+  return nativeApi()?.kind === "ios";
+}
+
+/**
+ * True when the surrounding shell exposes the complete server-picker bridge —
+ * data ({@link getServerPicker}) plus both actions the picker offers
+ * ({@link switchServer}, {@link openServerSetup}). Shells with the picker
+ * surface server selection in the sidebar; shells without it (older iOS
+ * builds) fall back to their own selection chrome, the floating pill. All
+ * three methods are required so a partial/version-skewed shell never hides
+ * its own pill while the sidebar offers actions it cannot perform.
+ */
+export function supportsNativeServerPicker(): boolean {
+  const native = nativeApi();
+  return (
+    typeof native?.getServerPicker === "function" &&
+    typeof native.switchServer === "function" &&
+    typeof native.openServerSetup === "function"
+  );
+}
+
+/**
+ * True when running inside the native Android WebView shell. A sibling to
+ * {@link isIOSShell} — deliberately NOT folded into it, since the iOS-only
+ * chrome (viewport lock, native keyboard inset, server switcher) keys off
+ * `isIOSShell()` and must stay off on Android, which uses its own WebView
+ * keyboard/inset behavior and the web in-page fallbacks.
+ */
+export function isAndroidShell(): boolean {
+  return nativeApi()?.kind === "android";
+}
+
+/**
+ * True when running inside the native desktop shell (Electron).
+ *
+ * The shell loads the same server-served SPA in a Chromium webview, so the
+ * web code can do better than the Web platform: OS notifications and a
+ * dock/taskbar badge. Detection is feature-based — the Electron preload
+ * exposes `window.omnigentDesktop` — never a build flag. In a plain browser
+ * this is false and every native call here degrades to a no-op / web fallback.
+ */
+export function isNativeShell(): boolean {
+  return nativeApi() !== undefined;
+}
+
+export interface NativeNotifyParams {
+  /** Headline — typically the conversation's display label. */
+  title: string;
+  /** Secondary line, e.g. "Agent finished and is ready for your input." */
+  body?: string;
+  /**
+   * In-app path the shell should open when the user clicks this notification,
+   * e.g. `"/c/conv_abc123"`. A click closure can't cross the process boundary,
+   * so we forward the destination as a string and route to it on click via
+   * `onNativeNotificationActivated`. Omitted -> click only focuses the window.
+   */
+  navigatePath?: string;
+}
+
+/**
+ * Show an OS-native notification via the Electron preload bridge (which calls
+ * the main-process `Notification` API and wires click-to-focus on its side).
+ *
+ * Returns `true` when the notification was handed to the bridge, `false` when
+ * not running under Electron or anything went wrong (so the caller can fall
+ * back to the Web Notifications API).
+ */
+export async function nativeNotify({
+  title,
+  body,
+  navigatePath,
+}: NativeNotifyParams): Promise<boolean> {
+  const native = nativeApi();
+  if (!native) return false;
+  try {
+    return await native.notify({ title, body, navigatePath });
+  } catch (err) {
+    // Only reachable inside a native shell. Log rather than swallow so a
+    // broken bridge is visible instead of silently dropping notifications.
+    console.warn("[nativeBridge] native notify failed:", err);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to native notification clicks from the desktop shell. The shell
+ * fires the in-app path the clicked notification carried (its `navigatePath`),
+ * so the renderer can route to it — restoring the in-browser behavior where
+ * clicking a toast opens its conversation.
+ *
+ * Returns an unsubscribe function. A no-op (returning a no-op unsubscribe)
+ * outside the Electron shell or under a shell too old to support click
+ * routing, so callers can register it unconditionally.
+ */
+export function onNativeNotificationActivated(callback: (path: string) => void): () => void {
+  const native = nativeApi();
+  if (!native?.onNotificationActivated) return () => {};
+  try {
+    return native.onNotificationActivated(callback);
+  } catch (err) {
+    console.warn("[nativeBridge] native onNotificationActivated failed:", err);
+    return () => {};
+  }
+}
+
+/**
+ * Subscribe to in-app navigation from the desktop shell. Native menu actions
+ * and same-server deep links send basename-less paths such as `/settings` and
+ * `/c/<id>` so the SPA can route in place without reloading. The embedded
+ * build's `basenamedRouting` rebases them under the mount.
+ *
+ * Returns an unsubscribe function. A no-op (returning a no-op unsubscribe)
+ * outside the Electron shell or under a shell too old to support in-app
+ * navigation, so callers can register it unconditionally.
+ */
+export function onOpenPath(callback: (path: string) => void): () => void {
+  const native = nativeApi();
+  if (!native?.onOpenPath) return () => {};
+  try {
+    return native.onOpenPath(callback);
+  } catch (err) {
+    console.warn("[nativeBridge] native onOpenPath failed:", err);
+    return () => {};
+  }
+}
+
+/**
+ * Subscribe to native sidebar-drag events from the iOS shell's left-edge swipe
+ * (the gesture it repurposed from back-navigation), so the renderer can drive
+ * its sidebar as an interactive drawer — tracking the finger on `begin`/`move`
+ * and animating to the settled state on `open`/`close`.
+ *
+ * Returns an unsubscribe function. A no-op (returning a no-op unsubscribe)
+ * outside a native shell or under a shell too old to support the gesture, so
+ * callers can register it unconditionally.
+ */
+export function onNativeSidebarDrag(
+  callback: (phase: SidebarDragPhase, progress: number) => void,
+): () => void {
+  const native = nativeApi();
+  if (!native?.onSidebarDrag) return () => {};
+  try {
+    return native.onSidebarDrag(callback);
+  } catch (err) {
+    console.warn("[nativeBridge] native onSidebarDrag failed:", err);
+    return () => {};
+  }
+}
+
+/**
+ * Paint the dock / taskbar badge with a count (macOS dock badge, Linux Unity
+ * launcher count). Pass `0` (or omit) to clear it.
+ *
+ * No-op outside the Electron shell. The Electron main process calls
+ * `app.setBadgeCount`, which on Windows is unsupported at the app level — we
+ * intentionally don't paper over that.
+ *
+ * `activation` is only meaningful on the Android shell, where the badge is a
+ * tray notification: it makes that notification open a target and show
+ * descriptive text. Electron/iOS have a real icon badge and ignore it.
+ */
+/**
+ * Tell the native shell which theme source the user selected. The shell drives
+ * its own OS-level night mode so that native chrome and the WebView agree.
+ * No-op outside supported shells. Fire-and-forget.
+ */
+export function setThemeSource(themeSource: ThemeSource): void {
+  callSetColorScheme(themeSource);
+}
+
+export async function setBadgeCount(count: number, activation?: BadgeActivation): Promise<void> {
+  const native = nativeApi();
+  if (!native) return;
+  try {
+    // Forward `activation` only when present so shells (and tests) that expect
+    // the single-arg call keep matching; Android reads it to make the badge
+    // notification actionable + descriptive.
+    if (activation) native.setBadgeCount(count, activation);
+    else native.setBadgeCount(count);
+  } catch (err) {
+    console.warn("[nativeBridge] native setBadgeCount failed:", err);
+  }
+}
+
+/**
+ * Set one of the inset-system CSS variables on the document root. Visibility of
+ * the native bars is web-owned (the web app is what shows/hides them), so the
+ * setters below fold it into `--omnigent-*-bar-visible`; the bars' size comes
+ * from the native bridge (see {@link onNativeInsets} / nativeInsets.ts). Both
+ * combine in `--omnigent-inset-*` (index.css). Harmless off-shell — the size
+ * vars stay 0 there, so a stray visibility flag contributes nothing.
+ */
+function setInsetVar(name: string, value: string): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(name, value);
+}
+
+/**
+ * Inform a native shell that its server switcher should hide. Older shells
+ * simply lack this optional method, so this degrades to a no-op.
+ */
+export function setNativeServerSwitcherHidden(hidden: boolean): void {
+  setInsetVar("--omnigent-top-bar-visible", hidden ? "0" : "1");
+  const native = nativeApi();
+  const setter = native?.setServerSwitcherHidden ?? native?.setSidebarOpen;
+  if (!setter) return;
+  try {
+    setter(hidden);
+  } catch (err) {
+    console.warn("[nativeBridge] native setServerSwitcherHidden failed:", err);
+  }
+}
+
+/** @deprecated Use setNativeServerSwitcherHidden. */
+export function setNativeSidebarOpen(open: boolean): void {
+  setNativeServerSwitcherHidden(open);
+}
+
+/**
+ * Push the Chat/Terminal bar state to the iOS shell. The switcher now lives in
+ * the web header (ViewModeToggle) on every shell, so the SPA only ever pushes
+ * `visible: false` — keeping the shell's legacy bottom pill hidden (see
+ * hideNativeChatTerminalBar). No-op on shells without the method.
+ */
+export function setNativeViewMode(params: NativeViewModeParams): void {
+  setInsetVar("--omnigent-bottom-bar-visible", params.visible ? "1" : "0");
+  const native = nativeApi();
+  if (!native?.setViewMode) return;
+  try {
+    native.setViewMode(params);
+  } catch (err) {
+    console.warn("[nativeBridge] native setViewMode failed:", err);
+  }
+}
+
+/**
+ * Subscribe to the native bars' footprint from the shell. The shell pushes the
+ * current value immediately on subscribe (it caches the last emit), then again
+ * on any change. Returns an unsubscribe; a no-op outside a shell that reports
+ * insets (Electron, plain browser, older iOS shells), where the bars don't
+ * exist and the inset CSS vars stay 0.
+ */
+export function onNativeInsets(callback: (insets: NativeInsets) => void): () => void {
+  const native = nativeApi();
+  if (!native?.onNativeInsets) return () => {};
+  try {
+    return native.onNativeInsets(callback);
+  } catch (err) {
+    console.warn("[nativeBridge] native onNativeInsets failed:", err);
+    return () => {};
+  }
+}
+
+/** Prevent native focus scrolling while the app shell owns keyboard layout. */
+export function setIOSDocumentScrollEnabled(enabled: boolean): void {
+  const native = nativeApi();
+  if (native?.kind !== "ios") return;
+  try {
+    native.setDocumentScrollEnabled?.(enabled);
+  } catch (err) {
+    console.warn("[nativeBridge] native setDocumentScrollEnabled failed:", err);
+  }
+}
+
+/** UIKit's visible height, or null for older shells and pending orientation updates. */
+export function getIOSKeyboardViewportHeight(): number | null {
+  if (!isIOSShell()) return null;
+  try {
+    const viewport = nativeApi()?.getKeyboardViewport?.();
+    if (
+      !viewport ||
+      !Number.isFinite(viewport.width) ||
+      !Number.isFinite(viewport.height) ||
+      Math.abs(viewport.width - window.innerWidth) > 1 ||
+      viewport.height <= 0
+    ) {
+      return null;
+    }
+    // WebKit can temporarily shrink innerHeight during a keyboard transition.
+    // Only reconcile subpixel rounding; UIKit owns the usable app height.
+    return Math.abs(viewport.height - window.innerHeight) <= 1
+      ? Math.min(viewport.height, window.innerHeight)
+      : viewport.height;
+  } catch {
+    return null;
+  }
+}
+
+export function onNativeKeyboardViewportChanged(callback: () => void): () => void {
+  try {
+    return nativeApi()?.onKeyboardViewportChanged?.(callback) ?? (() => {});
+  } catch {
+    return () => {};
+  }
+}
+
+/**
+ * Fetch server picker data from the native shell (Electron or iOS): the
+ * current origin plus organization-provided and recently-connected server
+ * lists.
+ *
+ * Resolves `null` outside a native shell, under a shell too old to support
+ * the picker, or on a page the shell doesn't recognize as a connected
+ * server — callers hide the picker in all of those cases.
+ */
+export async function getServerPicker(): Promise<ServerPickerInfo | null> {
+  const native = nativeApi();
+  if (!native?.getServerPicker) return null;
+  try {
+    return await native.getServerPicker();
+  } catch (err) {
+    console.warn("[nativeBridge] native getServerPicker failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Ask the native shell to re-point this window to another URL returned in
+ * `ServerPickerInfo.managedServers` or `recentServers`. The shell navigates the
+ * whole window, so on success this page unloads.
+ */
+export async function switchServer(url: string): Promise<void> {
+  const native = nativeApi();
+  if (!native?.switchServer) return;
+  try {
+    await native.switchServer(url);
+  } catch (err) {
+    console.warn("[nativeBridge] native switchServer failed:", err);
+  }
+}
+
+/**
+ * Ask the native shell to sign this window's server out. Every window on that
+ * server returns to the setup page, and the next Connect signs in through the
+ * browser. Resolves false off-shell or when the shell can't sign it out.
+ */
+export async function signOutOfServer(): Promise<boolean> {
+  const native = nativeApi();
+  if (!native?.signOutOfServer) return false;
+  try {
+    return (await native.signOutOfServer()) === true;
+  } catch (err) {
+    console.warn("[nativeBridge] native signOutOfServer failed:", err);
+    return false;
+  }
+}
+
+/**
+ * Ask the native shell to return this window to its "connect to server"
+ * setup page (the picker's "+ Connect to new server…" action). The window
+ * navigates away on success.
+ */
+export function openServerSetup(): void {
+  const native = nativeApi();
+  if (!native?.openServerSetup) return;
+  try {
+    native.openServerSetup();
+  } catch (err) {
+    console.warn("[nativeBridge] native openServerSetup failed:", err);
+  }
+}
+
+/**
+ * Fetch this machine's identity (CLI installed + host id) from the desktop
+ * shell. Fast — reads local config, no runner-status subprocess — so callers
+ * that only need to recognize "this machine" (e.g. the host picker) don't wait
+ * on the slow status check. Resolves `null` outside the Electron shell.
+ */
+export async function getHostIdentity(): Promise<HostIdentity | null> {
+  const electron = electronApi();
+  if (!electron?.getHostIdentity) return null;
+  try {
+    return await electron.getHostIdentity();
+  } catch (err) {
+    console.warn("[nativeBridge] electron getHostIdentity failed:", err);
+    return null;
+  }
+}
+
+/**
+ * The runner ("local" | "remote") picked during desktop onboarding for this
+ * server, handed over once; null otherwise or outside Electron.
+ */
+export async function takeOnboardingRunner(): Promise<"local" | "remote" | null> {
+  try {
+    return (await electronApi()?.takeOnboardingRunner?.()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Start / stop / restart this machine's host daemon for the window's server,
+ * via the desktop shell. Resolves `{ ok, error? }`; a no-op `{ ok: false }`
+ * outside the shell.
+ */
+export async function controlHost(action: HostControlAction): Promise<HostActionResult> {
+  const electron = electronApi();
+  if (!electron?.controlHost) return { ok: false, error: "not running under the desktop shell" };
+  try {
+    return await electron.controlHost(action);
+  } catch (err) {
+    console.warn("[nativeBridge] electron controlHost failed:", err);
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Fetch the desktop shell's feature gates (MDM-managed). Resolves `null`
+ * outside the Electron shell or under a shell too old to expose them — callers
+ * must treat null / a missing field as disabled.
+ */
+export async function getDesktopFeatures(): Promise<DesktopFeatures | null> {
+  const electron = electronApi();
+  if (!electron?.getDesktopFeatures) return null;
+  try {
+    return await electron.getDesktopFeatures();
+  } catch (err) {
+    console.warn("[nativeBridge] electron getDesktopFeatures failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Connect the user's Arca instance (Databricks-internal sandbox) to the
+ * window's server as a host, via the desktop shell. The shell asks native
+ * consent and runs `arca ssh` — resolving only once the remote host daemon
+ * started (or failed). A no-op `{ ok: false }` outside the shell.
+ */
+export async function connectArcaHost(): Promise<ArcaConnectResult> {
+  const electron = electronApi();
+  if (!electron?.connectArcaHost) {
+    return { ok: false, error: "not running under the desktop shell" };
+  }
+  try {
+    return await electron.connectArcaHost();
+  } catch (err) {
+    console.warn("[nativeBridge] electron connectArcaHost failed:", err);
+    return { ok: false, error: String(err) };
+  }
+}
+
+/** Present only in desktop shells that can extend a running Arca instance. */
+export function hasArcaExtendBridge(): boolean {
+  return typeof electronApi()?.extendArca === "function";
+}
+
+export async function extendArca(mode: ArcaExtendMode): Promise<ArcaExtendResult> {
+  const bridge = electronApi()?.extendArca;
+  if (!bridge) return { ok: false, error: "Arca extend is unavailable in this app." };
+  try {
+    return await bridge(mode);
+  } catch (error) {
+    console.warn("[nativeBridge] electron extendArca failed:", error);
+    return {
+      ok: false,
+      error: "Could not extend Arca from this app.",
+    };
+  }
+}
+
+/** Present only in desktop shells that can renew this machine's dbcert. */
+export function hasDbcertRefreshBridge(): boolean {
+  return typeof electronApi()?.refreshDbcert === "function";
+}
+
+/** Renew the laptop's dbcert through the desktop shell, which runs `dbcert --force`. */
+export async function refreshDbcert(): Promise<DbcertRefreshResult> {
+  const bridge = electronApi()?.refreshDbcert;
+  if (!bridge) return { ok: false, error: "dbcert refresh is unavailable in this app." };
+  try {
+    return await bridge();
+  } catch (error) {
+    console.warn("[nativeBridge] electron refreshDbcert failed:", error);
+    return { ok: false, error: "Could not run dbcert from this app." };
+  }
+}
+
+/**
+ * Subscribe to host status-change pings from the desktop shell. The shell fires
+ * these only on real events — a host child connecting or exiting, or a control
+ * action — never on a timer, so the callback should re-read what it needs (e.g.
+ * the server's host list) when it fires.
+ *
+ * Returns an unsubscribe function. A no-op (returning a no-op unsubscribe)
+ * outside the Electron shell or under a shell too old to push updates, so
+ * callers can register it unconditionally.
+ */
+export function onHostStatusChanged(callback: () => void): () => void {
+  const electron = electronApi();
+  if (!electron?.onHostStatusChanged) return () => {};
+  try {
+    return electron.onHostStatusChanged(callback);
+  } catch (err) {
+    console.warn("[nativeBridge] electron onHostStatusChanged failed:", err);
+    return () => {};
+  }
+}
+
+/**
+ * Fetch the local `omni` CLI status from the desktop shell (installed, resolved
+ * path, version, source). Resolves `null` outside the Electron shell or under a
+ * shell too old to expose the CLI bridge.
+ */
+export async function getCliStatus(): Promise<CliStatus | null> {
+  const electron = electronApi();
+  if (!electron?.getCliStatus) return null;
+  try {
+    return await electron.getCliStatus();
+  } catch (err) {
+    console.warn("[nativeBridge] electron getCliStatus failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Clear the saved CLI-path override so the shell reverts to auto-detection,
+ * then resolve the freshly-detected status. Resolves `null` outside the shell.
+ */
+export async function resetCliPath(): Promise<CliStatus | null> {
+  const electron = electronApi();
+  if (!electron?.resetCliPath) return null;
+  try {
+    return await electron.resetCliPath();
+  } catch (err) {
+    console.warn("[nativeBridge] electron resetCliPath failed:", err);
+    return null;
+  }
+}
+
+/** True when the desktop shell can reveal this machine's files in the OS file manager. */
+export function supportsFileReveal(): boolean {
+  return typeof electronApi()?.revealFile === "function";
+}
+
+/** Ask the desktop shell to reveal ``path``; resolves false if it could not. */
+export async function revealFile(hostId: string, path: string): Promise<boolean> {
+  try {
+    return (await electronApi()?.revealFile?.(hostId, path)) ?? false;
+  } catch {
+    return false;
+  }
+}

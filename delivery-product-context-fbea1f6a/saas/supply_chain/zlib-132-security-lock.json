@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "component": "zlib",
+  "source_version": "1.3.2",
+  "production_admission": true,
+  "source_authentication": {
+    "kind": "detached-openpgp-signature",
+    "primary_fingerprint": "5ED46A6721D365587791E2AA783FCD8E58BCAFBA",
+    "key_source": "https://keys.openpgp.org/vks/v1/by-fingerprint/5ED46A6721D365587791E2AA783FCD8E58BCAFBA"
+  },
+  "artifacts": [
+    {
+      "name": "zlib-1.3.2.tar.xz",
+      "role": "upstream",
+      "size": 1320064,
+      "sha256": "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3",
+      "url": "https://zlib.net/zlib-1.3.2.tar.xz"
+    },
+    {
+      "name": "zlib-1.3.2.tar.xz.asc",
+      "role": "signature",
+      "size": 235,
+      "sha256": "03ce710347e2f84fa7ed0a6ae6a93467b08031a3022fc296da40220a83b96667",
+      "url": "https://zlib.net/zlib-1.3.2.tar.xz.asc"
+    },
+    {
+      "name": "zlib-df84af25.patch",
+      "role": "security-fix",
+      "size": 854,
+      "sha256": "110ff14375733173d8aa54574473424fbd7dfe4b81f1ca34a759c6fe14b15b14",
+      "url": "https://github.com/madler/zlib/commit/df84af25dc1942490e1d1c899a07619152a46148.patch"
+    }
+  ],
+  "fix_commit": "df84af25dc1942490e1d1c899a07619152a46148",
+  "addresses": ["CVE-2026-85091"],
+  "verification": ["openpgp", "sha256", "zero-fuzz-patch", "make-test", "runtime-version"]
+}

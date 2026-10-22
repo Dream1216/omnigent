@@ -1,0 +1,255 @@
+package ai.omnigent.android
+
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.util.Base64
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Legacy ticket sign-in for OIDC servers whose manifest doesn't list this app's native
+ * redirect. Deprecated: removal targeted for Android 0.3.0, once servers ship native sign-in.
+ *
+ * Drives the RFC 8252 login flow for the shell: authenticate in the system
+ * browser — a real browser, so Google sign-in (which blocks embedded WebViews
+ * with `disallowed_useragent`) and passkeys (which need the browser / a password
+ * manager) both work — then bridge the resulting session into the WebView, whose
+ * cookie store is isolated from the browser's.
+ *
+ * Reuses the server's existing browser-login endpoints (the same ones the
+ * `omnigent login` CLI uses, no server change):
+ *   1. `POST /auth/cli-login` with a PKCE S256 challenge -> `{ticket, login_url}`
+ *   2. open `login_url` in the browser; the user authenticates and approves
+ *      the consent page; that fulfills the ticket server-side
+ *   3. `GET /auth/cli-poll?ticket=...` with `X-Omnigent-Code-Verifier` -> `{token}`
+ *      once fulfilled (the verifier proves this client created the ticket)
+ *
+ * That `token` is exactly the session-cookie JWT (the server validates the same
+ * HS256 JWT as either the session cookie or a `Bearer`), so [MainActivity]
+ * injects it into the WebView's CookieManager and reloads — authenticated.
+ */
+class OidcLoginManager {
+    private val io = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
+    private val inFlight = AtomicBoolean(false)
+
+    // Held only for the duration of a login; nulled by [cancel]/[shutdown] so a
+    // poll that finishes after a server switch or host destroy can neither inject
+    // a stale token nor invoke into a dead Activity.
+    @Volatile private var sessionCallback: ((String) -> Unit)? = null
+
+    @Volatile private var currentTask: Future<*>? = null
+
+    // Stamped into each flow at start() and bumped by cancel(). The queued
+    // browser launch re-checks it at execution time, so a launch posted before a
+    // cancel/server switch/destroy can never open the obsolete server's URL.
+    private val flowGeneration = AtomicInteger(0)
+
+    /**
+     * Begin a login against [origin] (the pinned server). Opens the browser and
+     * polls in the background; [onSession] is invoked on the main thread with the
+     * session JWT once the browser flow completes.
+     *
+     * Returns true if this call started a flow, or false if one was already in
+     * flight (a second concurrent call is ignored). The caller uses the result so
+     * a no-op call isn't counted against a retry budget.
+     */
+    fun start(
+        activity: Activity,
+        origin: String,
+        onSession: (String) -> Unit,
+    ): Boolean {
+        if (!inFlight.compareAndSet(false, true)) return false
+        sessionCallback = onSession
+        val generation = flowGeneration.incrementAndGet()
+        currentTask =
+            io.submit {
+                var token: String? = null
+                try {
+                    val codeVerifier = generateCodeVerifier()
+                    val ticket = requestTicket(origin, deriveCodeChallenge(codeVerifier))
+                    authLog("cli-login -> ${if (ticket != null) "ticket ok" else "FAILED"}")
+                    if (ticket != null) {
+                        main.post {
+                            // Re-check at execution time: the flow may have been
+                            // cancelled/superseded, or the activity torn down,
+                            // while this launch sat in the queue.
+                            if (generation == flowGeneration.get() &&
+                                !activity.isFinishing &&
+                                !activity.isDestroyed
+                            ) {
+                                launchTab(activity, origin + ticket.loginUrl)
+                            } else {
+                                authLog("skipping stale browser launch")
+                            }
+                        }
+                        token = pollForToken(origin, ticket.id, codeVerifier)
+                        authLog(
+                            "poll -> ${if (token != null) "token (len=${token.length})" else "no token"}",
+                        )
+                    }
+                } catch (_: InterruptedException) {
+                    // shutdown() interrupted the poll — the host is going away; drop.
+                } catch (t: Throwable) {
+                    authLog("login flow error: ${t.javaClass.simpleName}")
+                } finally {
+                    inFlight.set(false)
+                }
+                val result = token
+                // sessionCallback is null once shutdown() ran — never invoke into a
+                // destroyed host.
+                if (result != null) main.post { sessionCallback?.invoke(result) }
+            }
+        return true
+    }
+
+    /**
+     * Cancel an in-flight login without tearing down the executor. Safe to call
+     * when switching servers: nulls the callback (so a late-arriving token is
+     * never injected), resets [inFlight] (so a new login can start immediately),
+     * and interrupts the polling thread (stops wasted network I/O). Both this and
+     * the token-delivery lambda run on the main thread, so the null is always
+     * visible before the lambda can fire.
+     */
+    fun cancel() {
+        flowGeneration.incrementAndGet() // invalidates any queued browser launch
+        sessionCallback = null
+        inFlight.set(false)
+        currentTask?.cancel(true) // interrupts the polling sleep
+        currentTask = null
+    }
+
+    /** Cancel any in-flight login and release the executor. Call from onDestroy. */
+    fun shutdown() {
+        cancel()
+        io.shutdownNow()
+    }
+
+    private data class Ticket(
+        val id: String,
+        val loginUrl: String,
+    )
+
+    private fun generateCodeVerifier(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return Base64.encodeToString(bytes, BASE64_URL_FLAGS)
+    }
+
+    private fun deriveCodeChallenge(codeVerifier: String): String {
+        val digest =
+            MessageDigest
+                .getInstance("SHA-256")
+                .digest(codeVerifier.toByteArray(Charsets.US_ASCII))
+        return Base64.encodeToString(digest, BASE64_URL_FLAGS)
+    }
+
+    private fun requestTicket(
+        origin: String,
+        codeChallenge: String,
+    ): Ticket? {
+        val conn = (URL("$origin/auth/cli-login").openConnection() as HttpURLConnection)
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.connectTimeout = HTTP_TIMEOUT_MS
+        conn.readTimeout = HTTP_TIMEOUT_MS
+        return try {
+            val body =
+                JSONObject()
+                    .put("code_challenge", codeChallenge)
+                    .put("code_challenge_method", "S256")
+                    .toString()
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            if (conn.responseCode != 200) return null
+            val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            val id = json.optString("ticket").ifEmpty { return null }
+            val loginUrl = json.optString("login_url").ifEmpty { return null }
+            // The browser hand-off must stay on the pinned origin: [start]
+            // concatenates this onto it, so only a relative path may pass — an
+            // absolute URL or a scheme-relative `//host` would send the one-time
+            // ticket flow to a server-chosen destination instead.
+            if (!loginUrl.startsWith("/") || loginUrl.startsWith("//")) return null
+            Ticket(id, loginUrl)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun launchTab(
+        activity: Activity,
+        url: String,
+    ) {
+        // Full system browser (not a Custom Tab): the IdP flow page renders blank
+        // in an in-app Custom Tab on some setups but works in the browser. Still
+        // RFC 8252 — the system browser is the canonical external user-agent.
+        authLog("opening login in browser") // URL carries the one-time ticket — not logged
+        val intent =
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse(url),
+            ).addCategory(Intent.CATEGORY_BROWSABLE)
+        runCatching { activity.startActivity(intent) }
+    }
+
+    private fun pollForToken(
+        origin: String,
+        ticket: String,
+        codeVerifier: String,
+    ): String? {
+        val deadline = System.currentTimeMillis() + POLL_TIMEOUT_MS
+        val encoded = Uri.encode(ticket)
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(POLL_INTERVAL_MS) // throws InterruptedException on shutdownNow()
+            val conn = (
+                URL(
+                    "$origin/auth/cli-poll?ticket=$encoded",
+                ).openConnection() as HttpURLConnection
+            )
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("X-Omnigent-Code-Verifier", codeVerifier)
+            conn.connectTimeout = HTTP_TIMEOUT_MS
+            conn.readTimeout = HTTP_TIMEOUT_MS
+            try {
+                when (conn.responseCode) {
+                    202 -> {
+                        continue
+                    }
+
+                    // still pending
+                    200 -> {
+                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                        return JSONObject(body).optString("token").ifEmpty { null }
+                    }
+
+                    else -> {
+                        return null
+                    } // 410 expired/rejected, or other
+                }
+            } catch (_: Throwable) {
+                if (Thread.currentThread().isInterrupted) return null // shutdown mid-request
+                continue // transient network error — keep polling until the deadline
+            } finally {
+                conn.disconnect()
+            }
+        }
+        return null
+    }
+
+    private companion object {
+        const val POLL_INTERVAL_MS = 2_000L
+        const val POLL_TIMEOUT_MS = 5 * 60 * 1_000L // mirrors the CLI's 5-minute window
+        const val HTTP_TIMEOUT_MS = 10_000 // connect + read timeout for the login endpoints
+        const val BASE64_URL_FLAGS = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+    }
+}

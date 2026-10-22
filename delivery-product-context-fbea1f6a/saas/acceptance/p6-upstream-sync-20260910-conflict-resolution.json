@@ -1,0 +1,126 @@
+{
+  "schema_version": "omnigent.saas.upstream-conflict-resolution.v1",
+  "downstream_base_revision": "bf476c8bd7f1d827f85917359125ff7f6f59c90e",
+  "frozen_upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
+  "merge_revision": "e68d77142db8767e2c75297237082a328ca140d7",
+  "merge_base_revision": "e179bc422643c994e864bf34922bc54b5d4ab03b",
+  "changed_in_both_file_count": 14,
+  "text_conflict_file_count": 4,
+  "text_conflict_block_count": 7,
+  "changed_in_both_files": [
+    ".github/workflows/server-compat.yml",
+    "deploy/docker/Dockerfile",
+    "omnigent/db/utils.py",
+    "omnigent/host/connect.py",
+    "omnigent/runtime/agent_cache.py",
+    "pyproject.toml",
+    "tests/cli/test_cli.py",
+    "tests/server/integration/test_hosts_store_credential.py",
+    "tests/test_antigravity_native_reader.py",
+    "uv.lock",
+    "web/src/lib/identity.test.ts",
+    "web/src/lib/identity.ts",
+    "web/src/shell/NewChatDialog.test.tsx",
+    "web/src/shell/NewChatDialog.tsx"
+  ],
+  "conflicts": [
+    {
+      "file": "deploy/docker/Dockerfile",
+      "upstream_semantics": "install bzip2 plus optional harness and GitHub CLI tooling",
+      "downstream_semantics": "pin reproducible Debian snapshot inputs, preserve image labels, and remove package metadata",
+      "resolution": "retain the reproducible downstream package flow and integrate every upstream tool dependency and installer"
+    },
+    {
+      "file": "omnigent/runtime/agent_cache.py",
+      "upstream_semantics": "reject traversal, absolute, reserved-suffix, and symlink cache paths",
+      "downstream_semantics": "serialize same-agent mutations and atomically publish or roll back extracted cache directories",
+      "resolution": "route every public path through upstream validation, then apply downstream locking, staging, rollback, and quarantine"
+    },
+    {
+      "file": "pyproject.toml",
+      "upstream_semantics": "add microsandbox and PostgreSQL extras, compose Databricks through the PostgreSQL extra, and install the PEP 517 frontend in tests",
+      "downstream_semantics": "ship the SaaS extra, command entrypoints, package discovery, and packaged control-plane assets",
+      "resolution": "retain the union of upstream extras and test dependencies with the isolated SaaS packaging contract"
+    },
+    {
+      "file": "uv.lock",
+      "upstream_semantics": "lock the new upstream dependency graph",
+      "downstream_semantics": "lock the SaaS dependency and packaging graph",
+      "resolution": "regenerate from the resolved pyproject union with uv 0.12.1"
+    }
+  ],
+  "lockfile": {
+    "command": "uv lock",
+    "uv_version": "0.12.1",
+    "python_version": "3.12.13",
+    "resolved_package_count": 292,
+    "check": "passed"
+  },
+  "patch_replay": {
+    "upstream_revision": "06c33aeae701d521a3cfacd2daf99441b6d64492",
+    "patch_count": 3,
+    "official_source_path_count": 4,
+    "content_mismatch_count": 0,
+    "status": "passed"
+  },
+  "source_intrusion_budget": {
+    "governance_mode": "single_owner_beta",
+    "previous_direct_file_limit": 14,
+    "previous_net_added_loc_limit": 520,
+    "revised_direct_file_limit": 20,
+    "revised_net_added_loc_limit": 665,
+    "observed_direct_files": 20,
+    "observed_net_added_loc": 664,
+    "production_admission_effect": "none"
+  },
+  "targeted_tests": {
+    "command": "uv run --group test pytest tests/runtime/test_agent_cache.py tests/deploy/test_host_image_cli_install.py tests/test_git_credential_github.py tests/runner/test_github_resource.py -q",
+    "passed": 114,
+    "failed": 0
+  },
+  "local_validation": {
+    "initial_compatibility_run": {
+      "passed": 2351,
+      "skipped": 123,
+      "failed": 20,
+      "disposition": "all four root-cause groups were resolved and every affected test was included in the passing focused regression run"
+    },
+    "focused_regression": {
+      "passed": 169,
+      "failed": 0
+    },
+    "server_compatibility": {
+      "passed": 30,
+      "failed": 0
+    },
+    "n_minus_one_patch": {
+      "passed": 5,
+      "failed": 0
+    },
+    "zygote_and_query_context": {
+      "passed": 429,
+      "failed": 0
+    },
+    "hard_sandbox_and_egress": {
+      "passed": 40,
+      "skipped_for_platform": 21,
+      "failed": 0
+    },
+    "web_identity_and_new_chat": {
+      "passed": 333,
+      "failed": 0
+    },
+    "wheel_required_artifacts": 395,
+    "acceptance_ledger": {
+      "status": "passed",
+      "release_decision": "NO-GO",
+      "pending_gate_count": 11
+    },
+    "authoritative_final_sha_validation": "required_on_push_and_pull_request"
+  },
+  "pre_commit": {
+    "scope": "all_files",
+    "status": "passed"
+  },
+  "status": "resolved"
+}

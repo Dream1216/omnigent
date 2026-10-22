@@ -1,0 +1,1899 @@
+// Unit tests for `sessionsApi.ts` — happy-path POSTs with mocked
+// `fetch`, plus argument-shape pins for `interrupt` and `approve`.
+//
+// These tests primarily guard the camelCase TS ↔ snake_case wire
+// boundary: a regression here would mean the store hits an endpoint
+// with the wrong field names, which the server would 422 with no
+// useful client-side error trail.
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  apiErrorFromResponse,
+  approve,
+  bindOnlyOnlineRunner,
+  createBundledSession,
+  createSession,
+  createSideChat,
+  exportSessionTranscript,
+  fetchSessionItemsPage,
+  forkSession,
+  getSession,
+  getSessionSlim,
+  getSessionUsage,
+  importLocalSessions,
+  interrupt,
+  listRunners,
+  openSessionStream,
+  postEvent,
+  continueFailedTurn,
+  SESSION_HISTORY_PAGE_SIZE,
+  stopSession,
+  updateSession,
+} from "./sessionsApi";
+import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "./backgroundSessionTitlesPreferences";
+import { getSessionHost, setSessionHost } from "./sessionHost";
+
+function mockJsonResponse(
+  body: unknown,
+  init?: { ok?: boolean; status?: number; statusText?: string },
+): Response {
+  return {
+    ok: init?.ok ?? true,
+    status: init?.status ?? 200,
+    statusText: init?.statusText ?? "OK",
+    json: async () => body,
+  } as unknown as Response;
+}
+
+// An NDJSON streaming response: each line is emitted as its own chunk so the
+// reader sees them arrive one at a time, matching the `/imports/local` stream.
+function mockNdjsonResponse(lines: string[]): Response {
+  const encoder = new TextEncoder();
+  let i = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i < lines.length) {
+        controller.enqueue(encoder.encode(lines[i] + "\n"));
+        i += 1;
+      } else {
+        controller.close();
+      }
+    },
+  });
+  return { ok: true, status: 200, statusText: "OK", body } as unknown as Response;
+}
+
+const fetchMock = vi.fn();
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  localStorage.clear();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  localStorage.clear();
+});
+
+describe("apiErrorFromResponse", () => {
+  it("reads the AP `error` envelope (message + code)", async () => {
+    const err = await apiErrorFromResponse(
+      mockJsonResponse(
+        { error: { code: "conflict", message: "Session is busy." } },
+        { ok: false, status: 409 },
+      ),
+    );
+    expect(err.message).toBe("Session is busy.");
+    expect(err.code).toBe("conflict");
+    expect(err.status).toBe(409);
+  });
+
+  it("reads a top-level error envelope (error_code + message), as storage backends send", async () => {
+    const err = await apiErrorFromResponse(
+      mockJsonResponse(
+        {
+          error_code: "INVALID_PARAMETER_VALUE",
+          message: "Workspace items cannot contain the '/' character",
+        },
+        { ok: false, status: 400 },
+      ),
+    );
+    expect(err.message).toBe("Workspace items cannot contain the '/' character");
+    expect(err.code).toBe("INVALID_PARAMETER_VALUE");
+    expect(err.status).toBe(400);
+  });
+
+  it("falls back to the status line when the body is not an error shape", async () => {
+    const err = await apiErrorFromResponse(
+      mockJsonResponse({}, { ok: false, status: 404, statusText: "Not Found" }),
+    );
+    expect(err.message).toBe("404 Not Found");
+    expect(err.code).toBeNull();
+  });
+});
+
+describe("createSession", () => {
+  it("POSTs agent_id (snake_case) and parses the snake_case response", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+      }),
+    );
+
+    const session = await createSession("agent_xyz");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    expect(JSON.parse(init.body as string)).toEqual({
+      agent_id: "agent_xyz",
+      initial_items: [],
+    });
+    expect(session).toEqual({
+      id: "conv_abc",
+      agentId: "agent_xyz",
+      agentName: null,
+      runnerId: undefined,
+      hostId: null,
+      hostResumable: false,
+      archived: false,
+      status: "idle",
+      createdAt: 1704067200,
+      title: null,
+      items: [],
+      queuedItems: undefined,
+      contextWindow: undefined,
+      labels: undefined,
+      projectId: null,
+      lastTaskError: undefined,
+      lastTotalTokens: undefined,
+      usageIncluded: true,
+      totalCostUsd: undefined,
+      usageByModel: null,
+      llmModel: undefined,
+      harness: null,
+      modelOverride: undefined,
+      costControlModeOverride: undefined,
+      shareWorkspaceFiles: false,
+      reasoningEffort: undefined,
+      pendingElicitations: [],
+      pendingInputs: [],
+      permissionLevel: null,
+      parentSessionId: null,
+      subAgentName: null,
+      terminalLaunchArgs: null,
+      kind: "default",
+      backgroundTaskCount: undefined,
+      todos: [],
+      codexModelOptions: [],
+      terminalPending: false,
+      sandboxStatus: null,
+      mcpStartup: null,
+      activeResponseId: null,
+      workspace: null,
+      gitBranch: null,
+    });
+  });
+
+  it("preserves the saved inference policy on an empty session catalog", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_policy",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        inference_configured: true,
+        inference_error: "Gateway unavailable",
+        model_options: [],
+      }),
+    );
+    const session = await createSession("agent_xyz");
+    expect(session.inferenceConfigured).toBe(true);
+    expect(session.inferenceError).toBe("Gateway unavailable");
+    expect(session.codexModelOptions).toEqual([]);
+  });
+
+  it("forwards initial_items when provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "running",
+        created_at: 1704067200,
+      }),
+    );
+    const seed = [
+      {
+        type: "message",
+        data: { role: "user", content: [{ type: "input_text", text: "hi" }] },
+      },
+    ];
+
+    await createSession("agent_xyz", seed);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).initial_items).toEqual(seed);
+  });
+
+  it("sends the local opt-out header when background titles are disabled", async () => {
+    localStorage.setItem(BACKGROUND_SESSION_TITLES_STORAGE_KEY, "off");
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await createSession("agent_xyz");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("X-Omnigent-Background-Session-Titles")).toBe("off");
+  });
+
+  it("forwards parent_session_id, sub_agent_name and title for the Add-agent path", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_child",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        parent_session_id: "conv_parent",
+      }),
+    );
+
+    await createSession("agent_xyz", [], {
+      parentSessionId: "conv_parent",
+      subAgentName: null,
+      title: "ui:claude-native-ui:1",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // Whole body asserted: proves the snake_case mapping AND that
+    // sub_agent_name=null is sent verbatim (so the runner resolves the
+    // child's own agent_id instead of a parent sub-spec).
+    expect(JSON.parse(init.body as string)).toEqual({
+      agent_id: "agent_xyz",
+      initial_items: [],
+      parent_session_id: "conv_parent",
+      sub_agent_name: null,
+      title: "ui:claude-native-ui:1",
+    });
+  });
+
+  it("omits the optional fields entirely when no options are passed", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await createSession("agent_xyz");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string);
+    // Optional keys must be absent (not null/undefined) so the server
+    // applies its own defaults — guards against always-sending them.
+    expect("parent_session_id" in sent).toBe(false);
+    expect("sub_agent_name" in sent).toBe(false);
+    expect("title" in sent).toBe(false);
+  });
+
+  it("throws when the response is not ok", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 404 }));
+    await expect(createSession("missing")).rejects.toThrow(/404/);
+  });
+
+  it("forward-compat: reads queued_items from the snapshot when present", async () => {
+    const queued = [{ type: "message", data: { role: "user", content: [] } }];
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "running",
+        created_at: 1704067200,
+        items: [],
+        queued_items: queued,
+      }),
+    );
+
+    const session = await createSession("agent_xyz");
+    expect(session.queuedItems).toEqual(queued);
+  });
+
+  it("maps pending_inputs (snake) to pendingInputs (camel) with content", async () => {
+    // The snapshot replays un-consumed native web messages here so the
+    // store re-hydrates the optimistic bubble on rebind. Each entry's
+    // pending_id becomes the bubble's stable key and the content is
+    // carried through verbatim for rendering.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "running",
+        created_at: 1704067200,
+        items: [],
+        pending_inputs: [
+          { pending_id: "pending_1", content: [{ type: "input_text", text: "queued" }] },
+        ],
+      }),
+    );
+
+    const session = await createSession("agent_xyz");
+    expect(session.pendingInputs).toEqual([
+      { pendingId: "pending_1", content: [{ type: "input_text", text: "queued" }] },
+    ]);
+  });
+
+  it("maps active_response_id (snake) to activeResponseId (camel)", async () => {
+    // The in-flight turn id lets a mid-turn reconnect reopen a streaming
+    // activeResponse so native Claude's tool cards keep rendering live.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "running",
+        created_at: 1704067200,
+        items: [],
+        active_response_id: "resp_turn_1",
+      }),
+    );
+
+    const session = await createSession("agent_xyz");
+    expect(session.activeResponseId).toBe("resp_turn_1");
+  });
+
+  it("defaults activeResponseId to null when the snapshot omits it", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+      }),
+    );
+
+    const session = await createSession("agent_xyz");
+    expect(session.activeResponseId).toBeNull();
+  });
+});
+
+describe("createBundledSession", () => {
+  it("sends the local opt-out header when background titles are disabled", async () => {
+    localStorage.setItem(BACKGROUND_SESSION_TITLES_STORAGE_KEY, "off");
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        session_id: "conv_bundle",
+      }),
+    );
+
+    const result = await createBundledSession(
+      new File([], "agent.tar.gz", { type: "application/gzip" }),
+      { workspace: "/tmp/project" },
+    );
+
+    expect(result.id).toBe("conv_bundle");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("X-Omnigent-Background-Session-Titles")).toBe("off");
+  });
+});
+
+describe("forkSession", () => {
+  it("POSTs the fork endpoint with the (url-encoded) source id and parses the fork", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+        title: "Fork of My session",
+        items: [],
+      }),
+    );
+
+    const session = await forkSession("conv abc");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv%20abc/fork");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    // No title given → empty body so the server derives "Fork of <title>".
+    expect(JSON.parse(init.body as string)).toEqual({});
+    expect(session.id).toBe("conv_fork");
+    expect(session.title).toBe("Fork of My session");
+    expect(session.status).toBe("idle");
+  });
+
+  it("forwards the title when provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await forkSession("conv_src", { title: "My clone" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ title: "My clone" });
+  });
+
+  it("sends a managed fork's chosen sandbox host id", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await forkSession("conv_src", {
+      sandbox: { workspace: null, hostId: "0123456789abcdef0123456789abcdef" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      host_type: "managed",
+      workspace: null,
+      host_id: "0123456789abcdef0123456789abcdef",
+    });
+  });
+
+  it("forwards run-config overrides (model / effort / launch args)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await forkSession("conv_src", {
+      config: {
+        modelOverride: "opus",
+        reasoningEffort: "high",
+        terminalLaunchArgs: ["--permission-mode", "auto"],
+      },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      model_override: "opus",
+      reasoning_effort: "high",
+      terminal_launch_args: ["--permission-mode", "auto"],
+    });
+  });
+
+  it("omits run-config fields left undefined so the fork inherits them", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    // An empty config object (non-native target) sends no run overrides.
+    await forkSession("conv_src", { config: {} });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({});
+  });
+
+  it("asks for a managed sandbox when a sandbox target is given", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await forkSession("conv_src", {
+      sandbox: { provider: "modal", workspace: "https://github.com/org/repo#main" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      host_type: "managed",
+      sandbox_provider: "modal",
+      workspace: "https://github.com/org/repo#main",
+    });
+  });
+
+  it("keeps an explicit null workspace, so a sandbox fork can start empty", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    // Null is a real choice (empty sandbox); dropping the key would instead
+    // inherit the source's repository server-side. A provider the server
+    // didn't name is omitted so it picks its first.
+    await forkSession("conv_src", { sandbox: { provider: null, workspace: null } });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ host_type: "managed", workspace: null });
+  });
+
+  it("sends no host_type when no sandbox target is given (the fork stays unbound)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_fork",
+        agent_id: "agent_clone",
+        status: "idle",
+        created_at: 1704067200,
+      }),
+    );
+
+    await forkSession("conv_src", { config: {} });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).not.toHaveProperty("host_type");
+  });
+
+  it("surfaces a non-ok response as a thrown error (e.g. 403 no access)", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 403 }));
+    await expect(forkSession("conv_src")).rejects.toThrow(/403/);
+  });
+});
+
+describe("createSideChat", () => {
+  const source = {
+    id: "conv_source",
+    agent_id: "agent_source",
+    status: "idle",
+    created_at: 1704067200,
+    host_id: "host_mac",
+    workspace: "/Users/alice/project",
+    runner_id: "runner_source",
+    runner_online: true,
+    host_online: true,
+  };
+  const fork = {
+    id: "conv_side",
+    agent_id: "agent_fork",
+    status: "idle",
+    created_at: 1704067200,
+    labels: { "omnigent.side_chat": "1", "omnigent.side_chat.source_id": source.id },
+  };
+
+  it.each(["worktree-from-another-machine", "main", null])(
+    "relaunches a stopped parent and reuses its runner without requiring saved branch %s",
+    async (gitBranch) => {
+      const relaunchedRunnerId = "runner_relaunched";
+      fetchMock
+        .mockResolvedValueOnce(
+          mockJsonResponse({ ...source, runner_online: false, git_branch: gitBranch }),
+        )
+        .mockResolvedValueOnce(mockJsonResponse({ recovered: true, recovery: "runner_relaunched" }))
+        .mockResolvedValueOnce(
+          mockJsonResponse({
+            ...source,
+            runner_id: relaunchedRunnerId,
+            runner_online: true,
+            git_branch: gitBranch,
+          }),
+        )
+        .mockResolvedValueOnce(mockJsonResponse(fork))
+        .mockResolvedValueOnce(mockJsonResponse({ ...fork, runner_id: relaunchedRunnerId }));
+
+      await expect(createSideChat(source.id)).resolves.toEqual({ childSessionId: fork.id });
+
+      const [retryUrl, retryInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+      expect(retryUrl).toBe(`/v1/sessions/${source.id}/events`);
+      expect(JSON.parse(retryInit.body as string)).toEqual({ type: "retry_session", data: {} });
+      const [forkUrl, forkInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+      expect(forkUrl).toBe(`/v1/sessions/${source.id}/fork`);
+      expect(JSON.parse(forkInit.body as string)).toEqual({ title: "Side chat", side_chat: true });
+      const [bindUrl, bindInit] = fetchMock.mock.calls[4] as [string, RequestInit];
+      expect(bindUrl).toBe(`/v1/sessions/${fork.id}`);
+      expect(bindInit.method).toBe("PATCH");
+      expect(JSON.parse(bindInit.body as string)).toEqual({ runner_id: relaunchedRunnerId });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    },
+  );
+
+  it.each([{}, { host_id: null, workspace: null }, { host_online: false }])(
+    "reuses the parent's online runner regardless of host availability (%j)",
+    async (placement) => {
+      fetchMock
+        .mockResolvedValueOnce(mockJsonResponse({ ...source, ...placement }))
+        .mockResolvedValueOnce(mockJsonResponse(fork))
+        .mockResolvedValueOnce(mockJsonResponse({ ...fork, runner_id: source.runner_id }));
+
+      await expect(createSideChat(source.id)).resolves.toEqual({ childSessionId: fork.id });
+
+      const [url, init] = fetchMock.mock.calls[2] as [string, RequestInit];
+      expect(url).toBe(`/v1/sessions/${fork.id}`);
+      expect(init.method).toBe("PATCH");
+      expect(JSON.parse(init.body as string)).toEqual({ runner_id: source.runner_id });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it("allows an in-process session to use normal dispatch without a host or runner id", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        mockJsonResponse({ ...source, host_id: null, workspace: null, runner_id: null }),
+      )
+      .mockResolvedValueOnce(mockJsonResponse(fork));
+
+    await expect(createSideChat(source.id)).resolves.toEqual({ childSessionId: fork.id });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["omnigent.side_chat.source_id", "omnigent.fork.source_id"])(
+    "routes the initial runner bind using %s without making the fork a sub-agent",
+    async (sourceLabel) => {
+      vi.stubEnv("VITE_DATABRICKS_WORKSPACE", "true");
+      const side = {
+        ...fork,
+        labels: { "omnigent.side_chat": "1", [sourceLabel]: source.id },
+      };
+      fetchMock
+        .mockResolvedValueOnce(mockJsonResponse(source))
+        .mockResolvedValueOnce(mockJsonResponse(side))
+        .mockResolvedValueOnce(mockJsonResponse({ ...side, runner_id: source.runner_id }));
+
+      await createSideChat(source.id);
+
+      const init = fetchMock.mock.calls[2][1] as RequestInit;
+      expect(new Headers(init.headers).get("X-Databricks-Omnigent-Slice-Key")).toBe(source.host_id);
+      expect(getSessionHost(side.id)).toBe(source.host_id);
+      fetchMock.mockResolvedValueOnce(mockJsonResponse(side));
+      expect(await getSession(side.id)).toMatchObject({
+        hostId: null,
+        parentSessionId: null,
+        kind: "default",
+      });
+    },
+  );
+
+  it("wakes a resumable host and refreshes its placement before starting a side chat", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          ...source,
+          host_resumable: true,
+          host_online: false,
+          runner_online: false,
+        }),
+      )
+      .mockResolvedValueOnce(mockJsonResponse({ recovered: true, recovery: "runner_relaunched" }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          ...source,
+          host_id: "host_awake",
+          workspace: "/resumed/workspace",
+          runner_id: "runner_awake",
+        }),
+      )
+      .mockResolvedValueOnce(mockJsonResponse(fork))
+      .mockResolvedValueOnce(mockJsonResponse({ ...fork, runner_id: "runner_awake" }));
+
+    await expect(createSideChat(source.id)).resolves.toEqual({ childSessionId: fork.id });
+
+    const [retryUrl, retryInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(retryUrl).toBe(`/v1/sessions/${source.id}/events`);
+    expect(JSON.parse(retryInit.body as string)).toMatchObject({ type: "retry_session" });
+    const [bindUrl, bindInit] = fetchMock.mock.calls[4] as [string, RequestInit];
+    expect(bindUrl).toBe(`/v1/sessions/${fork.id}`);
+    expect(bindInit.method).toBe("PATCH");
+    expect(JSON.parse(bindInit.body as string)).toEqual({ runner_id: "runner_awake" });
+  });
+
+  it("does not create an orphan fork when neither the host nor runner is available", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ ...source, host_online: false, runner_online: false }),
+    );
+
+    await expect(createSideChat(source.id)).rejects.toThrow("This session is disconnected.");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runner binding", () => {
+  it("lists online runners and parses harnesses", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        data: [
+          {
+            runner_id: "runner_abc",
+            online: true,
+            harnesses: ["openai-agents"],
+          },
+        ],
+      }),
+    );
+
+    const runners = await listRunners();
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/runners");
+    expect(runners).toEqual([
+      {
+        runnerId: "runner_abc",
+        online: true,
+        harnesses: ["openai-agents"],
+      },
+    ]);
+  });
+
+  it("PATCHes runner_id when exactly one runner is online", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          data: [{ runner_id: "runner_abc", online: true, harnesses: [] }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          id: "conv_abc",
+          agent_id: "agent_xyz",
+          runner_id: "runner_abc",
+          host_id: "host_a1b2",
+          status: "idle",
+          created_at: 1704067200,
+          items: [],
+        }),
+      );
+
+    const session = await bindOnlyOnlineRunner("conv_abc");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/runners");
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_abc");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ runner_id: "runner_abc" });
+    expect(session?.runnerId).toBe("runner_abc");
+    // host_id maps to hostId so off-sidebar sessions keep host-bound liveness.
+    expect(session?.hostId).toBe("host_a1b2");
+  });
+
+  it("returns null when no runner is online", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ data: [] }));
+
+    await expect(bindOnlyOnlineRunner("conv_abc")).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("fails loudly when multiple runners are online", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        data: [
+          { runner_id: "runner_a", online: true },
+          { runner_id: "runner_b", online: true },
+        ],
+      }),
+    );
+
+    await expect(bindOnlyOnlineRunner("conv_abc")).rejects.toThrow(/2 runners are online/);
+  });
+
+  it("PATCHes reasoning_effort without runner_id", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+      }),
+    );
+
+    await updateSession("conv_abc", { reasoningEffort: "high" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ reasoning_effort: "high" });
+  });
+
+  it("PATCHes model_override as snake_case", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        model_override: "claude-opus-4-7",
+      }),
+    );
+
+    const session = await updateSession("conv_abc", { modelOverride: "claude-opus-4-7" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ model_override: "claude-opus-4-7" });
+    // Response is parsed into camelCase modelOverride for the store.
+    expect(session.modelOverride).toBe("claude-opus-4-7");
+  });
+
+  it("PATCHes model_override='default' when modelOverride is null (matches REPL /model semantics)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        model_override: null,
+      }),
+    );
+
+    await updateSession("conv_abc", { modelOverride: null });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // ``null`` is encoded as ``"default"`` on the wire — same alias the
+    // server accepts on its clear path, so the REPL's ``/model default``
+    // and the UI's "clear" arrive at the same backend code.
+    expect(JSON.parse(init.body as string)).toEqual({ model_override: "default" });
+  });
+
+  it("PATCHes collaboration_mode as a string", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        labels: { "omnigent.codex_native.collaboration_mode": "plan" },
+      }),
+    );
+
+    const session = await updateSession("conv_abc", { codexPlanMode: true });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ collaboration_mode: "plan" });
+    expect(session.labels?.["omnigent.codex_native.collaboration_mode"]).toBe("plan");
+  });
+
+  it("surfaces AP error messages from failed PATCHes", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse(
+        {
+          error: {
+            code: "runner_unavailable",
+            message: "Could not enter Plan mode: no live Codex runner is available.",
+          },
+        },
+        { ok: false, status: 503 },
+      ),
+    );
+
+    await expect(updateSession("conv_abc", { codexPlanMode: true })).rejects.toThrow(
+      "Could not enter Plan mode",
+    );
+  });
+
+  it("PATCHes cost_control_mode_override as snake_case", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        cost_control_mode_override: "on",
+      }),
+    );
+
+    const session = await updateSession("conv_abc", { costControlModeOverride: "on" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ cost_control_mode_override: "on" });
+    // Response is parsed into camelCase for the store's canonical refresh.
+    expect(session.costControlModeOverride).toBe("on");
+  });
+
+  it("PATCHes an explicit null to clear costControlModeOverride (no clear alias)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        cost_control_mode_override: null,
+      }),
+    );
+
+    await updateSession("conv_abc", { costControlModeOverride: null });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // Unlike model_override (whose clear is the "default" alias), "off" is a
+    // real value for this field — the server's clear signal is the field
+    // present with a JSON null. Sending an alias here would 400.
+    expect(JSON.parse(init.body as string)).toEqual({ cost_control_mode_override: null });
+  });
+
+  it("PATCHes subagent_routing_override as snake_case and reads it back", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        subagent_routing_override: "on",
+      }),
+    );
+
+    const session = await updateSession("conv_abc", { subagentRoutingOverride: "on" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ subagent_routing_override: "on" });
+    expect(session.subagentRoutingOverride).toBe("on");
+  });
+
+  it("PATCHes an explicit null to clear subagentRoutingOverride", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        subagent_routing_override: null,
+      }),
+    );
+
+    await updateSession("conv_abc", { subagentRoutingOverride: null });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // "off" is a real value here too, so the clear signal is a JSON null. The
+    // cleared session reads as Default, the same place "off" lands.
+    expect(JSON.parse(init.body as string)).toEqual({ subagent_routing_override: null });
+  });
+
+  it("forwards silent:true for persistence-only session updates", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        model_override: "claude-opus-4-7",
+      }),
+    );
+
+    await updateSession("conv_abc", { modelOverride: "claude-opus-4-7", silent: true });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      model_override: "claude-opus-4-7",
+      silent: true,
+    });
+  });
+});
+
+describe("getSession", () => {
+  it("GETs the sessions endpoint and parses the response", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "running",
+        created_at: 1704067200,
+        items: [],
+      }),
+    );
+
+    const session = await getSession("conv_abc");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/sessions/conv_abc");
+    expect(session.agentId).toBe("agent_xyz");
+    expect(session.createdAt).toBe(1704067200);
+  });
+
+  it("url-encodes the session id", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv with space",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+      }),
+    );
+    await getSession("conv with space");
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/sessions/conv%20with%20space");
+  });
+
+  it("routes a hostless sub-agent child by its parent's host", async () => {
+    // A sub-agent child runs on its parent's runner, whose tunnel lives on the
+    // replica keyed by the PARENT's host. The child row carries no host_id of
+    // its own, so its session-scoped requests must key by the parent — else
+    // they land keyless on the default replica and read "runner offline".
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_routing_parent",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 0,
+        host_id: "host_devbox",
+      }),
+    );
+    await getSessionSlim("conv_routing_parent");
+
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_routing_child",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 0,
+        host_id: null,
+        kind: "sub_agent",
+        parent_session_id: "conv_routing_parent",
+      }),
+    );
+    await getSessionSlim("conv_routing_child");
+
+    expect(getSessionHost("conv_routing_child")).toBe("host_devbox");
+  });
+
+  it("resolves the routing host through an arbitrarily deep child chain", async () => {
+    // Nesting has no depth limit; only the root is host-bound.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_deep_0",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 0,
+        host_id: "host_root",
+      }),
+    );
+    await getSessionSlim("conv_deep_0");
+    for (let depth = 1; depth <= 6; depth++) {
+      fetchMock.mockResolvedValueOnce(
+        mockJsonResponse({
+          id: `conv_deep_${depth}`,
+          agent_id: "agent_xyz",
+          status: "idle",
+          created_at: 0,
+          host_id: null,
+          kind: "sub_agent",
+          parent_session_id: `conv_deep_${depth - 1}`,
+        }),
+      );
+      // oxlint-disable-next-line no-await-in-loop
+      await getSessionSlim(`conv_deep_${depth}`);
+    }
+
+    expect(getSessionHost("conv_deep_6")).toBe("host_root");
+  });
+
+  it("getSessionSlim skips items, liveness, and subtree usage", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+        usage_included: false,
+        total_cost_usd: null,
+        usage_by_model: null,
+      }),
+    );
+
+    const session = await getSessionSlim("conv_abc");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_abc?include_items=false&include_liveness=false&include_usage=false",
+    );
+    expect(session.agentId).toBe("agent_xyz");
+    expect(session.items).toEqual([]);
+    expect(session.usageIncluded).toBe(false);
+    expect(session.totalCostUsd).toBeNull();
+    expect(session.usageByModel).toBeNull();
+  });
+
+  it("getSessionSlim can request a runner-backed state refresh", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        items: [],
+      }),
+    );
+
+    await getSessionSlim("conv_abc", { refreshState: true });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv_abc?include_items=false&include_liveness=false&include_usage=false&refresh_state=true",
+    );
+  });
+
+  it("treats an older server's snapshot as already including usage", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 0,
+        total_cost_usd: 4.5,
+      }),
+    );
+
+    const session = await getSessionSlim("conv_abc");
+
+    expect(session.usageIncluded).toBe(true);
+    expect(session.totalCostUsd).toBe(4.5);
+  });
+
+  it("maps permission_level from the wire to permissionLevel", async () => {
+    // Regression for the bug where SessionResponseWire was missing
+    // permission_level — the field was on the wire but dropped at the
+    // parse boundary, so child sessions appeared as "no access" in the
+    // UI even when the user owned the parent.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+        permission_level: 4,
+      }),
+    );
+    const session = await getSession("conv_abc");
+    expect(session.permissionLevel).toBe(4);
+  });
+
+  it("treats a missing permission_level as null", async () => {
+    // The server omits the field when permissions are disabled.
+    // ``sessionFromWire`` must default to null so callers can lean on
+    // null-vs-numeric checks without optional-chaining everywhere.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+      }),
+    );
+    const session = await getSession("conv_abc");
+    expect(session.permissionLevel).toBeNull();
+  });
+
+  it("maps archived from the wire onto the snapshot", async () => {
+    // The snapshot is the only archived-flag carrier for a session opened
+    // directly by URL (the default sidebar list excludes archived rows).
+    // Dropping it at the parse boundary made the header kebab offer
+    // "Archive" on an already-archived session.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+        archived: true,
+      }),
+    );
+    const session = await getSession("conv_abc");
+    expect(session.archived).toBe(true);
+  });
+
+  it("treats a missing archived flag as false", async () => {
+    // Older servers / recorded fixtures omit the field; absent means active.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_abc",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+      }),
+    );
+    const session = await getSession("conv_abc");
+    expect(session.archived).toBe(false);
+  });
+
+  it("maps parent_session_id from the wire to parentSessionId", async () => {
+    // Child (sub-agent) sessions return their parent's id here so the
+    // UI can mark the rail accordingly without an extra round-trip.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_child",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+        parent_session_id: "conv_parent",
+      }),
+    );
+    const session = await getSession("conv_child");
+    expect(session.parentSessionId).toBe("conv_parent");
+  });
+
+  it("maps title from the wire to the camelCase Session", async () => {
+    // The sidebar's nested-child row reads ``session.title`` for the
+    // display label. Without this mapping it falls back to a truncated
+    // id, which is what we don't want.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_child",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+        title: "researcher:auth",
+      }),
+    );
+    const session = await getSession("conv_child");
+    expect(session.title).toBe("researcher:auth");
+  });
+
+  it("treats a missing parent_session_id as null", async () => {
+    // Top-level (non-child) sessions omit the field entirely.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_top",
+        agent_id: "ag",
+        status: "idle",
+        created_at: 0,
+      }),
+    );
+    const session = await getSession("conv_top");
+    expect(session.parentSessionId).toBeNull();
+  });
+});
+
+describe("getSessionUsage", () => {
+  it("requests usage without items, liveness, or runner-backed state refresh", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv with space",
+        total_cost_usd: 3.5,
+        usage_by_model: {
+          "model-a": { input_tokens: 10, total_cost_usd: 1 },
+          "model-b": { output_tokens: 20, total_cost_usd: 2.5 },
+        },
+      }),
+    );
+    const controller = new AbortController();
+
+    const usage = await getSessionUsage("conv with space", { signal: controller.signal });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/sessions/conv%20with%20space?include_usage=true&include_items=false&include_liveness=false&refresh_state=false",
+    );
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+    expect(usage).toEqual({
+      id: "conv with space",
+      totalCostUsd: 3.5,
+      usageByModel: {
+        "model-a": {
+          inputTokens: 10,
+          outputTokens: null,
+          totalTokens: null,
+          cacheReadInputTokens: null,
+          cacheCreationInputTokens: null,
+          totalCostUsd: 1,
+        },
+        "model-b": {
+          inputTokens: null,
+          outputTokens: 20,
+          totalTokens: null,
+          cacheReadInputTokens: null,
+          cacheCreationInputTokens: null,
+          totalCostUsd: 2.5,
+        },
+      },
+    });
+  });
+
+  it("ignores other snapshot fields without replacing host routing metadata", async () => {
+    setSessionHost("conv_usage_projection", "host_current");
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_usage_projection",
+        agent_id: "agent_old",
+        host_id: "host_old",
+        status: "failed",
+        created_at: 0,
+        items: [],
+        total_cost_usd: 3.5,
+        usage_by_model: null,
+      }),
+    );
+
+    try {
+      expect(await getSessionUsage("conv_usage_projection")).toEqual({
+        id: "conv_usage_projection",
+        totalCostUsd: 3.5,
+        usageByModel: null,
+      });
+      expect(getSessionHost("conv_usage_projection")).toBe("host_current");
+    } finally {
+      setSessionHost("conv_usage_projection", null);
+    }
+  });
+
+  it.each([null, 0])("preserves unpriced versus priced-zero usage (%s)", async (cost) => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ id: "conv_abc", total_cost_usd: cost, usage_by_model: null }),
+    );
+
+    expect(await getSessionUsage("conv_abc")).toEqual({
+      id: "conv_abc",
+      totalCostUsd: cost,
+      usageByModel: null,
+    });
+  });
+
+  it("rejects a failed usage read instead of synthesizing zero spend", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 503 }));
+
+    await expect(getSessionUsage("conv_abc")).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe("exportSessionTranscript", () => {
+  it("writes session_meta first, then every item in ascending order", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ id: "sess_1", object: "conversation", title: "Planning" }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        object: "list",
+        data: [
+          { id: "msg_1", type: "message", role: "user" },
+          { id: "msg_2", type: "message", role: "assistant" },
+        ],
+        first_id: "msg_1",
+        last_id: "msg_2",
+        has_more: false,
+      }),
+    );
+
+    const jsonl = await exportSessionTranscript("sess_1");
+
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "/v1/sessions/sess_1?include_items=false&include_liveness=false",
+    );
+    expect(fetchMock.mock.calls[1]![0]).toBe("/v1/sessions/sess_1/items?limit=500&order=asc");
+
+    expect(jsonl.endsWith("\n")).toBe(true);
+    const records = jsonl
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(records.map((r) => r.record_type)).toEqual(["session_meta", "item", "item"]);
+    expect(records[0]).toMatchObject({ id: "sess_1", title: "Planning" });
+    expect(records.slice(1).map((r) => r.id)).toEqual(["msg_1", "msg_2"]);
+  });
+
+  it("pages forward with after=<last_id> until has_more is false", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ id: "sess_1" }));
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        object: "list",
+        data: [{ id: "msg_1" }],
+        last_id: "msg_1",
+        has_more: true,
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        object: "list",
+        data: [{ id: "msg_2" }],
+        last_id: "msg_2",
+        has_more: false,
+      }),
+    );
+
+    const jsonl = await exportSessionTranscript("sess_1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]![0]).toBe(
+      "/v1/sessions/sess_1/items?limit=500&order=asc&after=msg_1",
+    );
+    const ids = jsonl
+      .trimEnd()
+      .split("\n")
+      .slice(1)
+      .map((line) => (JSON.parse(line) as { id: string }).id);
+    expect(ids).toEqual(["msg_1", "msg_2"]);
+  });
+});
+
+describe("fetchSessionItemsPage", () => {
+  it("requests the newest page (order=desc) and returns items oldest-to-newest", async () => {
+    // Server returns newest-first; the helper must reverse to chronological
+    // so history renders in the same order the live stream appends.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "msg_2",
+            response_id: "resp_2",
+            type: "message",
+            role: "assistant",
+            status: "completed",
+            model: "agent_xyz",
+            content: [{ type: "output_text", text: "second" }],
+          },
+          {
+            id: "msg_1",
+            response_id: "resp_1",
+            type: "message",
+            role: "user",
+            status: "completed",
+            content: [{ type: "input_text", text: "first" }],
+          },
+        ],
+        first_id: "msg_2",
+        last_id: "msg_1",
+        has_more: true,
+      }),
+    );
+
+    const page = await fetchSessionItemsPage("conv with space");
+
+    // Reversed to chronological: oldest (msg_1) first. Dropping the
+    // reverse would render the conversation backwards.
+    expect(page.items.map((item) => item.id)).toEqual(["msg_1", "msg_2"]);
+    // `has_more` surfaces as `hasMore` so the store can arm scroll-up loading.
+    expect(page.hasMore).toBe(true);
+    // One descending request at the default page size, no cursor.
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      `/v1/sessions/conv%20with%20space/items?limit=${SESSION_HISTORY_PAGE_SIZE}&order=desc`,
+    );
+  });
+
+  it("pages backwards via an `after` cursor in descending order when olderThan is set", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        object: "list",
+        data: [],
+        first_id: null,
+        last_id: null,
+        has_more: false,
+      }),
+    );
+
+    const page = await fetchSessionItemsPage("conv_abc", { olderThan: "msg_50", limit: 25 });
+
+    expect(page.items).toEqual([]);
+    expect(page.hasMore).toBe(false);
+    // olderThan maps to the server's `after` cursor: under order=desc,
+    // "after" means lower position = older items. Sending `before` here
+    // (the pre-fix shape) would return the conversation's start instead.
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      "/v1/sessions/conv_abc/items?limit=25&order=desc&after=msg_50",
+    );
+  });
+});
+
+describe("postEvent", () => {
+  it("POSTs the event body verbatim and returns {queued, itemId}", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: true, item_id: "ci_123" }));
+    const event = {
+      type: "message",
+      data: { role: "user", content: [{ type: "input_text", text: "hi" }] },
+    };
+
+    const out = await postEvent("conv_abc", event);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_abc/events");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual(event);
+    expect(out).toEqual({ queued: true, itemId: "ci_123" });
+  });
+
+  it("surfaces 4xx as a thrown error (does not silently swallow)", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 422 }));
+    await expect(postEvent("conv_abc", { type: "bogus", data: {} })).rejects.toThrow(/422/);
+  });
+
+  it("sends the local opt-out header when background titles are disabled", async () => {
+    localStorage.setItem(BACKGROUND_SESSION_TITLES_STORAGE_KEY, "off");
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: true }));
+
+    await postEvent("conv_abc", { type: "message", data: {} });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("X-Omnigent-Background-Session-Titles")).toBe("off");
+  });
+
+  it("reads pending_id for a native-terminal message", async () => {
+    // Native sessions return a pending-input id instead of an item_id.
+    // The id identifies the snapshot's replayed bubble on rebind and is
+    // the clearedPendingId the consume event carries to drop it. The
+    // store does NOT swap its live optimistic bubble to this id (it
+    // keeps the temp id for React-key stability); this test only asserts
+    // the field is parsed off the response. Dropping the parse would
+    // strand the snapshot-replayed bubble on rebind.
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({ queued: true, pending_id: "pending_abc123" }),
+    );
+    const out = await postEvent("conv_native", {
+      type: "message",
+      data: { role: "user", content: [{ type: "input_text", text: "hi" }] },
+    });
+    expect(out.pendingId).toBe("pending_abc123");
+    expect(out.itemId).toBeUndefined();
+  });
+});
+
+describe("openSessionStream", () => {
+  it("opens GET /v1/sessions/{id}/stream with the supplied signal", () => {
+    const signal = new AbortController().signal;
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}));
+
+    openSessionStream("conv_abc", signal);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_abc/stream");
+    expect(new Headers(init.headers).get("Accept")).toBe("text/event-stream");
+    expect(init.signal).toBe(signal);
+  });
+});
+
+describe("interrupt", () => {
+  it.each([undefined, "codex_turn_side_1"])(
+    "posts an interrupt with the optional observed response id %s",
+    async (responseId) => {
+      fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false }));
+
+      const out = await interrupt("conv_abc", responseId);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/v1/sessions/conv_abc/events");
+      expect(JSON.parse(init.body as string)).toEqual({
+        type: "interrupt",
+        data: responseId ? { response_id: responseId } : {},
+      });
+      expect(out.queued).toBe(false);
+    },
+  );
+});
+
+describe("stopSession", () => {
+  it("posts {type: 'stop_session', data: {}} to the events endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false }));
+
+    const out = await stopSession("conv_abc");
+
+    // The server's owner gate + runner dispatch hinge on this exact
+    // discriminator. A wrong type would 400 at the route or land as
+    // an unknown event, making the Stop button a silent no-op.
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_abc/events");
+    expect(JSON.parse(init.body as string)).toEqual({ type: "stop_session", data: {} });
+    expect(out.queued).toBe(false);
+  });
+});
+
+describe("continueFailedTurn", () => {
+  it.each([
+    { queued: true, item_id: "ci_retry" },
+    { queued: true, pending_id: "pending_retry" },
+  ])("submits a continuation for an accepted retry: %o", async (response) => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse(response));
+
+    await continueFailedTurn("conv_retry");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_retry/events");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      type: "message",
+      data: {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "Please continue from where you left off.",
+          },
+        ],
+      },
+    });
+  });
+
+  it("shares one in-flight continuation across error cards in the same session", async () => {
+    let finishRetry: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishRetry = resolve;
+        }),
+    );
+
+    const first = continueFailedTurn("conv_retry");
+    const second = continueFailedTurn("conv_retry");
+
+    expect(second).toBe(first);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    finishRetry?.(mockJsonResponse({ queued: true }));
+    await Promise.all([first, second]);
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: true }));
+    await continueFailedTurn("conv_retry");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases a shared failed attempt so a later retry can succeed", async () => {
+    let finishRetry: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishRetry = resolve;
+        }),
+    );
+
+    const first = continueFailedTurn("conv_retry");
+    const second = continueFailedTurn("conv_retry");
+    const outcomes = Promise.allSettled([first, second]);
+    finishRetry?.(mockJsonResponse({ queued: false, denied: true }));
+
+    expect(await outcomes).toEqual([
+      { status: "rejected", reason: new Error("The retry was blocked by a policy") },
+      { status: "rejected", reason: new Error("The retry was blocked by a policy") },
+    ]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: true }));
+    await continueFailedTurn("conv_retry");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows different sessions to retry independently", async () => {
+    let finishFirst: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: true }));
+
+    const first = continueFailedTurn("conv_first");
+    await continueFailedTurn("conv_second");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/v1/sessions/conv_first/events",
+      "/v1/sessions/conv_second/events",
+    ]);
+    finishFirst?.(mockJsonResponse({ queued: true }));
+    await first;
+  });
+
+  it("rejects policy denials so the error card remains actionable", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false, denied: true }));
+
+    await expect(continueFailedTurn("conv_retry")).rejects.toThrow(
+      "The retry was blocked by a policy",
+    );
+  });
+
+  it("rejects a response that did not queue a continuation", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false }));
+
+    await expect(continueFailedTurn("conv_retry")).rejects.toThrow("The retry was not accepted");
+  });
+
+  it("propagates the server's dispatch error", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse(
+        { error: { code: "runner_unavailable", message: "The host is offline" } },
+        { ok: false, status: 503 },
+      ),
+    );
+
+    await expect(continueFailedTurn("conv_retry")).rejects.toMatchObject({
+      code: "runner_unavailable",
+      message: "The host is offline",
+      status: 503,
+    });
+  });
+});
+
+describe("approve", () => {
+  it("POSTs the MCP-shape result to the elicitation's resolve URL", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false }));
+
+    await approve("conv_abc", "elic_xyz", {
+      action: "accept",
+      content: { confirm: true },
+    });
+
+    // URL-based elicitation: the elicitation id rides in the URL
+    // path, not the body. Pinning the exact URL guards against the
+    // verdict regressing to a generic `approval` event on `/events`.
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_abc/elicitations/elic_xyz/resolve");
+    expect(JSON.parse(init.body as string)).toEqual({
+      action: "accept",
+      content: { confirm: true },
+    });
+  });
+
+  it("omits content when not supplied", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false }));
+    await approve("conv_abc", "elic_xyz", { action: "decline" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/sessions/conv_abc/elicitations/elic_xyz/resolve");
+    expect(JSON.parse(init.body as string)).toEqual({ action: "decline" });
+  });
+});
+
+describe("importLocalSessions", () => {
+  it("streams each session through onSession and returns the final tally", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockNdjsonResponse([
+        JSON.stringify({ event: "session", session_id: "c1", title: "First" }),
+        JSON.stringify({ event: "session", session_id: "c2", title: null }),
+        JSON.stringify({ event: "done", imported: 2, already_imported: 1, failed: 0 }),
+      ]),
+    );
+
+    const seen: string[] = [];
+    const result = await importLocalSessions("host_1", "all", 25, (s) => seen.push(s.id));
+
+    expect(seen).toEqual(["c1", "c2"]);
+    expect(result).toEqual({
+      imported: 2,
+      alreadyImported: 1,
+      failed: 0,
+      sessions: [
+        { id: "c1", title: "First" },
+        { id: "c2", title: null },
+      ],
+      failures: [],
+    });
+    // Hits the streaming endpoint with the snake_case body.
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/v1/imports/local/stream");
+    expect(JSON.parse(init.body as string)).toEqual({
+      host_id: "host_1",
+      source: "all",
+      limit: 25,
+    });
+  });
+
+  it("collects per-session failure reasons from failed events and the tally", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockNdjsonResponse([
+        JSON.stringify({ event: "session", session_id: "c1", title: "Good" }),
+        JSON.stringify({
+          event: "failed",
+          external_session_id: "bad-1",
+          source: "codex",
+          reason: "No visible messages to import.",
+        }),
+        JSON.stringify({
+          event: "done",
+          imported: 1,
+          already_imported: 0,
+          failed: 1,
+          failures: [
+            { external_session_id: "bad-1", source: "codex", reason: "No visible messages." },
+          ],
+        }),
+      ]),
+    );
+
+    const result = await importLocalSessions("host_1", "all", 25);
+
+    expect(result.imported).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.failures).toEqual([
+      { externalSessionId: "bad-1", source: "codex", reason: "No visible messages to import." },
+    ]);
+  });
+
+  it("throws the server's message on a mid-stream error, keeping delivered sessions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockNdjsonResponse([
+        JSON.stringify({ event: "session", session_id: "c1", title: "First" }),
+        JSON.stringify({ event: "error", message: "host stalled mid-import" }),
+        JSON.stringify({ event: "done", imported: 1, already_imported: 0, failed: 0 }),
+      ]),
+    );
+
+    const seen: string[] = [];
+    await expect(importLocalSessions("h", "claude", 10, (s) => seen.push(s.id))).rejects.toThrow(
+      "host stalled mid-import",
+    );
+    // The session that streamed before the error was still handed to the caller.
+    expect(seen).toEqual(["c1"]);
+  });
+
+  it("sends an exact session ID with its harness", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockNdjsonResponse([
+        JSON.stringify({ event: "session", session_id: "c1", title: "Exact" }),
+        JSON.stringify({ event: "done", imported: 1, already_imported: 0, failed: 0 }),
+      ]),
+    );
+
+    await importLocalSessions("host_1", "codex", 25, undefined, "session-exact");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      host_id: "host_1",
+      source: "codex",
+      limit: 25,
+      session_id: "session-exact",
+    });
+  });
+
+  it("does not fall back to a server that cannot distinguish an exact import", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 404 }));
+
+    await expect(
+      importLocalSessions("host_1", "codex", 25, undefined, "session-exact"),
+    ).rejects.toThrow("Direct session import is not supported");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the buffered endpoint when the stream endpoint 404s", async () => {
+    // Old server: the streaming endpoint is absent, so the client retries the
+    // buffered one and delivers every session through onSession at once.
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({}, { ok: false, status: 404 }));
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        imported: 2,
+        already_imported: 1,
+        failed: 0,
+        sessions: [
+          { session_id: "c1", title: "First" },
+          { session_id: "c2", title: null },
+        ],
+      }),
+    );
+
+    const seen: string[] = [];
+    const result = await importLocalSessions("host_1", "all", 25, (s) => seen.push(s.id));
+
+    expect(seen).toEqual(["c1", "c2"]);
+    expect(result).toEqual({
+      imported: 2,
+      alreadyImported: 1,
+      failed: 0,
+      sessions: [
+        { id: "c1", title: "First" },
+        { id: "c2", title: null },
+      ],
+      failures: [],
+    });
+    // First the stream endpoint (404), then the buffered fallback.
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/imports/local/stream");
+    expect(fetchMock.mock.calls[1][0]).toBe("/v1/imports/local");
+  });
+});

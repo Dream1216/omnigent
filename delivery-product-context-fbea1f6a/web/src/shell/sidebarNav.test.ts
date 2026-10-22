@@ -1,0 +1,793 @@
+import { describe, expect, it, vi } from "vitest";
+import type { Conversation } from "@/hooks/useConversations";
+import { clearOptimisticTitles, recordOptimisticTitle } from "@/lib/optimisticTitles";
+import {
+  type ActiveChatOverride,
+  bareConversationId,
+  computeNextActiveOverride,
+  conversationDisplayLabel,
+  dedupeConversationsById,
+  filterConversations,
+  getConversationIconKind,
+  groupConversations,
+  getConversationAgentType,
+  migratePinnedConversationIds,
+  orderByPinnedTimestamp,
+  pinOrderWrites,
+  resolveSidebarDrop,
+  sessionsListAcceptsDrop,
+  sortConversations,
+  STATUS_BUCKETS,
+  statusBucket,
+  dateBucket,
+} from "./sidebarNav";
+
+function conversation(
+  id: string,
+  title: string | null,
+  createdAt: Date,
+  options: { labels?: Record<string, string>; updatedAt?: Date; archived?: boolean } = {},
+): Conversation {
+  return {
+    id,
+    object: "conversation",
+    title,
+    created_at: Math.floor(createdAt.getTime() / 1000),
+    updated_at: Math.floor((options.updatedAt ?? createdAt).getTime() / 1000),
+    labels: options.labels ?? {},
+    permission_level: null,
+    archived: options.archived,
+  };
+}
+
+describe("filterConversations", () => {
+  it("matches title and id case-insensitively", () => {
+    const conversations = [
+      conversation("conv_alpha", "Weather Notes", new Date(2026, 4, 14, 10)),
+      conversation("conv_beta", "Build UI", new Date(2026, 4, 14, 9)),
+      conversation("conv_gamma", null, new Date(2026, 4, 14, 8)),
+    ];
+
+    expect(filterConversations(conversations, " weather ").map((c) => c.id)).toEqual([
+      "conv_alpha",
+    ]);
+    expect(filterConversations(conversations, "GAMMA").map((c) => c.id)).toEqual(["conv_gamma"]);
+  });
+
+  it("matches native wrapper default labels for untitled sessions", () => {
+    const conversations = [
+      conversation("conv_native", null, new Date(2026, 4, 14, 9), {
+        labels: { "omnigent.wrapper": "claude-code-native-ui" },
+      }),
+      conversation("conv_codex", null, new Date(2026, 4, 14, 8), {
+        labels: { "omnigent.wrapper": "codex-native-ui" },
+      }),
+      conversation("conv_pi", null, new Date(2026, 4, 14, 8), {
+        labels: { "omnigent.wrapper": "pi-native-ui" },
+      }),
+      conversation("conv_other", null, new Date(2026, 4, 14, 8)),
+    ];
+
+    expect(filterConversations(conversations, "claude").map((c) => c.id)).toEqual(["conv_native"]);
+    expect(filterConversations(conversations, "codex").map((c) => c.id)).toEqual(["conv_codex"]);
+    expect(filterConversations(conversations, "pi").map((c) => c.id)).toEqual(["conv_pi"]);
+  });
+});
+
+describe("computeNextActiveOverride", () => {
+  const a = conversation("a", "A", new Date(2026, 4, 14, 9));
+  const b = conversation("b", "B", new Date(2026, 4, 14, 10));
+
+  it("returns null when no chat is active", () => {
+    expect(computeNextActiveOverride(undefined, [a, b], null)).toBeNull();
+  });
+
+  it("snaps to the active chat's current updated_at on first observation", () => {
+    expect(computeNextActiveOverride("a", [a, b], null)).toEqual({
+      id: "a",
+      updatedAt: a.updated_at,
+    });
+  });
+
+  it("keeps the existing snapshot when activeId hasn't changed", () => {
+    // The whole point of the freeze: a server-side updated_at bump on
+    // the active chat must not refresh the snapshot.
+    const frozen: ActiveChatOverride = { id: "a", updatedAt: 100 };
+    const aBumped = { ...a, updated_at: 999 };
+    expect(computeNextActiveOverride("a", [aBumped, b], frozen)).toBe(frozen);
+  });
+
+  it("snaps to the new active chat when navigating between chats", () => {
+    expect(computeNextActiveOverride("b", [a, b], { id: "a", updatedAt: 100 })).toEqual({
+      id: "b",
+      updatedAt: b.updated_at,
+    });
+  });
+
+  it("drops the override while the new active chat hasn't loaded yet", () => {
+    expect(computeNextActiveOverride("c", [a, b], { id: "a", updatedAt: 100 })).toBeNull();
+  });
+});
+
+describe("bareConversationId", () => {
+  const hex = "0123456789abcdef0123456789abcdef";
+
+  it("strips a legacy prefix down to the bare hex tail", () => {
+    expect(bareConversationId(`conv_${hex}`)).toBe(hex);
+    expect(bareConversationId(`ag_${hex}`)).toBe(hex);
+  });
+
+  it("strips dashes from a canonical uuid and lowercases", () => {
+    expect(bareConversationId("01234567-89AB-CDEF-0123-456789ABCDEF")).toBe(hex);
+  });
+
+  it("is idempotent on an already-bare id", () => {
+    expect(bareConversationId(hex)).toBe(hex);
+  });
+
+  it("leaves a non-uuid value unchanged", () => {
+    expect(bareConversationId("not-a-uuid")).toBe("not-a-uuid");
+  });
+});
+
+describe("migratePinnedConversationIds", () => {
+  const hex = "0123456789abcdef0123456789abcdef";
+
+  it("rewrites legacy prefixed pins to bare hex", () => {
+    expect(migratePinnedConversationIds([`conv_${hex}`])).toEqual([hex]);
+  });
+
+  it("collapses a legacy id and its bare twin into one, keeping order", () => {
+    const other = "fedcba9876543210fedcba9876543210";
+    expect(migratePinnedConversationIds([`conv_${other}`, `conv_${hex}`, hex])).toEqual([
+      other,
+      hex,
+    ]);
+  });
+});
+
+describe("dedupeConversationsById", () => {
+  it("keeps the first occurrence of each id", () => {
+    const first = conversation("conv_a", "list copy", new Date(2026, 4, 14, 9));
+    const dup = conversation("conv_a", "backfill copy", new Date(2026, 4, 14, 8));
+    const other = conversation("conv_b", "B", new Date(2026, 4, 14, 7));
+
+    const deduped = dedupeConversationsById([first, other, dup]);
+    expect(deduped.map((c) => c.id)).toEqual(["conv_a", "conv_b"]);
+    expect(deduped[0].title).toBe("list copy");
+  });
+});
+
+describe("orderByPinnedTimestamp", () => {
+  const pinned = (id: string, pinnedAt: number | undefined, updatedAt: Date) =>
+    conversation(id, id, new Date(2026, 4, 14, 8), {
+      updatedAt,
+      labels: pinnedAt === undefined ? {} : { "omnigent.pinned": String(pinnedAt) },
+    });
+
+  it("orders oldest pin first, ignoring updated_at", () => {
+    // conv_a pinned LATER (larger value) but is the most recently active; it
+    // must still render below conv_b, which was pinned earlier.
+    const convA = pinned("conv_a", 2000, new Date(2026, 4, 14, 23));
+    const convB = pinned("conv_b", 1000, new Date(2026, 4, 14, 9));
+    expect(orderByPinnedTimestamp([convA, convB]).map((c) => c.id)).toEqual(["conv_b", "conv_a"]);
+  });
+
+  it("holds a pinned row's slot when its updated_at is bumped", () => {
+    const convA = pinned("conv_a", 1000, new Date(2026, 4, 14, 9));
+    const convB = pinned("conv_b", 2000, new Date(2026, 4, 14, 8));
+    const before = orderByPinnedTimestamp([convA, convB]).map((c) => c.id);
+    // conv_b gets a new message (latest updated_at) — its slot must not move.
+    const bumped = { ...convB, updated_at: Math.floor(new Date(2026, 4, 14, 23).getTime() / 1000) };
+    expect(orderByPinnedTimestamp([convA, bumped]).map((c) => c.id)).toEqual(before);
+  });
+
+  it("sinks a missing/unparseable pin value to the bottom, stably", () => {
+    const withTime = pinned("conv_a", 1000, new Date(2026, 4, 14, 9));
+    const noLabel = pinned("conv_b", undefined, new Date(2026, 4, 14, 8));
+    expect(orderByPinnedTimestamp([noLabel, withTime]).map((c) => c.id)).toEqual([
+      "conv_a",
+      "conv_b",
+    ]);
+  });
+
+  it("does not mutate the input array", () => {
+    const convA = pinned("conv_a", 2000, new Date(2026, 4, 14, 9));
+    const convB = pinned("conv_b", 1000, new Date(2026, 4, 14, 8));
+    const input = [convA, convB];
+    orderByPinnedTimestamp(input);
+    expect(input.map((c) => c.id)).toEqual(["conv_a", "conv_b"]);
+  });
+});
+
+describe("pinOrderWrites", () => {
+  const pins = (...values: (number | undefined)[]) =>
+    values.map((value, index) =>
+      conversation(`conv_${index}`, null, new Date(2026, 4, 14, 8), {
+        labels: value === undefined ? {} : { "omnigent.pinned": String(value) },
+      }),
+    );
+
+  it("rewrites only the moved pin, between its new neighbours", () => {
+    expect(pinOrderWrites(pins(1000, 2000, 3000), "conv_2", "conv_1")).toEqual([
+      { id: "conv_2", pinnedAt: 1500 },
+    ]);
+    expect(pinOrderWrites(pins(1000, 2000, 3000), "conv_0", "conv_1")).toEqual([
+      { id: "conv_0", pinnedAt: 2500 },
+    ]);
+  });
+
+  it("moves to the top or bottom just past the end value", () => {
+    expect(pinOrderWrites(pins(1000, 2000, 3000), "conv_2", "conv_0")).toEqual([
+      { id: "conv_2", pinnedAt: 999 },
+    ]);
+    expect(pinOrderWrites(pins(1000, 2000, 3000), "conv_0", "conv_2")).toEqual([
+      { id: "conv_0", pinnedAt: 3001 },
+    ]);
+  });
+
+  it("renumbers every pin when there's no room between the neighbours", () => {
+    // conv_0 already holds 1000, so it isn't rewritten.
+    expect(pinOrderWrites(pins(1000, 1000, 1000), "conv_2", "conv_1")).toEqual([
+      { id: "conv_2", pinnedAt: 1001 },
+      { id: "conv_1", pinnedAt: 1002 },
+    ]);
+    expect(pinOrderWrites(pins(1000, undefined, undefined), "conv_0", "conv_1")).toEqual([
+      { id: "conv_1", pinnedAt: 1000 },
+      { id: "conv_0", pinnedAt: 1001 },
+      { id: "conv_2", pinnedAt: 1002 },
+    ]);
+  });
+
+  it("renumbers below now when the existing values are too large to count up from", () => {
+    vi.useFakeTimers({ now: 1791337307018 });
+    try {
+      const writes = pinOrderWrites(pins(1e20, 1e20, 1e20), "conv_2", "conv_1");
+      expect(writes).toEqual([
+        { id: "conv_0", pinnedAt: 1791337307015 },
+        { id: "conv_2", pinnedAt: 1791337307016 },
+        { id: "conv_1", pinnedAt: 1791337307017 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renumbers once repeated moves leave no representable value between neighbours", () => {
+    // Adjacent doubles at epoch-ms scale: their midpoint rounds to one of them.
+    const low = 1791337307018;
+    const high = low + 2 ** -12;
+    expect(pinOrderWrites(pins(low, high, 5000000000000), "conv_2", "conv_1")).toEqual([
+      { id: "conv_2", pinnedAt: low + 1 },
+      { id: "conv_1", pinnedAt: low + 2 },
+    ]);
+  });
+
+  it("inserts a not-yet-pinned session above the row it's dropped on", () => {
+    expect(pinOrderWrites(pins(1000, 2000), "new", "conv_1")).toEqual([
+      { id: "new", pinnedAt: 1500 },
+    ]);
+    expect(pinOrderWrites(pins(1000, 2000), "new", "conv_0")).toEqual([
+      { id: "new", pinnedAt: 999 },
+    ]);
+  });
+
+  it("is a no-op for a drop on itself or an unknown row", () => {
+    expect(pinOrderWrites(pins(1000, 2000), "conv_0", "conv_0")).toEqual([]);
+    expect(pinOrderWrites(pins(1000, 2000), "conv_0", "missing")).toEqual([]);
+  });
+
+  it("produces values that orderByPinnedTimestamp sorts into the dragged order", () => {
+    const rows = pins(1000, 2000, 3000, 4000);
+    const writes = new Map(pinOrderWrites(rows, "conv_3", "conv_1").map((w) => [w.id, w.pinnedAt]));
+    const next = rows.map((c) =>
+      writes.has(c.id) ? { ...c, labels: { "omnigent.pinned": String(writes.get(c.id)) } } : c,
+    );
+    expect(orderByPinnedTimestamp(next).map((c) => c.id)).toEqual([
+      "conv_0",
+      "conv_3",
+      "conv_1",
+      "conv_2",
+    ]);
+  });
+});
+
+describe("getConversationAgentType", () => {
+  it("returns 'Claude Code' for claude-native-ui sessions", () => {
+    const conv = conversation("conv_native", null, new Date(2026, 4, 14, 9), {
+      labels: { "omnigent.wrapper": "claude-code-native-ui" },
+    });
+    // claude-code-native-ui is the wrapper label assigned to sessions started
+    // via `omnigent claude`. Any other label value must not match.
+    expect(getConversationAgentType(conv)).toBe("Claude Code");
+  });
+
+  it("returns 'Codex' for codex-native-ui sessions", () => {
+    const conv = conversation("conv_codex", null, new Date(2026, 4, 14, 9), {
+      labels: { "omnigent.wrapper": "codex-native-ui" },
+    });
+    // codex-native-ui is the wrapper label assigned to sessions started
+    // via `omnigent codex`. It gets its own filter bucket and row icon.
+    expect(getConversationAgentType(conv)).toBe("Codex");
+  });
+
+  it("returns 'Pi' for pi-native-ui sessions", () => {
+    const conv = conversation("conv_pi", null, new Date(2026, 4, 14, 9), {
+      labels: { "omnigent.wrapper": "pi-native-ui" },
+    });
+    expect(getConversationAgentType(conv)).toBe("Pi");
+  });
+
+  it("returns 'Kiro' for kiro-native-ui sessions", () => {
+    const conv = conversation("conv_kiro", null, new Date(2026, 4, 14, 9), {
+      labels: { "omnigent.wrapper": "kiro-native-ui" },
+    });
+    expect(getConversationAgentType(conv)).toBe("Kiro");
+  });
+
+  it("returns 'Antigravity' for antigravity-native-ui sessions", () => {
+    const conv = conversation("conv_agy", null, new Date(2026, 4, 14, 9), {
+      labels: { "omnigent.wrapper": "antigravity-native-ui" },
+    });
+    // antigravity-native-ui is the wrapper label assigned to sessions started
+    // via `omnigent antigravity` or the web-UI Antigravity picker. It gets its
+    // own filter bucket and friendly sidebar name.
+    expect(getConversationAgentType(conv)).toBe("Antigravity");
+  });
+
+  it("returns agent_name for YAML-based sessions", () => {
+    const conv: Conversation = {
+      ...conversation("conv_yaml", "My session", new Date(2026, 4, 14, 9)),
+      agent_name: "databricks_coding_agent",
+    };
+    // agent_name comes from the agent spec's `name:` field; it's the canonical
+    // identity for YAML-based agents and is preferred over the id.
+    expect(getConversationAgentType(conv)).toBe("databricks_coding_agent");
+  });
+
+  it("returns 'Other' when no wrapper label and no agent_name", () => {
+    const conv = conversation("conv_plain", "Some chat", new Date(2026, 4, 14, 9));
+    // Sessions with no wrapper and no agent_name are unclassified; 'Other'
+    // is the catch-all bucket in the filter dropdown.
+    expect(getConversationAgentType(conv)).toBe("Other");
+  });
+
+  it("prefers native wrapper labels over agent_name when both are set", () => {
+    // In practice the native wrapper never sets agent_name, but if it did the
+    // wrapper label wins so the filter bucket stays consistent with the row icon.
+    const claudeConv: Conversation = {
+      ...conversation("conv_both", null, new Date(2026, 4, 14, 9), {
+        labels: { "omnigent.wrapper": "claude-code-native-ui" },
+      }),
+      agent_name: "some_agent",
+    };
+    const codexConv: Conversation = {
+      ...conversation("conv_both_codex", null, new Date(2026, 4, 14, 9), {
+        labels: { "omnigent.wrapper": "codex-native-ui" },
+      }),
+      agent_name: "some_agent",
+    };
+    const piConv: Conversation = {
+      ...conversation("conv_both_pi", null, new Date(2026, 4, 14, 9), {
+        labels: { "omnigent.wrapper": "pi-native-ui" },
+      }),
+      agent_name: "some_agent",
+    };
+    expect(getConversationAgentType(claudeConv)).toBe("Claude Code");
+    expect(getConversationAgentType(codexConv)).toBe("Codex");
+    expect(getConversationAgentType(piConv)).toBe("Pi");
+  });
+
+  it("returns 'Other' when agent_name is null", () => {
+    const conv: Conversation = {
+      ...conversation("conv_null_name", "Chat", new Date(2026, 4, 14, 9)),
+      agent_name: null,
+    };
+    // Explicit null is equivalent to absent — do not render null as the type name.
+    expect(getConversationAgentType(conv)).toBe("Other");
+  });
+});
+
+describe("getConversationIconKind", () => {
+  it("maps native wrapper labels and nessie agent names to row icon kinds", () => {
+    expect(
+      getConversationIconKind(
+        conversation("conv_claude", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "claude-code-native-ui" },
+        }),
+      ),
+    ).toBe("claude");
+    expect(
+      getConversationIconKind(
+        conversation("conv_codex", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "codex-native-ui" },
+        }),
+      ),
+    ).toBe("codex");
+    expect(
+      getConversationIconKind(
+        conversation("conv_opencode", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "opencode-native-ui" },
+        }),
+      ),
+    ).toBe("opencode");
+    expect(
+      getConversationIconKind(
+        conversation("conv_pi", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "pi-native-ui" },
+        }),
+      ),
+    ).toBe("pi");
+    expect(
+      getConversationIconKind(
+        conversation("conv_kiro", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "kiro-native-ui" },
+        }),
+      ),
+    ).toBe("kiro");
+    expect(
+      getConversationIconKind(
+        conversation("conv_agy", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "antigravity-native-ui" },
+        }),
+      ),
+    ).toBe("antigravity");
+    expect(
+      getConversationIconKind({
+        ...conversation("conv_nessie", null, new Date(2026, 4, 14, 9)),
+        agent_name: "nessie",
+      }),
+    ).toBe("nessie");
+    expect(
+      getConversationIconKind(conversation("conv_other", null, new Date(2026, 4, 14, 9))),
+    ).toBeNull();
+  });
+});
+
+describe("conversationDisplayLabel", () => {
+  it("uses the title when present and a 'New session' fallback otherwise", () => {
+    expect(
+      conversationDisplayLabel(
+        conversation("conv_abcdefghijklmnopqrstuvwxyz", "Named chat", new Date(2026, 4, 14, 9)),
+      ),
+    ).toBe("Named chat");
+    expect(
+      conversationDisplayLabel(
+        conversation("conv_abcdefghijklmnopqrstuvwxyz", null, new Date(2026, 4, 14, 9)),
+      ),
+    ).toBe("New session");
+  });
+
+  it("falls back to 'Claude Code' for claude-native sessions with no title", () => {
+    expect(
+      conversationDisplayLabel(
+        conversation("conv_abcdefghijklmnopqrstuvwxyz", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "claude-code-native-ui" },
+        }),
+      ),
+    ).toBe("Claude Code");
+  });
+
+  it("falls back to 'Codex' for codex-native sessions with no title", () => {
+    expect(
+      conversationDisplayLabel(
+        conversation("conv_abcdefghijklmnopqrstuvwxyz", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "codex-native-ui" },
+        }),
+      ),
+    ).toBe("Codex");
+  });
+
+  it("falls back to 'Pi' for pi-native sessions with no title", () => {
+    expect(
+      conversationDisplayLabel(
+        conversation("conv_abcdefghijklmnopqrstuvwxyz", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "pi-native-ui" },
+        }),
+      ),
+    ).toBe("Pi");
+  });
+
+  it("prefers the actual title over the claude-native fallback once set", () => {
+    expect(
+      conversationDisplayLabel(
+        conversation(
+          "conv_abcdefghijklmnopqrstuvwxyz",
+          "investigate the regression",
+          new Date(2026, 4, 14, 9),
+          { labels: { "omnigent.wrapper": "claude-code-native-ui" } },
+        ),
+      ),
+    ).toBe("investigate the regression");
+  });
+
+  it("shows the optimistic first-prompt label while the title is unset", () => {
+    recordOptimisticTitle("conv_abcdefghijklmnopqrstuvwxyz", "debug the login redirect");
+    try {
+      expect(
+        conversationDisplayLabel(
+          conversation("conv_abcdefghijklmnopqrstuvwxyz", null, new Date(2026, 4, 14, 9), {
+            labels: { "omnigent.wrapper": "claude-code-native-ui" },
+          }),
+        ),
+      ).toBe("debug the login redirect");
+    } finally {
+      clearOptimisticTitles();
+    }
+  });
+
+  it("lets the real title supersede the optimistic label once it lands", () => {
+    recordOptimisticTitle("conv_abcdefghijklmnopqrstuvwxyz", "debug the login redirect");
+    try {
+      expect(
+        conversationDisplayLabel(
+          conversation(
+            "conv_abcdefghijklmnopqrstuvwxyz",
+            "debug the login redirect",
+            new Date(2026, 4, 14, 9),
+            {
+              labels: { "omnigent.wrapper": "claude-code-native-ui" },
+            },
+          ),
+        ),
+      ).toBe("debug the login redirect");
+      // A server title — the seed, a generated title, or a rename — always
+      // wins over the stashed prompt.
+      expect(
+        conversationDisplayLabel(
+          conversation(
+            "conv_abcdefghijklmnopqrstuvwxyz",
+            "Login redirect loop",
+            new Date(2026, 4, 14, 9),
+            {
+              labels: { "omnigent.wrapper": "claude-code-native-ui" },
+            },
+          ),
+        ),
+      ).toBe("Login redirect loop");
+    } finally {
+      clearOptimisticTitles();
+    }
+  });
+
+  it("falls back to the wrapper name when no optimistic label was stashed", () => {
+    // Sessions born outside the landing form (forks, CLI, imports) never
+    // record one.
+    expect(
+      conversationDisplayLabel(
+        conversation("conv_abcdefghijklmnopqrstuvwxyz", null, new Date(2026, 4, 14, 9), {
+          labels: { "omnigent.wrapper": "claude-code-native-ui" },
+        }),
+      ),
+    ).toBe("Claude Code");
+  });
+});
+
+// Drag-and-drop routing: dropping a session onto a project folder files it
+// there; onto the "Chats" / remove-from-project zone unfiles it; onto "Pinned"
+// pins it. "Shared with me" is never a drop target, so dropping there yields a
+// null target → no-op.
+describe("resolveSidebarDrop", () => {
+  // Source builder — defaults to an unfiled, unpinned session.
+  const src = (over: Partial<{ project: string | null; isPinned: boolean }> = {}) => ({
+    id: "c1",
+    project: null,
+    isPinned: false,
+    ...over,
+  });
+
+  it("files an unfiled session into the project it's dropped on", () => {
+    expect(resolveSidebarDrop(src(), { type: "project", name: "Sprint 42" })).toEqual({
+      kind: "move",
+      project: "Sprint 42",
+      unpin: false,
+    });
+  });
+
+  it("moves a filed session into a different project", () => {
+    expect(
+      resolveSidebarDrop(src({ project: "Backlog" }), { type: "project", name: "Sprint 42" }),
+    ).toEqual({ kind: "move", project: "Sprint 42", unpin: false });
+  });
+
+  it("is a no-op when dropped on its own project folder (no pointless PATCH)", () => {
+    expect(
+      resolveSidebarDrop(src({ project: "Sprint 42" }), { type: "project", name: "Sprint 42" }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("ungroups a filed session dropped on the remove-from-project zone", () => {
+    expect(resolveSidebarDrop(src({ project: "Sprint 42" }), { type: "ungroup" })).toEqual({
+      kind: "ungroup",
+      project: "Sprint 42",
+      unpin: false,
+    });
+  });
+
+  it("is a no-op when an already-unfiled session is dropped on the ungroup zone", () => {
+    expect(resolveSidebarDrop(src(), { type: "ungroup" })).toEqual({ kind: "none" });
+  });
+
+  it("pins an unpinned session dropped on the Pinned zone", () => {
+    expect(resolveSidebarDrop(src({ project: "Sprint 42" }), { type: "pin" })).toEqual({
+      kind: "pin",
+    });
+    // Also pins an unfiled session (pinning is independent of project membership).
+    expect(resolveSidebarDrop(src(), { type: "pin" })).toEqual({ kind: "pin" });
+  });
+
+  it("is a no-op when an already-pinned session is dropped on the Pinned zone", () => {
+    expect(
+      resolveSidebarDrop(src({ project: "Sprint 42", isPinned: true }), { type: "pin" }),
+    ).toEqual({ kind: "none" });
+  });
+
+  // Pinned sessions float into the Pinned section regardless of project label,
+  // so moving/unfiling one must ALSO unpin it or it appears stuck in Pinned.
+  it("moves AND unpins a pinned session dropped on a different project", () => {
+    expect(
+      resolveSidebarDrop(src({ project: "Backlog", isPinned: true }), {
+        type: "project",
+        name: "Sprint 42",
+      }),
+    ).toEqual({ kind: "move", project: "Sprint 42", unpin: true });
+  });
+
+  it("unpins a pinned session dropped on its OWN project folder so it lands there", () => {
+    // Not a no-op when pinned: the session is hidden up in Pinned, so re-file
+    // (harmless same-label write) and unpin to reveal it in the folder.
+    expect(
+      resolveSidebarDrop(src({ project: "Sprint 42", isPinned: true }), {
+        type: "project",
+        name: "Sprint 42",
+      }),
+    ).toEqual({ kind: "move", project: "Sprint 42", unpin: true });
+  });
+
+  it("ungroups AND unpins a pinned, filed session dropped on Chats", () => {
+    expect(
+      resolveSidebarDrop(src({ project: "Sprint 42", isPinned: true }), { type: "ungroup" }),
+    ).toEqual({ kind: "ungroup", project: "Sprint 42", unpin: true });
+  });
+
+  it("unpins a pinned, unfiled session dropped on Chats (drops it into the flat list)", () => {
+    expect(resolveSidebarDrop(src({ isPinned: true }), { type: "ungroup" })).toEqual({
+      kind: "unpin",
+    });
+  });
+
+  it("reorders a pinned session dropped on another pinned row", () => {
+    expect(resolveSidebarDrop(src({ isPinned: true }), { type: "pin-order", id: "c2" })).toEqual({
+      kind: "reorder-pin",
+      targetId: "c2",
+    });
+    expect(resolveSidebarDrop(src({ isPinned: true }), { type: "pin-order", id: "c1" })).toEqual({
+      kind: "none",
+    });
+  });
+
+  it("pins an unpinned session dropped on a pinned row", () => {
+    expect(resolveSidebarDrop(src(), { type: "pin-order", id: "c2" })).toEqual({
+      kind: "pin",
+      targetId: "c2",
+    });
+  });
+
+  it("is a no-op when dropped on nothing droppable (e.g. Shared with me)", () => {
+    expect(resolveSidebarDrop(src({ project: "Sprint 42" }), null)).toEqual({ kind: "none" });
+    expect(resolveSidebarDrop(src(), null)).toEqual({ kind: "none" });
+    expect(resolveSidebarDrop(src({ isPinned: true }), null)).toEqual({ kind: "none" });
+  });
+});
+
+describe("statusBucket", () => {
+  const base = conversation("a", "A", new Date(2026, 0, 1));
+  it("puts approvals and failures ahead of everything else", () => {
+    expect(
+      statusBucket({ ...base, status: "running", pending_elicitations_count: 1 }, true, true),
+    ).toBe("Needs attention");
+    expect(statusBucket({ ...base, status: "failed" }, true, true)).toBe("Needs attention");
+  });
+  it("ranks working, then unread, then draft, then done", () => {
+    expect(statusBucket({ ...base, status: "running" }, false, true)).toBe("Working");
+    expect(statusBucket({ ...base, status: "idle" }, true, true)).toBe("Unread");
+    expect(statusBucket({ ...base, status: "idle" }, false, true)).toBe("Draft");
+    expect(statusBucket({ ...base, status: "idle" }, false, false)).toBe("Done");
+  });
+});
+
+describe("dateBucket", () => {
+  const now = new Date(2026, 8, 30, 10, 0);
+  const at = (date: Date) => date.getTime() / 1000;
+  it("buckets by local calendar day", () => {
+    expect(dateBucket(at(new Date(2026, 8, 30, 0, 0)), now)).toBe("today");
+    expect(dateBucket(at(new Date(2026, 8, 29, 23, 59)), now)).toBe("yesterday");
+    expect(dateBucket(at(new Date(2026, 8, 29, 0, 0)), now)).toBe("yesterday");
+    expect(dateBucket(at(new Date(2026, 8, 28, 23, 59)), now)).toBe("in the last 7 days");
+    expect(dateBucket(at(new Date(2026, 8, 23, 0, 0)), now)).toBe("in the last 7 days");
+    expect(dateBucket(at(new Date(2026, 8, 22, 23, 59)), now)).toBe("in the last 30 days");
+    expect(dateBucket(at(new Date(2026, 7, 31, 0, 0)), now)).toBe("in the last 30 days");
+    expect(dateBucket(at(new Date(2026, 7, 30, 23, 59)), now)).toBe("earlier");
+  });
+});
+
+describe("groupConversations", () => {
+  it("returns non-empty groups in bucket order, keeping row order", () => {
+    const rows = ["a", "b", "c", "d"].map((id) => conversation(id, id, new Date(2026, 0, 1)));
+    const keys: Record<string, (typeof STATUS_BUCKETS)[number]> = {
+      a: "Done",
+      b: "Working",
+      c: "Done",
+      d: "Working",
+    };
+    const groups = groupConversations(rows, (c) => keys[c.id], STATUS_BUCKETS);
+    expect(groups.map((g) => [g.title, g.conversations.map((c) => c.id)])).toEqual([
+      ["Working", ["b", "d"]],
+      ["Done", ["a", "c"]],
+    ]);
+  });
+
+  it("puts a row with no key in the last group instead of dropping it", () => {
+    const rows = ["a", "b"].map((id) => conversation(id, id, new Date(2026, 0, 1)));
+    const groups = groupConversations(rows, (c) => (c.id === "a" ? "Working" : undefined), [
+      "Working",
+      "Done",
+    ]);
+    expect(groups.map((g) => [g.title, g.conversations.map((c) => c.id)])).toEqual([
+      ["Working", ["a"]],
+      ["Done", ["b"]],
+    ]);
+  });
+
+  it("retains an empty Working group in status order", () => {
+    const done = conversation("done", "Done", new Date(2026, 0, 1));
+    expect(groupConversations([done], () => "Done", STATUS_BUCKETS, "Working")).toEqual([
+      { title: "Working", conversations: [] },
+      { title: "Done", conversations: [done] },
+    ]);
+  });
+});
+
+describe("sessionsListAcceptsDrop", () => {
+  const drag = (project: string | null, isPinned: boolean) => ({ id: "s", project, isPinned });
+  it("ungroups or unpins in the default view", () => {
+    expect(sessionsListAcceptsDrop(drag("Customer X", false), false)).toBe(true);
+    expect(sessionsListAcceptsDrop(drag(null, true), false)).toBe(true);
+    expect(sessionsListAcceptsDrop(drag(null, false), false)).toBe(false);
+  });
+  it("never removes a session from its project in a grouped view", () => {
+    expect(sessionsListAcceptsDrop(drag("Customer X", false), true)).toBe(false);
+    expect(sessionsListAcceptsDrop(drag("Customer X", true), true)).toBe(false);
+    expect(sessionsListAcceptsDrop(drag(null, true), true)).toBe(true);
+  });
+});
+
+it("keeps Created stable across updates, active-row overrides, and hover freezes", () => {
+  const old = { ...conversation("a", "old", new Date(1000)), created_at: 1, updated_at: 300 };
+  const newer = { ...conversation("b", "new", new Date(2000)), created_at: 2, updated_at: 100 };
+  const sameSecond = { ...newer, id: "c" };
+  const frozen = new Map([
+    [old.id, 999],
+    [newer.id, 1],
+  ]);
+  const active = { id: newer.id, updatedAt: 500 };
+  const ids = (rows: Conversation[]) =>
+    sortConversations(rows, active, frozen, "created_at").map((row) => row.id);
+  expect(ids([old, newer, sameSecond])).toEqual(["c", "b", "a"]);
+  expect(ids([{ ...old, updated_at: 1000 }, sameSecond, newer])).toEqual(["c", "b", "a"]);
+  expect(sortConversations([old, newer], null).map((row) => row.id)).toEqual(["a", "b"]);
+});
+
+it("orders equal-updated_at rows by id whether or not the order is frozen", () => {
+  const same = new Date("2026-10-14T10:00:00Z");
+  const a = conversation("a", "A", same);
+  const b = conversation("b", "B", same);
+  const c = conversation("c", "C", same);
+  const frozen = new Map<string, number>();
+  const first = sortConversations([a, b, c], null, frozen).map((row) => row.id);
+  // A refresh can hand the same rows back in another order while the pointer is inside.
+  expect(sortConversations([c, a, b], null, frozen).map((row) => row.id)).toEqual(first);
+  // With the pointer outside, arrival order still must not show through.
+  expect(first).toEqual(["c", "b", "a"]);
+  expect(sortConversations([c, a, b], null).map((row) => row.id)).toEqual(["c", "b", "a"]);
+});

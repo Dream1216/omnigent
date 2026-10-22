@@ -1,0 +1,172 @@
+import Foundation
+import WebKit
+
+enum WebViewMode: String {
+  case chat
+  case terminal
+}
+
+@MainActor
+final class WebViewModel: ObservableObject {
+  @Published var currentURL: URL?
+  @Published var isLoading = false
+  @Published var isAuthenticating = false
+  /// Covers the previous server's page while the next server is prepared.
+  @Published var hidesPage = false
+  var cancelAuthentication: (() -> Void)?
+  var signOut: (() -> Void)?
+  #if DEBUG
+    /// Set only while a native workspace view is attached; answers with what to expect next.
+    var injectDebugFault: ((DatabricksDebugFault) async -> String)?
+    /// Set only while a native-OIDC connection is attached; answers with what to expect next.
+    var injectOidcDebugFault: ((OidcDebugFault) async -> String)?
+  #endif
+  @Published var serverSwitcherHidden = true
+
+  /// Whether the native Chat/Terminal switcher should be shown. The web app owns
+  /// this truth and pushes it via `setViewMode`; we only render when it asks us to.
+  @Published var bottomBarVisible = false
+  /// Currently selected mode, kept in sync with the web app in both directions.
+  @Published var viewMode: WebViewMode = .chat
+  /// Whether the Terminal option is selectable (web is connected to a session).
+  @Published var terminalEnabled = false
+  /// Terminal is booting but not yet openable — drives a spinner on the segment.
+  @Published var terminalStartingUp = false
+
+  weak var webView: WKWebView?
+
+  /// How long, after a navigation begins, we wait for the web app to prove it's
+  /// alive by talking over the JS bridge. If the page never speaks within this
+  /// window — a blank render, crashed JS, or a hang that never reaches
+  /// `didFinish` — we surface the server switcher so the user is never stranded
+  /// on a broken page with no way back to server selection.
+  private static let bridgeLivenessTimeout: TimeInterval = 6
+
+  private var serverSwitcherWatchdog: Task<Void, Never>?
+
+  func reload() {
+    webView?.reload()
+  }
+
+  /// Arm (or re-arm) the liveness watchdog. Called whenever a navigation
+  /// begins. The switcher has just been hidden for the load; if the page never
+  /// claims it back over the bridge, the watchdog reveals it as an escape hatch.
+  func armServerSwitcherWatchdog() {
+    serverSwitcherWatchdog?.cancel()
+    serverSwitcherWatchdog = Task { @MainActor [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(Self.bridgeLivenessTimeout * 1_000_000_000))
+      guard !Task.isCancelled, let self else { return }
+      self.serverSwitcherHidden = false
+      self.serverSwitcherWatchdog = nil
+    }
+  }
+
+  /// Stand the watchdog down. Called the moment the page proves it's alive over
+  /// the bridge, and when a load fails (we route to server selection anyway).
+  func cancelServerSwitcherWatchdog() {
+    serverSwitcherWatchdog?.cancel()
+    serverSwitcherWatchdog = nil
+  }
+
+  func emitNotificationActivation(_ path: String) {
+    guard path.starts(with: "/") else { return }
+    let script =
+      "window.__omnigentNativeEmitNotificationActivated?.(\(Self.javascriptString(path)));"
+    webView?.evaluateJavaScript(script)
+  }
+
+  /// Push a deep-link in-app path (`/c/<id>`) to the SPA so it routes to it
+  /// in-place, without a reload — the deep-link analog of
+  /// `emitNotificationActivation`, kept on a separate JS channel so a deep
+  /// link isn't mislabeled as a notification. Only the main process / app
+  /// shell invokes this for a window currently on its pinned server, so the
+  /// SPA's `onOpenPath` subscriber (mounted once the SPA loads) is the receiver.
+  func emitOpenPath(_ path: String) {
+    guard path.starts(with: "/") else { return }
+    let script = "window.__omnigentNativeEmitOpenPath?.(\(Self.javascriptString(path)));"
+    webView?.evaluateJavaScript(script)
+  }
+
+  /// Push the footprint (in CSS px, excluding the OS safe area which the web
+  /// layer adds via `env()`) of the native floating bars to the web app. The
+  /// web side folds these into its `--omnigent-inset-*` variables so page
+  /// content reserves the right amount of space — making native bar dimensions
+  /// the single source of truth instead of magic numbers duplicated in CSS.
+  func emitInsets(topBar: CGFloat, bottomBar: CGFloat) {
+    let script =
+      "window.__omnigentNativeEmitInsets?.(\(jsNumber(topBar)), \(jsNumber(bottomBar)));"
+    webView?.evaluateJavaScript(script)
+  }
+
+  /// Push the server-picker payload (current origin plus the selectable
+  /// managed/recent servers) to the SPA, which surfaces server selection in
+  /// its sidebar instead of the floating pill. The JS bridge caches the value
+  /// so a later-mounting subscriber still receives it.
+  func emitServerPicker(
+    currentOrigin: String?, managedServers: [String], recentServers: [String], canSignOut: Bool
+  ) {
+    guard
+      let json = Self.serverPickerJSON(
+        currentOrigin: currentOrigin, managedServers: managedServers,
+        recentServers: recentServers, canSignOut: canSignOut)
+    else { return }
+    webView?.evaluateJavaScript("window.__omnigentNativeEmitServerPicker?.(\(json));")
+  }
+
+  /// The picker payload as JSON. `canSignOut` offers the SPA's "Sign out of {server}" item.
+  nonisolated static func serverPickerJSON(
+    currentOrigin: String?, managedServers: [String], recentServers: [String], canSignOut: Bool
+  ) -> String? {
+    guard let currentOrigin else { return nil }
+    struct Payload: Encodable {
+      let currentOrigin: String
+      let managedServers: [String]
+      let recentServers: [String]
+      let canSignOut: Bool
+    }
+    let payload = Payload(
+      currentOrigin: currentOrigin,
+      managedServers: managedServers,
+      recentServers: recentServers,
+      canSignOut: canSignOut
+    )
+    guard let data = try? JSONEncoder().encode(payload) else { return nil }
+    return String(data: data, encoding: .utf8)
+  }
+
+  /// Settle the page's pending `signOutOfServer()` calls.
+  func emitSignOutResult(_ handled: Bool) {
+    webView?.evaluateJavaScript("window.__omnigentNativeEmitSignOutResult?.(\(handled));")
+  }
+
+  /// Tell the web app the user tapped a segment in the native switcher.
+  func emitViewModeChanged(_ mode: WebViewMode) {
+    let script =
+      "window.__omnigentNativeEmitViewModeChanged?.(\(Self.javascriptString(mode.rawValue)));"
+    webView?.evaluateJavaScript(script)
+  }
+
+  func emitSidebarDrag(phase: String, progress: Double) {
+    let clamped = max(0, min(1, progress))
+    let script =
+      "window.__omnigentNativeEmitSidebarDrag?.(\(Self.javascriptString(phase)), \(clamped));"
+    webView?.evaluateJavaScript(script)
+  }
+
+  /// Format a CGFloat as a bare JS number literal (no units, finite-guarded).
+  private func jsNumber(_ value: CGFloat) -> String {
+    guard value.isFinite else { return "0" }
+    return String(format: "%g", Double(value))
+  }
+
+  /// `nonisolated` because it touches no main-actor state — a pure formatter, so
+  /// non-isolated callers (e.g. `WorkspaceChromeScript`) can share it.
+  nonisolated static func javascriptString(_ value: String) -> String {
+    guard let data = try? JSONEncoder().encode(value),
+      let encoded = String(data: data, encoding: .utf8)
+    else {
+      return "\"\""
+    }
+    return encoded
+  }
+}

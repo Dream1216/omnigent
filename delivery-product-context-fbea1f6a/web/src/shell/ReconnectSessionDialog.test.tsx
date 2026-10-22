@@ -1,0 +1,541 @@
+// Unit tests for ReconnectSessionDialog — the affordance shown when the
+// open session is unreachable (host offline, or not host-bound with the
+// runner down). Two tabs: Reconnect (instruction + CLI command) and
+// Clone (the shared ForkSessionForm).
+//
+// What we lock:
+//   1. host_offline owner → `omnigent host` (no --resume / YAML),
+//      Reconnect tab is the default.
+//   2. host_offline non-owner → no command at all (only the owner can
+//      reach the host machine), Clone tab is the default.
+//   3. local_stranded → wrapper-specific resume command, with the conv
+//      id + server URL substituted.
+//   4. claude-native local_stranded → `omnigent claude --resume`.
+//   5. The Clone tab embeds ForkSessionForm with the source props, and
+//      its onClose closes the dialog.
+//   6. open={false} renders nothing.
+//
+// ForkSessionForm itself (host picker, fork+launch flow, retry
+// semantics) is covered by ForkSessionDialog.test.tsx — here it is
+// stubbed so these tests pin the dialog's own contract: which tab is
+// default, what each tab shows, and what props reach the form.
+
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ReconnectSessionDialog, buildReconnectCommand } from "./ReconnectSessionDialog";
+import { useSessionActionRestrictions } from "@/hooks/useSessionActionRestrictions";
+import { SESSION_ACTIONS_LOADING } from "@/lib/sessionCapabilities";
+
+vi.mock("@/hooks/useSessionActionRestrictions", () => ({
+  useSessionActionRestrictions: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.mocked(useSessionActionRestrictions).mockReturnValue({
+    forkDisabledReason: undefined,
+    switchHostDisabledReason: undefined,
+  });
+});
+
+vi.mock("./ForkSessionDialog", () => ({
+  ForkSessionForm: (props: {
+    sourceSessionId: string;
+    sourceTitle?: string | null;
+    sourceWorkspace?: string | null;
+    sourceHostId?: string | null;
+    sourceGitBranch?: string | null;
+    onClose: () => void;
+  }) => (
+    <div
+      data-testid="fork-session-form-stub"
+      data-source-session-id={props.sourceSessionId}
+      data-source-title={props.sourceTitle ?? ""}
+      data-source-workspace={props.sourceWorkspace ?? ""}
+      data-source-host-id={props.sourceHostId ?? ""}
+      data-source-git-branch={props.sourceGitBranch ?? ""}
+    >
+      <button type="button" data-testid="fork-session-form-close" onClick={props.onClose}>
+        close
+      </button>
+    </div>
+  ),
+}));
+// The switch dialog owns its own host/filesystem queries; stub it so these
+// tests only pin whether this dialog offers it and with which session.
+vi.mock("./SwitchHostDialog", () => ({
+  SwitchHostDialog: (props: { sessionId: string; currentHostId: string | null }) => (
+    <div
+      data-testid="switch-host-dialog-stub"
+      data-session-id={props.sessionId}
+      data-current-host-id={props.currentHostId ?? ""}
+    />
+  ),
+}));
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("buildReconnectCommand", () => {
+  it("emits `omnigent host` for host_offline (no --resume, no YAML)", () => {
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_host1",
+      serverUrl: "https://example.databricksapps.com",
+      state: "host_offline",
+    });
+    expect(cmd).toContain("omnigent host");
+    expect(cmd).toContain("--server 'https://example.databricksapps.com'");
+    // The --profile flag was removed from the CLI; emitting it here would
+    // hand users a command that errors with "No such option".
+    expect(cmd).not.toContain("--profile");
+    // The server relaunches the runner on demand — nothing to --resume,
+    // no local YAML, regardless of wrapper.
+    expect(cmd).not.toContain("--resume");
+    expect(cmd).not.toContain("path/to/agent.yaml");
+  });
+
+  it("prefers `omnigent host` for a host_offline claude-native session", () => {
+    // A claude-native session can still be host-bound; while the host is
+    // down the host relaunches whatever runtime it needs, so host wins.
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_host_claude",
+      serverUrl: "https://x.databricksapps.com",
+      wrapper: "claude-code-native-ui",
+      state: "host_offline",
+    });
+    expect(cmd).toContain("omnigent host");
+    expect(cmd).not.toContain("omnigent claude");
+  });
+
+  it("emits the generic run form for a local_stranded session", () => {
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_abc123",
+      serverUrl: "https://example.databricksapps.com",
+      state: "local_stranded",
+    });
+    expect(cmd).toContain("omnigent run path/to/agent.yaml");
+    expect(cmd).toContain("--resume conv_abc123");
+    expect(cmd).toContain("--server 'https://example.databricksapps.com'");
+    expect(cmd).not.toContain("--profile");
+  });
+
+  it("quotes server URLs containing shell metacharacters", () => {
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_query",
+      serverUrl: "https://example.com/api?profile=dev&glob=*",
+      state: "host_offline",
+    });
+    expect(cmd).toContain("--server 'https://example.com/api?profile=dev&glob=*'");
+  });
+
+  it("emits `omnigent devin --resume` for a devin-native local_stranded session", () => {
+    // Every native wrapper resumes through its own verb; `omnigent run` cannot
+    // resume one at all, which is what this used to suggest.
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_devin1",
+      serverUrl: "https://x.databricksapps.com",
+      wrapper: "devin-native-ui",
+      state: "local_stranded",
+    });
+    expect(cmd).toContain("omnigent devin");
+    expect(cmd).toContain("--resume conv_devin1");
+    expect(cmd).not.toContain("omnigent run");
+    expect(cmd).not.toContain("path/to/agent.yaml");
+  });
+
+  it("emits `omnigent claude --resume` for a claude-native local_stranded session", () => {
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_claude1",
+      serverUrl: "https://x.databricksapps.com",
+      wrapper: "claude-code-native-ui",
+      state: "local_stranded",
+    });
+    expect(cmd).toContain("omnigent claude");
+    expect(cmd).toContain("--resume conv_claude1");
+    // No agent YAML for claude-native — the wrapper has none.
+    expect(cmd).not.toContain("path/to/agent.yaml");
+    expect(cmd).not.toContain("omnigent run");
+  });
+
+  it("falls back to the run form for an unknown wrapper (local_stranded)", () => {
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_other",
+      serverUrl: "https://x.databricksapps.com",
+      wrapper: "some-future-wrapper",
+      state: "local_stranded",
+    });
+    expect(cmd).toContain("omnigent run path/to/agent.yaml");
+    expect(cmd).not.toContain("omnigent claude");
+  });
+
+  it("resolves the native verb from the harness when there is no wrapper label", () => {
+    // A pre-native session (e.g. a legacy devin-acp row) carries no wrapper
+    // label. The server canonicalizes its harness to `devin-native`, and that
+    // must still pick the right resume verb instead of the generic run form,
+    // which cannot resume a native session.
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_legacy_devin",
+      serverUrl: "https://x.databricksapps.com",
+      wrapper: null,
+      harness: "devin-native",
+      state: "local_stranded",
+    });
+    expect(cmd).toContain("omnigent devin");
+    expect(cmd).toContain("--resume conv_legacy_devin");
+    expect(cmd).not.toContain("omnigent run");
+  });
+
+  it("prefers the wrapper label over the harness when both are present", () => {
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_both",
+      serverUrl: "https://x.databricksapps.com",
+      wrapper: "claude-code-native-ui",
+      harness: "devin-native",
+      state: "local_stranded",
+    });
+    expect(cmd).toContain("omnigent claude");
+    expect(cmd).not.toContain("omnigent devin");
+  });
+
+  it("falls back to the run form when neither wrapper nor harness is native", () => {
+    const cmd = buildReconnectCommand({
+      conversationId: "conv_generic",
+      serverUrl: "https://x.databricksapps.com",
+      wrapper: null,
+      harness: "openai-agents",
+      state: "local_stranded",
+    });
+    expect(cmd).toContain("omnigent run path/to/agent.yaml");
+  });
+});
+
+describe("<ReconnectSessionDialog />", () => {
+  it.each([
+    ["Clone session", "Forking this sandbox session is not supported yet."],
+    ["Switch host", "Switching hosts is not supported for this sandbox session yet."],
+  ])("disables managed actions and explains %s to keyboard users", async (name, reason) => {
+    vi.mocked(useSessionActionRestrictions).mockReturnValue({
+      forkDisabledReason: "Forking this sandbox session is not supported yet.",
+      switchHostDisabledReason: "Switching hosts is not supported for this sandbox session yet.",
+    });
+    render(
+      <ReconnectSessionDialog
+        open
+        onOpenChange={vi.fn()}
+        conversationId="conv_managed"
+        serverUrl="http://localhost:6767"
+        state="host_offline"
+        isOwner
+      />,
+    );
+    expect(screen.getByTestId("reconnect-session-tab-clone")).toBeDisabled();
+    const switchHost = screen.getByTestId("reconnect-session-switch-host");
+    expect(switchHost).toBeDisabled();
+    const user = userEvent.setup();
+    const target = screen.getByRole("group", { name });
+    expect(target).toHaveAttribute("tabindex", "0");
+    act(() => target.focus());
+    expect(target).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(reason));
+    expect(target).toHaveAccessibleDescription(reason);
+    await user.keyboard("{Enter} ");
+    await user.click(target);
+    expect(clonePanelState()).toBe("inactive");
+    expect(screen.queryByTestId("switch-host-dialog-stub")).not.toBeInTheDocument();
+  });
+
+  function renderDialog(props: Partial<React.ComponentProps<typeof ReconnectSessionDialog>> = {}) {
+    const onOpenChange = vi.fn();
+    const dialog = (updates: Partial<React.ComponentProps<typeof ReconnectSessionDialog>> = {}) => (
+      <ReconnectSessionDialog
+        open
+        onOpenChange={onOpenChange}
+        conversationId="conv_abc123"
+        serverUrl="https://example.databricksapps.com"
+        state="host_offline"
+        isOwner
+        {...props}
+        {...updates}
+      />
+    );
+    const { rerender } = render(dialog());
+    return {
+      onOpenChange,
+      rerender: (updates?: Partial<React.ComponentProps<typeof ReconnectSessionDialog>>) =>
+        rerender(dialog(updates)),
+    };
+  }
+
+  // Radix Tabs activates a trigger on mousedown (not click), so fire both.
+  function switchToTab(testId: string): void {
+    const trigger = screen.getByTestId(testId);
+    fireEvent.mouseDown(trigger);
+    fireEvent.click(trigger);
+  }
+
+  // The clone panel is forceMount-ed (it must keep the fork form's state
+  // across tab switches), so it is always in the DOM and only hidden via
+  // a Tailwind data-[state=inactive] class — which jsdom can't evaluate.
+  // Assert on the panel's data-state instead of toBeVisible().
+  function clonePanelState(): string | null | undefined {
+    return screen
+      .getByTestId("fork-session-form-stub")
+      .closest('[role="tabpanel"]')
+      ?.getAttribute("data-state");
+  }
+
+  it("defaults to the Reconnect tab with the host command for a host_offline owner", () => {
+    renderDialog({ state: "host_offline", isOwner: true });
+    expect(screen.getByText("Host is offline")).toBeInTheDocument();
+    const block = screen.getByTestId("reconnect-session-command");
+    expect(block.textContent).toContain("omnigent host");
+    // The clone form stays mounted (forceMount) but its panel is the
+    // inactive one while the Reconnect tab is the default.
+    expect(clonePanelState()).toBe("inactive");
+  });
+
+  it("offers the host switch to a host_offline owner and hands off to that dialog", () => {
+    // The composer badge no longer carries a switch link while offline, so
+    // this is the only way to escape a host that isn't coming back.
+    const { onOpenChange } = renderDialog({
+      state: "host_offline",
+      isOwner: true,
+      sourceHostId: "host_dead",
+    });
+    expect(screen.queryByTestId("switch-host-dialog-stub")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("reconnect-session-switch-host"));
+
+    // Handing off means this dialog closes as the switch one opens; the
+    // switch dialog is a sibling, so it survives that close.
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    const stub = screen.getByTestId("switch-host-dialog-stub");
+    expect(stub.getAttribute("data-session-id")).toBe("conv_abc123");
+    expect(stub.getAttribute("data-current-host-id")).toBe("host_dead");
+  });
+
+  it("withholds the host switch from a non-owner and from local_stranded", () => {
+    // Binding a runner on another machine isn't a viewer's call, and a
+    // local_stranded session has no host to move off of.
+    renderDialog({ state: "host_offline", isOwner: false });
+    expect(screen.queryByTestId("reconnect-session-switch-host")).toBeNull();
+    cleanup();
+    renderDialog({ state: "local_stranded", isOwner: true });
+    expect(screen.queryByTestId("reconnect-session-switch-host")).toBeNull();
+  });
+
+  it("defaults to the Clone tab for a host_offline non-owner", () => {
+    renderDialog({ state: "host_offline", isOwner: false });
+    // A non-owner can't reach the host machine, so reconnecting is
+    // impossible — cloning is the only action and must be front and
+    // center. The fork form is the active panel.
+    expect(clonePanelState()).toBe("active");
+    // The Reconnect tab is inactive (it unmounts when not selected), so
+    // no command renders anywhere.
+    expect(screen.queryByTestId("reconnect-session-command")).toBeNull();
+    expect(screen.getByText("Host is offline")).toBeInTheDocument();
+  });
+
+  it("does not suggest cloning an unsupported session to a non-owner", () => {
+    vi.mocked(useSessionActionRestrictions).mockReturnValue({
+      forkDisabledReason: "Forking this sandbox session is not supported yet.",
+      switchHostDisabledReason: "Switching hosts is not supported for this sandbox session yet.",
+    });
+    renderDialog({ state: "host_offline", isOwner: false });
+    expect(clonePanelState()).toBe("inactive");
+    expect(screen.getByTestId("reconnect-session-description")).toHaveTextContent(
+      "Forking this sandbox session is not supported yet.",
+    );
+    expect(screen.queryByText(/Clone the session to continue/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a non-owner on Clone while loading, then selects Reconnect when unsupported", () => {
+    vi.mocked(useSessionActionRestrictions).mockReturnValue({
+      forkDisabledReason: SESSION_ACTIONS_LOADING,
+      switchHostDisabledReason: SESSION_ACTIONS_LOADING,
+    });
+    const { rerender } = renderDialog({ state: "host_offline", isOwner: false });
+    // The fork form gates itself while loading; a disabled trigger would let
+    // the dialog's initial focus activate Reconnect instead.
+    expect(clonePanelState()).toBe("active");
+    expect(screen.getByTestId("reconnect-session-tab-clone")).not.toBeDisabled();
+    switchToTab("reconnect-session-tab-reconnect");
+    expect(screen.getByTestId("reconnect-session-description")).toHaveTextContent(
+      "Clone the session to continue in a copy you own.",
+    );
+    expect(screen.queryByText(SESSION_ACTIONS_LOADING)).not.toBeInTheDocument();
+    switchToTab("reconnect-session-tab-clone");
+    expect(clonePanelState()).toBe("active");
+
+    vi.mocked(useSessionActionRestrictions).mockReturnValue({
+      forkDisabledReason: "Forking this sandbox session is not supported yet.",
+      switchHostDisabledReason: "Switching hosts is not supported for this sandbox session yet.",
+    });
+    rerender();
+    expect(clonePanelState()).toBe("inactive");
+    expect(screen.getByTestId("reconnect-session-tab-reconnect")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("reconnect-session-description")).toHaveTextContent(
+      "Forking this sandbox session is not supported yet.",
+    );
+    expect(screen.getByTestId("reconnect-session-tab-clone")).toBeDisabled();
+  });
+
+  it("restores the default Clone tab when a non-owner reopens a supported session", () => {
+    const { rerender } = renderDialog({ state: "host_offline", isOwner: false });
+    switchToTab("reconnect-session-tab-reconnect");
+    expect(clonePanelState()).toBe("inactive");
+    rerender({ open: false });
+    expect(screen.queryByTestId("reconnect-session-dialog")).not.toBeInTheDocument();
+    rerender({ open: true });
+    expect(clonePanelState()).toBe("active");
+  });
+
+  it("keeps the switch-host prompt for an owner while restrictions are still loading", () => {
+    vi.mocked(useSessionActionRestrictions).mockReturnValue({
+      forkDisabledReason: SESSION_ACTIONS_LOADING,
+      switchHostDisabledReason: SESSION_ACTIONS_LOADING,
+    });
+    renderDialog({ state: "host_offline", isOwner: true, sourceHostId: "host_dead" });
+    expect(screen.getByText(/Can't bring that machine back/)).toBeInTheDocument();
+    expect(screen.getByTestId("reconnect-session-switch-host")).toBeDisabled();
+  });
+
+  it("explains owner-only reconnect (no command) on a non-owner's Reconnect tab", () => {
+    renderDialog({ state: "host_offline", isOwner: false });
+    switchToTab("reconnect-session-tab-reconnect");
+    // Even when the non-owner opens the Reconnect tab, the command must
+    // not render — only the explanation that the owner has to do it.
+    expect(screen.queryByTestId("reconnect-session-command")).toBeNull();
+    expect(screen.getByTestId("reconnect-session-description").textContent).toMatch(
+      /only its owner can reconnect it/i,
+    );
+  });
+
+  it("shows the run command for a local_stranded session (owner or not)", () => {
+    renderDialog({ state: "local_stranded", isOwner: false });
+    // local_stranded isn't about a host machine — whoever started it can
+    // relaunch, so the command shows regardless of ownership.
+    const block = screen.getByTestId("reconnect-session-command");
+    expect(block.textContent).toContain("omnigent run path/to/agent.yaml");
+    expect(block.textContent).toContain("--resume conv_abc123");
+    expect(screen.getByText("Agent disconnected")).toBeInTheDocument();
+    // The description testid pins the visible tab copy (the same string
+    // also lives in the sr-only DialogDescription, so getByText can't).
+    expect(screen.getByTestId("reconnect-session-description").textContent).toBe(
+      "Run the command below from the machine where you started this session to reconnect.",
+    );
+  });
+
+  it("shows the claude reattach command for a claude-native local_stranded session", () => {
+    renderDialog({
+      state: "local_stranded",
+      wrapper: "claude-code-native-ui",
+    });
+    const block = screen.getByTestId("reconnect-session-command");
+    expect(block.textContent).toContain("omnigent claude");
+    expect(block.textContent).not.toContain("path/to/agent.yaml");
+  });
+
+  it("switching to the Clone tab reveals the fork form with the source props", () => {
+    renderDialog({
+      state: "local_stranded",
+      sourceTitle: "My session",
+      sourceWorkspace: "/Users/me/repo",
+      sourceHostId: "host_1",
+      sourceGitBranch: "main",
+    });
+    switchToTab("reconnect-session-tab-clone");
+    const form = screen.getByTestId("fork-session-form-stub");
+    expect(clonePanelState()).toBe("active");
+    // The Reconnect panel unmounts when inactive — no stray command.
+    expect(screen.queryByTestId("reconnect-session-command")).toBeNull();
+    // The form receives the same source prefill the header-menu Clone
+    // dialog gets — a missing prop here silently downgrades the clone
+    // to a non-coding fork (no host/directory pickers).
+    expect(form).toHaveAttribute("data-source-session-id", "conv_abc123");
+    expect(form).toHaveAttribute("data-source-title", "My session");
+    expect(form).toHaveAttribute("data-source-workspace", "/Users/me/repo");
+    expect(form).toHaveAttribute("data-source-host-id", "host_1");
+    expect(form).toHaveAttribute("data-source-git-branch", "main");
+  });
+
+  it("the fork form's onClose closes the dialog", () => {
+    const { onOpenChange } = renderDialog();
+    switchToTab("reconnect-session-tab-clone");
+    fireEvent.click(screen.getByTestId("fork-session-form-close"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("renders no dialog content when closed", () => {
+    render(
+      <ReconnectSessionDialog
+        open={false}
+        onOpenChange={() => {}}
+        conversationId="conv_abc123"
+        serverUrl="https://example.databricksapps.com"
+        state="host_offline"
+        isOwner
+      />,
+    );
+    expect(screen.queryByTestId("reconnect-session-dialog")).toBeNull();
+  });
+
+  it("shows the failed local reconnect with an accessible error and retry", () => {
+    const onReconnect = vi.fn();
+    renderDialog({
+      localReconnect: {
+        reconnecting: false,
+        error: "Finish signing in, then try again.",
+        onReconnect,
+      },
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Finish signing in");
+    expect(screen.getByTestId("reconnect-session-command")).toHaveTextContent("omnigent host");
+    fireEvent.click(screen.getByRole("button", { name: "Retry reconnect" }));
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it("disables retry while reconnecting", () => {
+    renderDialog({
+      localReconnect: { reconnecting: true, error: null, onReconnect: vi.fn() },
+    });
+    const button = screen.getByRole("button", { name: "Reconnecting this machine…" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("offers an explicit Arca reconnect for the remembered remote host", () => {
+    const onReconnect = vi.fn();
+    renderDialog({
+      arcaReconnect: { reconnecting: false, error: null, onReconnect },
+    });
+
+    expect(screen.getByTestId("reconnect-session-description")).toHaveTextContent(
+      "Arca host is offline",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect Arca" }));
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it("shows Arca reconnect progress and failures in the current session dialog", () => {
+    renderDialog({
+      arcaReconnect: {
+        reconnecting: true,
+        error: "Couldn't reach Arca.",
+        onReconnect: vi.fn(),
+      },
+    });
+
+    const button = screen.getByRole("button", { name: "Reconnecting Arca…" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByTestId("reconnect-session-arca-error")).toHaveTextContent(
+      "Couldn't reach Arca.",
+    );
+  });
+});

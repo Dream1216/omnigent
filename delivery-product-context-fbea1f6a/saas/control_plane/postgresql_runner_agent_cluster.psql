@@ -1,0 +1,6 @@
+\set ON_ERROR_STOP on
+
+-- Atomic managed-admin entrypoint for the PostgreSQL 18 Runner boundary.
+BEGIN;
+\ir postgresql_runner_agent_cluster.sql
+COMMIT;

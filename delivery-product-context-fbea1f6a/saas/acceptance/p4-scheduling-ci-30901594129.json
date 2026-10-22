@@ -1,0 +1,87 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 30901594129,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/30901594129",
+  "job_id": 91966931289,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/30901594129/job/91966931289",
+  "head_sha": "e0a806f66bd53ab60466d7294653fadf2d1b093d",
+  "upstream_revision": "b8fd1952ac77b8c78ef971de801f2d35379c3b3b",
+  "conclusion": "success",
+  "environment": {
+    "ci_postgresql": "16",
+    "local_postgresql": "18.4",
+    "python": "3.12",
+    "browser": "chromium"
+  },
+  "verification": {
+    "ci_tests": "642 passed",
+    "local_saas_matrix": "130 passed",
+    "official_cli_runner_managed_host_and_archive_regressions_included": true,
+    "wheel_required_artifacts": 64,
+    "patches_replayed": 2,
+    "migration_head": "p4a000000001",
+    "migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed",
+    "local_full_precommit": "passed",
+    "pending_acceptance_gates_before_this_record": 12,
+    "release_decision": "NO-GO"
+  },
+  "application_identity_and_governance": {
+    "official_create_app_composition_root": true,
+    "official_route_authenticated_by_saas_cookie": true,
+    "competing_auth_provider_and_duplicate_saas_router_rejected": true,
+    "revocable_http_cookie_and_bearer_sessions": true,
+    "identity_connection_and_password_credentials": true,
+    "owner_transfer_concurrency_and_single_owner_invariant": true,
+    "member_removal_project_and_active_run_preflight": true,
+    "missing_required_removal_domain_fails_closed": true
+  },
+  "outbox_dispatcher": {
+    "runnable_graceful_worker": true,
+    "postgresql_skip_locked_claim_and_lease_recovery": true,
+    "publisher_class_instance_and_factory_loading": true,
+    "non_bypass_single_service_login_required": true,
+    "unsafe_search_path_table_ownership_and_cross_service_roles_rejected": true,
+    "publisher_delivery_semantics": "at-least-once; consumer deduplication required"
+  },
+  "scheduling": {
+    "durable_weighted_fair_tenant_queue": true,
+    "shared_runner_pool_and_registration_authority": true,
+    "two_concurrent_scheduler_instances": true,
+    "distinct_tenant_and_run_claims_without_duplicate": true,
+    "pool_and_tenant_capacity_counters_consistent": true,
+    "postgresql_transaction_advisory_pool_lock": true,
+    "runner_reconnect_generation_and_stale_token_rejection": true,
+    "run_lease_monotonic_fence": true,
+    "hashed_short_lived_capability_scope": true,
+    "failure_domain_derived_from_reviewed_placement": true
+  },
+  "postgresql_rls": {
+    "protected_control_plane_tables": 38,
+    "new_scheduling_tables": 5,
+    "enable_and_force_rls": true,
+    "runner_topology_hidden_from_ordinary_roles": true,
+    "tenant_space_dispatch_and_capability_scope_denied": true,
+    "governance_run_impact_policy_select_only": true,
+    "executor_nosuperuser_nobypassrls": true
+  },
+  "source_intrusion": {
+    "direct_upstream_files": 8,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 389,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.987,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "not_proven_by_this_record": [
+    "Worktree and ChangeSet recovery across hosts",
+    "Sandbox Secret Egress and Preview isolation",
+    "two independent infrastructure failure domains",
+    "network partition and N-1 rollback",
+    "signed vulnerability-cleared production image promotion"
+  ],
+  "evidence_successor_policy": "This record verifies the P4 fair-queue, Runner-registry, lease/fence implementation and the production composition gaps closed at the exact implementation revision. A successor that changes only this evidence record, the acceptance ledger, wheel evidence inventory, or explanatory documentation does not alter the verified implementation."
+}

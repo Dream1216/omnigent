@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "policy_id": "omnigent-saas-production-deployment-v1",
+  "reviewed_at": "2026-09-18",
+  "revision_contract": {
+    "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+    "adapter_contract_version": "0.2.0",
+    "control_plane_schema_revision": "p0s000000017"
+  },
+  "evidence_directory": "saas/production/deployment-evidence",
+  "max_evidence_age_days": 30,
+  "minimum_failure_domains": 2,
+  "minimum_physical_hosts": 2,
+  "required_components": {
+    "control-plane": {
+      "minimum_replicas": 2
+    },
+    "queue-worker": {
+      "minimum_replicas": 2
+    },
+    "runner": {
+      "minimum_replicas": 2
+    },
+    "preview-gateway": {
+      "minimum_replicas": 2
+    },
+    "egress-proxy": {
+      "minimum_replicas": 2
+    }
+  },
+  "required_network_controls": [
+    "default_deny_ingress",
+    "default_deny_egress",
+    "metadata_endpoint_denied",
+    "private_control_plane_denied",
+    "runner_egress_proxy_only",
+    "dns_egress_restricted",
+    "preview_origin_isolated",
+    "runner_preview_uds_only",
+    "runner_control_mtls",
+    "preview_relay_mtls"
+  ],
+  "required_database_controls": [
+    "runner_target_database_connect_only",
+    "runner_no_database_create_or_temporary",
+    "runner_catalog_drift_fail_closed",
+    "runner_transition_rpc_or_trigger_only"
+  ],
+  "required_drills": [
+    "failure_domain_loss",
+    "network_partition",
+    "control_plane_replica_loss",
+    "runner_loss",
+    "preview_gateway_loss",
+    "egress_bypass",
+    "metadata_access",
+    "secret_exfiltration",
+    "stale_fencing",
+    "n_minus_one_rollback"
+  ],
+  "maximum_n_minus_one_rollback_seconds": 900,
+  "required_attestation_roles": [
+    "site-reliability",
+    "security",
+    "release-engineering"
+  ],
+  "artifact_uri_schemes": [
+    "s3",
+    "gs",
+    "az",
+    "oci"
+  ],
+  "verified_workflow_identities": [
+    "spiffe://omnigent/production-deployment-evidence"
+  ]
+}

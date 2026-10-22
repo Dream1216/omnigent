@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "policy_id": "omnigent-saas-p6-consecutive-upstream-sync-v1",
+  "records": [
+    {
+      "path": "saas/acceptance/p6-upstream-sync-ci-31011047850.json",
+      "sha256": "578e5eae4ce2ad8a3e7e07e364c25671028d7aa20af7f7ebd01725873f3ccd7f"
+    },
+    {
+      "path": "saas/acceptance/p6-upstream-sync-ci-31019511803.json",
+      "sha256": "584a093d501c5361c6dfd1fc30fac69380cc16175992e25819865f0259324a73"
+    }
+  ]
+}

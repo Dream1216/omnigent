@@ -1,0 +1,291 @@
+# Platform Security Foundation operations
+
+This runbook operates the PC1 Staff Realm, PC2 content-blind lifecycle authority,
+PC3 governed JIT Support/Admin Operation/audit-evidence boundary and PC4 standalone
+Platform Console. It never grants
+ambient customer-content access or makes the emergency database role an application
+role. Destructive User/Tenant deletion and production release remain separate gates.
+
+## Trust boundary and deployment
+
+1. Deploy the Platform HTTP application on a dedicated HTTPS Origin. Configure a
+   dedicated Audience, the `__Host-omnigent_platform_session` cookie, a separate CSRF
+   boundary and the local Staff password authenticator. Never mount this application under the
+   Tenant Origin or copy Tenant cookies into its ingress.
+2. Require a valid local Staff username/password. Do not configure TOTP, Passkey,
+   WebAuthn or an enterprise IdP for Staff. Bearer tokens, a Tenant session, mixed
+   Staff/Tenant cookies, an incorrect Origin, and an incorrect Audience fail closed.
+3. Migrate through `p0s000000017`, then apply
+   `saas/control_plane/postgresql_roles.psql` as the database authority. Verify 122 control-plane
+   tables and 19 Runtime tables retain both enabled and forced RLS.
+4. Give each process login exactly one NOLOGIN role:
+
+   - Staff password verification and session service: `saas_platform_authenticator`;
+   - Platform browser API: `saas_platform_app`;
+   - approved Staff and Assignment administration: `saas_platform_governance`;
+   - content-blind projection writer: `saas_platform_projector`;
+   - exact opaque JIT-session validation: `saas_platform_support`.
+
+   None may inherit `saas_platform`, `saas_app`, `saas_governance`, or another platform
+   process role. The emergency `saas_platform` credential is not application
+   configuration and must remain in the separate recovery Realm.
+5. For P17, render the mandatory canonical business-delivery profile alongside the
+   core profile. Give each new LOGIN exactly its independent NOLOGIN role:
+   `usage_consumer` → `saas_usage_consumer`, `audit_delivery` → `saas_audit_delivery`,
+   and `revocation_consumer` → `saas_revocation_consumer`. The three URLs must be
+   distinct, use `sslmode=verify-full`, and match the exact migration receipt and
+   role graph. The Server receives only the revocation URL, its binding profile and
+   its actual Downward API `OMNIGENT_SAAS_POD_UID`. Missing P17 bindings or URL fail startup;
+   LISTEN reconnects require a new epoch, full-source catchup and the original
+   65-second Snapshot barrier before degraded fallback is eligible. Every real
+   replica must apply invalidations; a single replica ACK is insufficient.
+6. Enable `PlatformHttpConfig.enabled` only after the Origin, Audience, cookie, password
+   lockout, database-role and negative-matrix checks below pass for the exact release revision.
+7. Run the standalone production process with
+   `python -m saas.production.platform_admin`. Set
+   `OMNIGENT_SAAS_PLATFORM_ADMIN_ENABLED=true`, the exact Staff Origin and Audience,
+   the canonical Platform Admin service-role binding file, and only the
+   `platform_authenticator` and `platform_app` database URL files. The process refuses
+   owner, migration, Tenant app, or Platform governance credentials.
+
+## PC4 Platform Console
+
+- Serve `/platform-admin` and its `/platform-admin/assets/*` resources only from the
+  dedicated Staff Origin. Do not proxy it through the Tenant Origin or mount it into
+  the official Agent/Harness Web application.
+- The Staff login adapter must place the CSRF value in
+  `sessionStorage["omnigent.platform.csrf"]` for the Staff Origin. Keep the Session
+  cookie HttpOnly, Secure and `__Host-` scoped. An empty CSRF binding must leave every
+  mutation control disabled.
+- Keep the same-origin-only CSP and forbid inline scripts, inline styles, third-party
+  assets and `innerHTML`/raw customer content rendering. Any new asset must be in the
+  wheel allowlist and covered by authenticated asset-route tests.
+- Treat lifecycle previews as short-lived CAS inputs, not authorization grants. Fetch
+  the exact User/Tenant preview immediately before the command and let PostgreSQL RLS
+  plus the governance transaction reauthorize the target.
+- The Operations drawer merges governed PC3 operations with only the requesting
+  principal's immutable PC2 lifecycle receipts. Do not expose another Staff actor's
+  PC2 receipt through this endpoint.
+- Permission-disabled modules and controls are a usability mirror only. Server
+  authorization, current Assignment checks, fresh authentication, separation of
+  duties, target-bound RLS and idempotency remain authoritative.
+
+## Staff bootstrap and role governance
+
+- Staff browser authentication is local username/password only. Do not configure an
+  enterprise IdP, TOTP, Passkey or WebAuthn challenge for this Realm. Store only an
+  Argon2id hash in `saas_platform_password_credentials`; never log, echo or persist the
+  plaintext password outside the login request.
+- Bootstrap the first `platform_operator` exactly once through
+  `PlatformPasswordAuthenticationService.bootstrap_initial_operator` using
+  `saas_platform_governance`. The bootstrap exception self-records the initial role;
+  later role changes still use the normal RBAC separation-of-duties path. Never turn a
+  Tenant Owner or database login into a product Platform role.
+- If a reviewed pre-P0S14 Beta already contains a temporary Staff operator, do not
+  delete or rewrite it to bypass the empty-store guard. First create and bind the exact
+  `platform_authenticator` service login with the split superuser/principal-operator
+  commands in `bootstrap_platform_governance_service_login`. Then run
+  `python -m saas.scripts.transition_local_platform_operator` with owner-only username
+  and password files, the pinned active legacy operator principal ID, approval reference,
+  and reason. The transition creates only the first local credential and a separately
+  attributed `platform_operator` assignment; exact retries are idempotent and drift fails
+  closed. Keep the governance database URL in this one-shot Job, never in the Web process.
+- Login failures use one generic response for unknown users and wrong passwords. Five
+  consecutive failures lock the account for 15 minutes. Password verification issues
+  an Origin/Audience-bound Staff Cookie with an eight-hour maximum lifetime; logout,
+  suspension and security-version changes revoke its authority.
+- Perform password recovery only through the governance-side `reset_password` operation
+  with the expected credential version. A successful reset clears the lock, increments
+  both credential and Staff security versions, and revokes every existing Staff session.
+- Thereafter use `PlatformAuthorizationService`: fresh authentication, an external
+  approval reference, two-person separation, active-target validation and optimistic
+  assignment versions are mandatory. Self-grant and self-revoke are denied.
+- Session validation reloads current Staff security version and current active
+  assignments. Suspension, security-version change, assignment revocation and expiry
+  therefore take effect without waiting for the browser session to expire.
+- The five built-in roles are `platform_operator`, `platform_security_auditor`,
+  `support_agent`, `billing_operator` and `compliance_operator`. The machine-readable
+  catalog is authoritative; wildcard and `allow_all` permissions are prohibited.
+
+## P0S12 SMTP configuration
+
+- Build one `EmailProviderConfigurationService` from the Platform application
+  session factory, the existing `PlatformAuthorizationService`, the public
+  Tenant Origin, and `build_secret_cipher()`. Refuse application startup for
+  this capability when no KMS or Vault Transit backend is configured; do not
+  add a local encryption-key fallback.
+- Pass that service as `email_configuration=` to
+  `create_platform_admin_app`. Keep `platform.email_configuration.manage` and
+  `.test` on fresh Staff authentication. The browser must never receive or log
+  the plaintext password or stored ciphertext; an empty password on a later
+  save means preserve the current ciphertext.
+- Use the `platform_smtp` Worker mode only after a live test succeeds from the
+  exact deployed network. The Worker login inherits only `saas_onboarding`, can
+  select the configuration table, and cannot read receipts or mutate either
+  SMTP table.
+- Permit egress only to the reviewed relay and TLS port. STARTTLS downgrade,
+  certificate-validation bypass, plaintext SMTP, arbitrary relay hosts and
+  provider fallback are prohibited. A host/port change is not operationally
+  complete until the NetworkPolicy allowlist changes under separate review.
+- Preserve `saas_email_provider_configuration_receipts` as append-only normal
+  operations evidence. A Platform test stores only a recipient hash and sends
+  no registration token. SMTP delivery remains at-least-once; the stable
+  Message-ID reduces duplicates but is not an exactly-once claim.
+
+## Projection safety
+
+- The projector accepts explicit Tenant/User metadata inputs only. It stores no code,
+  Prompt, message, Artifact, Secret, request body or unmasked customer email.
+- Projection updates are monotonic by `source_version`. Lists use UUID cursors, stable
+  ordering, bounded page sizes and per-field permission filtering.
+- The browser role can read projections only while its exact Staff principal has an
+  active assignment. Tenant GUCs do not grant platform visibility. Customer and service
+  roles have no table privilege on platform facts.
+- Add a new projection field only with a migration, a catalog field permission, a safe
+  projector input, output filtering, PostgreSQL denial coverage and recovery hashing.
+
+## PC2 lifecycle commands
+
+- High-risk User suspend/restore and Tenant suspend/restore require a current
+  `platform_operator` assignment, fresh local-password Staff authentication,
+  approval reference, reason, expected version and idempotency key. The governance
+  transaction rechecks current authority rather than trusting browser session claims.
+- User suspension increments `security_version`, revokes all human Sessions, fails
+  pending OIDC login transactions, suspends stewarded Service Accounts and revokes
+  their active API Credentials. Restore never resurrects old Sessions or Credentials.
+- Tenant suspension increments active members' security versions, revokes their
+  Sessions, suspends Tenant Service Accounts and revokes active API Credentials.
+  Restore only reopens the Tenant status; it does not reactivate revoked credentials.
+- Owner Recovery is not ordinary ownership transfer. Preview must prove the existing
+  Owner is inactive and the target is an active member; execution binds the preview
+  hash plus Tenant/source/target versions and atomically demotes/promotes one Owner.
+- Every accepted mutation appends a `saas_platform_lifecycle_operations` receipt and a
+  secret-free Outbox event in the same transaction. Never treat an HTTP response alone
+  as lifecycle evidence.
+
+## PC2 Identity Conflict Case review
+
+- The Staff queue exposes only case ID, Provider class, optional candidate User ID,
+  lifecycle/review states, versions and timestamps. Raw email, Issuer, Subject, login
+  assertion, Prompt, message and customer content remain unavailable to Staff roles.
+- Only a current `platform_operator` with fresh authentication may assign one active
+  Global User candidate or block a pending case. Every decision requires an external
+  approval reference, reason, expected case version and idempotency key; PostgreSQL
+  binds UPDATE to the one requested case.
+- Assignment is not account linking. The candidate must reauthenticate in the customer
+  Realm and use the existing Identity Conflict self-service challenge to approve or
+  reject. Staff code must never insert `saas_identity_connections` for this workflow.
+- A blocked case rejects later login resolution. Preserve the lifecycle receipt and
+  Outbox event as security evidence. Downgrade from `pc2b00000001` is deliberately
+  refused while any reviewed case or Identity Conflict operation exists; use an
+  explicitly approved forward archival migration rather than deleting audit facts.
+
+## PC3 governed Support and audit evidence
+
+- Standard Support access is Tenant-bound, expires within one hour, and requires an
+  active Tenant Owner/Admin/Security Auditor decision followed by a different Staff
+  approver. The requester cannot self-approve. Customer identity status and
+  `security_version` are rechecked in the same transaction.
+- Break-glass access requires an incident reference, expires within 15 minutes, skips
+  only customer pre-approval, and still requires a distinct Staff approver. It never
+  inherits `saas_platform`, bypasses RLS, or broadens its requested scopes.
+- Content scope is bound to exact Project IDs. A one-time disclosed Support token
+  resolves only its active Grant, Tenant, Staff principal, scope and Project set. Store
+  only its digest; revoke or expiry invalidates access immediately.
+- Tenant administrators can list metadata, approve/reject, and immediately revoke an
+  exact Grant from the Tenant Cookie/Origin/CSRF Realm. Customer revocation terminates
+  all active Grant sessions in the same transaction and emits a redacted Outbox fact.
+- Admin Operations, Grant transitions and export approvals are versioned and
+  idempotent. The audit chain has a permanent locked head, monotonic sequence, payload
+  hash, previous hash and event hash. Audit Event and Export rows reject update/delete.
+- Audit exports require an authorized auditor request plus a different Staff approver.
+  Production must inject an `AuditSigner` backed by an independently permissioned
+  KMS/HSM HMAC key. `AuditSigningKey` is only for local tests; a plaintext production
+  key is a release blocker.
+- Run application traffic through `saas_platform_governance` only for governed
+  mutations and through `saas_platform_support` only for exact token validation. Never
+  grant either role membership in the emergency `saas_platform` role.
+
+## Verification
+
+Run the unit, HTTP, real Chromium and real PostgreSQL matrices:
+
+```bash
+uv run pytest -q \
+  tests/saas/test_production_platform_admin.py \
+  tests/saas/test_production_service_bindings.py \
+  tests/saas/test_service_login_bootstrap.py \
+  tests/saas/test_platform_security.py \
+  tests/saas/test_platform_http.py \
+  tests/saas/test_platform_admin_browser.py \
+  tests/saas/test_platform_security_browser.py \
+  tests/saas/test_platform_lifecycle.py \
+  tests/saas/test_platform_lifecycle_http.py \
+  tests/saas/test_platform_governed_access.py \
+  tests/saas/test_email_provider_configuration.py \
+  tests/saas/test_email_provider_http.py \
+  tests/saas/test_onboarding_email.py \
+  tests/saas/test_http_cookie_auth.py
+
+export OMNIGENT_SAAS_TEST_POSTGRES_URL=\
+postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+uv run pytest -q \
+  tests/saas/test_platform_security_postgresql.py \
+  tests/saas/test_platform_lifecycle_postgresql.py \
+  tests/saas/test_platform_governed_access_postgresql.py
+```
+
+The PostgreSQL check must prove exact Staff identity and session lookup, role-less
+denial, active-role access, transaction-local context cleanup, Tenant-role denial,
+customer-content denial and inability to `SET ROLE saas_platform`. The Chromium check
+must use HTTPS and prove the four-role PC4 page/action matrix plus Staff success,
+mixed-cookie, wrong-Origin, bearer and role-less denial.
+
+Then run migration drift, isolated logical restore, wheel-content, Pyrefly and the full
+compatibility matrix. The restore must retain non-empty Staff, Assignment, Session,
+both projection tables and SCIM Directory/User/Group/Event facts, exact
+`pc5a00000003`, and the 85/17 forced-RLS inventories.
+
+## Revocation, incident response and rollback
+
+- For a suspected Staff session compromise, suspend the Staff principal or increment
+  its security version, revoke its sessions, revoke or expire affected assignments and
+  inspect IdP plus Platform request identifiers. Do not grant customer Membership to
+  work around the outage.
+- For an Origin, Audience, cookie or RLS composition error, disable the Platform feature
+  flag and remove its ingress before changing data. Tenant administration remains on its
+  independent Realm.
+- For suspected Support-token exposure, revoke the exact Grant first, confirm every
+  linked Session has `revoked_at`, disable the Support data-plane login if containment
+  is uncertain, and verify the audit chain before resuming. Do not widen a Grant during
+  an incident; request a new versioned Grant instead.
+- For a planned SCIM credential rollover, verify UTC clock health first, record the
+  activation and grace deadlines, install the one-time successor token at the IdP, and
+  prove successor-authenticated traffic before grace expires. Do not schedule another
+  rotation during an active overlap. If either token is suspected compromised, use
+  Directory Disable to destroy both digests instead of shortening timestamps by SQL.
+- A code rollback may leave the PC1 tables and forced policies in place. Do not downgrade
+  the schema while a Platform process or session is active. Before a destructive
+  downgrade, disable ingress, revoke all Staff sessions, stop authenticator/app/
+  governance/projector processes, preserve approved Assignment evidence, take an
+  immutable backup and rehearse restoration.
+- Downgrade through `pc3a00000001` is refused while any Grant, Session, Admin Operation,
+  Audit Event or Export fact exists. Archive and verify evidence through an approved
+  forward migration; never delete PC3 facts to make an older binary start.
+- Downgrade from `pc5a00000003` is refused while an active SCIM credential overlap exists;
+  close the overlap before rollback. Downgrade from `pc5a00000002` is refused while
+  immutable SCIM Bulk receipts exist;
+  downgrade from `pc5a00000001` is additionally refused while an immutable SCIM Event
+  exists. Stop SCIM ingress and preserve Directory/User/Group/Event evidence; use an
+  approved forward archival migration rather than deleting receipts to start an older binary.
+- Emergency recovery uses the separate incident and break-glass process. Never add
+  `saas_platform` inheritance to make an application outage disappear.
+
+## Acceptance boundary
+
+Passing this runbook establishes the code contracts for the PC1 security foundation,
+PC2 lifecycle, PC3 governed-access slice and PC4 Console candidate: independent Staff Realm, governed
+Assignments, content-blind projections, least-privilege target-bound database roles,
+User/Tenant suspend/restore, Session revocation and Owner Recovery. It does not
+establish User/Tenant deletion, PC4 production deployment, production KMS signing,
+deployed local Staff credential/Origin, multi-AZ/PITR evidence, or release GO.

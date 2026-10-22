@@ -1,0 +1,934 @@
+// xterm.js view bridged to an agent's tmux session over a WebSocket.
+//
+// The xterm + WebSocket lifecycle lives in `TerminalSession` (plain
+// JS, outside React). This component is a thin shell: a callback ref
+// constructs the session when its container node attaches, and a
+// layout effect disposes it on unmount (React 18 never calls a ref's
+// returned cleanup).
+
+import { Loader2Icon } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import {
+  isTerminalClipboardWritePending,
+  queueTerminalClipboardWrite,
+} from "@/lib/terminalClipboardWriter";
+import {
+  getOmnigentServerIdentity,
+  isDatabricksWorkspace,
+  isHostRoutingEnabled,
+  resolveWebSocketUrl,
+} from "@/lib/host";
+import {
+  canRememberTerminalClipboardPreference,
+  readTerminalClipboardPreference,
+  subscribeTerminalClipboardPreference,
+  writeTerminalClipboardPreference,
+  type TerminalClipboardPreference,
+} from "@/lib/terminalClipboardPreferences";
+import { subscribeCodeFont } from "@/lib/codeFontPreferences";
+import { useFileViewer, useWorkspacePaths } from "@/shell/FileViewerContext";
+import { resolveInitialAttachUrl, watchDirectUpgrade, withAttachParams } from "@/lib/terminals";
+import {
+  readTerminalThemeMode,
+  resolveTerminalIsDark,
+  subscribeTerminalTheme,
+  type TerminalThemeMode,
+} from "@/lib/terminalThemePreferences";
+import { getSessionHost, markHostKeyless, isHostKeyless } from "@/lib/sessionHost";
+import {
+  TerminalClipboardPrompt,
+  type TerminalClipboardDecision,
+  type TerminalClipboardPromptReason,
+} from "./TerminalClipboardPrompt";
+import {
+  type ConnectionState,
+  type TerminalActivityListener,
+  type TerminalInputListener,
+  applyTerminalCopy,
+  isUnexpectedTerminalClose,
+  resolveTerminalWorkspaceFileLink,
+  TerminalSession,
+  terminalTheme,
+  WS_CLOSE_WRONG_REPLICA,
+} from "./TerminalSession";
+
+/**
+ * Backoff schedule for automatic re-attach after a transport-level
+ * close ({@link isUnexpectedTerminalClose}). One entry per attempt;
+ * when the schedule is exhausted the closed overlay stays up and the
+ * user falls back to a manual refresh / resume.
+ *
+ * The cumulative budget must outlast a server outage so a terminal
+ * watched through one recovers on its own instead of dead-ending while
+ * the backend is still coming back. The fast ramp covers the common
+ * case — a Databricks Apps redeploy reroutes the ingress in ~20-25s —
+ * and the schedule then holds at 30s for several minutes so a slow
+ * redeploy, a stuck rollout, or a longer infra blip still self-heals
+ * rather than stranding the user on a manual refresh. ~5 min total.
+ * (A backgrounded tab also re-dials with a fresh budget on the
+ * visibilitychange reveal, so this budget is really about a foreground
+ * terminal the user is actively watching.)
+ *
+ * Exported for direct unit testing (fake timers advance through it).
+ */
+export const RECONNECT_BACKOFF_MS = [
+  // Fast ramp: recover promptly from the common ~20-25s redeploy.
+  500, 1000, 2000, 4000, 8000, 15000,
+  // Then hold at 30s for the rest of a ~5-minute budget, so a longer
+  // outage still auto-recovers at a calm cadence instead of dead-ending.
+  30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000,
+] as const;
+
+/**
+ * A connection that stayed open at least this long before dropping is
+ * treated as a fresh outage: the retry budget resets. Without this, a
+ * terminal that reconnects fine but drops again hours later (another
+ * background-tab freeze) would eventually exhaust the budget; with a
+ * plain reset-on-connect, a connect→drop hot loop would retry forever.
+ */
+export const RECONNECT_STABLE_MS = 30_000;
+
+function isReconnectableTerminalClose(code: number): boolean {
+  return (
+    isUnexpectedTerminalClose(code) || (code === WS_CLOSE_WRONG_REPLICA && !isDatabricksWorkspace())
+  );
+}
+
+interface TerminalClipboardRequest {
+  scope: string;
+  epoch: number;
+  generation: number;
+  text: string;
+  source: "terminal" | "selection";
+}
+
+interface TerminalViewProps {
+  /** Session/conversation identifier, e.g. ``"conv_abc123"``. */
+  sessionId: string;
+  /** Opaque terminal resource id, e.g. ``"terminal_bash_s1"``. */
+  terminalId: string;
+  /** If true, drops keyboard input and runs ``tmux attach -r``. */
+  readOnly?: boolean;
+  /**
+   * Called on every connection-state transition so parents can reflect
+   * the terminal's live status. Uses a ref internally so changing the
+   * callback never recreates the WebSocket session. Called with ``null``
+   * on unmount so callers can clear stale bridge state.
+   */
+  onStateChange?: (state: ConnectionState | null) => void;
+  /**
+   * Called when output arrives from the terminal bridge. Best-effort
+   * activity signal for UI chrome; idle is inferred by the parent.
+   */
+  onActivity?: TerminalActivityListener;
+  /** Called when keyboard input is sent to the terminal. */
+  onInput?: TerminalInputListener;
+  /** Optional action shown beside the closed-bridge message. */
+  onResume?: () => void | Promise<void>;
+  /**
+   * What that action resumes, named in its label and errors: "sandbox" when
+   * the sandbox itself is offline.
+   */
+  resumeTarget?: "session" | "sandbox";
+  /** Whether the optional resume action is currently in flight. */
+  resumePending?: boolean;
+  /**
+   * False while the surface is mounted but hidden (a pre-warmed attach
+   * kept alive behind the chat view). The session stays connected either
+   * way; on the hidden→visible edge the terminal takes keyboard focus —
+   * the WS-open auto-focus is a browser no-op on a hidden element.
+   * Default true.
+   */
+  active?: boolean;
+  /**
+   * Whether the terminal grabs keyboard focus when its WS connects. Defaults
+   * to ``active`` — a foreground surface claims the keyboard as it comes up.
+   * The workspace-rail shell overrides this to false so a shell restored on a
+   * session switch connects in the background without yanking focus off the
+   * chat composer; it stays fully interactive (clipboard, reconnect) either
+   * way. It still grabs focus on the reveal edge and on an explicit open.
+   */
+  focusOnConnect?: boolean;
+  /**
+   * Loopback attach URL advertised by the session's runner (from the
+   * terminal resource's ``metadata.direct_attach_url``). When set, each
+   * connection attempt probes it first and uses it if the listener
+   * answers — a browser on the runner's machine then attaches with zero
+   * relay legs. Unreachable or absent falls back to the relay URL; the
+   * page URL and all HTTP traffic are unaffected either way.
+   */
+  directAttachUrl?: string;
+}
+
+export function TerminalView({
+  sessionId,
+  terminalId,
+  readOnly = false,
+  onStateChange,
+  onActivity,
+  onInput,
+  onResume,
+  resumeTarget = "session",
+  resumePending = false,
+  active = true,
+  focusOnConnect = active,
+  directAttachUrl,
+}: TerminalViewProps) {
+  const openFile = useFileViewer();
+  const workspacePaths = useWorkspacePaths();
+  const fileLinkRef = useRef({ openFile, ...workspacePaths });
+  fileLinkRef.current = { openFile, ...workspacePaths };
+  const notifyFileLink = useCallback((uri: string): boolean => {
+    const current = fileLinkRef.current;
+    if (current.openFile === null) return false;
+    const target = resolveTerminalWorkspaceFileLink(uri, current.root, current.home);
+    if (target === null) return false;
+    if (target.line === null) current.openFile(target.path);
+    else current.openFile(target.path, { line: target.line });
+    return true;
+  }, []);
+  const [state, setState] = useState<ConnectionState>({ kind: "connecting" });
+  const [connectAttempt, setConnectAttempt] = useState(0);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const clipboardServerIdentity = getOmnigentServerIdentity();
+  const clipboardScope = JSON.stringify([clipboardServerIdentity, sessionId, terminalId, readOnly]);
+  const [clipboardPrompt, setClipboardPrompt] = useState<
+    | (TerminalClipboardRequest & {
+        reason: TerminalClipboardPromptReason;
+        copyFailed?: boolean;
+      })
+    | null
+  >(null);
+  const clipboardScopeRef = useRef({ scope: clipboardScope, epoch: 0 });
+  // Unremembered choices apply to one mounted terminal; saved choices apply
+  // to every terminal on this server in the current browser or app.
+  const clipboardConsentRef = useRef<{
+    scope: string;
+    decision: TerminalClipboardPreference;
+  }>({ scope: clipboardScope, decision: readTerminalClipboardPreference() });
+  const clipboardNeedsClickRef = useRef(false);
+  const clipboardRequestGenerationRef = useRef(0);
+  const clipboardMountedRef = useRef(true);
+  const clipboardActiveRef = useRef(active);
+  const [clipboardScopeEpoch, setClipboardScopeEpoch] = useState(0);
+  useLayoutEffect(() => {
+    if (clipboardActiveRef.current !== active) {
+      clipboardActiveRef.current = active;
+      clipboardRequestGenerationRef.current += 1;
+      if (!active) {
+        setClipboardPrompt(null);
+      }
+    }
+    if (clipboardScopeRef.current.scope !== clipboardScope) {
+      const epoch = clipboardScopeRef.current.epoch + 1;
+      clipboardScopeRef.current = { scope: clipboardScope, epoch };
+      clipboardConsentRef.current = {
+        scope: clipboardScope,
+        decision: readTerminalClipboardPreference(),
+      };
+      clipboardNeedsClickRef.current = false;
+      clipboardRequestGenerationRef.current += 1;
+      setClipboardPrompt(null);
+      setClipboardScopeEpoch(epoch);
+    }
+  }, [active, clipboardScope]);
+  useEffect(
+    () =>
+      subscribeTerminalClipboardPreference((decision) => {
+        const { scope, epoch } = clipboardScopeRef.current;
+        const previousGeneration = clipboardRequestGenerationRef.current;
+        const generation = (clipboardRequestGenerationRef.current += 1);
+        clipboardConsentRef.current = { scope, decision };
+        clipboardNeedsClickRef.current = false;
+        // Shared grants keep waiting text visible; revocations discard it.
+        const keepPendingRequest =
+          decision === "allow" && clipboardMountedRef.current && clipboardActiveRef.current;
+        setClipboardPrompt((current) =>
+          keepPendingRequest &&
+          current?.scope === scope &&
+          current.epoch === epoch &&
+          current.generation === previousGeneration
+            ? {
+                ...current,
+                generation,
+                reason: current.reason === "consent" ? "permission" : current.reason,
+              }
+            : null,
+        );
+      }),
+    [clipboardServerIdentity],
+  );
+  // True between an unexpected close and the re-dial it scheduled, so
+  // the overlay reads "Reconnecting…" instead of the dead-end
+  // "Bridge closed" message during automatic recovery.
+  const [reconnectPending, setReconnectPending] = useState(false);
+  // Consecutive re-dial attempts in the current outage. A ref, not
+  // state: it only feeds the scheduling effect, never the render.
+  const reconnectAttemptsRef = useRef(0);
+  // Epoch ms when the current connection opened, or null while down.
+  // Lets the close handler tell "stable connection finally dropped"
+  // (reset the budget) from "re-dial died straight away" (burn it).
+  const connectedAtRef = useRef<number | null>(null);
+  const resolvedMode = useResolvedThemeMode();
+  // Terminal theme is independent of the app theme: "auto" follows the app's
+  // resolved appearance, while "light"/"dark" pin the terminal. Reading the
+  // pref as state (seeded at mount, updated via the pub/sub) lets a Settings
+  // change re-theme a live terminal through the existing setTheme effect below.
+  const [terminalMode, setTerminalMode] = useState<TerminalThemeMode>(() =>
+    readTerminalThemeMode(),
+  );
+  useEffect(() => subscribeTerminalTheme(setTerminalMode), []);
+  const isDark = resolveTerminalIsDark(terminalMode, resolvedMode === "dark");
+  const terminalBackground = terminalTheme(isDark).background;
+  // Stable ref so the theme-update effect can reach the live session
+  // without adding isDark to the attachSession deps (which would
+  // reconnect the WebSocket on every theme change).
+  const isDarkRef = useRef(isDark);
+  isDarkRef.current = isDark;
+  const sessionRef = useRef<TerminalSession | null>(null);
+  // Stable refs so callback prop changes never recreate the WS session.
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+  const onActivityRef = useRef(onActivity);
+  onActivityRef.current = onActivity;
+  const onInputRef = useRef(onInput);
+  onInputRef.current = onInput;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const focusOnConnectRef = useRef(focusOnConnect);
+  focusOnConnectRef.current = focusOnConnect;
+  // Track whether this terminal has already tried a keyless re-dial after a
+  // 4400 wrong-replica close. If keyless still fails with 4400, the host is
+  // genuinely unreachable — stop retrying.
+  const keylessRef = useRef(false);
+  // Bumped by every attach so an in-flight attach can tell it has been
+  // superseded — a ref callback can re-run for the *same* node, which
+  // leaves no other way to retire the previous attempt's async work.
+  const attachGenerationRef = useRef(0);
+  // Abort handle for the outgoing attach's direct-upgrade probe, which
+  // otherwise holds a loopback socket open for its full timeout.
+  const upgradeCtlRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    clipboardMountedRef.current = true;
+    return () => {
+      clipboardMountedRef.current = false;
+      clipboardRequestGenerationRef.current += 1;
+    };
+  }, []);
+
+  // Stable dispatcher: updates local state and notifies the parent.
+  const notifyState = useCallback((next: ConnectionState) => {
+    setState(next);
+    onStateChangeRef.current?.(next);
+  }, []);
+
+  const notifyActivity = useCallback(() => {
+    onActivityRef.current?.();
+  }, []);
+
+  const notifyInput = useCallback(() => {
+    onInputRef.current?.();
+  }, []);
+
+  const queueSessionClipboardCopy = useCallback(
+    (request: TerminalClipboardRequest & { kind: "automatic" | "user" }) => {
+      queueTerminalClipboardWrite({
+        text: request.text,
+        isCurrent: () =>
+          clipboardMountedRef.current &&
+          clipboardActiveRef.current &&
+          clipboardRequestGenerationRef.current === request.generation &&
+          clipboardScopeRef.current.scope === request.scope &&
+          clipboardScopeRef.current.epoch === request.epoch &&
+          (request.kind === "user" || clipboardConsentRef.current.decision === "allow"),
+        onResult: (copied) => {
+          if (copied) {
+            clipboardNeedsClickRef.current = false;
+            toast.success("Copied from terminal.", { duration: 1500 });
+          } else {
+            clipboardNeedsClickRef.current = true;
+            setClipboardPrompt({
+              ...request,
+              reason: "browser",
+              copyFailed: request.kind === "user",
+            });
+          }
+        },
+      });
+    },
+    [],
+  );
+
+  const notifyClipboardRequest = useCallback(
+    (text: string, copyEvent?: ClipboardEvent) => {
+      if (
+        !clipboardMountedRef.current ||
+        !clipboardActiveRef.current ||
+        (readOnly && !copyEvent) ||
+        clipboardScopeRef.current.scope !== clipboardScope ||
+        clipboardScopeRef.current.epoch !== clipboardScopeEpoch
+      ) {
+        return;
+      }
+      const generation = (clipboardRequestGenerationRef.current += 1);
+      if (clipboardConsentRef.current.scope !== clipboardScope) {
+        clipboardConsentRef.current = {
+          scope: clipboardScope,
+          decision: readTerminalClipboardPreference(),
+        };
+      }
+      if (clipboardConsentRef.current.decision === "block") {
+        toast.info("Copying from this terminal is blocked.", {
+          id: "terminal-clipboard-blocked",
+          description: "Change this in Settings → General.",
+        });
+        return;
+      }
+      const source = copyEvent ? "selection" : "terminal";
+      if (
+        clipboardConsentRef.current.decision === "allow" &&
+        copyEvent?.clipboardData &&
+        !isTerminalClipboardWritePending()
+      ) {
+        // Keep native copy gestures independent of browser async-clipboard permissions.
+        // If a write is in flight, queue below so it cannot overwrite this selection.
+        setClipboardPrompt(null);
+        clipboardNeedsClickRef.current = false;
+        applyTerminalCopy(copyEvent, text);
+        return;
+      }
+      if (
+        clipboardConsentRef.current.decision === "allow" &&
+        (copyEvent || !clipboardNeedsClickRef.current)
+      ) {
+        setClipboardPrompt(null);
+        queueSessionClipboardCopy({
+          scope: clipboardScope,
+          epoch: clipboardScopeEpoch,
+          generation,
+          text,
+          source,
+          kind: "automatic",
+        });
+        return;
+      }
+      // Keep only the newest request while the prompt is open.
+      setClipboardPrompt({
+        scope: clipboardScope,
+        epoch: clipboardScopeEpoch,
+        generation,
+        text,
+        source,
+        reason: clipboardConsentRef.current.decision === "allow" ? "browser" : "consent",
+      });
+    },
+    [clipboardScope, clipboardScopeEpoch, queueSessionClipboardCopy, readOnly],
+  );
+
+  const handleClipboardConsent = useCallback(
+    (decision: TerminalClipboardDecision | "retry", remember = false) => {
+      const prompt =
+        clipboardMountedRef.current &&
+        clipboardActiveRef.current &&
+        (!readOnly || clipboardPrompt?.source === "selection") &&
+        clipboardPrompt?.scope === clipboardScope &&
+        clipboardPrompt.epoch === clipboardScopeEpoch &&
+        clipboardPrompt.generation === clipboardRequestGenerationRef.current
+          ? clipboardPrompt
+          : null;
+      if (prompt === null) return;
+      setClipboardPrompt(null);
+      if (remember && (decision === "allow" || decision === "block")) {
+        if (!writeTerminalClipboardPreference(decision)) {
+          toast.error(
+            "Couldn't remember your clipboard choice. It applies only to this open terminal.",
+            {
+              duration: Number.POSITIVE_INFINITY,
+              closeButton: true,
+            },
+          );
+        }
+      }
+      // Saving can synchronously invalidate requests in every mounted terminal.
+      const generation = (clipboardRequestGenerationRef.current += 1);
+      if (decision !== "retry") {
+        clipboardConsentRef.current = {
+          scope: clipboardScope,
+          decision: decision === "once" ? "ask" : decision,
+        };
+      }
+      if (decision !== "block") {
+        queueSessionClipboardCopy({
+          scope: clipboardScope,
+          epoch: clipboardScopeEpoch,
+          generation,
+          text: prompt.text,
+          source: prompt.source,
+          kind: "user",
+        });
+      }
+      sessionRef.current?.focus();
+    },
+    [clipboardPrompt, clipboardScope, clipboardScopeEpoch, queueSessionClipboardCopy, readOnly],
+  );
+
+  const dismissClipboardPrompt = useCallback(() => {
+    clipboardRequestGenerationRef.current += 1;
+    setClipboardPrompt(null);
+    sessionRef.current?.focus();
+  }, []);
+
+  const visibleClipboardPrompt =
+    clipboardPrompt?.scope === clipboardScope &&
+    clipboardPrompt.epoch === clipboardScopeEpoch &&
+    clipboardPrompt.generation === clipboardRequestGenerationRef.current &&
+    active &&
+    (!readOnly || clipboardPrompt.source === "selection")
+      ? clipboardPrompt
+      : null;
+
+  // Dispose the outgoing session before a remount re-dials. React 18
+  // ignores the cleanup function attachSession returns (ref cleanups
+  // arrived in React 19), so without this every remount would abandon
+  // the previous session — xterm buffers, observers, and all.
+  const disposeActiveSession = useCallback(() => {
+    sessionRef.current?.dispose();
+    sessionRef.current = null;
+  }, []);
+
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    onStateChangeRef.current?.(stateRef.current);
+    return () => {
+      mountedRef.current = false;
+      // Synchronous so a same-id successor's first report lands after it.
+      onStateChangeRef.current?.(null);
+      // Deferred so StrictMode's dev-only remount keeps the live attach.
+      queueMicrotask(() => {
+        if (mountedRef.current) return;
+        upgradeCtlRef.current?.abort();
+        disposeActiveSession();
+      });
+    };
+  }, [disposeActiveSession]);
+
+  const handleResume = useCallback(async () => {
+    if (!onResume) return;
+    setResumeError(null);
+    try {
+      await onResume();
+      disposeActiveSession();
+      setConnectAttempt((attempt) => attempt + 1);
+    } catch (error) {
+      setResumeError(resumeErrorText(error, resumeTarget));
+    }
+  }, [onResume, disposeActiveSession, resumeTarget]);
+
+  const attachSession = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node === null) return;
+      // React re-runs a ref callback for the *same* node whenever the
+      // callback's identity changes — here, when the runner's
+      // direct-attach advert lands after mount. Retire the previous
+      // attach before touching the node: otherwise xterm stacks a
+      // second instance inside it (two helper textareas, two
+      // renderers) and the superseded upgrade watcher later re-dials
+      // on top of the session that replaced it.
+      const generation = (attachGenerationRef.current += 1);
+      upgradeCtlRef.current?.abort();
+      disposeActiveSession();
+      node.replaceChildren();
+      // Reset to ``connecting`` for every fresh attach so a stale
+      // overlay from a previous mount doesn't flash during the
+      // handshake. The session's WS ``open`` handler transitions us
+      // to ``connected``.
+      notifyState({ kind: "connecting" });
+
+      // Defer the actual session construction by one microtask so
+      // React 19 StrictMode's synchronous attach → cleanup → attach
+      // sequence collapses to a single real WS handshake. Without
+      // this, the first attach opens a WebSocket, the cleanup closes
+      // it 0ms later, and the second attach opens another — the
+      // server sees two handshakes per mount in dev. The microtask
+      // runs after the entire commit phase: by then the StrictMode
+      // cleanup has flipped ``cancelled`` and the first scheduled
+      // open is a no-op. The second attach's microtask proceeds and
+      // is the one that actually opens the WS.
+      let terminalSession: TerminalSession | null = null;
+      let cancelled = false;
+      const upgradeCtl = new AbortController();
+      upgradeCtlRef.current = upgradeCtl;
+      // Superseded by a later attach on this node, or unmounted (checked
+      // only after the first await)? React 18 never calls the ref cleanup.
+      const superseded = () =>
+        cancelled || attachGenerationRef.current !== generation || !mountedRef.current;
+      void (async () => {
+        // The awaited microtask preserves the StrictMode-collapse
+        // behavior queueMicrotask provided; the URL resolution (when a
+        // direct URL exists) adds real async time, so re-check after
+        // every await.
+        await Promise.resolve();
+        if (superseded()) return;
+        // Browser WebSockets carry the host ID in the query string so they
+        // reach the replica holding the runner tunnel. Hostless sessions
+        // and direct connections need no routing key.
+        const computedHostId = (() => {
+          if (!isHostRoutingEnabled()) return undefined;
+          if (isDatabricksWorkspace() && keylessRef.current) return undefined;
+          const h = getSessionHost(sessionId);
+          return h && (!isDatabricksWorkspace() || !isHostKeyless(h)) ? h : undefined;
+        })();
+        const relayUrl = buildAttachUrl(sessionId, terminalId, readOnly, computedHostId);
+        const directUrl = directAttachUrl ? withAttachParams(directAttachUrl, readOnly) : undefined;
+        // Never keep the user waiting on the direct path: this resolves
+        // direct only when the loopback listener is already known
+        // reachable; otherwise it returns the relay URL immediately.
+        const url = await resolveInitialAttachUrl(directUrl, relayUrl);
+        if (superseded()) return;
+        terminalSession = new TerminalSession(
+          node,
+          url,
+          notifyState,
+          isDarkRef.current,
+          notifyActivity,
+          notifyInput,
+          !readOnly && activeRef.current,
+          notifyClipboardRequest,
+          focusOnConnectRef.current,
+          terminalId === "terminal_codex_main",
+          notifyFileLink,
+        );
+        sessionRef.current = terminalSession;
+        // Relay-connected with a direct URL on offer: negotiate the
+        // loopback upgrade in the background. In Chrome this is what
+        // raises the Local Network Access prompt; the probe socket
+        // waits out the user's decision behind the live relay session.
+        // On success, re-dial — the known-good cache makes the remount
+        // pick the direct URL.
+        if (directUrl !== undefined && url === relayUrl) {
+          const upgraded = await watchDirectUpgrade(directUrl, upgradeCtl.signal);
+          if (superseded() || !upgraded) return;
+          disposeActiveSession();
+          setConnectAttempt((attempt) => attempt + 1);
+        }
+      })();
+      return () => {
+        cancelled = true;
+        upgradeCtl.abort();
+        terminalSession?.dispose();
+        sessionRef.current = null;
+        onStateChangeRef.current?.(null);
+      };
+    },
+    [
+      sessionId,
+      terminalId,
+      readOnly,
+      directAttachUrl,
+      notifyState,
+      notifyActivity,
+      notifyInput,
+      notifyClipboardRequest,
+      notifyFileLink,
+      disposeActiveSession,
+    ],
+  );
+
+  // Push theme changes into the live session without remounting.
+  useEffect(() => {
+    sessionRef.current?.setTheme(isDark);
+  }, [isDark]);
+
+  useEffect(() => {
+    sessionRef.current?.setClipboardEnabled(!readOnly && active);
+  }, [readOnly, active]);
+
+  // On the hidden→visible edge of a pre-warmed surface: focus the
+  // terminal (the session's WS-open focus is a no-op while the element is
+  // hidden — visibility:hidden elements aren't focusable), and if the
+  // transport dropped while the surface sat in the background — possibly
+  // exhausting the reconnect budget with nobody watching — retry
+  // immediately with a fresh budget. Reveal is a user signal, exactly
+  // like the visibilitychange redial for frozen tabs. Deliberate closes
+  // (4xxx) keep the dead-end overlay as ever.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const wasActiveRef = useRef(active);
+  useEffect(() => {
+    if (active && !wasActiveRef.current) {
+      sessionRef.current?.focus();
+      const current = stateRef.current;
+      if (current.kind === "closed" && isReconnectableTerminalClose(current.code)) {
+        reconnectAttemptsRef.current = 0;
+        disposeActiveSession();
+        setConnectAttempt((attempt) => attempt + 1);
+      }
+    }
+    wasActiveRef.current = active;
+  }, [active, disposeActiveSession]);
+
+  // Push code-font changes (Settings → Appearance) into the live session the
+  // same way — xterm is a fixed-pixel widget, so it can't follow a CSS variable
+  // like the chrome font and must be told imperatively. The subscription
+  // outlives individual re-dials (sessionRef is swapped in place), and a fresh
+  // session reads the current pref at construction, so a change made while
+  // disconnected still lands on reconnect.
+  useEffect(() => {
+    return subscribeCodeFont((font) => {
+      sessionRef.current?.setFont(font);
+    });
+  }, []);
+
+  // Auto-reconnect on transport-level drops (background-tab freezes,
+  // server restarts — see isUnexpectedTerminalClose). Deliberate
+  // closes keep the dead-end overlay so a terminal the server ended
+  // isn't resurrected in a loop. The re-dial reuses the resume path's
+  // remount: bumping connectAttempt swaps the keyed mount node, which
+  // disposes the dead session and attaches a fresh one — tmux
+  // re-renders the full screen on attach, so nothing visible is lost.
+  useEffect(() => {
+    if (state.kind === "connected") {
+      connectedAtRef.current = Date.now();
+      setReconnectPending(false);
+      return;
+    }
+    // "connecting" (a re-dial in flight) keeps the pending flag;
+    // "error" is transient and always followed by a close event.
+    if (state.kind !== "closed") return;
+    // Wrong-replica close (4400): the keyed request reached the wrong replica.
+    // Mark the host keyless so the next dial skips the key, and re-dial
+    // immediately without backoff (the correct route is one handshake away).
+    // One-shot: if we're ALREADY keyless and still get 4400, the host is
+    // genuinely unreachable from here — stop, don't loop.
+    if (state.code === WS_CLOSE_WRONG_REPLICA && isDatabricksWorkspace()) {
+      if (keylessRef.current) {
+        setReconnectPending(false);
+        return;
+      }
+      keylessRef.current = true;
+      const hostId = getSessionHost(sessionId);
+      if (hostId) markHostKeyless(hostId);
+      setReconnectPending(true);
+      disposeActiveSession();
+      setConnectAttempt((attempt) => attempt + 1);
+      return;
+    }
+    if (!isReconnectableTerminalClose(state.code)) {
+      setReconnectPending(false);
+      return;
+    }
+    // A connection that survived RECONNECT_STABLE_MS before dropping
+    // is a fresh outage — restore the full retry budget before
+    // charging this attempt.
+    if (
+      connectedAtRef.current !== null &&
+      Date.now() - connectedAtRef.current >= RECONNECT_STABLE_MS
+    ) {
+      reconnectAttemptsRef.current = 0;
+    }
+    connectedAtRef.current = null;
+    if (reconnectAttemptsRef.current >= RECONNECT_BACKOFF_MS.length) {
+      setReconnectPending(false);
+      return;
+    }
+    const delay = RECONNECT_BACKOFF_MS[reconnectAttemptsRef.current];
+    reconnectAttemptsRef.current += 1;
+    setReconnectPending(true);
+    // Re-dial on whichever fires first: the backoff timer (visible
+    // tabs), or the tab becoming visible again — frozen background
+    // tabs don't run timers, but they do deliver visibilitychange on
+    // thaw, which is exactly the moment the user is back and looking.
+    let redialed = false;
+    const redial = () => {
+      if (redialed) return;
+      redialed = true;
+      disposeActiveSession();
+      setConnectAttempt((attempt) => attempt + 1);
+    };
+    const timer = window.setTimeout(redial, delay);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") redial();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [state, disposeActiveSession, sessionId]);
+
+  // `isolate` scopes the status overlay's z-index to this surface so it
+  // can't paint over body-portaled UI such as the header's session menu.
+  return (
+    <div
+      data-testid="terminal-view"
+      data-state={state.kind}
+      data-terminal-id={terminalId}
+      data-terminal-theme={isDark ? "dark" : "light"}
+      className="relative isolate flex min-h-0 flex-1 flex-col"
+    >
+      {visibleClipboardPrompt !== null && (
+        <TerminalClipboardPrompt
+          reason={visibleClipboardPrompt.reason}
+          canRemember={canRememberTerminalClipboardPreference()}
+          copyFailed={visibleClipboardPrompt.copyFailed === true}
+          onDecision={handleClipboardConsent}
+          onRetry={() => handleClipboardConsent("retry")}
+          onDismiss={dismissClipboardPrompt}
+        />
+      )}
+      <div
+        className="relative min-h-0 flex-1 overflow-hidden p-3"
+        style={{ backgroundColor: terminalBackground }}
+      >
+        <div key={connectAttempt} ref={attachSession} className="h-full w-full overflow-hidden" />
+        {state.kind !== "connected" && (
+          <StatusOverlay
+            state={state}
+            reconnectPending={reconnectPending}
+            onResume={onResume ? handleResume : undefined}
+            resumeTarget={resumeTarget}
+            resumePending={resumePending}
+            resumeError={resumeError}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatusOverlay({
+  state,
+  reconnectPending,
+  onResume,
+  resumeTarget,
+  resumePending,
+  resumeError,
+}: {
+  state: ConnectionState;
+  /** True while an automatic re-dial is scheduled for a closed bridge. */
+  reconnectPending: boolean;
+  onResume?: () => void | Promise<void>;
+  resumeTarget: "session" | "sandbox";
+  resumePending: boolean;
+  resumeError: string | null;
+}) {
+  // Render outside the xterm container so close/error messages don't
+  // pollute the scrollback buffer the way ANSI-escape writes would.
+  return (
+    <div className="absolute inset-0 z-[10000] flex items-center justify-center bg-background/85 text-ui text-foreground backdrop-blur-[1px]">
+      {state.kind === "connecting" && (
+        <span className="flex items-center gap-2">
+          <Loader2Icon className="size-4 animate-spin" />
+          Connecting…
+        </span>
+      )}
+      {state.kind === "closed" && reconnectPending && (
+        // An automatic re-dial is scheduled — show recovery, not the
+        // dead-end message, so a transient drop never reads as fatal.
+        <span data-testid="terminal-reconnecting" className="flex items-center gap-2">
+          <Loader2Icon className="size-4 animate-spin" />
+          Reconnecting…
+        </span>
+      )}
+      {state.kind === "closed" && !reconnectPending && (
+        <div className="flex flex-wrap items-center justify-center gap-2 px-3">
+          <span>Bridge closed: {state.reason}</span>
+          {onResume && (
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              onClick={onResume}
+              disabled={resumePending}
+              className="border-zinc-500/50 bg-zinc-100 text-zinc-950 hover:bg-white"
+              componentId="diagnostics.terminal.resume"
+            >
+              {resumePending ? "Resuming…" : `Resume ${resumeTarget}`}
+            </Button>
+          )}
+          {resumeError && (
+            <span className="basis-full text-center text-sm text-destructive">{resumeError}</span>
+          )}
+        </div>
+      )}
+      {state.kind === "error" && <span>Bridge error</span>}
+    </div>
+  );
+}
+
+function resumeErrorText(error: unknown, target: string): string {
+  if (error instanceof Error && error.message) return `Couldn't resume ${target}: ${error.message}`;
+  return `Couldn't resume ${target}.`;
+}
+
+/**
+ * Build the path + query for the resource-addressed attach endpoint.
+ *
+ * The terminal is addressed by its opaque resource id (the server's
+ * canonical key), so user-derived names never appear in the path —
+ * dodges URL-encoding pitfalls for names with slashes or reserved
+ * characters.
+ *
+ * Pure helper — exported for direct unit testing. Production code
+ * should call :func:`buildAttachUrl`.
+ *
+ * :param sessionId: Session/conversation identifier,
+ *     e.g. ``"conv_abc123"``.
+ * :param terminalId: Opaque terminal resource id,
+ *     e.g. ``"terminal_bash_s1"``.
+ * :param readOnly: If true, requests a read-only attach. Forwarded
+ *     to the server as ``?read_only=true``.
+ * :returns: The path-and-query portion of the WS URL, e.g.
+ *     ``"/v1/sessions/.../resources/terminals/.../attach"``.
+ */
+export function buildAttachPath(
+  sessionId: string,
+  terminalId: string,
+  readOnly: boolean,
+  hostId?: string,
+): string {
+  const path =
+    `/v1/sessions/${encodeURIComponent(sessionId)}` +
+    `/resources/terminals/${encodeURIComponent(terminalId)}/attach`;
+  // Query params are only emitted when set, so the common (unsharded) case
+  // keeps URLs short and stable for anything that greps the access log.
+  // ``omnigent_slice_key`` pins this WebSocket to the replica holding the
+  // tunnel: a browser WS handshake can't carry request headers, so the routing
+  // key rides the query string — the one part of the handshake page JS controls
+  // — and the server ignores it as an app param.
+  const params = new URLSearchParams();
+  if (readOnly) params.set("read_only", "true");
+  if (hostId) params.set("omnigent_slice_key", hostId);
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
+/**
+ * Build the WebSocket URL for the resource-addressed attach endpoint.
+ *
+ * Uses the current page's origin so the URL works whether the SPA is
+ * served from the Omnigent server itself or via the Vite dev proxy.
+ * ``ws:``/``wss:`` matches the page's ``http:``/``https:``.
+ *
+ * :param sessionId: Session/conversation identifier.
+ * :param terminalId: Opaque terminal resource id.
+ * :param readOnly: If true, requests a read-only attach.
+ * :param hostId: The session's host_id, forwarded as the routing key
+ *     ``?omnigent_slice_key=``.
+ * :returns: The fully-qualified ``ws(s)://`` URL.
+ */
+function buildAttachUrl(
+  sessionId: string,
+  terminalId: string,
+  readOnly: boolean,
+  hostId?: string,
+): string {
+  // Delegates origin/prefix resolution to the embed host when present
+  // (standalone falls back to the current page's origin).
+  return resolveWebSocketUrl(buildAttachPath(sessionId, terminalId, readOnly, hostId));
+}

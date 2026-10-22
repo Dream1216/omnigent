@@ -1,0 +1,19 @@
+{
+  "schema_version": "omnigent.saas.upstream-freeze.v1",
+  "captured_at": "2026-09-17T19:43:47Z",
+  "downstream_repository": "https://github.com/Dream1216/omnigent.git",
+  "downstream_base_revision": "684cfa5a4f10ef07687031d680b2c3c0b39016ce",
+  "candidate_branch": "codex/upstream-v014-baseline-20260917",
+  "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
+  "previous_upstream_revision": "6aef59afe6877943bb0c261df7d5fee30e733f7d",
+  "frozen_upstream_revision": "9616bf97cd38494db7164a1f6f350e853da4d8d3",
+  "frozen_upstream_committed_at": "2026-09-17T10:47:26-07:00",
+  "frozen_upstream_version": "0.15.0.dev0",
+  "merge_base_revision": "6aef59afe6877943bb0c261df7d5fee30e733f7d",
+  "downstream_only_commit_count": 0,
+  "upstream_delta_commit_count": 3,
+  "upstream_delta_file_count": 9,
+  "upstream_delta_insertions": 580,
+  "upstream_delta_deletions": 61,
+  "status": "frozen"
+}

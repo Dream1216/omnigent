@@ -1,0 +1,1484 @@
+import { testAgent } from "@/test/agentFixtures";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
+import { FALLBACK_SERVER_INFO } from "@/lib/capabilities";
+import { sidebarConfig } from "@/lib/sidebarConfig";
+import { SidebarDataProvider } from "./useSidebarData";
+import { useAgents } from "./useAgents";
+import { refreshScopeWindow } from "@/lib/sidebarData";
+import type { Conversation } from "./useConversations";
+import { useAvailableAgents, prefetchAvailableAgentDetails } from "./useAvailableAgents";
+
+// The template catalog and sidebar Mine cache load through authenticatedFetch.
+// URL-keyed stubs exercise the real fetch and mapping path.
+function mockResponse(body: unknown, init?: { ok?: boolean; status?: number }): Response {
+  return {
+    ok: init?.ok ?? true,
+    status: init?.status ?? 200,
+    statusText: "OK",
+    json: async () => body,
+  } as unknown as Response;
+}
+
+const fetchMock = vi.fn();
+
+const BUILTINS_URL = "/v1/agents";
+const MINE_URL = "/v1/sessions?order=desc&sort_by=updated_at&limit=30&visibility=mine";
+const HARNESSES_URL = "/v1/harnesses";
+
+/**
+ * Stub the global fetch with per-URL responses. Unrouted URLs reject
+ * loudly so an unexpected request fails the test instead of hanging
+ * TanStack's retry loop.
+ */
+function routeFetch(routes: Record<string, Response>) {
+  fetchMock.mockImplementation((url: string) => {
+    const route = routes[url] ?? (url.includes("pinned=true") ? EMPTY_MINE : undefined);
+    if (!route) {
+      return Promise.reject(new Error(`unrouted fetch in test: ${url}`));
+    }
+    return Promise.resolve(route);
+  });
+}
+
+function wrapper({ children }: { children: ReactNode }) {
+  // retry off so the no-network/error case resolves on the first
+  // attempt instead of stalling the test on TanStack's backoff.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return (
+    <QueryClientProvider client={client}>
+      <SidebarDataProvider config={{ ...sidebarConfig, sharedAvailable: false }}>
+        {children}
+      </SidebarDataProvider>
+    </QueryClientProvider>
+  );
+}
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+/** Build owned sessions around the agent metadata under test. */
+function sessionResponse(
+  body: { data?: { id: string; name: string; created_at?: number }[]; [key: string]: unknown },
+  init?: { ok?: boolean; status?: number },
+): Response {
+  return mockResponse(
+    {
+      ...body,
+      data: body.data?.map((agent, index) => ({
+        id: `session_${index}`,
+        agent_id: agent.id,
+        agent_name: agent.name,
+        created_at: agent.created_at ?? 1,
+        updated_at: 1000 - index,
+        permission_level: 4,
+      })),
+    },
+    init,
+  );
+}
+
+const EMPTY_MINE = mockResponse({ object: "list", data: [], has_more: false });
+
+describe("useAvailableAgents", () => {
+  it("does not fetch while disabled", async () => {
+    const { result } = renderHook(() => useAvailableAgents({ enabled: false }), { wrapper });
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/v1/agents"))).toBe(false);
+    expect(result.current.fetchStatus).toBe("idle");
+  });
+
+  it("reuses the sidebar Mine request for both agent readers", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({ object: "list", data: [], has_more: false }),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(
+      () => {
+        useAgents();
+        return { ...useAvailableAgents() };
+      },
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls).toContain(BUILTINS_URL);
+    expect(urls.filter((url) => url === MINE_URL)).toHaveLength(1);
+    expect(urls.some((url) => url.includes("kind=session"))).toBe(false);
+  });
+
+  it("limits discovery to 30 Mine sessions and updates when that cache refreshes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mineKey = ["conversations", "", false, null, "mine"];
+    const rows: Conversation[] = Array.from({ length: 60 }, (_, index) => ({
+      id: `mine_${index}`,
+      object: "conversation",
+      title: null,
+      labels: {},
+      agent_id: `ag_${index}`,
+      agent_name: `custom-${index}`,
+      created_at: 100 - index,
+      updated_at: 100 - index,
+      permission_level: 4,
+    }));
+    const cache = (data: Conversation[]) =>
+      refreshScopeWindow(
+        undefined,
+        {
+          data,
+          has_more: false,
+          first_id: data[0]?.id ?? null,
+          last_id: data.at(-1)?.id ?? null,
+        },
+        60,
+      );
+    client.setQueryData(mineKey, cache(rows));
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({ data: [], has_more: false }),
+      "/v1/sessions?order=desc&sort_by=updated_at&limit=30&visibility=shared": mockResponse({
+        data: [{ ...rows[0], id: "shared", agent_id: "ag_shared", permission_level: 1 }],
+        has_more: false,
+      }),
+    });
+    const { result } = renderHook(
+      () => ({
+        picker: { ...useAvailableAgents() },
+        agents: useAgents().data,
+      }),
+      {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={client}>
+            <SidebarDataProvider>{children}</SidebarDataProvider>
+          </QueryClientProvider>
+        ),
+      },
+    );
+    await waitFor(() => expect(result.current.picker.isPlaceholderData).toBe(false));
+    await waitFor(() => expect(result.current.picker.data).toHaveLength(30));
+    expect(result.current.agents?.map((agent) => agent.id)).toEqual(
+      rows.slice(0, 30).map((row) => row.agent_id),
+    );
+    expect(
+      result.current.picker.data?.some((agent) => agent.id === "ag_30" || agent.id === "ag_shared"),
+    ).toBe(false);
+    act(() =>
+      client.setQueryData(
+        mineKey,
+        cache([
+          { ...rows[0], id: "new_session", agent_id: "ag_new", agent_name: "new-custom" },
+          ...rows.slice(1),
+        ]),
+      ),
+    );
+    await waitFor(() =>
+      expect(result.current.picker.data?.some((agent) => agent.id === "ag_new")).toBe(true),
+    );
+    expect(result.current.agents?.[0]?.id).toBe("ag_new");
+    expect(fetchMock.mock.calls.filter(([url]) => url === MINE_URL)).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => url === BUILTINS_URL)).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("kind=session"))).toBe(false);
+  });
+
+  it("labels and flags generic-ACP agents from the server harness catalog", async () => {
+    // A seeded ACP agent's name is a slug, so without the catalog the picker
+    // renders Grok Build as "Grok" and — lacking `acpHarness` — groups it under
+    // "Agents" instead of "Harnesses". Both come from the server so a new
+    // builtin ACP row needs no frontend change.
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          { id: "ag_grok", name: "grok", harness: "grok", builtin: true },
+          { id: "ag_polly", name: "polly", harness: "claude-sdk", builtin: true },
+        ],
+        has_more: false,
+      }),
+      [MINE_URL]: EMPTY_MINE,
+      [HARNESSES_URL]: mockResponse({
+        data: [
+          { id: "grok", label: "Grok Build", capabilities: { integration_mode: "acp-subprocess" } },
+          {
+            id: "claude-sdk",
+            label: "Claude SDK",
+            capabilities: { integration_mode: "sdk-in-process" },
+          },
+        ],
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    // The catalog is a second query, so wait for the enrichment specifically.
+    await waitFor(() =>
+      expect(result.current.data?.find((a) => a.name === "grok")?.acpHarness).toBe(true),
+    );
+    expect(result.current.data?.find((a) => a.name === "grok")?.display_name).toBe("Grok Build");
+
+    // A composed agent on a non-ACP harness keeps its own name: it must not
+    // inherit the harness label ("Claude SDK") nor move into the Harnesses group.
+    const polly = result.current.data?.find((a) => a.name === "polly");
+    expect(polly?.display_name).toBe("Polly");
+    expect(polly?.acpHarness).toBeUndefined();
+  });
+
+  it("paginates built-ins so defaults pushed past fork rows are still listed", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          { id: "ag_codex_fork", name: "codex-native-ui (fork ag_old)", harness: "codex-native" },
+        ],
+        has_more: true,
+        last_id: "ag_codex_fork",
+      }),
+      "/v1/agents?after=ag_codex_fork": mockResponse({
+        object: "list",
+        data: [{ id: "ag_codex", name: "codex-native-ui", harness: "codex-native" }],
+        has_more: false,
+      }),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    expect(result.current.data).toEqual([
+      {
+        id: "ag_codex",
+        name: "codex-native-ui",
+        display_name: "Codex",
+        description: null,
+        harness: "codex-native",
+        skills: [],
+      },
+    ]);
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls).toContain("/v1/agents");
+    expect(urls).toContain("/v1/agents?after=ag_codex_fork");
+  });
+
+  it("maps rows into AvailableAgent and applies native, nessie, and debby display names", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "ag_native",
+            name: "claude-native-ui",
+            description: null,
+            harness: "claude-native",
+          },
+          {
+            id: "ag_pi_native",
+            name: "pi-native-ui",
+            description: null,
+            harness: "pi-native",
+          },
+          {
+            id: "ag_kiro_native",
+            name: "kiro-native-ui",
+            description: null,
+            harness: "kiro-native",
+          },
+          {
+            id: "ag_agy_native",
+            name: "antigravity-native-ui",
+            description: null,
+            harness: "antigravity-native",
+          },
+          {
+            id: "ag_opencode_native",
+            name: "opencode-native-ui",
+            description: null,
+            harness: "opencode-native",
+          },
+          {
+            id: "ag_nessie",
+            name: "nessie",
+            description: "Multi-agent coding orchestrator.",
+            harness: "nessie",
+            skills: [{ name: "review-pr", description: "Review a pull request" }],
+          },
+          {
+            id: "ag_debby",
+            name: "debby",
+            description: "A two-headed brainstorming partner.",
+            harness: "claude-sdk",
+          },
+          {
+            id: "ag_yaml",
+            name: "databricks_coding_agent",
+            description: "A coding agent",
+            harness: "codex",
+          },
+        ],
+        has_more: false,
+      }),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // Native terminal wrappers show product names ("Claude Code" / "Pi").
+    // nessie's and debby's lowercase slugs are
+    // title-cased to "Nessie" / "Debby". A regression in DISPLAY_NAMES
+    // would surface the raw slug to users. Other agents pass their name through as the
+    // display name. `harness` is passed through verbatim so the picker
+    // can pick a glyph by kind — a custom Codex agent (ag_yaml) keeps
+    // its "codex" harness even though its name doesn't say "codex".
+    // `skills` passes through verbatim (nessie) and normalises to []
+    // when the wire field is absent (older servers) — the landing
+    // composer's "/" menu indexes it unconditionally.
+    expect(result.current.data).toEqual([
+      {
+        id: "ag_native",
+        name: "claude-native-ui",
+        display_name: "Claude Code",
+        description: null,
+        harness: "claude-native",
+        skills: [],
+      },
+      {
+        id: "ag_pi_native",
+        name: "pi-native-ui",
+        display_name: "Pi",
+        description: null,
+        harness: "pi-native",
+        skills: [],
+      },
+      {
+        id: "ag_kiro_native",
+        name: "kiro-native-ui",
+        display_name: "Kiro",
+        description: null,
+        harness: "kiro-native",
+        skills: [],
+      },
+      {
+        id: "ag_agy_native",
+        name: "antigravity-native-ui",
+        display_name: "Antigravity",
+        description: null,
+        harness: "antigravity-native",
+        skills: [],
+      },
+      {
+        id: "ag_opencode_native",
+        name: "opencode-native-ui",
+        display_name: "OpenCode",
+        description: null,
+        harness: "opencode-native",
+        skills: [],
+      },
+      {
+        id: "ag_nessie",
+        name: "nessie",
+        display_name: "Nessie",
+        description: "Multi-agent coding orchestrator.",
+        harness: "nessie",
+        skills: [{ name: "review-pr", description: "Review a pull request" }],
+      },
+      {
+        id: "ag_debby",
+        name: "debby",
+        display_name: "Debby",
+        description: "A two-headed brainstorming partner.",
+        harness: "claude-sdk",
+        skills: [],
+      },
+      {
+        id: "ag_yaml",
+        name: "databricks_coding_agent",
+        display_name: "Databricks_coding_agent",
+        description: "A coding agent",
+        harness: "codex",
+        skills: [],
+      },
+    ]);
+  });
+
+  it("defaults a missing harness to null", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        // `harness` omitted — the server leaves it off when the agent's
+        // spec couldn't be loaded. It must normalise to null so the card
+        // falls back to the generic glyph instead of leaking undefined.
+        data: [{ id: "ag_x", name: "x" }],
+        has_more: false,
+      }),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    expect(result.current.data?.[0].harness).toBeNull();
+  });
+
+  it("defaults a missing description to null", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        // `description` omitted entirely (not just null) — the picker
+        // renders the description conditionally, so undefined must be
+        // normalised to null rather than leaking through.
+        data: [{ id: "ag_x", name: "x" }],
+        has_more: false,
+      }),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    expect(result.current.data?.[0].description).toBeNull();
+  });
+
+  it("surfaces an error when the built-in request fails", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({ detail: "nope" }, { ok: false, status: 500 }),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect((result.current.error as Error).message).toContain("500");
+  });
+
+  it("discovers custom session-bound agents and drops built-in shadows", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [{ id: "ag_native", name: "claude-native-ui", harness: "claude-native" }],
+        has_more: false,
+      }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [
+          // Binds the built-in's own agent row — dropped by id.
+          { id: "ag_native", name: "claude-native-ui" },
+          // A fork clone of the built-in — distinct id, but the clone
+          // suffix strips back to a built-in name, so dropped by name.
+          {
+            id: "ag_clone",
+            name: "claude-native-ui (fork conv_9)",
+          },
+          // A fork OF A fork of the built-in — nested clone suffixes. A
+          // single-layer strip leaves "claude-native-ui (fork conv_9)"
+          // (not a built-in name), so the clone leaks into the picker;
+          // once enriched its claude-native harness resolves to the
+          // "Claude Code" display name, surfacing as a DUPLICATE of the
+          // built-in. agentRootName peels every layer so it drops by
+          // name before it is ever enriched.
+          {
+            id: "ag_clone2",
+            name: "claude-native-ui (fork conv_9) (fork conv_10)",
+          },
+          // Genuinely custom agent; survives with scan-only fields on initial
+          // load (harness/description filled on hover via prefetchAvailableAgentDetails).
+          { id: "ag_doc", name: "doc-writer" },
+          // Same custom agent on an older session — deduped by id.
+          { id: "ag_doc", name: "doc-writer" },
+          // Orphaned row (agent deleted) — skipped.
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // One built-in + one custom. A second "Claude Code" row (from
+    // ag_clone/ag_clone2 leaking) means shadow-dropping regressed —
+    // ag_clone2 specifically guards the nested fork-of-fork case that
+    // surfaces as a duplicate built-in; ag_doc missing means Mine
+    // discovery broke; two ag_doc rows mean the by-id dedup broke.
+    // description/harness are null on initial load — enriched on hover
+    // via prefetchAvailableAgentDetails.
+    expect(result.current.data).toEqual([
+      {
+        id: "ag_native",
+        name: "claude-native-ui",
+        display_name: "Claude Code",
+        description: null,
+        harness: "claude-native",
+        skills: [],
+      },
+      {
+        id: "ag_doc",
+        name: "doc-writer",
+        display_name: "Doc-writer",
+        description: null,
+        harness: null,
+        skills: [],
+        sessionId: expect.any(String),
+        created_at: 1,
+      },
+    ]);
+    // No enrich fetches on initial load — enrichment is deferred to hover.
+    const enrichCalls = fetchMock.mock.calls
+      .map((c) => c[0] as string)
+      .filter((u) => u.endsWith("/agent"));
+    expect(enrichCalls).toEqual([]);
+  });
+
+  it("dedupes native built-ins and hides session-discovered native shadows", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          // Stale/non-canonical native rows from older local state; they
+          // resolve by harness but must not compete with the seeded rows.
+          { id: "ag_stale_codex", name: "codex-native-ui (fork ag_old)", harness: "codex-native" },
+          { id: "ag_codex", name: "codex-native-ui", harness: "codex-native" },
+          {
+            id: "ag_stale_claude",
+            name: "claude-native-ui (fork ag_old)",
+            harness: "claude-native",
+          },
+          { id: "ag_claude", name: "claude-native-ui", harness: "claude-native" },
+          { id: "ag_stale_kiro", name: "kiro-naitive", harness: "kiro-native" },
+          { id: "ag_kiro", name: "kiro-native-ui", harness: "kiro-native" },
+        ],
+        has_more: false,
+      }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [
+          // Session-bound id with a non-canonical kiro name (server typo).
+          // On initial load harness is null (lazy enrichment), so it appears
+          // in the list; prefetchAvailableAgentDetails removes it once enriched
+          // to harness: "kiro-native" and a kiro built-in already exists.
+          { id: "ag_session_kiro", name: "kiro-naitive" },
+          // Legacy failed Kiro attempts used a plain "kiro" agent name and
+          // no harness; that row must not surface as a custom Kiro picker row.
+          { id: "ag_legacy_kiro", name: "kiro" },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // ag_session_kiro appears on initial load with harness: null because
+    // enrichment is deferred. prefetchAvailableAgentDetails (called on picker
+    // open) would later detect harness: "kiro-native" and remove the duplicate.
+    // ag_legacy_kiro is filtered by kiroLegacyNames (name: "kiro").
+    expect(result.current.data).toEqual([
+      {
+        id: "ag_codex",
+        name: "codex-native-ui",
+        display_name: "Codex",
+        description: null,
+        harness: "codex-native",
+        skills: [],
+      },
+      {
+        id: "ag_claude",
+        name: "claude-native-ui",
+        display_name: "Claude Code",
+        description: null,
+        harness: "claude-native",
+        skills: [],
+      },
+      {
+        id: "ag_kiro",
+        name: "kiro-native-ui",
+        display_name: "Kiro",
+        description: null,
+        harness: "kiro-native",
+        skills: [],
+      },
+      {
+        id: "ag_session_kiro",
+        name: "kiro-naitive",
+        display_name: "Kiro-naitive",
+        description: null,
+        harness: null,
+        skills: [],
+        sessionId: "session_0",
+        created_at: 1,
+      },
+    ]);
+  });
+
+  it("collapses same-named custom agents with distinct agent_ids to the newest agent row", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({ object: "list", data: [], has_more: false }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [
+          // Three sessions of the same custom agent, each with its own
+          // agent_id — a local-YAML agent mints a fresh row per launch
+          // (#3234). Scan order is newest-first, so conv_new wins.
+          { id: "ag_run3", name: "elise_working_agent" },
+          { id: "ag_run2", name: "elise_working_agent" },
+          // A fork clone of the custom agent strips back to the same
+          // base name, so it collapses into the same row too.
+          {
+            id: "ag_run1",
+            name: "elise_working_agent (fork conv_7)",
+          },
+          // A differently-named custom agent must NOT be collapsed —
+          // the dedup keys on base name, not on "is custom".
+          { id: "ag_doc", name: "doc-writer" },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // Exactly one elise row (the newest mint, ag_run3) plus doc-writer.
+    // Three elise rows would mean the by-name collapse regressed to
+    // by-id-only dedup; zero would mean customs were over-collapsed.
+    // description/harness are null on initial load (enriched on hover).
+    expect(result.current.data).toEqual([
+      {
+        id: "ag_run3",
+        name: "elise_working_agent",
+        display_name: "Elise_working_agent",
+        description: null,
+        harness: null,
+        skills: [],
+        sessionId: "session_0",
+        created_at: 1,
+      },
+      {
+        id: "ag_doc",
+        name: "doc-writer",
+        display_name: "Doc-writer",
+        description: null,
+        harness: null,
+        skills: [],
+        sessionId: expect.any(String),
+        created_at: 1,
+      },
+    ]);
+  });
+
+  it("lets a newer upload supersede a same-named user-registered template (builtin: false)", async () => {
+    // The regression this guards: a user registers agent A as a template
+    // (e.g. `omnigent server --agent`, builtin: false), then `omnigent run`s
+    // a NEWER agent A whose session-scoped row has a distinct agent_id. The
+    // picker must bind the newest (the upload), not the stale template.
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          // Seeded built-in — protected, always listed verbatim.
+          { id: "ag_debby", name: "debby", harness: "claude-sdk", builtin: true, created_at: 100 },
+          // User-registered template for "agent-a" (older).
+          {
+            id: "ag_template",
+            name: "agent-a",
+            harness: "claude-sdk",
+            builtin: false,
+            created_at: 200,
+          },
+        ],
+        has_more: false,
+      }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [
+          // A session that bound the template directly — dropped by id (the
+          // template already represents it as a candidate).
+          { id: "ag_template", name: "agent-a", created_at: 250 },
+          // The newer `omnigent run` upload: distinct agent_id, same name,
+          // created AFTER the template — must win.
+          { id: "ag_upload_v2", name: "agent-a", created_at: 300 },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // Exactly one "agent-a", bound to the newer upload (ag_upload_v2). The
+    // seeded debby is untouched. ag_template winning would mean the stale
+    // template shadowed the upload (the original bug); two agent-a rows would
+    // mean the template and upload both leaked.
+    const ids = result.current.data?.map((a) => a.id);
+    expect(ids).toEqual(["ag_debby", "ag_upload_v2"]);
+    // No enrich fetches on initial load — enrichment is deferred to hover.
+    const enrichCalls = fetchMock.mock.calls
+      .map((c) => c[0] as string)
+      .filter((u) => u.endsWith("/agent"));
+    expect(enrichCalls).toEqual([]);
+  });
+
+  it("keeps a user-registered template when no newer upload exists", async () => {
+    // Mirror image of the supersede case: the template is the only agent-a,
+    // and a same-named session that simply bound it must not duplicate it.
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "ag_template",
+            name: "agent-a",
+            description: "the template",
+            harness: "claude-sdk",
+            builtin: false,
+            created_at: 200,
+          },
+        ],
+        has_more: false,
+      }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [{ id: "ag_template", name: "agent-a", created_at: 250 }],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // One agent-a (the template), carried with its full catalog info. No
+    // enrich fetch — the only session bound the template directly.
+    expect(result.current.data?.map((a) => ({ id: a.id, description: a.description }))).toEqual([
+      { id: "ag_template", description: "the template" },
+    ]);
+    const enrichCalls = fetchMock.mock.calls
+      .map((c) => c[0] as string)
+      .filter((u) => u.endsWith("/agent"));
+    expect(enrichCalls).toEqual([]);
+  });
+
+  it("protects a seeded built-in from a same-named upload (builtin: true)", async () => {
+    // Option-1 half of the policy: a same-named upload must NOT shadow a
+    // SEEDED built-in (unlike a user-registered template). debby stays canonical.
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          { id: "ag_debby", name: "debby", harness: "claude-sdk", builtin: true, created_at: 100 },
+        ],
+        has_more: false,
+      }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [
+          // A newer upload named "debby" — must be dropped, not surfaced.
+          { id: "ag_fake_debby", name: "debby", created_at: 999 },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // Only the seeded debby; the same-named upload is shadowed (Option 1) and
+    // never enriched, even though it is newer than the built-in.
+    expect(result.current.data?.map((a) => a.id)).toEqual(["ag_debby"]);
+    const enrichCalls = fetchMock.mock.calls
+      .map((c) => c[0] as string)
+      .filter((u) => u.endsWith("/agent"));
+    expect(enrichCalls).toEqual([]);
+  });
+
+  it("degrades to built-ins when the sessions scan fails", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [{ id: "ag_native", name: "claude-native-ui" }],
+        has_more: false,
+      }),
+      // Transient 5xx on the scan — built-in availability must not be
+      // hostage to the discovery extension, so the hook still succeeds.
+      [MINE_URL]: sessionResponse({ detail: "boom" }, { ok: false, status: 503 }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    expect(result.current.data?.map((a) => a.id)).toEqual(["ag_native"]);
+  });
+
+  it("lists a custom agent with stored fields when optional metadata is absent", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({ object: "list", data: [], has_more: false }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [{ id: "ag_doc", name: "doc-writer" }],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    // Session metadata supplies the name; full details are deferred until hover.
+    expect(result.current.data).toEqual([
+      {
+        id: "ag_doc",
+        name: "doc-writer",
+        display_name: "Doc-writer",
+        description: null,
+        harness: null,
+        skills: [],
+        sessionId: expect.any(String),
+        created_at: 1,
+      },
+    ]);
+  });
+});
+
+describe("prefetchAvailableAgentDetails", () => {
+  it("patches harness, description, and skills into the cache on success", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const agent = testAgent("ag_doc", "doc-writer", {
+      display_name: "Doc-writer",
+      harness: null,
+      sessionId: "conv_3",
+    });
+    queryClient.setQueryData(["available-agents"], [agent]);
+
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        id: "ag_doc",
+        object: "agent",
+        name: "doc-writer",
+        description: "Documentation specialist",
+        harness: "claude-sdk",
+        skills: [{ name: "humanizer", description: "Remove AI writing patterns" }],
+      }),
+    );
+
+    await prefetchAvailableAgentDetails(agent, queryClient);
+
+    expect(queryClient.getQueryData(["available-agents"])).toEqual([
+      {
+        id: "ag_doc",
+        name: "doc-writer",
+        display_name: "Doc-writer",
+        description: "Documentation specialist",
+        harness: "claude-sdk",
+        sessionId: "conv_3",
+        skills: [{ name: "humanizer", description: "Remove AI writing patterns" }],
+      },
+    ]);
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/sessions/conv_3/agent");
+  });
+
+  it("is a no-op when harness is already populated", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const agent = testAgent("ag_doc", "doc-writer", {
+      display_name: "Doc-writer",
+      harness: "claude-sdk",
+      sessionId: "conv_3",
+    });
+    queryClient.setQueryData(["available-agents"], [agent]);
+
+    await prefetchAvailableAgentDetails(agent, queryClient);
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/v1/agents"))).toBe(false);
+    expect(queryClient.getQueryData(["available-agents"])).toEqual([agent]);
+  });
+
+  it("is a no-op when sessionId is absent (catalog agent)", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const agent = testAgent("ag_native", "claude-native-ui", {
+      display_name: "Claude Code",
+      harness: null,
+    });
+    queryClient.setQueryData(["available-agents"], [agent]);
+
+    await prefetchAvailableAgentDetails(agent, queryClient);
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/v1/agents"))).toBe(false);
+  });
+
+  it("leaves the agent name-only when the enrich fetch fails", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const agent = testAgent("ag_doc", "doc-writer", {
+      display_name: "Doc-writer",
+      harness: null,
+      sessionId: "conv_3",
+    });
+    queryClient.setQueryData(["available-agents"], [agent]);
+
+    fetchMock.mockResolvedValueOnce(mockResponse({ detail: "boom" }, { ok: false, status: 500 }));
+
+    await prefetchAvailableAgentDetails(agent, queryClient);
+
+    // Cache unchanged — agent stays with scan-only fields.
+    expect(queryClient.getQueryData(["available-agents"])).toEqual([agent]);
+  });
+
+  it("removes a session agent when enrichment reveals it is a native shadow", async () => {
+    // A session bound a kiro agent with a non-canonical name ("kiro-naitive"
+    // typo). On initial load harness is null so it passes the kiro filter.
+    // prefetchAvailableAgentDetails detects harness: "kiro-native" after
+    // enrichment and removes the agent since a seeded kiro built-in exists.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const kiroBuiltin = testAgent("ag_kiro", "kiro-native-ui", {
+      display_name: "Kiro",
+      harness: "kiro-native",
+    });
+    const kiroShadow = testAgent("ag_session_kiro", "kiro-naitive", {
+      display_name: "Kiro-naitive",
+      harness: null,
+      sessionId: "conv_kiro",
+    });
+    queryClient.setQueryData(["available-agents"], [kiroBuiltin, kiroShadow]);
+
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        id: "ag_session_kiro",
+        object: "agent",
+        name: "kiro-naitive",
+        harness: "kiro-native",
+        skills: [],
+      }),
+    );
+
+    await prefetchAvailableAgentDetails(kiroShadow, queryClient);
+
+    // Shadow removed; only the seeded built-in remains.
+    expect(queryClient.getQueryData(["available-agents"])).toEqual([kiroBuiltin]);
+  });
+});
+
+// Pinned agents (e.g. a project's configured default) must survive discovery:
+// the recency-bounded scan can miss them and the same-name collapse could
+// otherwise drop or id-swap them, silently rebinding the project.
+describe("useAvailableAgents pinned agents", () => {
+  it("keeps a pinned agent's id through the same-name newest-wins collapse", async () => {
+    // A newer same-named upload wins the name bucket — without pinning, that
+    // id swap would silently rebind the project to the newer upload.
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({ object: "list", data: [], has_more: false }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [
+          { id: "ag_new", name: "deploy-bot", created_at: 200 },
+          { id: "ag_pinned", name: "deploy-bot", created_at: 100 },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(
+      () => ({ ...useAvailableAgents({ pinnedAgentIds: ["ag_pinned"] }) }),
+      {
+        wrapper,
+      },
+    );
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    const ids = (result.current.data ?? []).map((a) => a.id);
+    expect(ids).toContain("ag_pinned");
+    expect(ids).toContain("ag_new");
+  });
+
+  it("restores a pinned session-less catalog template superseded by a newer same-named upload", async () => {
+    // A project pins a user-registered template (builtin: false) that has no
+    // sessions of its own. A newer same-named upload wins the name bucket, so
+    // the template leaves the merged list; the scan can't restore it and the
+    // per-agent session lookup finds nothing. The pin must still resolve from
+    // the catalog instead of surfacing a false "agent unavailable".
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "ag_pinned",
+            name: "deploy-bot",
+            harness: "claude-sdk",
+            builtin: false,
+            created_at: 100,
+          },
+        ],
+        has_more: false,
+      }),
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [
+          // Newer same-named upload — wins the bucket, evicting the template.
+          { id: "ag_upload_v2", name: "deploy-bot", created_at: 200 },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(
+      () => ({ ...useAvailableAgents({ pinnedAgentIds: ["ag_pinned"] }) }),
+      {
+        wrapper,
+      },
+    );
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    const ids = (result.current.data ?? []).map((a) => a.id);
+    expect(ids).toContain("ag_pinned");
+    expect(ids).toContain("ag_upload_v2");
+    // Restored straight from the catalog — no per-agent session probe fired.
+    const lookupCalls = fetchMock.mock.calls
+      .map((c) => c[0] as string)
+      .filter((u) => u.includes("agent_id=ag_pinned"));
+    expect(lookupCalls).toEqual([]);
+  });
+
+  it("omits an unresolvable pinned id without failing the rest of the list", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [{ id: "ag_polly", name: "polly", builtin: true }],
+        has_more: false,
+      }),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(
+      () => ({ ...useAvailableAgents({ pinnedAgentIds: ["ag_gone"] }) }),
+      {
+        wrapper,
+      },
+    );
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    expect(result.current.data?.map((a) => a.id)).toEqual(["ag_polly"]);
+  });
+});
+
+describe("useAvailableAgents slow discovery scan", () => {
+  const catalogResponse = () =>
+    mockResponse({
+      object: "list",
+      data: [
+        { id: "ag_claude", name: "claude-native-ui", harness: "claude-native", builtin: true },
+        { id: "ag_codex", name: "codex-native-ui", harness: "codex-native", builtin: true },
+      ],
+      has_more: false,
+    });
+
+  it("serves catalog rows as placeholder data without waiting for the scan", async () => {
+    // Managed deployments with large session tables answer the discovery
+    // scan slowly; here it simply never resolves until released. The
+    // catalog-only harness rows must come up anyway — a slow scan must not
+    // hold the picker hostage any more than a failing one does.
+    let releaseScan: (r: Response) => void = () => {};
+    const scanGate = new Promise<Response>((resolve) => {
+      releaseScan = resolve;
+    });
+    let releaseCatalog!: (r: Response) => void;
+    const catalogGate = new Promise<Response>((resolve) => {
+      releaseCatalog = resolve;
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url === BUILTINS_URL) return catalogGate;
+      if (url === MINE_URL) return scanGate;
+      return Promise.reject(new Error(`unrouted fetch in test: ${url}`));
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+
+    expect(result.current.isLoading).toBe(true);
+    releaseCatalog(catalogResponse());
+
+    // Catalog rows appear while the scan is still pending…
+    await waitFor(() =>
+      expect(result.current.data?.map((a) => a.id)).toEqual(["ag_claude", "ag_codex"]),
+    );
+    expect(result.current.isPlaceholderData).toBe(true);
+    expect(result.current.isLoading).toBe(false);
+
+    // …and upgrade in place — placeholder flag cleared, scan-discovered
+    // agents merged in — once the scan finally lands.
+    releaseScan(
+      sessionResponse({
+        object: "list",
+        data: [{ id: "ag_custom", name: "my-agent", created_at: 1 }],
+        has_more: false,
+      }),
+    );
+    await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
+    expect(result.current.data?.map((a) => a.id)).toEqual(["ag_claude", "ag_codex", "ag_custom"]);
+  });
+
+  it("shows user-registered templates immediately while Mine is pending", async () => {
+    let releaseScan: (r: Response) => void = () => {};
+    const scanGate = new Promise<Response>((resolve) => {
+      releaseScan = resolve;
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url === BUILTINS_URL)
+        return Promise.resolve(
+          mockResponse({
+            object: "list",
+            data: [
+              {
+                id: "ag_claude",
+                name: "claude-native-ui",
+                harness: "claude-native",
+                builtin: true,
+              },
+              { id: "ag_codex", name: "codex-native-ui", harness: "codex-native", builtin: true },
+              {
+                id: "ag_template",
+                name: "agent-a",
+                harness: "claude-sdk",
+                builtin: false,
+                created_at: 200,
+              },
+            ],
+            has_more: false,
+          }),
+        );
+      if (url === MINE_URL) return scanGate;
+      return Promise.reject(new Error(`unrouted fetch in test: ${url}`));
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+
+    // All templates are available while the Mine request is still pending.
+    await waitFor(() =>
+      expect(result.current.data?.map((a) => a.id)).toEqual([
+        "ag_claude",
+        "ag_codex",
+        "ag_template",
+      ]),
+    );
+    expect(result.current.isPlaceholderData).toBe(true);
+
+    // Mine settling clears the placeholder flag without another catalog request.
+    releaseScan(sessionResponse({ object: "list", data: [], has_more: false }));
+    await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
+    expect(result.current.data?.map((a) => a.id)).toEqual(["ag_claude", "ag_codex", "ag_template"]);
+  });
+
+  it("fetches the catalog once per mount (placeholder and merge share it)", async () => {
+    routeFetch({
+      [BUILTINS_URL]: catalogResponse(),
+      [MINE_URL]: EMPTY_MINE,
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+    await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
+
+    // The placeholder's catalog query and the merged queryFn share one
+    // GET /v1/agents — the placeholder must not double the catalog load.
+    const catalogCalls = fetchMock.mock.calls.filter((c) => c[0] === BUILTINS_URL);
+    expect(catalogCalls).toHaveLength(1);
+  });
+});
+
+describe("useAvailableAgents user agents (scope=user)", () => {
+  const USER_AGENTS_URL = "/v1/agents?scope=user&limit=50";
+
+  function wrapperWithInfo(agentInstall: boolean) {
+    return function InfoWrapper({ children }: { children: ReactNode }) {
+      return wrapper({
+        children: (
+          <CapabilitiesProvider info={{ ...FALLBACK_SERVER_INFO, agent_install: agentInstall }}>
+            {children}
+          </CapabilitiesProvider>
+        ),
+      });
+    };
+  }
+
+  const CATALOG = mockResponse({
+    data: [{ id: "ag_polly", name: "polly", harness: "claude-sdk", builtin: true }],
+    has_more: false,
+  });
+  const MINE = sessionResponse({
+    object: "list",
+    data: [{ id: "ag_orion", name: "orion", created_at: 5 }],
+    has_more: false,
+  });
+
+  it("merges the caller's agents in, one per name, keeping built-in names", async () => {
+    routeFetch({
+      [BUILTINS_URL]: CATALOG,
+      [MINE_URL]: MINE,
+      [USER_AGENTS_URL]: mockResponse({
+        data: [
+          { id: "ag_vega", name: "vega", harness: "claude-sdk", builtin: false, created_at: 9 },
+          // Also used by a recent session: listed once.
+          { id: "ag_orion", name: "orion", builtin: false, created_at: 5 },
+          // A built-in's name: the built-in wins.
+          { id: "ag_polly_copy", name: "polly (fork 1a2b)", builtin: false, created_at: 8 },
+          { id: "ag_atlas", name: "atlas", builtin: false, created_at: 1 },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(true),
+    });
+    await waitFor(() => {
+      expect(result.current.isPlaceholderData).toBe(false);
+      expect(result.current.data?.map((a) => a.id)).toEqual([
+        "ag_polly",
+        "ag_vega",
+        "ag_orion",
+        "ag_atlas",
+      ]);
+    });
+  });
+
+  it("follows the cursor past a page the server filled only with skipped copies", async () => {
+    routeFetch({
+      [BUILTINS_URL]: CATALOG,
+      [MINE_URL]: sessionResponse({ object: "list", data: [], has_more: false }),
+      // 50 newer copies: the server read them, skipped them, and returned nothing.
+      [USER_AGENTS_URL]: mockResponse({ data: [], has_more: true, last_id: "ag_copy_50" }),
+      [`${USER_AGENTS_URL}&after=ag_copy_50`]: mockResponse({
+        data: [{ id: "ag_orion", name: "orion", builtin: false, created_at: 1 }],
+        has_more: false,
+        last_id: "ag_orion",
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(true),
+    });
+    await waitFor(() => {
+      expect(result.current.isPlaceholderData).toBe(false);
+      expect(result.current.data?.map((a) => a.id)).toEqual(["ag_polly", "ag_orion"]);
+    });
+  });
+
+  it("names your agents by their own name, whatever their harness", async () => {
+    routeFetch({
+      [BUILTINS_URL]: CATALOG,
+      [MINE_URL]: sessionResponse({ object: "list", data: [], has_more: false }),
+      [HARNESSES_URL]: mockResponse({
+        data: [
+          { id: "grok", label: "Grok Build", capabilities: { integration_mode: "acp-subprocess" } },
+        ],
+      }),
+      [USER_AGENTS_URL]: mockResponse({
+        data: [
+          {
+            id: "ag_orion",
+            name: "orion",
+            harness: "claude-native",
+            builtin: false,
+            created_at: 2,
+          },
+          { id: "ag_scout", name: "scout", harness: "grok", builtin: false, created_at: 1 },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(true),
+    });
+    await waitFor(() =>
+      expect(result.current.data?.find((a) => a.id === "ag_scout")?.acpHarness).toBe(true),
+    );
+    const mine = (result.current.data ?? []).filter((a) => a.mine);
+    expect(mine.map((a) => [a.id, a.display_name])).toEqual([
+      ["ag_orion", "Orion"],
+      ["ag_scout", "Scout"],
+    ]);
+  });
+
+  it("follows the cursor past a page of one name's repeats to older agents", async () => {
+    // An older server kept a row per `omnigent run --harness codex`.
+    const codexRuns = Array.from({ length: 50 }, (_, i) => ({
+      id: `ag_codex_${i}`,
+      name: "codex",
+      harness: "codex",
+      builtin: false,
+      created_at: 100 - i,
+    }));
+    routeFetch({
+      [BUILTINS_URL]: CATALOG,
+      [MINE_URL]: sessionResponse({ object: "list", data: [], has_more: false }),
+      [USER_AGENTS_URL]: mockResponse({ data: codexRuns, has_more: true, last_id: "ag_codex_49" }),
+      [`${USER_AGENTS_URL}&after=ag_codex_49`]: mockResponse({
+        data: [{ id: "ag_orion", name: "orion", builtin: false, created_at: 1 }],
+        has_more: false,
+        last_id: "ag_orion",
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(true),
+    });
+    await waitFor(() => {
+      expect(result.current.isPlaceholderData).toBe(false);
+      expect(result.current.data?.map((a) => a.id)).toEqual(["ag_polly", "ag_codex_0", "ag_orion"]);
+    });
+  });
+
+  it("shows the most recently changed of same-named agents, so an install is selectable", async () => {
+    routeFetch({
+      [BUILTINS_URL]: CATALOG,
+      // A recent session uses an older upload named orion.
+      [MINE_URL]: MINE,
+      [USER_AGENTS_URL]: mockResponse({
+        data: [
+          { id: "ag_orion", name: "orion", builtin: false, created_at: 5, updated_at: 5 },
+          // Installed earlier, just reinstalled (or imported).
+          {
+            id: "ag_orion_installed",
+            name: "orion",
+            builtin: false,
+            created_at: 3,
+            updated_at: 10,
+          },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(true),
+    });
+    await waitFor(() => {
+      expect(result.current.isPlaceholderData).toBe(false);
+      expect(result.current.data?.map((a) => a.id)).toEqual(["ag_polly", "ag_orion_installed"]);
+    });
+  });
+
+  it("ranks the caller's agents by their own changes, not by session activity", async () => {
+    routeFetch({
+      [BUILTINS_URL]: CATALOG,
+      // A fork just started on the older upload named orion.
+      [MINE_URL]: sessionResponse({
+        object: "list",
+        data: [{ id: "ag_orion", name: "orion", created_at: 20 }],
+        has_more: false,
+      }),
+      [USER_AGENTS_URL]: mockResponse({
+        data: [
+          { id: "ag_orion", name: "orion", builtin: false, created_at: 5, updated_at: 5 },
+          {
+            id: "ag_orion_installed",
+            name: "orion",
+            builtin: false,
+            created_at: 3,
+            updated_at: 10,
+          },
+        ],
+        has_more: false,
+      }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(true),
+    });
+    await waitFor(() => {
+      expect(result.current.isPlaceholderData).toBe(false);
+      expect(result.current.data?.map((a) => a.id)).toEqual(["ag_polly", "ag_orion_installed"]);
+    });
+  });
+
+  it("does not ask for the caller's agents when the server lacks agent_install", async () => {
+    routeFetch({ [BUILTINS_URL]: CATALOG, [MINE_URL]: MINE });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(false),
+    });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    expect(result.current.data?.map((a) => a.id)).toEqual(["ag_polly", "ag_orion"]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("scope=user"))).toBe(false);
+  });
+
+  it("keeps the existing list when the caller's agents fail to load", async () => {
+    routeFetch({
+      [BUILTINS_URL]: CATALOG,
+      [MINE_URL]: MINE,
+      [USER_AGENTS_URL]: mockResponse({}, { ok: false, status: 500 }),
+    });
+
+    const { result } = renderHook(() => ({ ...useAvailableAgents() }), {
+      wrapper: wrapperWithInfo(true),
+    });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isPlaceholderData).toBe(false);
+    });
+
+    expect(result.current.data?.map((a) => a.id)).toEqual(["ag_polly", "ag_orion"]);
+    expect(fetchMock.mock.calls.some(([url]) => url === USER_AGENTS_URL)).toBe(true);
+  });
+});

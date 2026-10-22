@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Omnigent · Staff Login</title>
+    <link rel="stylesheet" href="/platform-admin/assets/platform-login.css">
+    <script src="/platform-admin/assets/platform-login.js" defer></script>
+  </head>
+  <body>
+    <div class="signal-grid" aria-hidden="true"></div>
+    <main class="login-shell">
+      <section class="identity-panel" aria-labelledby="login-title">
+        <a class="brand" href="/platform-admin/login" aria-label="Omnigent Staff Login">
+          <span class="brand-sigil">O</span>
+          <span><strong>OMNIGENT</strong><small>PLATFORM OPERATIONS</small></span>
+        </a>
+
+        <div class="realm-marker">
+          <span class="realm-pulse" aria-hidden="true"></span>
+          <span>INDEPENDENT STAFF REALM</span>
+        </div>
+
+        <div class="title-block">
+          <p>CONTROL PLANE / LOCAL ACCESS</p>
+          <h1 id="login-title">平台管理<br><em>人员登录</em></h1>
+          <p class="summary">使用独立 Staff 用户名和密码登录。权限仍由平台 RBAC 控制，客户账号不能进入此后台。</p>
+        </div>
+
+        <dl class="boundary-list">
+          <div><dt>AUTH</dt><dd>USERNAME + PASSWORD</dd></div>
+          <div><dt>SESSION</dt><dd>STAFF COOKIE ONLY</dd></div>
+          <div><dt>ACCESS</dt><dd>RBAC ENFORCED</dd></div>
+        </dl>
+      </section>
+
+      <section class="form-panel">
+        <div class="form-index">01 / AUTHENTICATE</div>
+        <form id="staff-login-form" data-testid="staff-login-form">
+          <label>
+            <span>STAFF USERNAME</span>
+            <input id="staff-username" data-testid="staff-username" name="username" autocomplete="username" maxlength="128" required autofocus>
+          </label>
+          <label>
+            <span>PASSWORD</span>
+            <input id="staff-password" data-testid="staff-password" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+          </label>
+          <p class="form-error" id="staff-login-error" data-testid="staff-login-error" role="alert" aria-live="polite"></p>
+          <button id="staff-login-submit" data-testid="staff-login-submit" type="submit">
+            ENTER CONTROL PLANE <span>↗</span>
+          </button>
+        </form>
+        <p class="security-note"><strong>REALM BOUNDARY</strong> 该会话与租户登录相互隔离；连续失败将暂时锁定 Staff 账号。</p>
+      </section>
+    </main>
+  </body>
+</html>

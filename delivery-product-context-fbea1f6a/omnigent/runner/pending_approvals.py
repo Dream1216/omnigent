@@ -1,0 +1,369 @@
+"""Runner-side registry of asyncio Futures awaiting policy ASK verdicts.
+
+When the runner needs the user to approve a gated tool call, it
+mints an ``elicitation_id``, parks a Future here, and waits for the
+AP server's approval-event POST to arrive on
+``/v1/sessions/{id}/events``. The runner's session-event handler
+resolves the Future on receipt.
+
+Lifted out of ``omnigent.runner.app`` so the gate that lives in
+``omnigent.runner.tool_dispatch`` can register and wait without
+threading the dict through every dispatch entry point. The dict is
+process-global; elicitation ids are UUIDs so there's no collision
+concern, and an in-flight Future's scope is naturally one approval
+round-trip.
+
+Lifecycle contract:
+
+* :func:`register` creates a Future and inserts it. Returns the
+  Future so the caller can await it (typically wrapped in
+  :func:`asyncio.wait_for`).
+* The caller MUST call :func:`cleanup` in a ``finally`` block.
+  The registry has no GC of its own; leaked entries accumulate.
+* :func:`resolve` is called by the session-event handler when an
+  ``approval`` event arrives. Idempotent and no-op when the id is
+  unknown or the Future is already done.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+from dataclasses import dataclass
+
+# Default wait budget for a UI verdict, in seconds. Held at one day
+# (86400s) — matching the deciding policy's default ``ask_timeout``: an ASK
+# is a human-in-the-loop gate and should outlive a user stepping away rather
+# than auto-refuse on its own. The old 120s default silently refused (treated
+# as DENY) any prompt a user didn't answer within two minutes — the
+# runner-side mirror of the cost-policy auto-resolve bug. Callers that resolve
+# a per-policy ``ask_timeout`` should still pass ``timeout_seconds`` explicitly;
+# this is only the fallback when none is provided. Headless/unattended agents
+# that want a fast fail-closed should pass a finite ``timeout_seconds``.
+_DEFAULT_WAIT_SECONDS: float = 86400.0
+
+#: Content values MCP allows in an ``ElicitResult`` — the same union the
+#: server validates a resolve payload against.
+ElicitContent = dict[str, str | int | float | bool | list[str] | None]
+
+
+class ServerReconnected(Exception):
+    """The caller should recreate server-owned approval state and wait again."""
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """What the user decided, and whatever their form carried.
+
+    ``content`` exists because an elicitation can ask for more than consent:
+    an MCP server's ``requestedSchema`` names fields, and the answer to
+    "which environment?" is the field, not the accept. Carrying it here is
+    what lets the awaiting caller return the person's answer instead of
+    guessing one.
+
+    :param approved: ``True`` on accept, ``False`` on decline or timeout.
+    :param content: The resolver's ``content`` map, or ``None`` when the
+        verdict carried none (a bare approve/reject card, a decline, or a
+        timeout).
+    """
+
+    approved: bool
+    content: ElicitContent | None = None
+
+
+# Module-global registry: elicitation_id → asyncio.Future[Verdict].
+# Future is owned by the caller that registered it — this module is just
+# the routing table the session-event handler reads to set the result.
+_pending: dict[str, asyncio.Future[Verdict]] = {}
+
+# Waits whose presentation state belongs to the disconnected server. Their
+# callers decide whether to recreate a policy gate or re-publish a suspended
+# external MCP prompt; this registry only supplies the reconnect signal.
+_retry_on_server_reconnect: set[str] = set()
+
+# Monotonic runner-local server generation plus callers waiting for the next
+# successful tunnel hello. Proxy calls use this to avoid retrying until the
+# replacement server can route back to the retained runner operation.
+_server_generation = 0
+_server_reconnect_waiters: set[asyncio.Future[int]] = set()
+
+# Per-session count of outstanding ASK verdicts (a session may have more
+# than one parked at once — e.g. parallel tool calls that each tripped a
+# checkpoint). Maintained by :func:`wait_for_user_approval` around its
+# park, since that's the single entry point that knows the conversation
+# id. Read by :func:`has_pending` so the runner's message-ingest path can
+# tell a session is awaiting a human approval and must NOT have that gate
+# perturbed by a mid-turn message injection (e.g. a parent agent's
+# ``sys_session_send`` to a blocked child — that message would otherwise
+# steer the parked turn past the human gate). See the ingest guard in
+# ``omnigent/runner/app.py``.
+_session_pending: dict[str, int] = {}
+
+
+def has_pending(conversation_id: str) -> bool:
+    """
+    Whether *conversation_id* currently has an outstanding ASK verdict.
+
+    ``True`` between :func:`wait_for_user_approval` parking and its exit
+    (verdict, decline, timeout, or cancellation). Lets callers treat a
+    session as "awaiting human approval" without threading the
+    elicitation id around.
+
+    :param conversation_id: Session/conversation id, e.g. ``"conv_abc123"``.
+    :returns: ``True`` when at least one approval is parked for the session.
+    """
+    return _session_pending.get(conversation_id, 0) > 0
+
+
+def has_any_pending() -> bool:
+    """Return whether any unresolved approval verdict is registered."""
+    return any(not fut.done() for fut in _pending.values())
+
+
+def register(
+    elicitation_id: str,
+    *,
+    retry_on_server_reconnect: bool = False,
+) -> asyncio.Future[Verdict]:
+    """
+    Create and store a Future for an outstanding ASK verdict.
+
+    Must be called from inside an asyncio event loop so the Future
+    binds to it. Each ``elicitation_id`` should be unique (the
+    server mints these as UUIDs); re-registering the same id
+    silently overwrites the prior entry.
+
+    :param elicitation_id: Correlation id, e.g. ``"elicit_abc123"``.
+    :param retry_on_server_reconnect: Whether a tunnel reconnect should wake
+        this waiter so its caller can recreate server-owned approval state.
+    :returns: The newly created Future. Caller awaits with
+        :func:`asyncio.wait_for` to bound the wait.
+    """
+    fut: asyncio.Future[Verdict] = asyncio.get_running_loop().create_future()
+    _pending[elicitation_id] = fut
+    if retry_on_server_reconnect:
+        _retry_on_server_reconnect.add(elicitation_id)
+    else:
+        _retry_on_server_reconnect.discard(elicitation_id)
+    return fut
+
+
+def cleanup(elicitation_id: str) -> None:
+    """
+    Remove an entry from the registry.
+
+    Idempotent — popping an unknown id is a no-op. Callers must
+    invoke this in a ``finally`` block paired with :func:`register`
+    so cancelled / timed-out Futures don't leak.
+
+    :param elicitation_id: Correlation id to drop.
+    """
+    _pending.pop(elicitation_id, None)
+    _retry_on_server_reconnect.discard(elicitation_id)
+
+
+def current_server_generation() -> int:
+    """Return the number of successful server reconnections observed."""
+    return _server_generation
+
+
+async def wait_for_server_reconnect(
+    after_generation: int,
+    *,
+    timeout_seconds: float,
+) -> int:
+    """Wait until a successful tunnel hello advances the server generation."""
+    if _server_generation > after_generation:
+        return _server_generation
+    future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+    _server_reconnect_waiters.add(future)
+    if _server_generation > after_generation and not future.done():
+        future.set_result(_server_generation)
+    try:
+        return await asyncio.wait_for(future, timeout=timeout_seconds)
+    finally:
+        _server_reconnect_waiters.discard(future)
+
+
+def notify_server_reconnect() -> int:
+    """Wake waits whose server-owned state must be recreated.
+
+    The surviving runner receives this signal after its tunnel connects to a
+    new server generation. Opted-in callers either repeat a not-yet-executed
+    policy check or re-publish an external prompt whose original execution is
+    retained separately. Other waits are intentionally untouched.
+
+    :returns: Number of pending waits notified.
+    """
+    global _server_generation
+    _server_generation += 1
+    for waiter in tuple(_server_reconnect_waiters):
+        if not waiter.done():
+            waiter.set_result(_server_generation)
+
+    notified = 0
+    for elicitation_id in tuple(_retry_on_server_reconnect):
+        fut = _pending.get(elicitation_id)
+        if fut is None or fut.done():
+            continue
+        fut.set_exception(ServerReconnected())
+        notified += 1
+    return notified
+
+
+def resolve(
+    elicitation_id: str,
+    approved: bool,
+    content: ElicitContent | None = None,
+) -> bool:
+    """
+    Set the verdict on a registered Future.
+
+    Called by the runner's session-event handler when an
+    ``approval`` event arrives. Idempotent: returns ``False`` for
+    unknown ids or already-completed Futures so callers can
+    distinguish "delivered" from "no-op."
+
+    :param elicitation_id: Correlation id from the approval event.
+    :param approved: ``True`` on ``action == "accept"``, ``False``
+        on decline or other terminal actions.
+    :param content: The ``content`` map the resolver sent, when the
+        prompt asked for more than consent. ``None`` for a bare
+        approve/reject.
+    :returns: ``True`` if the Future was unresolved and was set;
+        ``False`` if no Future was registered or it was already
+        completed (e.g. timed out before the verdict arrived).
+    """
+    fut = _pending.get(elicitation_id)
+    if fut is None or fut.done():
+        return False
+    # A refusal is not an answer, so nothing the form collected travels with
+    # it. Normalising here means no consumer has to remember to drop it.
+    fut.set_result(Verdict(approved=approved, content=content if approved else None))
+    return True
+
+
+async def wait_for_user_verdict(
+    *,
+    elicitation_id: str,
+    conversation_id: str,
+    publish_event: Callable[[str, dict[str, object]], None],
+    timeout_seconds: float | None = None,
+    retry_on_server_reconnect: bool = False,
+) -> Verdict:
+    """
+    Park on a registered Future until the user delivers a verdict.
+
+    Centralizes the register → wait_for → cleanup → publish
+    sequence so every ASK-escalation site emits a
+    ``response.elicitation_resolved`` event on the way out — the
+    Omnigent server's pending-elicitations index (powers the sidebar
+    badge) decrements when it sees that event, so emitting on
+    every exit path (verdict, timeout, cancellation) keeps the
+    badge in lockstep with the underlying awaiter.
+
+    Returns ``False`` on timeout. Cancellation propagates: if the
+    caller's task is cancelled the ``finally`` still emits the
+    resolved event so the badge clears. An exit without a human verdict
+    (timeout, cancellation) stamps ``reason: "unanswered"`` on that event,
+    so the web card can say the prompt expired instead of implying someone
+    answered it elsewhere.
+
+    :param elicitation_id: Correlation id minted by the Omnigent server's
+        policy evaluator and returned in the ``pending`` verdict,
+        e.g. ``"elicit_abc123"``.
+    :param conversation_id: Session/conversation id the prompt
+        was published on, e.g. ``"conv_abc123"``.
+    :param publish_event: Callable that puts an SSE event on the
+        runner's per-session outbound queue. Same shape the
+        runner's ``_publish_event`` helper uses.
+    :param timeout_seconds: Maximum seconds to wait before
+        treating the prompt as refused, e.g. the spec-resolved
+        ``ask_timeout`` from the server's pending verdict. ``None``
+        falls back to :data:`_DEFAULT_WAIT_SECONDS`.
+    :param retry_on_server_reconnect: Wake with :class:`ServerReconnected`
+        after a tunnel reconnect so the caller can recreate server-owned
+        approval state.
+    :returns: The user's :class:`Verdict`. Declines and timeouts
+        carry ``approved=False`` and no content.
+    """
+    effective_timeout = _DEFAULT_WAIT_SECONDS if timeout_seconds is None else timeout_seconds
+    fut = register(
+        elicitation_id,
+        retry_on_server_reconnect=retry_on_server_reconnect,
+    )
+    # Mark the session as awaiting approval for the lifetime of this park
+    # so ``has_pending`` reports it. Decremented in ``finally`` on every
+    # exit path (verdict, timeout, cancellation) so the flag never leaks.
+    _session_pending[conversation_id] = _session_pending.get(conversation_id, 0) + 1
+    answered = False
+    try:
+        verdict = await asyncio.wait_for(fut, timeout=effective_timeout)
+        answered = True
+    except asyncio.TimeoutError:
+        verdict = Verdict(approved=False)
+    finally:
+        cleanup(elicitation_id)
+        _remaining = _session_pending.get(conversation_id, 0) - 1
+        if _remaining > 0:
+            _session_pending[conversation_id] = _remaining
+        else:
+            _session_pending.pop(conversation_id, None)
+        # Signal the Omnigent server's pending-elicitations index that
+        # this prompt is done. Idempotent on the happy path (the
+        # AP-side dispatch already cleared the entry); on timeout
+        # / cancellation this event is the ONLY signal the server
+        # gets, so it must fire on every exit path.
+        resolved: dict[str, object] = {
+            "type": "response.elicitation_resolved",
+            "elicitation_id": elicitation_id,
+        }
+        if not answered:
+            # Nobody decided anything: let the card say the prompt expired
+            # rather than render the neutral "Resolved elsewhere" pill.
+            resolved["reason"] = "unanswered"
+        publish_event(conversation_id, resolved)
+    return verdict
+
+
+async def wait_for_user_approval(
+    *,
+    elicitation_id: str,
+    conversation_id: str,
+    publish_event: Callable[[str, dict[str, object]], None],
+    timeout_seconds: float | None = None,
+) -> bool:
+    """
+    Park on a verdict and report only whether it was an accept.
+
+    The consent-only view of :func:`wait_for_user_verdict`, for gates that
+    ask nothing beyond yes or no.
+
+    :param elicitation_id: Correlation id, e.g. ``"elicit_abc123"``.
+    :param conversation_id: Session the prompt was published on.
+    :param publish_event: Runner ``_publish_event``-shaped callable.
+    :param timeout_seconds: Wait budget; ``None`` uses the module default.
+    :returns: ``True`` on accept, ``False`` on decline / timeout.
+    """
+    verdict = await wait_for_user_verdict(
+        elicitation_id=elicitation_id,
+        conversation_id=conversation_id,
+        publish_event=publish_event,
+        timeout_seconds=timeout_seconds,
+    )
+    return verdict.approved
+
+
+def reset_for_tests() -> None:
+    """
+    Clear the registry. For test isolation only — leaked Futures
+    from one test silently change the behavior of the next.
+    """
+    global _server_generation
+    _pending.clear()
+    _retry_on_server_reconnect.clear()
+    _session_pending.clear()
+    for waiter in tuple(_server_reconnect_waiters):
+        waiter.cancel()
+    _server_reconnect_waiters.clear()
+    _server_generation = 0

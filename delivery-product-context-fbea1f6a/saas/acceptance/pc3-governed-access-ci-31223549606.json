@@ -1,0 +1,92 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31223549606,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31223549606",
+  "job_id": 93013068779,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31223549606/job/93013068779",
+  "artifact_id": 9011361537,
+  "artifact_url": "https://github.com/Dream1216/omnigent/actions/runs/31223549606/artifacts/9011361537",
+  "head_sha": "df7ce571910bd0c4c727784cd4a27f8fbfb97ce3",
+  "implementation_sha": "c8ce9e75775ff8964905bbab1d8f6fcf875b5f6b",
+  "upstream_revision": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+  "conclusion": "success",
+  "verification": {
+    "combined_ci_tests": "951 passed",
+    "combined_ci_warnings": 232,
+    "combined_ci_seconds": 176.78,
+    "isolated_logical_restore_contract": "passed in 3.642 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed in 38.33 seconds",
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips in 17.42 seconds",
+    "wheel_required_artifacts": 201,
+    "patches_replayed": 2,
+    "migration_head": "pc3a00000001",
+    "ci_migration_upgrade_check_and_downgrade": "passed with no migration drift",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "pc3_governed_access_slice": {
+    "platform_permission_policy_version": "2026-08-08.pc3-governed-access",
+    "platform_permissions": 28,
+    "standard_support_maximum_seconds": 3600,
+    "break_glass_maximum_seconds": 900,
+    "tenant_admin_approval_precedes_distinct_staff_approval": true,
+    "break_glass_requires_incident_and_distinct_staff_approval": true,
+    "one_time_support_token_is_hash_stored_and_exactly_scoped": true,
+    "customer_revoke_invalidates_all_active_support_sessions": true,
+    "emergency_database_role_does_not_inherit_support_role": true,
+    "admin_operation_audit_and_redacted_outbox_are_atomic": true,
+    "audit_chain_head_is_serialized_and_events_are_immutable": true,
+    "signed_export_requires_two_distinct_staff_principals": true,
+    "tenant_export_includes_visible_events_and_minimal_contiguous_chain_proof": true,
+    "production_signer_is_injected_through_audit_signer_protocol": true,
+    "local_hmac_signer_is_not_production_approved": true,
+    "downgrade_with_pc3_facts_is_refused": true
+  },
+  "database_isolation": {
+    "real_postgresql": "PostgreSQL 16",
+    "control_plane_forced_rls_tables": 81,
+    "runtime_forced_rls_tables": 17,
+    "platform_security_restore": "passed",
+    "post_backup_billing_authority_replay": "passed",
+    "cross_tenant_and_cross_workspace_negative_probes": true,
+    "support_role_requires_one_exact_active_token": true,
+    "revoked_support_token_sees_zero_sessions": true,
+    "roleless_staff_and_missing_context_fail_closed": true,
+    "audit_mutation_is_database_rejected": true,
+    "selected_table_content_sha256": "0e611e03ba14d8d7c72f4c3c4606bf0ef91190951ee8148aaa417b30f0d53c49"
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "63035f92c9b945ddf0d6f0821168e9096c61aaad",
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 479,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.9956,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "nonempty PC3 support, Admin Operation, audit-event and export backup or replay facts",
+    "production KMS or HSM signing, key rotation, revocation, timestamping, or transparency anchoring",
+    "production Staff IdP, Tenant approval, incident response, or support-access operations",
+    "WAL continuity, PITR, multi-AZ, another failure domain, external object-lock backup, or production RPO and RTO",
+    "PC4 Platform Console user interface",
+    "PC5 enterprise operations completion",
+    "registry publication, signature, vulnerability and license admission, Canary, N-1 rollback, production deployment, or release GO"
+  ],
+  "preceding_fail_closed_run": {
+    "run_id": 31220917286,
+    "head_sha": "c8ce9e75775ff8964905bbab1d8f6fcf875b5f6b",
+    "reason": "PC3 immutable audit fixtures remained in the shared PostgreSQL database and correctly blocked later migration downgrade tests",
+    "resolution": "the PostgreSQL acceptance fixture now removes only its own PC3 facts as the test superuser and returns the schema to pc2b00000001 without weakening the product downgrade guard"
+  },
+  "evidence_successor_policy": "This record verifies the exact PC3 implementation and PostgreSQL-test isolation successor at df7ce571910bd0c4c727784cd4a27f8fbfb97ce3. A successor that changes only this evidence record, wheel inventory, README, tests that assert those records, or plan documentation does not alter the verified implementation and must not be treated as production proof."
+}

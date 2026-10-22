@@ -1,0 +1,198 @@
+// Persisted, app-global preferences for the UI font — size and family.
+//
+// The preference is stored as a discrete px choice and exposed to CSS through
+// `--desktop-ui-font-size`. index.css maps that value directly into Tailwind's
+// typography tokens while keeping the root rem grid fixed at 16px, so text
+// changes without resizing icons, controls, or spacing. With no saved choice,
+// CSS supplies a 13px desktop default and a 14px mobile default.
+//
+// Font family works the analogous way with `--ui-font-family`. Note it can't
+// reuse `--font-sans`: Tailwind v4's `@theme inline` block inlines the literal
+// stack into the `font-sans` utility instead of a `var()` reference, so setting
+// `--font-sans` at runtime is a no-op. The `html` rule reads
+// `var(--ui-font-family, var(--font-sans))`, so an unset family falls back to
+// the system stack and any value we set on the style root wins.
+//
+// The DOM mutations target `getStyleRoot()`, not `document.documentElement`
+// directly: embedded, the scoped `.omnigent-app` redefines the font tokens
+// locally, so a value set on the real document root is shadowed for the subtree
+// and must be set on the scope root instead. Standalone `getStyleRoot()` IS the
+// document root, so behavior is unchanged.
+
+import { getStyleRoot } from "./host";
+
+const STORAGE_KEY = "omnigent:ui-font-size";
+
+export const UI_FONT_SIZE_DEFAULT = 13;
+export const UI_FONT_SIZE_MOBILE_DEFAULT = 14;
+export const UI_FONT_SIZE_MIN = 11;
+export const UI_FONT_SIZE_MAX = 18;
+export const UI_FONT_SIZE_STEP = 1;
+export const UI_FONT_SIZE_MOBILE_QUERY = "(max-width: 767.98px)";
+
+/** Clamp an arbitrary number into the supported px range. */
+export function clampUiFontSizePx(px: number): number {
+  return Math.min(UI_FONT_SIZE_MAX, Math.max(UI_FONT_SIZE_MIN, Math.round(px)));
+}
+
+function isValidPx(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function defaultUiFontSizePx(): number {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(UI_FONT_SIZE_MOBILE_QUERY).matches
+  ) {
+    return UI_FONT_SIZE_MOBILE_DEFAULT;
+  }
+  return UI_FONT_SIZE_DEFAULT;
+}
+
+function readStoredUiFontSizePx(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidPx(parsed)) return null;
+    return clampUiFontSizePx(parsed);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the persisted UI font size in px.
+ *
+ * Returns the viewport default when nothing valid is stored: 13px on desktop
+ * and 14px on mobile. A stored value applies directly on either viewport.
+ */
+export function readUiFontSizePx(): number {
+  return readStoredUiFontSizePx() ?? defaultUiFontSizePx();
+}
+
+/**
+ * Persist the UI font size (px). The value is clamped to the supported range
+ * before writing. Swallows quota/access errors so a failed write can't break
+ * the app.
+ */
+export function writeUiFontSizePx(px: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(clampUiFontSizePx(px)));
+  } catch {
+    // localStorage quota or access errors shouldn't break the app.
+  }
+}
+
+/**
+ * Apply an explicit user-selected size to the typography tokens.
+ */
+export function applyDesktopUiFontSize(px: number): void {
+  const root = getStyleRoot();
+  if (!root) return;
+  root.style.setProperty("--desktop-ui-font-size", `${clampUiFontSizePx(px)}px`);
+}
+
+/** Apply a saved choice, or let CSS choose the viewport-specific default. */
+export function applyStoredUiFontSize(): void {
+  const root = getStyleRoot();
+  if (!root) return;
+  const stored = readStoredUiFontSizePx();
+  if (stored === null) {
+    root.style.removeProperty("--desktop-ui-font-size");
+  } else {
+    root.style.setProperty("--desktop-ui-font-size", `${stored}px`);
+  }
+}
+
+// ---- Font family ---------------------------------------------------------
+
+const FONT_FAMILY_STORAGE_KEY = "omnigent:ui-font-family";
+
+/** Empty string = "System default": no override, falls back to `--font-sans`. */
+export const UI_FONT_FAMILY_DEFAULT = "";
+
+/** Longest family name we'll accept — a guard against a corrupt/oversized entry. */
+const UI_FONT_FAMILY_MAX_LENGTH = 100;
+
+/**
+ * Normalize a raw family name into a value safe to persist and to set as a CSS
+ * custom property: trimmed, with characters that could terminate the
+ * declaration or open a new one (`;{}` and control chars) stripped. Over-long
+ * input collapses to the default. Returns "" for anything that isn't a usable
+ * family, so callers treat empty as "System default".
+ */
+function normalizeUiFontFamily(value: unknown): string {
+  if (typeof value !== "string") return UI_FONT_FAMILY_DEFAULT;
+  // eslint-disable-next-line no-control-regex -- intentionally stripping control chars
+  const cleaned = value.replace(/[;{}\x00-\x1f\x7f]/g, "").trim();
+  if (!cleaned || cleaned.length > UI_FONT_FAMILY_MAX_LENGTH) {
+    return UI_FONT_FAMILY_DEFAULT;
+  }
+  return cleaned;
+}
+
+/**
+ * Read the persisted UI font family.
+ *
+ * Returns "" (System default) when nothing is stored, on a server render (no
+ * `window`), or when the stored value is missing/malformed — never throws, so a
+ * corrupt entry can't break app boot.
+ */
+export function readUiFontFamily(): string {
+  if (typeof window === "undefined") return UI_FONT_FAMILY_DEFAULT;
+  try {
+    const raw = window.localStorage.getItem(FONT_FAMILY_STORAGE_KEY);
+    if (!raw) return UI_FONT_FAMILY_DEFAULT;
+    const parsed: unknown = JSON.parse(raw);
+    return normalizeUiFontFamily(parsed);
+  } catch {
+    return UI_FONT_FAMILY_DEFAULT;
+  }
+}
+
+/**
+ * Persist the UI font family. An empty (or all-stripped) name clears the
+ * preference — reverting to System default — rather than storing a blank. Swallows
+ * quota/access errors so a failed write can't break the app.
+ */
+export function writeUiFontFamily(name: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const normalized = normalizeUiFontFamily(name);
+    if (!normalized) {
+      window.localStorage.removeItem(FONT_FAMILY_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(FONT_FAMILY_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // localStorage quota or access errors shouldn't break the app.
+  }
+}
+
+/**
+ * Apply the given family to the DOM by setting the `--ui-font-family` variable
+ * on the document root; the `html` rule in index.css reads it as the whole UI's
+ * font. An empty name removes the property, restoring the system stack.
+ *
+ * The chosen family is applied WITH the system stack appended
+ * (`<name>, var(--font-sans)`) so a name that isn't installed — or a partial one
+ * typed so far — degrades to the app's default sans rather than the browser's
+ * default serif. (The `var(--ui-font-family, …)` fallback in the CSS only fires
+ * when the property is unset, not when it holds an unusable name, so the
+ * fallback has to live inside the value too.) This is the single source of the
+ * DOM side-effect.
+ */
+export function applyUiFontFamily(name: string): void {
+  const root = getStyleRoot();
+  if (!root) return;
+  const normalized = normalizeUiFontFamily(name);
+  if (!normalized) {
+    root.style.removeProperty("--ui-font-family");
+    return;
+  }
+  root.style.setProperty("--ui-font-family", `${normalized}, var(--font-sans)`);
+}

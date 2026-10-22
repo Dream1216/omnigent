@@ -1,0 +1,107 @@
+// Context that lets any component in the chat tree open a file in the
+// FileViewer panel without prop-drilling through AppShell → Outlet → ChatPage
+// → BlockRenderer → ToolCard.
+
+import { createContext, useContext } from "react";
+
+/**
+ * A 1-based citation target. Object identity is the navigation request key:
+ * preserve it when forwarding or remounting; create a fresh object for each click.
+ */
+export interface FilePosition {
+  line: number;
+  column?: number;
+}
+
+export type OpenFileOptions = Partial<FilePosition>;
+
+export type FileNavigationGuard = (
+  path: string,
+  options: OpenFileOptions | undefined,
+  navigate: () => void,
+) => void;
+
+interface FileViewerContextType {
+  openFile: (path: string, options?: OpenFileOptions) => void;
+  /** The mounted viewer confirms dirty navigation before selection or URL changes. */
+  registerNavigationGuard?: (guard: FileNavigationGuard) => () => void;
+  /** Open Pull Requests in the workspace rail or mobile drawer. */
+  openGithubTab: () => void;
+  /**
+   * Returns true when `path` is a known workspace file (present in the
+   * session's changed-files list). Used as the synchronous fast path for
+   * clickable file-path links in the chat; paths not in this list are
+   * verified against the filesystem API via the session id below.
+   */
+  isChangedPath: (path: string) => boolean;
+  /**
+   * The focused session id, so chat consumers can verify whether an
+   * arbitrary referenced path exists in the workspace (not just the
+   * agent-changed ones). Undefined outside AppShell.
+   */
+  conversationId: string | undefined;
+  /**
+   * Absolute workspace root, so chat consumers can collapse an absolute or
+   * home-relative path the agent mentions onto a workspace-relative one.
+   * Null when the session has no filesystem or it isn't loaded yet.
+   */
+  workspaceRoot: string | null;
+  /**
+   * Absolute runner home, used to expand a leading ``~`` before resolving
+   * against {@link workspaceRoot}. Null when unknown.
+   */
+  workspaceHome: string | null;
+  /** Host running the session, so desktop-only file actions can check it is this machine. */
+  sessionHostId?: string | null;
+}
+
+export const FileViewerContext = createContext<FileViewerContextType | null>(null);
+
+/**
+ * Returns the `openFile` callback when rendered inside AppShell, or
+ * `null` when used outside of it (tests, Storybook, etc.).
+ */
+export function useFileViewer(): ((path: string, options?: OpenFileOptions) => void) | null {
+  return useContext(FileViewerContext)?.openFile ?? null;
+}
+
+/**
+ * Returns a callback that opens the Pull Requests rail tab or mobile drawer, or `null`
+ * when used outside AppShell (tests, Storybook).
+ */
+export function useOpenGithubTab(): (() => void) | null {
+  return useContext(FileViewerContext)?.openGithubTab ?? null;
+}
+
+// Stable fallback used when the context is absent (tests, Storybook).
+// A module-level constant avoids allocating a new function on every render.
+const ALWAYS_FALSE = () => false;
+
+/**
+ * Returns the `isChangedPath` predicate when rendered inside AppShell, or
+ * a function that always returns `false` when used outside of it
+ * (tests, Storybook, etc.).
+ */
+export function useIsChangedPath(): (path: string) => boolean {
+  return useContext(FileViewerContext)?.isChangedPath ?? ALWAYS_FALSE;
+}
+
+/**
+ * Returns the focused session id when rendered inside AppShell, or
+ * `undefined` when used outside of it (tests, Storybook). Lets chat consumers
+ * verify path existence against the runner filesystem API.
+ */
+export function useFileViewerConversationId(): string | undefined {
+  return useContext(FileViewerContext)?.conversationId;
+}
+
+/**
+ * Returns the workspace root and runner home for the focused session, so chat
+ * consumers can collapse an absolute / home-relative path the agent mentions
+ * onto a workspace-relative one. Both are null outside AppShell or before the
+ * environment resolves.
+ */
+export function useWorkspacePaths(): { root: string | null; home: string | null } {
+  const ctx = useContext(FileViewerContext);
+  return { root: ctx?.workspaceRoot ?? null, home: ctx?.workspaceHome ?? null };
+}

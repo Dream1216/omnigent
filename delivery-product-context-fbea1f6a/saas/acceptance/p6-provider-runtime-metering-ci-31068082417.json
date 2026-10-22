@@ -1,0 +1,92 @@
+{
+  "workflow": "SaaS upstream compatibility",
+  "run_id": 31068082417,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/31068082417",
+  "job_id": 92510022253,
+  "job_url": "https://github.com/Dream1216/omnigent/actions/runs/31068082417/job/92510022253",
+  "artifact_id": 8954661650,
+  "head_sha": "0e886d503b4fbd12813de3a6034f451e6e3e4e8a",
+  "upstream_revision": "d05e52b595d8349eea987303dc2c79d0353bb09b",
+  "conclusion": "success",
+  "verification": {
+    "combined_ci_tests": "901 passed",
+    "combined_ci_warnings": 226,
+    "combined_ci_seconds": 149.0,
+    "isolated_logical_restore_contract": "passed in 6.672 seconds",
+    "official_zygote_and_query_context_regressions": "57 passed in 29.88 seconds",
+    "official_hard_sandbox_egress_and_credential_acceptance": "36 passed, 22 platform skips in 12.76 seconds",
+    "wheel_required_artifacts": 181,
+    "patches_replayed": 2,
+    "migration_head": "p6a000000009",
+    "ci_migration_upgrade_check_and_downgrade": "passed",
+    "type_check": "passed with 0 errors",
+    "acceptance_pending_gate_count": 11,
+    "release_decision": "NO-GO"
+  },
+  "official_runtime_provider_contract": {
+    "official_source_imports_saas_runtime_code": false,
+    "generic_upstream_seams": [
+      "Host process factory",
+      "Runner entry module selection",
+      "required fail-closed Provider usage observer"
+    ],
+    "official_client_responses_create_path_observed": true,
+    "official_host_launch_frame_path_observed": true,
+    "input_and_output_usage_persist_before_completion_returns": true,
+    "total_token_double_count_avoided": true,
+    "usage_attributes_are_content_blind": true
+  },
+  "managed_launch_and_spool_contract": {
+    "forkserver_disabled_for_managed_host": true,
+    "ambient_credentials_and_passthrough_rejected": true,
+    "scheduler_staged_grant_is_one_time": true,
+    "child_receives_only_private_envelope_path": true,
+    "envelope_mode": "0600",
+    "envelope_unlinked_and_directory_fsynced_before_official_runner_start": true,
+    "capability_never_persisted_in_usage_spool": true,
+    "spool_rejects_symlink_identity_change_duplicate_unknown_and_non_allowlisted_facts": true,
+    "restart_and_partial_delivery_reuse_stable_event_and_idempotency_keys": true,
+    "transport_failure_retains_pending_usage": true,
+    "corrupt_spool_is_quarantined": true
+  },
+  "end_to_end_code_contract": {
+    "path": "official Provider observer -> private spool -> TLS 1.3 mTLS -> durable Runner certificate -> saas_metering PostgreSQL RLS -> immutable Usage receipt",
+    "real_postgresql": "PostgreSQL 16",
+    "control_plane_forced_rls_tables": 68,
+    "runtime_forced_rls_tables": 17,
+    "restored_machine_metering_receipts": 2,
+    "machine_metering_receipt_restore": "passed",
+    "cross_tenant_billing_receipt_negative_probe": "passed",
+    "post_backup_billing_authority_replay": "passed",
+    "temporary_restore_databases_dropped": true
+  },
+  "upstream_compatibility": {
+    "reviewed_official_baseline": "d05e52b595d8349eea987303dc2c79d0353bb09b",
+    "direct_upstream_files": 9,
+    "direct_upstream_file_budget": 10,
+    "upstream_net_added_loc": 479,
+    "upstream_net_added_loc_budget": 500,
+    "active_patches": 2,
+    "active_patch_budget": 8,
+    "isolated_custom_code_ratio": 0.995,
+    "forbidden_upstream_files": [],
+    "reverse_dependencies": []
+  },
+  "fail_closed_production_state": {
+    "aggregate_pending_gates": 11,
+    "production_readiness": "blocked",
+    "release_decision": "NO-GO"
+  },
+  "not_proven_by_this_record": [
+    "a deployed durable scheduler-to-remote-Host raw one-time grant delivery path",
+    "a Provider-native request or receipt identity surfaced by the official callback",
+    "recovery of the process-kill window between Provider completion and usage notification",
+    "live Provider traffic or production billing accuracy",
+    "period rollover credit expiry proration overdue suspension or payment and invoice lifecycle",
+    "signed deduplicated out-of-order replayable Provider billing webhooks",
+    "a real Provider invoice and customer financial export reconciliation",
+    "production billing SLO capacity incident response tax privacy or commercial acceptance",
+    "completion of the aggregate P6 billing gate or a release-level GO decision"
+  ],
+  "evidence_successor_policy": "This record verifies the exact official Runtime Provider usage integration implementation at 0e886d503b4fbd12813de3a6034f451e6e3e4e8a. A successor that changes only this evidence record, the still-pending acceptance gate evidence list, wheel inventory, README, tests that assert those records, or plan documentation does not alter the verified implementation. It deliberately does not prove deployed scheduler grant delivery, Provider-native receipts, kill-window reconciliation, live production metering, Provider payment and invoice integration, production operation, the aggregate P6 billing gate, or release GO."
+}

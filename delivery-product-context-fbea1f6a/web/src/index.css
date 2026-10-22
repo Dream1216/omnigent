@@ -1,0 +1,2424 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@import "tw-animate-css";
+@import "./styles/shadcn-tailwind.css";
+@import "@fontsource-variable/geist-mono";
+@import "./themePalettes.generated.css";
+
+/* Streamdown ships utility classes pre-compiled in its dist; this @source
+ * pragma tells Tailwind v4 to scan those files so the classes survive the
+ * production build. Required by ai-elements/MessageResponse, which uses
+ * Streamdown to render markdown (code blocks, math, GFM, mermaid).
+ *
+ * Runtime styles for Streamdown and KaTeX are imported in each app entrypoint.
+ * Keep those imports there so package-required CSS is loaded independently of
+ * app theme customization in this file. */
+@source "../node_modules/streamdown/dist/*.js";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  /* Native system UI font stack — defers to whatever the OS ships
+     * (San Francisco on Apple, Segoe UI on Windows, Roboto on Android),
+     * matching Tailwind's default sans so the app reads as native chrome. */
+  --font-sans:
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+    "Noto Color Emoji";
+  --font-mono: "Geist Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  /* Hero/title step — overrides Tailwind's default text-3xl (30/36)
+     * with a slightly larger 32px face on the same 36px line. */
+  --text-3xl: 32px;
+  --text-3xl--line-height: 36px;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  /* Weaker panel border for low-contrast dividers. */
+  --color-border-weak: var(--border-weak);
+  /* Stronger border for higher-contrast dividers/outlines. */
+  --color-border-strong: var(--border-strong);
+  /* Neutral border specifically for buttons (lighter than --border-strong). */
+  --color-button-border: var(--button-border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  /* Dedicated blue for the sub-agent "session active / idle-alive" states
+     * (launching/idle/done) — distinct from the shared amber --warning (still
+     * used by the "Needs response" badge). */
+  --color-session-active: var(--session-active);
+  /* Brand pink — reserved for brand moments, not status. */
+  --color-brand-accent: var(--brand-accent);
+  /* Pink tag surface (translucent) — generates `bg-tag-pink`. */
+  --color-tag-pink: var(--tag-pink);
+  /* Named status hues — success/warning/info are repointed to the
+     * green/yellow/blue of this set below, so the two stay in lockstep. */
+  --color-status-blue: var(--status-blue);
+  --color-status-green: var(--status-green);
+  --color-status-yellow: var(--status-yellow);
+  --color-status-red: var(--status-red);
+  --color-status-gray: var(--status-gray);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  /* Tertiary text for lighter/disabled labels. */
+  --color-foreground-tertiary: var(--foreground-tertiary);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-link: var(--link);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Opaque form of --card, for card surfaces that must fully hide
+     * content tucked behind them (e.g. the composer's tray corners). */
+  --color-card-solid: var(--card-solid);
+  /* Translucent card surface for trays/overlays layered on the page
+     * gradient — consumed with an opacity modifier (e.g. bg-tray/50). */
+  --color-tray: var(--tray);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --shadow-composer: 0 0 12px -6px rgb(var(--ui-shadow-neutral-rgb) / 0.12);
+  --shadow-composer-focus: 0 0 20px -4px rgb(var(--ui-shadow-neutral-rgb) / 0.12);
+  --shadow-xs: 0 2px 8px rgb(var(--ui-shadow-neutral-rgb) / 0.04);
+  --shadow-sm: 0 4px 10px -6px rgb(var(--ui-shadow-neutral-rgb) / 0.09);
+  --shadow-md: 0 6px 12px -6px rgb(var(--ui-shadow-neutral-rgb) / 0.12);
+  --shadow-lg: 0 6px 20px -4px rgb(var(--ui-shadow-neutral-rgb) / 0.12);
+  --shadow-menu: 0 8px 28px rgb(var(--ui-shadow-warm-rgb) / 0.12);
+  --shadow-xl: 0 12px 44px rgb(var(--ui-shadow-warm-rgb) / 0.16);
+  --shadow-card:
+    0 4px 16px -2px rgb(var(--ui-shadow-warm-rgb) / 0.1),
+    0 1px 0 rgb(var(--ui-shadow-neutral-rgb) / 0.02);
+  --shadow-tooltip: 0 3px 6px rgb(var(--ui-shadow-neutral-rgb) / 0.05);
+  --shadow-dialog: 0 16px 48px rgb(var(--ui-shadow-neutral-rgb) / 0.2);
+}
+
+/* The two body text steps. Keep these non-inline: `@theme inline` bakes the
+ * literal value into each utility, which would make the runtime typography
+ * mapping below a no-op. Line heights are unitless so both tiers keep their
+ * 1.6 rhythm at every size the Appearance setting allows. */
+@theme {
+  /* App-default interface/body text — every control, label, and menu item. */
+  --text-ui: 1rem;
+  --text-ui--line-height: 1.6;
+  /* Caption tier: captions, descriptions, sub/group titles. Always 0.9 of the
+   * body step, mapped below so it tracks the Appearance setting. */
+  --text-sm: 0.9rem;
+  --text-sm--line-height: 1.6;
+  /* `text-xs` is retired in favour of `text-sm`. Aliased rather than left on
+   * Tailwind's 0.75rem, which against the fixed 16px root is a hard 12px that
+   * ignores the Appearance setting — the same trap the ramp test guards. Keeps
+   * vendor markup (streamdown's image-fallback) on the caption tier too. */
+  --text-xs: var(--text-sm);
+  --text-xs--line-height: var(--text-sm--line-height);
+}
+
+/* Apple system-blue accent (hue 256, matches iOS / macOS systemBlue —
+ * ~#007AFF light, ~#0A84FF dark). Reserved for focus rings, charts,
+ * unread state, and the active sidebar highlight; surfaces and primary
+ * buttons stay neutral grey (hue 240). See designs/UI/WEB_UI.md (still
+ * describes the older cobalt direction). */
+:root {
+  /* User-controlled UI font size (see Appearance settings /
+   * lib/uiFontPreferences.ts). Stored as a discrete px value and overridden at
+   * runtime on documentElement. It feeds typography tokens only. */
+  --desktop-ui-font-size: 13px;
+  --icon-size-default: 14px;
+  --icon-container-default: 16px;
+  --ui-shadow-neutral-rgb: 0 0 0;
+  --ui-shadow-warm-rgb: 60 40 10;
+  /* Onboarding wizard page surface — a hair off the white card so it reads as a
+     distinct backdrop (the card stays var(--card)). */
+  --onboarding-wizard-background: #fcfbfb;
+  --onboarding-modal-border: #0000001a;
+  --onboarding-modal-shadow: 0 24px 80px 8px #00000012;
+  --composer-shadow: 0 0 12px -6px rgb(0 0 0 / 12%);
+  --composer-shadow-focus: 0 0 20px -6px rgb(0 0 0 / 12%);
+
+  /* User-controlled UI font family (see Appearance settings /
+   * lib/uiFontPreferences.ts). Deliberately left unset here so the `html` rule's
+   * `var(--ui-font-family, var(--font-sans))` falls back to the system stack;
+   * the Appearance setting sets it at runtime on documentElement. */
+
+  /* ---- Inset system -------------------------------------------------------
+   * Single source of truth for how far content must stay clear of screen
+   * chrome. The SAME bundle runs in a browser, in Electron, and inside the
+   * iOS WKWebView shell, so these variables are defined universally and the
+   * runtime-specific inputs default to zero — `<PageScroll>` and the scoped
+   * rules below consume them without any `isIOSShell()` branching.
+   *
+   * Three inputs combine:
+   *   1. OS safe area  — `env(safe-area-inset-*)`, nonzero only on notched /
+   *      home-indicator devices (and only when `viewport-fit=cover`). The
+   *      Android shell can't rely on `env()` alone (unreliable across WebView
+   *      versions / nav modes), so it also injects measured insets as
+   *      `--omnigent-android-safe-area-*`; we fold those in with `max()` so the
+   *      var stays universal and contributes nothing off the Android shell.
+   *   2. Native bar footprint — the pixel height of the iOS shell's floating
+   *      server switcher (top) and chat/terminal bar (bottom). The native
+   *      layer owns these dimensions and pushes them over the bridge (see
+   *      src/lib/nativeInsets.ts); they stay 0 off-shell.
+   *   3. Bar visibility — 0|1, owned by the web app (it is what tells the
+   *      shell to show/hide each bar). Folded in via a unitless multiply so a
+   *      hidden bar contributes nothing.
+   *
+   * The bottom chat/terminal bar overlays page content, so it feeds the
+   * content inset. The top server switcher floats within the web header band
+   * (ChatHeader, --omnigent-header-height) and is narrower than it, so content
+   * that already clears the header also clears the switcher — its size is
+   * tracked here for symmetry/introspection but is intentionally NOT added to
+   * the content top inset to avoid double-counting the header band. */
+  --omnigent-header-height: 3.5rem; /* web ChatHeader (h-14) */
+  --omnigent-safe-top: max(
+    env(safe-area-inset-top, 0px),
+    var(--omnigent-android-safe-area-top, 0px)
+  );
+  --omnigent-safe-bottom: max(
+    env(safe-area-inset-bottom, 0px),
+    var(--omnigent-android-safe-area-bottom, 0px)
+  );
+  --omnigent-safe-left: max(
+    env(safe-area-inset-left, 0px),
+    var(--omnigent-android-safe-area-left, 0px)
+  );
+  --omnigent-safe-right: max(
+    env(safe-area-inset-right, 0px),
+    var(--omnigent-android-safe-area-right, 0px)
+  );
+  --omnigent-native-top-bar: 0px; /* set by native bridge (px) */
+  --omnigent-native-bottom-bar: 0px; /* set by native bridge (px) */
+  --omnigent-top-bar-visible: 0; /* web-owned 0|1 */
+  --omnigent-bottom-bar-visible: 0; /* web-owned 0|1 */
+  /* Android floating server-switcher pill footprint (margin + height).
+     Used by the Android scroll-fade gradient so it starts at the pill
+     bottom. Set once; if the pill size changes, update both values. */
+  --omnigent-android-switcher-margin: 8px;
+  --omnigent-android-switcher-height: 25px;
+  --omnigent-inset-top: var(--omnigent-safe-top);
+  --omnigent-inset-bottom: calc(
+    var(--omnigent-safe-bottom) + var(--omnigent-native-bottom-bar) *
+      var(--omnigent-bottom-bar-visible)
+  );
+
+  /* Tertiary gray for lighter/disabled/placeholder text. */
+  --foreground-tertiary: #a1a1aa;
+  --destructive: #c8324c;
+  --destructive-foreground: #fff;
+  /* success/warning/info repointed onto the named status hues below so
+     * the ~45 existing badges/indicators adopt the brand status palette. */
+  --success: #2ea65c;
+  --warning: #d4972a;
+  --info: #3b8ff5;
+  /* Session active / idle-alive blue — a deeper, saturated azure
+     * that harmonizes with the brand blues (#2272b4 / #3b8ff5) and reads
+     * with strong contrast on the white card surface. */
+  --session-active: #2f7fd4;
+  /* Weaker panel border for low-contrast dividers. */
+  --border-weak: #ececee;
+  --button-icon-hover-color: #27272a;
+  /* Pink tag surface — a translucent wash, so it tints whatever it sits on. */
+  --tag-pink: rgba(240, 1, 150, 0.06);
+  /* Named status hues. success/warning/info above mirror green/yellow/blue. */
+  --status-blue: #3b8ff5;
+  --status-green: #2ea65c;
+  --status-yellow: #d4972a;
+  --status-red: #f04858;
+  --status-gray: #8e99a4;
+  --chart-1: #3b8ff5;
+  --chart-2: #2272b4;
+  --chart-3: #2ea65c;
+  --chart-4: #d4972a;
+  --chart-5: #8e99a4;
+  --radius: 0.5rem;
+  --radius-otto-button: 6px;
+  --radius-otto-sm: 8px;
+  --radius-otto-md: 12px;
+  --ease-otto: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --duration-otto-fast: 180ms;
+}
+
+.dark {
+  --ui-shadow-neutral-rgb: 0 0 0;
+  --ui-shadow-warm-rgb: 0 0 0;
+  --onboarding-wizard-background: #131315;
+  --onboarding-modal-border: #ffffff14;
+  --onboarding-modal-shadow: 0 24px 80px 8px #00000038;
+  --composer-shadow: 0 0 12px -6px rgb(0 0 0 / 80%);
+  --composer-shadow-focus: 0 0 14px -8px rgb(0 0 0 / 90%);
+  --destructive: #e65b77;
+  --destructive-foreground: #fff;
+  /* success/warning/info repointed onto the status hues below, mirroring
+     * light mode so dark mode doesn't carry a second green/yellow/blue. */
+  --success: #2ea65c;
+  --warning: #d4972a;
+  --info: #3b8ff5;
+  /* Session active / idle-alive blue, lightened for the dark glass card so
+     * the small dot keeps adequate contrast against the dark canvas (the
+     * light-mode #2f7fd4 reads too dim here). */
+  --session-active: #5ca4f5;
+  /* Pink tag surface — a heavier wash than light, since 6% all but vanishes
+     * against the dark canvas. */
+  --tag-pink: rgba(240, 1, 150, 0.15);
+  --status-blue: #3b8ff5;
+  --status-green: #2ea65c;
+  --status-yellow: #d4972a;
+  --status-red: #f04858;
+  --status-gray: #8e99a4;
+  --chart-1: oklch(0.64 0.22 254);
+  --chart-2: oklch(0.65 0.14 200);
+  --chart-3: oklch(0.68 0.15 145);
+  --chart-4: oklch(0.75 0.16 70);
+  --chart-5: oklch(0.65 0.008 240);
+  --tooltip-bg: #2a2440;
+}
+
+/* Main-sidebar item labels use the same text-ui semantic step as Appearance
+ * content. Both read the desktop typography tokens derived from the size
+ * selected in Settings. */
+.sidebar-compact-text {
+  font-size: var(--text-ui);
+  line-height: var(--text-ui--line-height);
+}
+
+/* Home-sidebar rows use a fixed 20px line box so their shared 4px block padding
+ * produces a natural 28px row without scaling layout geometry. */
+.sidebar-row {
+  line-height: 20px;
+}
+
+.composer-add-menu,
+.composer-host-menu {
+  background-color: #fff;
+  background-image: none;
+}
+
+.composer-add-menu {
+  border-color: #e4e4e7;
+  box-shadow: 0 0 20px -6px rgb(0 0 0 / 12%);
+}
+
+.composer-host-menu {
+  box-shadow: 0 2px 16px rgb(0 0 0 / 12%);
+}
+
+.dark :is(.composer-add-menu, .composer-host-menu) {
+  --muted: rgb(248 248 248 / 12.7333%);
+  --muted-foreground: rgb(245 245 244 / 56%);
+  background-color: rgb(31 31 33 / 60%);
+  border-color: rgb(255 255 255 / 8%);
+  backdrop-filter: blur(24px) saturate(120%);
+}
+
+.dark .composer-add-menu {
+  box-shadow: 0 0 14px -8px rgb(0 0 0 / 90%);
+}
+
+.dark .composer-host-menu {
+  box-shadow: 0 2px 16px rgb(0 0 0 / 35%);
+}
+
+.composer-add-menu [role="menuitem"] {
+  min-height: 24px;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.composer-host-menu [role="menuitem"] {
+  min-height: 28px;
+  gap: 4px;
+  border-radius: 8px;
+  padding: 4px 12px 4px 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.composer-host-menu [role="menuitem"] [class~="text-sm"] {
+  font-size: inherit;
+}
+
+:is(.composer-add-menu, .composer-host-menu) [data-active="true"] {
+  background-color: var(--muted);
+  font-weight: 500;
+}
+
+:is(.composer-add-menu, .composer-host-menu) [data-highlighted] {
+  background-color: var(--muted);
+}
+
+:is(.composer-add-menu, .composer-host-menu) [data-highlighted] svg {
+  color: var(--foreground);
+}
+
+.composer-host-menu [role="menuitem"].composer-host-connect {
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.composer-host-menu [role="separator"] {
+  margin: 4px 0;
+}
+
+.composer-agent-menu :is([role="menuitem"], [role="menuitemcheckbox"]) {
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 4px 12px 4px 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.composer-agent-menu [role^="menuitem"] {
+  background-color: transparent;
+}
+
+.composer-agent-menu [role^="menuitem"]:not([data-disabled]) {
+  cursor: pointer;
+}
+
+/* Show the selection initially; interaction takes over until the menu reopens. */
+.composer-agent-menu[data-initial-selection="true"]
+  :is(
+    .composer-agent-row,
+    [role="menuitem"]:not(.composer-agent-select, .composer-agent-edit)
+  )[data-active="true"],
+.composer-agent-menu[data-input-method="pointer"]:not([data-initial-selection="true"])
+  :is(
+    [role^="menuitem"]:not(.composer-agent-select, .composer-agent-edit),
+    .composer-agent-row
+  ):not([data-disabled]):hover,
+.composer-agent-menu[data-input-method="keyboard"]
+  [role^="menuitem"]:not(.composer-agent-select, .composer-agent-edit):focus,
+.composer-agent-menu[data-input-method="keyboard"] .composer-agent-row:focus-within,
+.composer-agent-menu
+  [role="menuitem"][aria-haspopup="menu"][data-state="open"]:not(
+    .composer-agent-select,
+    .composer-agent-edit
+  ),
+.composer-agent-menu .composer-agent-row:has(> [aria-haspopup="menu"][data-state="open"]) {
+  background-color: var(--muted);
+}
+
+/* Disabled rows wrap the item in a tooltip span, so match through one wrapper. */
+.composer-agent-menu .composer-agent-row > [role="menuitem"],
+.composer-agent-menu .composer-agent-row > span > [role="menuitem"] {
+  gap: 0;
+  padding: 0;
+}
+
+.composer-agent-menu .composer-agent-edit {
+  padding: 0 12px 0 4px;
+}
+
+.composer-agent-menu
+  .composer-agent-select:not(:has(> .composer-agent-edit))
+  .composer-agent-choice {
+  padding-right: 12px;
+}
+
+.composer-agent-menu [role="menuitemcheckbox"] {
+  padding-right: 32px;
+}
+
+.composer-agent-config-menu :is([role="menuitem"], [role="menuitemcheckbox"]) {
+  min-height: 28px;
+}
+
+.composer-agent-menu [role="menuitem"] > svg:last-child {
+  margin-left: 0;
+}
+
+.composer-reference-surface {
+  border-color: color(srgb 0.129412 0 0.0509804 / 0.1);
+  background-color: rgba(255, 255, 255, 0.8);
+  background-image: none;
+}
+
+.dark .composer-reference-surface {
+  border-width: 0.5px;
+  border-color: color(srgb 0.960784 0.960784 0.956863 / 0.04);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* --background is the opaque palette canvas; flatten tints over it to mask the stack. */
+.composer-workspace-surface {
+  background:
+    linear-gradient(
+      color-mix(in oklch, var(--muted) 70%, transparent),
+      color-mix(in oklch, var(--muted) 70%, transparent)
+    ),
+    var(--background);
+}
+
+/* Preserve the translucent dark tray while matching the mock's single warm
+   surface across queued rows and workspace metadata in light themes. */
+.composer-queued-surface {
+  background-color: color-mix(in oklab, var(--tray) 40%, transparent);
+}
+
+:root:not(.dark) .composer-workspace-surface,
+:root:not(.dark) .composer-queued-surface {
+  background:
+    linear-gradient(
+      color-mix(in oklch, var(--muted) 85%, transparent),
+      color-mix(in oklch, var(--muted) 85%, transparent)
+    ),
+    var(--background);
+}
+
+.composer-subagent-surface {
+  background:
+    linear-gradient(
+      color-mix(in oklch, var(--brand-accent) 10%, transparent),
+      color-mix(in oklch, var(--brand-accent) 10%, transparent)
+    ),
+    var(--background);
+}
+
+/* Soft brand-accent wash behind the whole side-chat pane: a single diffuse
+   glow from the top-right that fades to nothing, matching the design. One
+   gradient (no seam) over the full pane height (no hard edge above the
+   composer), kept very subtle so it reads fine behind message bubbles too. */
+.side-chat-backdrop {
+  background: radial-gradient(
+    150% 110% at 100% 0%,
+    color-mix(in oklch, var(--brand-accent) 8%, transparent),
+    transparent 70%
+  );
+}
+
+/* Fixed default icon geometry: a 14px glyph centered in a 16px SVG box. */
+.ui-icon {
+  box-sizing: border-box;
+  width: var(--icon-container-default);
+  height: var(--icon-container-default);
+  padding: 1px;
+  flex-shrink: 0;
+}
+
+/* Shared buttons standardize every unescaped SVG to the same fixed icon
+ * geometry. Set data-icon-size on a deliberately exceptional icon. */
+.button-standard-icons svg:not([data-icon-size]) {
+  box-sizing: border-box;
+  width: var(--icon-container-default);
+  height: var(--icon-container-default);
+  padding: 1px;
+}
+
+/* Small and standard icon buttons use the full 16px glyph. */
+.button-standard-icons:is([data-size="icon-xs"], [data-size="icon-sm"], [data-size="icon"])
+  svg:not([data-icon-size]) {
+  padding: 0;
+}
+
+/* Large icon buttons step up to a 24px glyph. */
+.button-standard-icons[data-size="icon-lg"] svg:not([data-icon-size]) {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+/* The desktop workspace rail stays mounted through its exit so its content
+   can fade and slide as one stable sibling of the session surface. */
+.workspace-panel-motion {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+}
+
+.workspace-panel-motion[data-animate-visibility] {
+  transition:
+    width 300ms ease-in-out,
+    opacity 300ms ease-in-out,
+    transform 300ms ease-in-out;
+}
+
+.workspace-panel-motion[data-state="open"] {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.workspace-panel-motion[data-resizing] {
+  transition: none;
+}
+
+[data-workspace-panel-animate] .chat-header {
+  transition: right 300ms ease-in-out;
+}
+
+[data-workspace-panel-resizing] .chat-header {
+  transition: none;
+}
+
+@starting-style {
+  .workspace-panel-motion[data-state="open"][data-animate-visibility] {
+    width: 0 !important;
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+/* The transparent <main> shows the palette canvas through. */
+.app-shell {
+  background: var(--background);
+}
+
+/* A desktop peek floats over the chat instead of pushing it aside, so its
+ * gradient layers need an opaque base rather than the translucent card color. */
+:root:not(.dark):not([data-theme]) .conversations-sidebar.is-peek,
+:root:not(.dark)[data-theme] .conversations-sidebar.is-peek,
+.dark:not([data-theme]) .conversations-sidebar.is-peek,
+.dark[data-theme] .conversations-sidebar.is-peek {
+  background-color: var(--card-solid);
+}
+
+/* Edge treatment is mode-specific but palette-independent. */
+html:not(.dark) .conversations-sidebar:not(.is-peek) {
+  border-right: none;
+  box-shadow: inset -8px 0 12px -8px rgb(0 0 0 / 5%);
+}
+.dark .conversations-sidebar {
+  border-right: 1px solid rgb(255 255 255 / 2%);
+  box-shadow: inset -8px 0 12px -8px rgb(0 0 0 / 5%);
+}
+
+/* Below md the sidebar is a full-screen overlay ON TOP of the chat, so it has
+ * to be opaque — the rules above set `background` as a shorthand, which resets
+ * background-color and would otherwise let the conversation show through the
+ * translucent layers. Restores what Sidebar.tsx's max-md:bg-card-solid does on
+ * desktop. Above md the sidebar pushes content aside instead of covering it,
+ * so it keeps its translucent canvas there. */
+@media (width < 48rem) {
+  :root:not(.dark):not([data-theme]) .conversations-sidebar,
+  :root:not(.dark)[data-theme] .conversations-sidebar,
+  .dark:not([data-theme]) .conversations-sidebar,
+  .dark[data-theme] .conversations-sidebar {
+    background-color: var(--card-solid);
+  }
+}
+
+/* Fade scrolling content before it reaches the transparent header or composer.
+ * Both ramps are 32px; the header's control band occupies the first 48px. */
+.chat-scroll-fade {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 48px,
+    black 80px,
+    black calc(100% - 32px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 48px,
+    black 80px,
+    black calc(100% - 32px),
+    transparent 100%
+  );
+}
+
+/* A pinned plan already clears the header, so only fade into the composer. */
+.chat-scroll-composer-fade {
+  mask-image: linear-gradient(to bottom, black calc(100% - 32px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 32px), transparent 100%);
+}
+
+/* Snap target for the "Worked for" fold row (scrollIntoView block:"start").
+ * Must land BELOW the fade above: the mask is fully opaque only from 80px,
+ * so a smaller margin parks the row in the transparent band — scrolled
+ * "to the top" yet invisible. Kept next to the fade so they can't desync. */
+.turn-fold-row {
+  scroll-margin-top: 88px;
+}
+
+/* Turn rail's edges dissolve so it's clear the ticks scroll past both ends.
+ * Short symmetric ramps since the ticks are small and evenly spaced. The ramp
+ * width comes from --turn-rail-fade, set inline from TurnRail's FADE constant
+ * so the visual mask and the thumb-tracking math can't silently desync. */
+.turn-rail-fade {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--turn-rail-fade),
+    black calc(100% - var(--turn-rail-fade)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--turn-rail-fade),
+    black calc(100% - var(--turn-rail-fade)),
+    transparent 100%
+  );
+}
+
+/* Elevated surfaces — frosted glass effect with backdrop blur.
+ * Targets top-level cards only. A bg-card nested inside another bg-card
+ * (e.g. FilesPanel inside the workspace panel, toolbars inside the
+ * composer) is an interior fill, and re-decorating it with its own
+ * border/shadow visually carves the parent card into pieces.
+ * :not([data-collapsed]) skips closed rails/drawers/sidebars: they
+ * collapse to w-0 with their utility borders removed, but this rule's
+ * border+shadow would still paint them as a thin glowing strip along the
+ * screen edge. Closed panels mark themselves data-collapsed. (NOT keyed on
+ * aria-hidden: Radix's modal a11y hiding sets aria-hidden="true" on open
+ * panels while a menu/dialog is up, and dropping this rule's 1px border
+ * then reflowed every sidebar row 2px wider. Not [inert] either: this
+ * React version drops the boolean inert attribute from the DOM.)
+ * Both rails (Workspace, Conversations) are excluded — they paint their own
+ * canvas layers above, not a glass card. */
+.dark
+  :is(.bg-card, [class*="md:bg-card"]):not(
+    :is(.bg-card, [class*="md:bg-card"]) :is(.bg-card, [class*="md:bg-card"])
+  ):not([data-collapsed]):not([aria-label="Workspace"]):not([aria-label="Conversations"]) {
+  /* -webkit- must come BEFORE the unprefixed property: LightningCSS (vite
+   * build) collapses the pair and keeps only the last declaration. */
+  -webkit-backdrop-filter: blur(32px) saturate(180%) !important;
+  backdrop-filter: blur(32px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-top-color: rgba(255, 255, 255, 0.14);
+  background-image: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0) 60%
+  );
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.22),
+    0 1px 3px rgba(0, 0, 0, 0.16);
+}
+
+/* Side panels (FileViewer, TerminalsPanel, FilesPanelDrawer) manage their own
+ * left border; suppress the full border that the glass rule applies. */
+.dark aside[data-testid="file-viewer"],
+.dark div[data-testid="terminals-panel"],
+.dark aside[data-testid="files-panel-drawer"] {
+  border-right: none !important;
+  border-top: none !important;
+  border-bottom: none !important;
+}
+
+/* Right rail (workspace panel) in dark: blends into the canvas, keeping only
+ * its left divider. Excluded from the glass rule above, so this just clears
+ * the rail's md:bg-card fill and the bg-card fills its panel contents paint
+ * (FilesPanel/TerminalsPanel/SubagentsPanel + the graph surface).
+ * Skip when maximized — the panel covers the full content area and needs an
+ * opaque background so the chat beneath doesn't bleed through. */
+.dark aside[aria-label="Workspace"]:not([data-maximized]),
+.dark
+  aside[aria-label="Workspace"]:not([data-maximized])
+  :is([data-workspace-panel-content] > *, [data-workspace-panel-surface]) {
+  background: transparent !important;
+}
+
+/* When maximized the workspace panel covers the full content area; use an
+ * opaque background so the chat underneath doesn't bleed through. */
+aside[aria-label="Workspace"][data-maximized] {
+  background: var(--card-solid) !important;
+}
+
+/* Label-only tooltips must not block controls beneath their portal wrapper. */
+[data-radix-popper-content-wrapper]:has([data-noninteractive-tooltip]) {
+  pointer-events: none !important;
+}
+
+/* Popovers/menus — same glass treatment */
+.dark [data-slot="popover-content"],
+.dark [data-slot="select-content"],
+.dark [role="menu"],
+.dark [data-radix-popper-content-wrapper] > * {
+  /* -webkit- before unprefixed — see comment on the bg-card rule above. */
+  -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
+  backdrop-filter: blur(24px) saturate(150%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Native clearance uses window pixels, independent of rem and page zoom.
+ * The preload supplies zoom; older shells fall back to 100%.
+ * The embed build maps html selectors onto the .omnigent-app scope root. */
+html[data-electron-mac] {
+  --mac-titlebar-height: calc(48px / var(--omnigent-electron-zoom, 1));
+  --mac-traffic-light-width: calc(88px / var(--omnigent-electron-zoom, 1));
+}
+@media (min-width: 48rem) {
+  /* Reserve the board's shared sidebar toggle only while navigation is closed. */
+  .app-shell:not([data-sidebar-open]) .canvas-page-heading {
+    padding-left: 4rem;
+  }
+  html[data-electron-mac] .app-shell .canvas-page-heading {
+    padding-left: 1.5rem;
+  }
+  /* md+: matches the sidebar's own desktop breakpoint.
+   *
+   * The sidebar starts at the window's top edge rather than below the lights, so
+   * no band of empty canvas sits above it. The title-bar row itself is NOT the
+   * sidebar's header row: the window furniture (lights + the Search/Settings/
+   * toggle cluster) is owned by AppShell and positioned over this top strip, so
+   * it stays put when the sidebar collapses or peeks. What remains here is to
+   * strip the sidebar's now-redundant header chrome — its wordmark and its own
+   * copy of the cluster — and reclaim the empty row. */
+  html[data-electron-mac] .conversations-sidebar {
+    margin-top: 0;
+  }
+  /* No brand mark on the desktop shell: the lights own the window's top-left.
+   * `display: none` rather than removing it from the JSX so the browser keeps
+   * the wordmark (and its click-to-home link) untouched. */
+  html[data-electron-mac] .sidebar-brand {
+    display: none;
+  }
+  /* The sidebar's own cluster is hidden here because an identical one renders in
+   * the title-bar strip (AppShell), where it survives the sidebar collapsing to
+   * w-0/inert and the peek card's inset-2 offset. Scoped to
+   * .conversations-sidebar so it can never match the AppShell copy. Hidden
+   * rather than removed from the JSX so every other platform keeps the
+   * in-sidebar cluster untouched. */
+  html[data-electron-mac] .conversations-sidebar [data-testid="sidebar-header-actions"] {
+    display: none;
+  }
+  /* Reserve the full drag strip so the session list starts below the
+   * window furniture and stays outside the drag region. */
+  html[data-electron-mac] .sidebar-header-row {
+    height: var(--mac-titlebar-height);
+    padding: 0;
+  }
+  /* The chat header's own open-sidebar button is redundant here: the title-bar
+   * cluster's toggle is always present (collapsed included) and carries the same
+   * dwell-to-peek, so this one would be a second copy of the same control,
+   * sitting lower and out of line with the lights. Hidden only on the mac shell
+   * — everywhere else it is the ONLY way to reopen a collapsed sidebar. */
+  html[data-electron-mac] .chat-header-sidebar-toggle {
+    display: none;
+  }
+  /* Float the peek card below the 48px drag strip, with the same 0.5rem
+   * breathing room as its other edges. The docked sidebar is unaffected. */
+  html[data-electron-mac] .conversations-sidebar.is-peek {
+    top: calc(var(--mac-titlebar-height) + 0.5rem);
+  }
+  /* The peek card already clears the drag strip, so it needs no reserved
+   * header row above its content. */
+  html[data-electron-mac] .conversations-sidebar.is-peek .sidebar-header-row {
+    display: none;
+  }
+  /* The settings sidebar swaps the header row for a "Back" row, which would now
+   * sit under the traffic lights. Push it below them — it has no cluster to
+   * align beside the lights, so it clears them vertically instead. */
+  html[data-electron-mac] .settings-sidebar-header {
+    padding-top: calc(var(--mac-titlebar-height) + 0.5rem);
+  }
+}
+/* Match the full desktop header; controls opt out of dragging below. */
+html[data-electron-mac] .electron-drag-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--mac-titlebar-height);
+  -webkit-app-region: drag;
+}
+/* Canvas clears the native title bar, including focus
+ * and compact conversation states where the board is hidden. */
+html[data-electron-mac] .canvas-workspace {
+  margin-top: var(--mac-titlebar-height);
+}
+/* Align to the native lights at y=24px, regardless of the host rem size.
+ * Keep the cluster independent of sidebar open, collapsed, and peek states. */
+html[data-electron-mac] .electron-sidebar-header-actions {
+  position: absolute;
+  top: calc(var(--mac-titlebar-height) / 2);
+  left: var(--mac-traffic-light-width);
+  transform: translateY(-50%);
+  /* Above the sidebar, which is a positioned sibling at z-index 50 with an
+   * opaque gradient background — at any lower layer it paints straight over
+   * this cluster (the buttons still measure correctly in the DOM, which is why
+   * only a screenshot catches it). 51 clears the sidebar while staying under
+   * the mobile overlay/drawer layers. */
+  z-index: 51;
+  display: flex;
+  align-items: center;
+
+  /* Read Collapse · Search · Settings outward from the window controls: pull
+   * the cluster's last button (the toggle) to the front. */
+  & > * > *:last-child {
+    order: -1;
+  }
+}
+/* Clear the fixed native-control area plus the font-relative action cluster
+ * when the collapsed sidebar exposes the chat header at the window edge. */
+html[data-electron-mac] .traffic-light-clearance {
+  padding-left: calc(var(--mac-traffic-light-width) + 5rem);
+}
+/* A maximized rail reaches the same window corner while the sidebar is closed.
+ * Once the sidebar opens, the rail starts to its right and needs no clearance. */
+html[data-electron-mac]
+  .app-shell:not([data-sidebar-open])
+  aside[aria-label="Workspace"][data-maximized]
+  .workspace-tab-strip {
+  padding-left: calc(var(--mac-traffic-light-width) + 5rem);
+}
+/* Drag regions ignore z-order, so controls and overlays need counter-regions.
+ * Scoped from <html> to cover portals outside AppShell on macOS only. */
+html[data-electron-mac]
+  :is(
+    a,
+    button,
+    input,
+    textarea,
+    select,
+    iframe,
+    video,
+    audio,
+    label,
+    summary,
+    [tabindex]:not([tabindex="-1"]),
+    .no-drag,
+    [role="button"],
+    [role="link"],
+    [role="tab"],
+    [role="separator"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
+    [role="combobox"],
+    [role="option"],
+    [role="radio"],
+    [role="checkbox"],
+    [role="switch"],
+    [role="slider"],
+    [role="listbox"],
+    [role="textbox"],
+    [role="searchbox"],
+    [role="spinbutton"],
+    [role="menu"],
+    [role="dialog"],
+    [role="tooltip"],
+    [contenteditable="" i],
+    [contenteditable="plaintext-only" i],
+    [contenteditable="true" i]
+  ) {
+  -webkit-app-region: no-drag;
+}
+/* The title-bar breadcrumb doubles as a window-drag handle (its title is a
+ * plain span, deliberately left draggable). Exclude the folder icon: it's a
+ * tooltip trigger with its own hover state, so it must stay interactive rather
+ * than move the window. Plain <span>, so the interactive-elements rule above
+ * doesn't reach it. */
+html[data-electron-mac] .breadcrumb-folder {
+  -webkit-app-region: no-drag;
+}
+
+/* Native shells carry their own chrome (server switcher), so the folder /
+ * title / sub-agent segments are redundant there. Keep the parent-session
+ * link: native back is off and edge-pan opens the sidebar, so that link is
+ * the only in-header climb-out of a sub-agent. Hide the empty nav when there
+ * is no parent link (top-level). Not scoped to a width media query so it
+ * holds on wider native shells (e.g. iPad) too. */
+[data-ios-native] .conversation-breadcrumb:not(:has(> a.breadcrumb-parent-link)),
+[data-android-native] .conversation-breadcrumb:not(:has(> a.breadcrumb-parent-link)) {
+  display: none;
+}
+[data-ios-native] .conversation-breadcrumb > :not(a.breadcrumb-parent-link),
+[data-android-native] .conversation-breadcrumb > :not(a.breadcrumb-parent-link) {
+  display: none;
+}
+
+/* The iOS WKWebView runs full-screen under the keyboard at every responsive
+ * width. useIOSViewportLock publishes the area above the docked keyboard so
+ * flow content stays visible without shrinking for floating iPad controls. */
+[data-ios-native].app-shell {
+  height: 100lvh;
+  height: var(--omnigent-viewport-height, 100lvh);
+  min-height: 100lvh;
+  min-height: var(--omnigent-viewport-height, 100lvh);
+  max-height: 100lvh;
+  max-height: var(--omnigent-viewport-height, 100lvh);
+  overflow: hidden;
+}
+
+/* Native shells render beneath the status bar at every width. Keep floating
+ * chat controls and the pinned Plan tracker below its safe area. */
+:is([data-ios-native], [data-android-native]) .chat-header {
+  top: max(0px, calc(var(--omnigent-safe-top) - 0.5rem));
+}
+:is([data-ios-native], [data-android-native]) .chat-plan-accordion {
+  margin-top: calc(var(--omnigent-header-height) + max(0px, var(--omnigent-safe-top) - 0.5rem));
+}
+
+/* Settings titles join the mobile header row beside the sidebar control. */
+@media (width < 48rem) {
+  .settings-mobile-header::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 80px;
+    pointer-events: none;
+    content: "";
+    background: linear-gradient(to bottom, var(--background) 0 48px, transparent 80px);
+  }
+
+  .settings-page-title {
+    position: fixed;
+    top: 0;
+    right: 4rem;
+    left: 4rem;
+    z-index: 30;
+    height: var(--omnigent-header-height);
+    margin: 0;
+    overflow: hidden;
+    font-size: var(--text-ui);
+    line-height: var(--omnigent-header-height);
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  :is([data-ios-native], [data-android-native]) .settings-page-title {
+    top: max(0px, calc(var(--omnigent-safe-top) - 0.5rem));
+  }
+}
+
+/* Remaining native-shell adjustments are specific to the mobile layout. */
+@media (width < 48rem) {
+  /* Slide animation for the mobile drawer. Covers BOTH paths that move the
+     panel: the edge-swipe drag settles via an inline `transform`, while the
+     button toggle (and the drag's resting open/closed state) is driven by
+     Tailwind v4's `translate-x` utilities — which animate the `translate`
+     property, not `transform`. Listing only `transform` (as before) left the
+     toggle un-transitioned, so tapping the collapse/expand button snapped the
+     drawer instantly with no animation. Transition both so the toggle slides
+     too. Suppressed inline (`transition: none`) while a drag is live so the
+     overlay tracks the finger 1:1. */
+  :is([data-ios-native], [data-android-native]) .conversations-sidebar {
+    transition-property: transform, translate;
+    transition-duration: 360ms;
+    transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+    will-change: transform, translate;
+  }
+
+  /* Leading-edge shadow so the drawer reads as a native layer lifted above the
+     chat while it slides, instead of a flat sheet. Scoped to the open/dragging
+     state via `:not([data-collapsed])` (the sidebar sets `data-collapsed` only
+     when closed) so the drawer doesn't cast a sliver along the screen's left
+     edge while parked off-screen. The drawer stops short of the right edge, so
+     the shadow stays visible while open, separating it from the strip of chat
+     behind. iOS-only: the web overlay is unchanged. */
+  :is([data-ios-native], [data-android-native]) .conversations-sidebar:not([data-collapsed]) {
+    box-shadow: 8px 0 28px -6px rgb(0 0 0 / 0.22);
+  }
+
+  .dark :is([data-ios-native], [data-android-native]) .conversations-sidebar:not([data-collapsed]) {
+    box-shadow: 8px 0 30px -4px rgb(0 0 0 / 0.55);
+  }
+
+  [data-ios-native] :is(input, textarea, select, [contenteditable="true"]) {
+    font-size: 16px;
+  }
+
+  [data-ios-native] .composer-input-text {
+    font-size: var(--text-ui);
+  }
+
+  [data-ios-native] .chat-conversation-content,
+  [data-android-native] .chat-conversation-content {
+    /* header band + 1.5rem breathing room + OS safe area, sourced from the
+       shared inset vars (was a hardcoded 5rem). */
+    padding-top: calc(var(--omnigent-header-height) + 1.5rem + var(--omnigent-inset-top));
+  }
+
+  :is([data-ios-native], [data-android-native])
+    .chat-conversation-content.chat-content-under-arca-banner {
+    padding-top: 1rem;
+  }
+
+  [data-ios-native] .main-terminal-view,
+  [data-android-native] .main-terminal-view {
+    padding-top: calc(3.25rem + var(--omnigent-inset-top));
+  }
+
+  [data-ios-native] .chat-scroll-fade {
+    mask-image: linear-gradient(
+      to bottom,
+      transparent calc(48px + var(--omnigent-inset-top)),
+      black calc(80px + var(--omnigent-inset-top)),
+      black calc(100% - 32px),
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent calc(48px + var(--omnigent-inset-top)),
+      black calc(80px + var(--omnigent-inset-top)),
+      black calc(100% - 32px),
+      transparent 100%
+    );
+  }
+
+  [data-ios-native] .turn-fold-row {
+    scroll-margin-top: calc(88px + var(--omnigent-inset-top));
+  }
+
+  /* Android: the floating server-switcher pill sits at the top. Start the
+     fade at the pill bottom (safe-top + margin + height) so content scrolls
+     smoothly into view below it. */
+  [data-android-native] .chat-scroll-fade {
+    --fade-start: calc(
+      var(--omnigent-safe-top) + var(--omnigent-android-switcher-margin) +
+        var(--omnigent-android-switcher-height)
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent var(--fade-start),
+      black calc(var(--fade-start) + 32px),
+      black calc(100% - 32px),
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent var(--fade-start),
+      black calc(var(--fade-start) + 32px),
+      black calc(100% - 32px),
+      transparent 100%
+    );
+  }
+
+  [data-ios-native] .chat-composer-form,
+  [data-android-native] .chat-composer-form {
+    padding-bottom: calc(0.75rem + var(--omnigent-safe-bottom));
+  }
+}
+
+/* Full-height native surfaces touch screen edges at every width. Collapsed
+ * panels must remain zero-width, peeking sidebars are already inset, and
+ * panels inside the padded Workspace rail must not receive the inset twice. */
+:is([data-ios-native], [data-android-native])
+  :is(
+    aside[aria-label="Workspace"],
+    .conversations-sidebar,
+    [data-testid="execution-logs-panel"],
+    [data-testid="file-viewer"],
+    [data-testid="files-panel-drawer"],
+    [data-testid="terminals-panel"],
+    .mobile-panel-drawer
+  ):not(aside[aria-label="Workspace"] *):not([data-collapsed]):not(.is-peek) {
+  /* Border-box floors the box at the padding sum, so each lateral inset is
+   * capped at half the surface's published reservation (the rail's inline
+   * --omnigent-reserved-width) — without the var the full inset holds. */
+  --omnigent-lateral-inset-cap: calc(var(--omnigent-reserved-width, 100000px) / 2);
+  padding-top: var(--omnigent-safe-top);
+  padding-bottom: var(--omnigent-safe-bottom);
+  padding-left: min(var(--omnigent-safe-left), var(--omnigent-lateral-inset-cap));
+  padding-right: min(var(--omnigent-safe-right), var(--omnigent-lateral-inset-cap));
+}
+
+/* At phone widths the open drawer's Search bubble pairs with the chat
+ * header's overflow bubble in the exposed chat strip beside it. The chat
+ * header sits at safe-top - 0.5rem (rule above), so mirror that offset here
+ * or the paired bubbles drift 0.5rem apart. Keeps the specificity of the
+ * padding rule above and follows it in source order so it wins the tie. */
+@media (width < 48rem) {
+  :is([data-ios-native], [data-android-native])
+    aside.conversations-sidebar:not(aside[aria-label="Workspace"] *):not([data-collapsed]):not(
+      .is-peek
+    ) {
+    padding-top: max(0px, calc(var(--omnigent-safe-top) - 0.5rem));
+  }
+}
+
+@media (width < 48rem) and (prefers-reduced-motion: reduce) {
+  [data-ios-native] .conversations-sidebar {
+    transition-duration: 1ms;
+  }
+}
+
+/* Share button — glassy pink effect (both modes). The vertical
+ * gradient alone does the embossed work (lighter top = light catch,
+ * darker bottom = shadow, simulating a convex surface lit from above);
+ * no border or inset shine. Light mode: gentler gradient, no shadow —
+ * the full emboss + dark depth shadow reads too heavy on the light
+ * canvas. Dark mode: stronger emboss plus the grounding shadow. */
+.share-button-glassy {
+  background: linear-gradient(to bottom, #fa3d99 0%, #f22286 40%, #d51d74 100%);
+  border: none;
+  box-shadow: none;
+  color: #ffffff;
+}
+
+.share-button-glassy:hover {
+  /* Darken the gradient slightly on hover */
+  background: linear-gradient(to bottom, #ec3790 0%, #e51b7d 40%, #c41a6b 100%);
+}
+
+.dark .share-button-glassy {
+  background: linear-gradient(150deg, #ff4da6 0%, #f22286 40%, #b8185f 100%);
+  border: none;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.5),
+    0 1px 3px rgba(0, 0, 0, 0.4);
+  color: #ffffff;
+}
+
+.dark .share-button-glassy:hover {
+  background: linear-gradient(150deg, #f0408f 0%, #e51b7d 40%, #a51455 100%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  /* The app shell is a fixed-viewport layout (h-dvh) with internal
+   * scrollers — the document itself must never scroll. Without this, any
+   * sub-pixel overflow (browser zoom rounding, floating overlays) gives the
+   * root a classic scrollbar on macOS "always show scrollbars" setups, and
+   * Radix's scroll-lock (body overflow:hidden on menu/dialog open) then
+   * removes it — widening the layout viewport and every fixed-position
+   * overlay with it. Scoped via :has so login/register/setup pages (outside
+   * the shell) keep default document scrolling. */
+  html:has(.app-shell),
+  body:has(.app-shell) {
+    overflow: hidden;
+  }
+  html {
+    /* Font family for the whole inherited UI. Can't `@apply font-sans`: Tailwind
+     * v4's `@theme inline` inlines the literal stack, so a runtime `--font-sans`
+     * override is a no-op. Read a dedicated `--ui-font-family` (set on
+     * documentElement by the Appearance setting / lib/uiFontPreferences.ts)
+     * with the system stack as the fallback when it's unset. */
+    font-family: var(--ui-font-family, var(--font-sans));
+    /* Keep the desktop rem grid fixed so font preferences cannot resize icons,
+     * controls, spacing, or radii. Typography is mapped separately below. */
+    font-size: 16px;
+  }
+  /* Code surfaces stay on the mono stack, immune to the UI --ui-font-family
+   * override above. The Appearance font-family setting is UI chrome only; the
+   * Monaco editor and xterm terminals are code fonts, owned by a separate
+   * (future) code-font setting. Monaco/xterm already pin their own font, so this
+   * is a guard against inheritance leaking in through any unpinned descendant. */
+  .monaco-editor,
+  .xterm {
+    font-family: var(--font-mono);
+  }
+  ::selection {
+    background: var(--selection-background);
+    color: var(--selection-foreground);
+  }
+}
+
+/* Desktop-only typography mapping. Tailwind text utilities read these tokens,
+ * while the fixed 16px root keeps every spacing/size utility geometrically
+ * stable. Typed multiplication preserves each Tailwind text step relative to
+ * the discrete Appearance value without affecting mobile. */
+@media (width >= 48rem) {
+  :root {
+    /* The step factors below are Tailwind's rem ratios against a 16px base, so
+     * they need the preference on that scale. Multiplying the raw 13px shrinks
+     * the ramp ~19%, dragging every `font-size: 1em` <code> down with it. */
+    --ui-ramp-anchor: calc(var(--desktop-ui-font-size) * (16 / 13));
+    /* Body and caption tiers come off the raw preference, not the anchor: the
+     * anchor is the 16px-equivalent grid the title ratios need, and running the
+     * caption factor through it put text-sm at 14.4px against a 13px body —
+     * a caption step larger than the text it captions. */
+    --text-sm: calc(var(--desktop-ui-font-size) * 0.9);
+    --text-ui: var(--desktop-ui-font-size);
+    --text-base: var(--desktop-ui-font-size);
+    /* Title steps keep the anchor so each stays on its Tailwind ratio. */
+    --text-lg: calc(var(--ui-ramp-anchor) * 1.125);
+    --text-xl: calc(var(--ui-ramp-anchor) * 1.25);
+    --text-2xl: calc(var(--ui-ramp-anchor) * 1.5);
+  }
+
+  body {
+    font-size: var(--desktop-ui-font-size);
+  }
+}
+
+/* Mobile typography and sidebar geometry. The root remains at the global 16px
+ * so rem-based controls and spacing keep the same scale across viewports. */
+@media (width < 48rem) {
+  /* Mobile defaults to 14px when no preference is saved. An inline value from
+   * the Appearance setting overrides this directly, without rescaling. */
+  :root {
+    --desktop-ui-font-size: 14px;
+    --mobile-ui-font-size: var(--desktop-ui-font-size);
+    --ui-ramp-anchor: var(--mobile-ui-font-size);
+    --text-sm: calc(var(--mobile-ui-font-size) * 0.9);
+    --text-ui: var(--mobile-ui-font-size);
+    --text-base: var(--mobile-ui-font-size);
+    --text-lg: calc(var(--ui-ramp-anchor) * 1.125);
+    --text-xl: calc(var(--ui-ramp-anchor) * 1.25);
+    --text-2xl: calc(var(--ui-ramp-anchor) * 1.5);
+  }
+
+  body {
+    font-size: var(--mobile-ui-font-size);
+  }
+
+  /* Keep mobile sidebar glyphs uniform. Desktop icon geometry is unchanged. */
+  .conversations-sidebar {
+    --sidebar-icon-size-mobile: 16px;
+  }
+
+  .conversations-sidebar svg,
+  .conversations-sidebar .ui-icon,
+  .conversations-sidebar .button-standard-icons svg {
+    width: var(--sidebar-icon-size-mobile);
+    height: var(--sidebar-icon-size-mobile);
+    padding: 0;
+  }
+}
+
+/* Geist Mono renders wider than Geist Sans at the same point size, making
+ * streamdown's default text-sm inline code and code blocks look larger than
+ * the surrounding prose. Scale both down to ~87.5 % of the parent font size
+ * so they match the relative sizing used in the Lexical markdown editor.
+ *
+ * The bg override pulls inline-code chips off the page-default `bg-muted`
+ * (which is only ~4% darker than the background) onto the dedicated
+ * --code-bg token (~7% light / ~12% dark step from page). Reference:
+ * Claude Code's inline chips — stronger contrast does the differentiation
+ * work without needing a foreground tint or extra border. */
+[data-streamdown="inline-code"] {
+  font-size: 0.875em;
+  background-color: var(--code-bg);
+}
+[data-streamdown="code-block-body"] {
+  font-size: 0.875em;
+}
+/* Fallback mono fonts (e.g. JetBrains Mono) ship ligatures that can visually
+ * swallow spaces in CLI flags like `-c --markdown`; code must render literally. */
+[data-streamdown="inline-code"],
+[data-streamdown="code-block-body"] {
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
+}
+
+/* @pierre/diffs renders the GitHub tab's diff in a shadow root that falls back
+ * to a fixed 13px/20px SF Mono, ignoring the Interface font size. Bind it to the
+ * panel's text-ui step with the same mono compensation as chat code above. */
+.github-diff-stack {
+  --diffs-font-size: calc(var(--text-ui) * 0.875);
+  --diffs-line-height: calc(var(--diffs-font-size) * var(--text-ui--line-height));
+  --diffs-font-family: var(--font-mono);
+  --diffs-header-font-family: var(--ui-font-family, var(--font-sans));
+  --diffs-font-features: "liga" 0, "calt" 0;
+}
+
+/* The transcript draws its own constant-height scrollbar (TranscriptScrollbar);
+ * hide the native one so both don't show. */
+.transcript-hide-native-scrollbar {
+  scrollbar-width: none;
+}
+.transcript-hide-native-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* The virtualized transcript holds its own read position across history
+ * prepends and in-flow changes above the list (Transcript.tsx). Its rows are
+ * absolutely positioned, so native anchoring can't see them and would only
+ * double-count the in-flow part. */
+[data-virtualized-transcript] {
+  overflow-anchor: none;
+}
+
+/* Streamdown hard-codes `content-visibility: auto` with a flat 200px intrinsic
+ * size on every code block, so offscreen blocks lay out at 200px and snap to
+ * their real height (100–1700px) as they scroll in — shifting the transcript
+ * under the reader and resizing the scrollbar on every snap. Blocks under
+ * content-visibility are also skipped when the browser picks a scroll anchor,
+ * so this has to go for anchoring to hold across a history prepend. Scoped to
+ * the transcript so the file viewer keeps skipping offscreen blocks in big
+ * files. Overrides an inline style, hence !important. */
+[role="log"] [data-streamdown="code-block"] {
+  content-visibility: visible !important;
+}
+
+/* Streamdown pins `text-sm` on table cells and h6. That tier is the caption
+ * step, so inside chat prose those read as a shrink rather than body text —
+ * pin them back to the surrounding size. sub/sup keep the caption step, where
+ * a smaller face is correct. */
+[data-streamdown="table-cell"],
+[data-streamdown="table-header-cell"],
+[data-streamdown="heading-6"] {
+  font-size: 1em;
+}
+
+/* Keep Streamdown's actions aligned with our header overlays; sticky controls
+ * otherwise drift into the block body when the transcript scrolls. */
+.chat-code-block > [data-streamdown="code-block"] > .sticky,
+.chat-mermaid > [data-streamdown="mermaid-block"] > .sticky {
+  position: static;
+}
+
+/* Word-wrap toggle for chat code blocks (see ChatCodeBlockPre in message.tsx).
+ * Streamdown renders the body with `overflow-x-auto` and the <code> with
+ * `white-space: pre`, so long lines scroll horizontally. When `.chat-code-wrap`
+ * is set we soft-wrap instead so everything fits the column width. */
+.chat-code-wrap > [data-streamdown="code-block"] > [data-streamdown="code-block-body"] {
+  overflow-x: hidden;
+}
+.chat-code-wrap > [data-streamdown="code-block"] > [data-streamdown="code-block-body"] pre,
+.chat-code-wrap > [data-streamdown="code-block"] > [data-streamdown="code-block-body"] code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Hang-indent wrapped continuation lines past the line-number gutter so they
+ * align with the code, not under the numbers. Gutter = before:w-6 (1.5rem) +
+ * before:mr-4 (1rem) = 2.5rem; the negative text-indent pulls the first line
+ * (and its ::before number) back to the left edge. */
+.chat-code-wrap > [data-streamdown="code-block"] > [data-streamdown="code-block-body"] code > span {
+  padding-left: 2.5rem;
+  text-indent: -2.5rem;
+}
+
+/* Reserve the 1.5rem fullscreen button plus Streamdown's 0.5rem action gap.
+ * The fullscreen overlay sits outside the Mermaid block's 1px border. */
+.chat-mermaid [data-streamdown="mermaid-block-actions"] {
+  margin-right: calc(2rem - 1px);
+}
+
+/* Streamdown centers the SVG in a shrink-to-fit flex child. Give that child
+ * the diagram area's width so Mermaid's width="100%" does not collapse. */
+[data-streamdown="mermaid-block"] div:has(> svg[aria-roledescription]) {
+  width: 100%;
+}
+
+/* Keep Mermaid's canvas transparent so the diagram follows the surrounding
+ * chat or file surface in either theme. The SVG itself has no canvas fill. */
+[data-streamdown="mermaid-block"],
+[data-streamdown="mermaid-block"] > div:last-child {
+  background-color: transparent;
+}
+
+/* Streamdown's <button> link-safety-modal variant and wrap-anywhere reset can
+ * leave the default arrow cursor on links — force pointer to signal affordance. */
+[data-streamdown="link"] {
+  cursor: pointer;
+  color: var(--link);
+  text-underline-offset: 0.18em;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+[data-streamdown="link"]:hover {
+  text-decoration-color: currentColor;
+}
+
+[data-streamdown="link"]:focus-visible,
+[data-streamdown="inline-code"][role="button"]:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+[data-streamdown="inline-code"][role="button"] {
+  color: var(--link);
+}
+
+/* Streamdown renders links with `wrap-anywhere` (overflow-wrap: anywhere),
+ * which also shrinks the element's min-content width to a single character.
+ * In an auto-layout table that lets a link-only column collapse to ~2ch, so
+ * a short link like "#3090" stacks one or two characters per line while the
+ * prose columns hog the width. `break-word` still wraps overlong URLs, but
+ * keeps min-content at the longest unbreakable run so the column can't be
+ * squeezed below it. */
+:is([data-streamdown="table-cell"], [data-streamdown="table-header-cell"])
+  [data-streamdown="link"] {
+  overflow-wrap: break-word;
+}
+
+/* Resets table cells to `break-word` so the inherited `wrap-anywhere` from the chat prose root doesn't collapse a column's min-content. */
+[data-streamdown="table-cell"],
+[data-streamdown="table-header-cell"] {
+  overflow-wrap: break-word;
+}
+
+/* KaTeX lays out radicals/fractions with positioned spans. Wide display math
+ * gets its own horizontal scroll surface instead of relying on the surrounding
+ * chat bubble to clip or wrap it. (No overflow-y override: with overflow-x
+ * non-visible the browser forces overflow-y to compute as auto anyway.) */
+.katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  padding-block: 0.25rem;
+}
+
+.katex {
+  max-width: 100%;
+}
+
+/* Keep the heading hierarchy proportional to the user's body-text setting. */
+[data-streamdown="heading-1"] {
+  font-size: 1.65em;
+}
+[data-streamdown="heading-2"] {
+  font-size: 1.4em;
+}
+[data-streamdown="heading-3"] {
+  font-size: 1.2em;
+}
+[data-streamdown="heading-4"] {
+  font-size: 1.05em;
+}
+
+.message-markdown :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.35;
+  margin-block: 1.6em 0.6em;
+}
+
+.message-markdown > :first-child {
+  margin-top: 0;
+}
+
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* Use the usable chat column so side panels and split views keep narrow prose. */
+.chat-conversation-content {
+  container: chat-column / inline-size;
+}
+
+.is-assistant {
+  --chat-prose-width: 80ch;
+}
+
+@container chat-column (min-width: 64rem) {
+  .is-assistant {
+    --chat-prose-width: 120ch;
+  }
+}
+
+/* Prose shares one limit in ordinary replies and replies with wide content. */
+.chat-markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+  max-width: var(--chat-prose-width, 80ch);
+}
+
+.chat-markdown :is(ul, ol) {
+  list-style-position: outside;
+  padding-inline-start: 1.5em;
+}
+
+.chat-markdown li {
+  padding-block: 0.2em;
+}
+
+.chat-markdown li::marker {
+  color: var(--muted-foreground);
+}
+
+.chat-markdown li > :is(ul, ol) {
+  margin-block: 0.35em;
+}
+
+/* GitHub task lists in chat messages (Streamdown + remark-gfm). remark-gfm tags
+   each task item `task-list-item` with a disabled <input type="checkbox">, but
+   Streamdown also applies Tailwind `list-disc`, so a disc renders right next to
+   the checkbox (bullet + checkbox). Drop the marker per ITEM (not on the whole
+   `.contains-task-list` list) so a list mixing task and plain items only loses
+   the bullet on the task items — matching GitHub. `list-style-type` is
+   inherited, so setting it on the <li> overrides the list's `list-disc`. Space
+   the checkbox from its label. */
+[data-streamdown="list-item"].task-list-item {
+  list-style: none;
+}
+[data-streamdown="list-item"].task-list-item > input[type="checkbox"] {
+  margin-right: 0.4em;
+  vertical-align: -0.075em;
+}
+
+/* Message highlights must match FLASH_DURATION_MS in chatStore.ts.
+   Omit the final keyframe to fade back to the bubble's own background. */
+@keyframes message-highlight {
+  0%,
+  40% {
+    background-color: var(--message-highlight);
+  }
+}
+
+.animate-message-highlight {
+  --message-highlight: color-mix(in oklch, var(--warning) 16%, transparent);
+  animation: message-highlight 1500ms ease-out;
+}
+
+.dark .animate-message-highlight {
+  --message-highlight: color-mix(in oklch, var(--warning) 24%, transparent);
+}
+
+@keyframes user-message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-user-message-enter {
+  animation: user-message-enter 300ms ease-out both;
+}
+
+/* File-tree children fade without animating geometry. Height or position
+   transitions fight the virtualizer and make long lists visibly drift. */
+@keyframes file-tree-row-expand {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes file-tree-row-collapse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.file-tree-row-enter,
+.file-tree-row-exit {
+  overflow: hidden;
+  will-change: opacity;
+}
+
+.file-tree-row-enter {
+  animation: file-tree-row-expand 180ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.file-tree-row-exit {
+  pointer-events: none;
+  animation: file-tree-row-collapse 180ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* Workspace navigation keeps its compact outline highlight. */
+@keyframes user-msg-flash {
+  0% {
+    box-shadow: 0 0 0 0 var(--ring);
+  }
+  20% {
+    box-shadow: 0 0 0 4px var(--ring);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.animate-user-msg-flash {
+  animation: user-msg-flash 800ms ease-out;
+  border-radius: var(--radius-2xl);
+}
+
+/* Reduced-motion: static highlights still signal the target. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-message-highlight {
+    animation: none;
+    /* Override inline contributor tints while the static highlight is active. */
+    background-color: var(--message-highlight) !important;
+  }
+
+  .animate-user-msg-flash {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+}
+
+/* ── Intelligent model router — composer sparkle toggle ──────────────────
+ * (components/CostRoutingControl.tsx.) Two stacked sparkle layers cross-fade
+ * with a slight spring as the toggle flips; a soft monochrome halo backs the
+ * lit glyph. The verdict ping is a one-shot ring replayed via React key
+ * remount — CSS only, no JS timers. Resting states are class-driven, so the
+ * global reduced-motion gate below collapses the motion without losing any
+ * state legibility. */
+.imc-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    opacity 160ms ease,
+    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.imc-layer-off {
+  opacity: 1;
+  transform: none;
+}
+.imc-layer-on {
+  opacity: 0;
+  transform: scale(0.55) rotate(-40deg);
+}
+.imc-toggle[data-mode="on"] .imc-layer-off {
+  opacity: 0;
+  transform: scale(0.55) rotate(40deg);
+}
+/* Lit state: brand pink so on/off reads unmistakably at a glance. */
+.imc-toggle[data-mode="on"] {
+  color: var(--brand-accent);
+}
+.imc-toggle[data-mode="on"] .imc-layer-on {
+  opacity: 1;
+  transform: none;
+}
+
+/* Whisper of intent on hover; squish on press (the spring eases it back). */
+.imc-toggle[data-mode="off"]:hover:not(:disabled) .imc-layer-off {
+  transform: scale(1.08);
+}
+.imc-toggle:active:not(:disabled) .imc-layer-off,
+.imc-toggle:active:not(:disabled) .imc-layer-on {
+  transform: scale(0.88);
+}
+
+/* Companion sparks stage in just after the star lands. */
+.imc-spark {
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.imc-toggle[data-mode="on"] .imc-spark {
+  opacity: 1;
+  transition-delay: 110ms;
+}
+
+.imc-halo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.625rem;
+  height: 1.625rem;
+  margin: -0.8125rem;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklch, var(--brand-accent) 14%, transparent) 0%,
+    transparent 70%
+  );
+  opacity: 0;
+  transform: scale(0.5);
+  transition:
+    opacity 200ms ease,
+    transform 200ms ease;
+  pointer-events: none;
+}
+.imc-toggle[data-mode="on"] .imc-halo {
+  opacity: 1;
+  transform: scale(1);
+}
+.dark .imc-toggle[data-mode="on"] .imc-halo {
+  background: radial-gradient(
+    circle,
+    color-mix(in oklch, var(--brand-accent) 20%, transparent) 0%,
+    transparent 70%
+  );
+}
+
+/* Fresh-verdict ping: one thin ring expands and fades, resting invisible
+ * (the keyframes end where the element's static state is, so a collapsed
+ * reduced-motion run shows nothing). */
+@keyframes imc-verdict-ping {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  30% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+.imc-ping {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: -0.5625rem;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in oklch, var(--brand-accent) 55%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: imc-verdict-ping 650ms ease-out 1;
+}
+
+/* Text shimmer: a clipped gradient swept across the text. Pure CSS so it
+ * doesn't pull framer-motion (~165KB) into the bundle — see Shimmer in
+ * components/ai-elements/shimmer.tsx. Duration is set via --shimmer-duration. */
+@keyframes shimmer-sweep {
+  from {
+    background-position: 100% center;
+  }
+  to {
+    background-position: 0% center;
+  }
+}
+
+.text-shimmer {
+  animation: shimmer-sweep var(--shimmer-duration, 2s) linear infinite;
+}
+
+/* Otto working indicator: gentle bob + periodic blink (see OttoIcon.tsx).
+ * Opt-in via .otto-working so the mascot can also render static. The global
+ * reduced-motion gate below freezes both animations. */
+@keyframes otto-bob {
+  0%,
+  100% {
+    transform: translateY(5%);
+  }
+  50% {
+    transform: translateY(-5%);
+  }
+}
+
+@keyframes otto-blink {
+  0%,
+  88%,
+  96%,
+  100% {
+    transform: scaleY(1);
+  }
+  92% {
+    transform: scaleY(0.1);
+  }
+}
+
+.otto-working {
+  animation: otto-bob 1.6s ease-in-out infinite;
+}
+
+.otto-working .otto-eye {
+  /* fill-box puts the origin at each eye's own center so the blink collapses in place. */
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: otto-blink 3.4s ease-in-out infinite;
+}
+
+@keyframes compaction-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+/* Global reduced-motion gate. The two scoped blocks above keep their
+ * static-state declarations (class specificity beats * for those visible
+ * properties); this universal rule collapses every other transition-* and
+ * animate-* timer so users who request reduced motion don't see any
+ * sweeping change we forgot to scope. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── TipTap comment decorations ────────────────────────────────────────────
+ * ProseMirror Decorations render as <span> elements; these classes are
+ * applied by TipTapCommentExtension and must live here so Tailwind's
+ * source-scanner does not purge them (they only appear as string literals
+ * in TypeScript, not in JSX className props). */
+
+/* Base comment highlight — yellow wash + underline */
+.md-comment {
+  background-color: color-mix(in oklch, var(--warning) 30%, transparent);
+  border-bottom: 2px solid color-mix(in oklch, var(--warning) 60%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+/* Active (selected) comment — stronger highlight */
+.md-comment-active {
+  background-color: color-mix(in oklch, var(--warning) 50%, transparent);
+  border-bottom-color: color-mix(in oklch, var(--warning) 90%, transparent);
+}
+
+/* Pending comment (user clicked "Add comment", typing in textarea) — blue */
+.md-comment-pending {
+  background-color: color-mix(in oklch, var(--primary) 20%, transparent);
+  border-bottom: 2px solid color-mix(in oklch, var(--primary) 50%, transparent);
+  border-radius: 2px;
+}
+
+/* Find-in-file matches in the markdown editor — all matches dim, current match strong */
+.md-search-match {
+  background-color: color-mix(in oklch, var(--warning) 30%, transparent);
+  border-radius: 2px;
+}
+.md-search-match-current {
+  background-color: color-mix(in oklch, var(--warning) 70%, transparent);
+}
+
+/* Find-in-file matches in the rendered markdown / notebook preview. The preview
+   is React-owned DOM, so matches are painted with the CSS Custom Highlight API
+   (Range-based, no node mutation) rather than wrapper spans. */
+::highlight(md-preview-search) {
+  background-color: color-mix(in oklch, var(--warning) 30%, transparent);
+}
+::highlight(md-preview-search-current) {
+  background-color: color-mix(in oklch, var(--warning) 70%, transparent);
+}
+
+/* TipTap editor prose styling */
+.tiptap-md-content .ProseMirror {
+  outline: none;
+}
+.tiptap-md-content .ProseMirror h1 {
+  font-size: 1.75em;
+  font-weight: 700;
+  margin: 0.75em 0 0.5em;
+}
+.tiptap-md-content .ProseMirror h2 {
+  font-size: 1.4em;
+  font-weight: 600;
+  margin: 0.75em 0 0.5em;
+}
+.tiptap-md-content .ProseMirror h3 {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin: 0.75em 0 0.5em;
+}
+.tiptap-md-content .ProseMirror p {
+  margin: 0.5em 0;
+  line-height: 1.7;
+}
+.tiptap-md-content .ProseMirror ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.tiptap-md-content .ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.tiptap-md-content .ProseMirror li {
+  margin: 0.25em 0;
+}
+/* GitHub-style task lists (`- [ ]` / `- [x]`), rendered by
+   @tiptap/extension-list's TaskList/TaskItem (registered in
+   MarkdownRichTextViewer.tsx). TaskList renders <ul data-type="taskList">;
+   each item is drawn by TaskItem's node-view as
+   <li data-checked><label><input type=checkbox><span></span></label><div>…</div></li>
+   — note the live editor DOM carries data-checked on the <li> but NOT
+   data-type (that only appears on the static renderHTML/clipboard path), so we
+   target items as `ul[data-type="taskList"] > li`. The data-attribute selector
+   out-specifies the plain ul/li rules above: drop the inherited disc marker and
+   lay the checkbox out beside the content instead of stacking on top of it. */
+.tiptap-md-content .ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.5em 0;
+}
+.tiptap-md-content .ProseMirror ul[data-type="taskList"] > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 0.25em 0;
+}
+/* The checkbox lives in a contenteditable=false <label>. Give the label the
+   height of one content line (paragraph line-height: 1.7) and center the
+   checkbox within it, so it sits on the first text line at any font size
+   instead of relying on a fixed margin nudge. */
+.tiptap-md-content .ProseMirror ul[data-type="taskList"] > li > label {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 1.7em;
+  user-select: none;
+}
+.tiptap-md-content .ProseMirror ul[data-type="taskList"] > li > label input[type="checkbox"] {
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+/* Content column: the <div> wraps the item's paragraph(s). Collapse the
+   paragraph's default vertical margin so a single-line item hugs the checkbox. */
+.tiptap-md-content .ProseMirror ul[data-type="taskList"] > li > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tiptap-md-content .ProseMirror ul[data-type="taskList"] > li > div > p {
+  margin: 0;
+}
+/* Nested checklists tuck under their parent item, not the page margin. */
+.tiptap-md-content .ProseMirror ul[data-type="taskList"] > li ul[data-type="taskList"] {
+  margin: 0.25em 0 0;
+}
+.tiptap-md-content .ProseMirror blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+  margin: 0.75em 0;
+}
+/* GitHub-style alerts (> [!NOTE] etc., detected by TipTapGitHubAlert.ts):
+   colored border, icon + label header injected via pseudo-elements so the
+   ProseMirror document is untouched. */
+.tiptap-md-content .ProseMirror blockquote[data-alert-type] {
+  position: relative;
+  color: var(--foreground);
+  border-left-color: var(--md-alert-color);
+}
+.tiptap-md-content .ProseMirror blockquote[data-alert-type]::before {
+  content: attr(data-alert-label);
+  display: block;
+  padding-left: 24px;
+  margin-bottom: 0.25rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--md-alert-color);
+}
+/* The icon: a mask over a colored box so it inherits --md-alert-color. */
+.tiptap-md-content .ProseMirror blockquote[data-alert-type]::after {
+  content: "";
+  position: absolute;
+  top: 0.2em;
+  left: 1em;
+  width: 16px;
+  height: 16px;
+  background-color: var(--md-alert-color);
+  mask: var(--md-alert-icon) no-repeat center / contain;
+  -webkit-mask: var(--md-alert-icon) no-repeat center / contain;
+}
+.tiptap-md-content .ProseMirror blockquote[data-alert-type="note"] {
+  --md-alert-color: #0969da;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/%3E%3C/svg%3E");
+}
+.tiptap-md-content .ProseMirror blockquote[data-alert-type="tip"] {
+  --md-alert-color: #1a7f37;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5Zm.75 3.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Z'/%3E%3C/svg%3E");
+}
+.tiptap-md-content .ProseMirror blockquote[data-alert-type="important"] {
+  --md-alert-color: #8250df;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/%3E%3C/svg%3E");
+}
+.tiptap-md-content .ProseMirror blockquote[data-alert-type="warning"] {
+  --md-alert-color: #9a6700;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/%3E%3C/svg%3E");
+}
+.tiptap-md-content .ProseMirror blockquote[data-alert-type="caution"] {
+  --md-alert-color: #cf222e;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25a.749.749 0 0 1-.53.22H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/%3E%3C/svg%3E");
+}
+/* GitHub's dark-palette hues for the same five types. */
+.dark .tiptap-md-content .ProseMirror blockquote[data-alert-type="note"] {
+  --md-alert-color: #4493f8;
+}
+.dark .tiptap-md-content .ProseMirror blockquote[data-alert-type="tip"] {
+  --md-alert-color: #3fb950;
+}
+.dark .tiptap-md-content .ProseMirror blockquote[data-alert-type="important"] {
+  --md-alert-color: #ab7df8;
+}
+.dark .tiptap-md-content .ProseMirror blockquote[data-alert-type="warning"] {
+  --md-alert-color: #d29922;
+}
+.dark .tiptap-md-content .ProseMirror blockquote[data-alert-type="caution"] {
+  --md-alert-color: #f85149;
+}
+
+/* ── Rendered Markdown preview (read-only CodeViewer surface) ──────────────
+   The preview renders via react-markdown into a .prose container. Two GitHub
+   parity fixes live here (the rich-text editor handles the same cases above
+   through TipTap, so this is the preview's equivalent). */
+
+/* Honor explicit <img width/height>. Tailwind Preflight sets `img { height:
+   auto }`, which overrides the width/height *attributes* (presentational hints
+   lose to author CSS); a custom <img> renderer forwards them as inline styles,
+   which win. Keep max-width so oversized images still can't overflow, and use
+   inline-block so logos/badges flow within text like on GitHub. */
+.markdown-preview.prose img {
+  max-width: 100%;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* GitHub alerts. rehype-github-alerts emits GitHub's own markup
+   (<div class="markdown-alert markdown-alert-note"> + a
+   <p class="markdown-alert-title">Note</p> header). We drop its inline octicon
+   in sanitize and redraw it here as a CSS mask, reusing the exact GitHub icons
+   and hues from the editor block above so both surfaces match. */
+.markdown-preview .markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  color: inherit;
+  border-left: 0.25em solid var(--md-alert-color);
+}
+.markdown-preview .markdown-alert > :first-child {
+  margin-top: 0;
+}
+.markdown-preview .markdown-alert > :last-child {
+  margin-bottom: 0;
+}
+.markdown-preview .markdown-alert-title {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--md-alert-color);
+}
+/* The icon: a mask over a colored box so it inherits --md-alert-color. */
+.markdown-preview .markdown-alert-title::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  margin-right: 0.5rem;
+  background-color: var(--md-alert-color);
+  mask: var(--md-alert-icon) no-repeat center / contain;
+  -webkit-mask: var(--md-alert-icon) no-repeat center / contain;
+}
+.markdown-preview .markdown-alert-note {
+  --md-alert-color: #0969da;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/%3E%3C/svg%3E");
+}
+.markdown-preview .markdown-alert-tip {
+  --md-alert-color: #1a7f37;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5Zm.75 3.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Z'/%3E%3C/svg%3E");
+}
+.markdown-preview .markdown-alert-important {
+  --md-alert-color: #8250df;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/%3E%3C/svg%3E");
+}
+.markdown-preview .markdown-alert-warning {
+  --md-alert-color: #9a6700;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/%3E%3C/svg%3E");
+}
+.markdown-preview .markdown-alert-caution {
+  --md-alert-color: #cf222e;
+  --md-alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25a.749.749 0 0 1-.53.22H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/%3E%3C/svg%3E");
+}
+/* GitHub's dark-palette hues for the same five types. */
+.dark .markdown-preview .markdown-alert-note {
+  --md-alert-color: #4493f8;
+}
+.dark .markdown-preview .markdown-alert-tip {
+  --md-alert-color: #3fb950;
+}
+.dark .markdown-preview .markdown-alert-important {
+  --md-alert-color: #ab7df8;
+}
+.dark .markdown-preview .markdown-alert-warning {
+  --md-alert-color: #d29922;
+}
+.dark .markdown-preview .markdown-alert-caution {
+  --md-alert-color: #f85149;
+}
+.tiptap-md-content .ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--code-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+}
+.tiptap-md-content .ProseMirror pre {
+  background: var(--muted);
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+.tiptap-md-content .ProseMirror pre code {
+  background: none;
+  padding: 0;
+}
+/* Code-block node view (TipTapCodeBlockView): the wrapper owns the block
+   spacing; the inner <pre> loses its own margin so the language selector and
+   the mermaid preview sit flush with the source. */
+.tiptap-md-content .ProseMirror .tiptap-code-block {
+  margin: 0.75em 0;
+}
+.tiptap-md-content .ProseMirror .tiptap-code-block pre {
+  margin: 0;
+}
+.tiptap-md-content .ProseMirror .tiptap-mermaid-preview {
+  border-top: 1px solid var(--border);
+  margin-top: 0.5em;
+  padding-top: 0.5em;
+}
+.tiptap-md-content .ProseMirror a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.tiptap-md-content .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+/* Soft line breaks (TipTapSoftBreak.ts) hold a hard-wrapped paragraph's source
+   newlines; their collapsible space reads as a word gap instead of the line
+   break ProseMirror's break-spaces would draw. */
+.tiptap-md-content .ProseMirror .md-soft-break {
+  white-space: normal;
+}
+/* Raw-HTML passthrough blocks (TipTapHtmlPassthrough.ts). Hidden blocks
+   (comments, bare wrapper tags) keep the bytes without visual presence;
+   summary blocks render as a dim disclosure line. */
+.tiptap-md-content .ProseMirror .md-html-passthrough-hidden {
+  height: 0;
+  overflow: hidden;
+  margin: 0;
+}
+.tiptap-md-content .ProseMirror .md-html-passthrough-summary {
+  color: var(--muted-foreground);
+  font-weight: 500;
+  margin: 0.75em 0 0.25em;
+}
+/* GitHub-style images: never overflow the editor column. Explicit <img
+   width/height> are applied as inline styles by the node view (see
+   TipTapWorkspaceImage), which beat Preflight's `img { height: auto }` — an
+   attribute-based size would not. inline-block overrides Preflight's
+   `img { display: block }` so images flow within headings/paragraphs (logos,
+   badges) like on GitHub. */
+.tiptap-md-content .ProseMirror img {
+  max-width: 100%;
+  display: inline-block;
+  vertical-align: middle;
+}
+.tiptap-md-content .ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid var(--primary);
+  border-radius: 2px;
+}
+.tiptap-md-content .ProseMirror .tableWrapper {
+  overflow-x: auto;
+}
+/* GitHub-style tables: auto layout + max-content so columns size to their
+   content and the table hugs it (capped by the wrapper, which scrolls).
+   Column-resize still works — prosemirror-tables' <col> widths apply under
+   auto layout too, just less pixel-exact than with table-layout: fixed. */
+.tiptap-md-content .ProseMirror table {
+  border-collapse: collapse;
+  width: max-content;
+  max-width: 100%;
+  margin: 0.75em 0;
+}
+.tiptap-md-content .ProseMirror th,
+.tiptap-md-content .ProseMirror td {
+  border: 1px solid var(--border);
+  padding: 6px 13px;
+  position: relative;
+}
+.tiptap-md-content .ProseMirror th {
+  font-weight: 600;
+}
+/* Zebra striping on even body rows (row 1 is the header), as on GitHub. */
+.tiptap-md-content .ProseMirror table tr:nth-child(odd):not(:first-child) {
+  background: var(--muted);
+}
+/* Column resize handle injected by TipTap as a single element inside the
+   hovered cell.  JS in TableBubbleMenu stretches top/height to the full
+   table so it spans the entire column visually. */
+.tiptap-md-content .ProseMirror .column-resize-handle {
+  background-color: var(--primary);
+  pointer-events: none;
+  position: absolute;
+  right: -2px;
+  top: 0; /* overridden by JS */
+  height: 100%; /* fallback before JS runs */
+  width: 3px;
+  z-index: 20;
+  border-radius: 2px;
+}
+/* Cursor when hovering over a resizable column border */
+.tiptap-md-content .resize-cursor {
+  cursor: col-resize;
+}
+
+.theme-contrast-range {
+  appearance: none;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--primary) 0%,
+    var(--primary) var(--range-progress),
+    var(--input) var(--range-progress),
+    var(--input) 100%
+  );
+}
+.theme-contrast-range::-webkit-slider-runnable-track {
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: transparent;
+}
+.theme-contrast-range::-moz-range-track {
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: transparent;
+}
+.theme-contrast-range::-moz-range-progress {
+  background: transparent;
+}
+.theme-contrast-range::-webkit-slider-thumb {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: -0.1875rem;
+  appearance: none;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--primary);
+}
+.theme-contrast-range::-moz-range-thumb {
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--primary);
+}
+@media (min-width: 48rem) {
+  :root:not(.dark)[data-theme="custom"][data-custom-translucent-sidebar]
+    :is(.conversations-sidebar, aside[aria-label="Workspace"]:not([data-maximized])) {
+    background: var(--custom-light-sidebar);
+    backdrop-filter: blur(20px) saturate(1.12);
+  }
+  .dark[data-theme="custom"][data-custom-translucent-sidebar]
+    :is(.conversations-sidebar, aside[aria-label="Workspace"]:not([data-maximized])) {
+    background: var(--custom-dark-sidebar);
+    backdrop-filter: blur(20px) saturate(1.12);
+  }
+  :root[data-theme="custom"][data-custom-translucent-sidebar]
+    aside[aria-label="Workspace"]:not([data-maximized])
+    :is([data-workspace-panel-content] > *, [data-workspace-panel-surface]) {
+    background-color: transparent;
+  }
+}
+
+/* Turn "Worked for …" process fold (BlockRenderer TurnWorkedFold).
+   The trace collapses with a height animation instead of disappearing in
+   one frame — an instant swap of a tall block read as a page reload. The
+   from/to heights need Radix's measured custom property, so this can't be
+   expressed as a Tailwind utility. */
+@keyframes turn-fold-expand {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+@keyframes turn-fold-collapse {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+.turn-fold-content {
+  overflow: hidden;
+}
+.turn-fold-content[data-state="open"] {
+  animation: turn-fold-expand 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* User-click expands open at full height in one frame: the animation
+   starts at height 0, so the snap-to-top that accompanies a user expand
+   would clamp against a scroller that has no room yet, then lose the
+   200ms growth to the stick-to-bottom pin / scroll anchoring. */
+.turn-fold-content-instant[data-state="open"] {
+  animation: none;
+}
+.turn-fold-content[data-state="closed"] {
+  animation: turn-fold-collapse 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-fold-content[data-state="open"],
+  .turn-fold-content[data-state="closed"] {
+    animation: none;
+  }
+}
+/* The summary row grows in over the same beat as the trace shrinks.
+   Inserting it at full height first jolted the bubble ~40px TALLER
+   before the collapse began, which read as two separate motions; row
+   expanding + trace shrinking nets one monotonic shrink. */
+@keyframes turn-fold-row-in {
+  from {
+    grid-template-rows: 0fr;
+  }
+  to {
+    grid-template-rows: 1fr;
+  }
+}
+.turn-fold-row-enter {
+  display: grid;
+  grid-template-rows: 0fr;
+  animation: turn-fold-row-in 200ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.turn-fold-row-enter > * {
+  min-height: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-fold-row-enter {
+    grid-template-rows: 1fr;
+    animation: none;
+  }
+}
+
+/* Project emoji picker (rename modal + new-session landing). emoji-mart's web
+ * component hard-codes `:host { height: 435px; min-height: 230px }`, which
+ * overflows and clips on short / mobile screens. Force it down to the height the
+ * popover published in `--emoji-picker-height` so emoji-mart scrolls its own
+ * grid internally (one scrollbar, nav + search pinned). A Tailwind arbitrary
+ * variant can't target the custom element, so this lives here. */
+.emoji-picker-popover em-emoji-picker {
+  height: var(--emoji-picker-height, 420px) !important;
+  min-height: 0 !important;
+}
+
+/* Extension pages sit below the shell header overlay. When AppShell drops that
+ * header (sidebar open on an extension route), the page takes the full height.
+ * Unlayered on purpose so it beats the responsive inset utilities. */
+main[data-shell-header="hidden"] .extension-view-host {
+  padding-top: 0;
+}
+
+main[data-shell-header="hidden"] .extension-view-status {
+  top: 0;
+}

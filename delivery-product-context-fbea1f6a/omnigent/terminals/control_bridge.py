@@ -1,0 +1,899 @@
+"""Shared tmux control-mode (``tmux -C``) ↔ WebSocket bridge.
+
+The bridge attaches a control-mode client and consumes tmux's line protocol:
+
+- ``%output <pane-id> <octal-escaped-bytes>`` — the raw bytes the program in a
+  pane just produced, forwarded to the browser xterm.js as binary frames. The
+  browser terminal therefore owns the character grid, scrollback, and text
+  selection (tmux's own status line / copy-mode chrome is never streamed to a
+  control client), which is what gives native scrolling and copy in the web UI.
+- ``%begin <t> <n> <flags>`` … ``%end``/``%error <t> <n> <flags>`` — bracketed
+  reply blocks for commands the bridge sends, correlated by command number.
+- ``%exit`` / ``%window-close`` / ``%layout-change`` — lifecycle + structure.
+
+Design notes learned from the protocol (see ``control_bridge`` spike):
+
+- Attach with ``-C`` (NOT ``-CC``): ``-CC`` requires the parent be a real
+  terminal and the client exits immediately when stdin/stdout are pipes. ``-C``
+  gives the same protocol with echo already off, which is what we want for a
+  programmatic consumer reading/writing pipes.
+- A control client only receives ``%output`` produced *after* it attaches, so
+  the bridge seeds the browser terminal with ``capture-pane -e -p`` (escapes
+  preserved) once on connect, then streams subsequent ``%output``.
+- Browser input bytes are injected with ``send-keys -H <hh> <hh> ...``
+  (space-separated hex, one token per byte). Feeding raw ESC/control bytes into
+  a ``send-keys -l`` command line corrupts the line-based command parser and
+  the client exits; the hex channel is byte-exact for ESC sequences, control
+  chars, and UTF-8 multibyte alike.
+
+The browser-facing stream uses binary frames for raw pane bytes, text JSON
+frames for resize controls, and binary frames for input. A typed text JSON
+frame carries tmux clipboard updates because outer-client OSC 52 is absent from
+``%output``.
+
+Tmux's own overlays (``display-popup``, copy-mode, status line) are not delivered
+to control clients. The native cost-approval popup remains available to users
+working in a real native TTY, while the web ApprovalCard is the browser surface.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import contextlib
+import json
+import logging
+import os
+import re
+import shutil
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Final
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+from omnigent.inner.terminal_clipboard import MAX_CLIPBOARD_BYTES
+from omnigent.terminals.ws_common import (
+    WS_CLOSE_INTERNAL_ERROR,
+    WS_CLOSE_TERMINAL_DETACHED,
+    WS_CLOSE_TERMINAL_NOT_FOUND,
+    _check_pane_dead_definitive,
+    _coalesce_limit_after_input,
+    _forward_terminal_to_ws,
+    _monotonic,
+    _tmux_session_alive,
+)
+
+_logger = logging.getLogger(__name__)
+
+__all__ = [
+    "bridge_tmux_control_to_websocket",
+    "unescape_control_output",
+]
+
+# tmux octal-escapes bytes < 0x20 and backslash in %output values as ``\ooo``.
+_OCTAL_ESCAPE_RE: Final = re.compile(rb"\\([0-7]{3})")
+
+# ``capture-pane -p`` joins rows with a bare LF. Match an LF not already
+# preceded by CR so the CRLF rewrite is idempotent (a future tmux emitting
+# CRLF is left untouched).
+_CAPTURE_ROW_SEP_RE: Final = re.compile(rb"(?<!\r)\n")
+
+# tmux's client→server protocol rejects a single command larger than its 16KB
+# imsg cap. ``send-keys -H`` expands each input byte to 3 chars ("xx "), so cap
+# the bytes per send-keys invocation well under the limit. 1024 bytes ≈ 3KB
+# packed; tmux applies successive invocations in order so the pane sees one
+# contiguous stream. Matches terminal.py's literal-send chunking rationale.
+_SEND_KEYS_HEX_BYTES_PER_CALL: Final[int] = 1024
+
+# Raw-read chunk for the control client's stdout. The reader uses
+# ``stdout.read(n)`` (not ``readline()``) and parses lines from its own buffer:
+# one wakeup can pull many ``%output`` lines so the forwarder coalesces them,
+# and raw reads sidestep ``readline()``'s line-length cap (an oversized line
+# would otherwise raise ``LimitOverrunError`` and crash the reader on a tmux
+# build that chunks ``%output`` more coarsely than 3.6b's few-KB lines).
+_CONTROL_READ_CHUNK: Final[int] = 256 * 1024
+# StreamReader buffer cap. ``read(n)`` returns as soon as any bytes arrive and
+# doesn't enforce a line limit, but the 64 KiB default would still bound a
+# single read; raise it so a large burst can be pulled in one wakeup.
+_CONTROL_STDOUT_BUFFER_LIMIT: Final[int] = 16 * 1024 * 1024
+
+# Terminal type declared for the control-mode attach client. The real renderer
+# is the browser's xterm.js, an xterm-256color-class emulator, so this is
+# accurate rather than a guess. tmux exposes it as ``#{client_termname}``, and a
+# pane TUI (e.g. Codex) trusts that over its own $TERM; without pinning it the
+# client inherits the runner's TERM, which can be a non-interactive ``dumb``.
+_WEB_TERMINAL_TERM: Final[str] = "xterm-256color"
+
+# Closing the socket is best-effort: the browser may already be gone. Starlette
+# raises ``RuntimeError`` once a close frame has been sent and
+# ``WebSocketDisconnect`` when the transport is already dead (it wraps
+# uvicorn's ``ClientDisconnected``, an ``OSError``, so neither is a
+# ``RuntimeError``). A client that left first is not a bridge failure, and
+# letting either escape the route surfaces as "Exception in ASGI application".
+_WS_CLOSE_EXPECTED_ERRORS: Final = (RuntimeError, WebSocketDisconnect)
+
+# When the control reader ends with a send backlog still queued (a
+# burst-then-exit program), how long to let the forwarder finish draining that
+# sentinel-terminated backlog before teardown cancels it. Bounds teardown so a
+# stuck-slow client can't hang the close; a normal drain completes well within.
+_FORWARD_DRAIN_TIMEOUT_S: Final[float] = 5.0
+
+# tmux emits this control notification after copy-mode stores a selection in a
+# paste buffer. Only default-style, shell-safe names are accepted; copy-mode's
+# generated names (for example ``buffer0``) are covered without letting an
+# untrusted protocol line select an arbitrary command target.
+_CLIPBOARD_BUFFER_CHANGED_PREFIX: Final = b"%paste-buffer-changed "
+_CLIPBOARD_BUFFER_NAME_RE: Final = re.compile(rb"[A-Za-z0-9_.:-]{1,128}\Z")
+# Browser clipboard writes should stay text-sized. Bound the raw buffer before
+# base64/JSON expansion so a huge tmux buffer cannot become a websocket DoS.
+_CLIPBOARD_MAX_BYTES: Final[int] = MAX_CLIPBOARD_BYTES
+_CLIPBOARD_READ_TIMEOUT_S: Final[float] = 2.0
+# A copy-mode commit follows the initiating key or mouse release immediately.
+# Correlating the notification with this client's recent input prevents one
+# attached browser from overwriting every other viewer's local clipboard.
+_CLIPBOARD_RECENT_INPUT_WINDOW_S: Final[float] = 5.0
+
+
+def unescape_control_output(value: bytes) -> bytes:
+    """Un-escape a ``%output`` value back to raw pane bytes.
+
+    tmux escapes bytes below ASCII space and the backslash itself as a
+    three-digit octal sequence ``\\ooo``; every other byte passes through
+    verbatim. The decoded result is a raw terminal byte stream (not guaranteed
+    valid UTF-8) suitable to write straight into xterm.js.
+
+    :param value: The escaped bytes following ``%output <pane-id> `` on one
+        protocol line, e.g. ``rb"\\033[31mRED\\033[0m\\015\\012"``.
+    :returns: The raw bytes, e.g. ``b"\\x1b[31mRED\\x1b[0m\\r\\n"``.
+    """
+    return _OCTAL_ESCAPE_RE.sub(lambda m: bytes([int(m.group(1), 8)]), value)
+
+
+async def _read_tmux_buffer(
+    tmux: str,
+    socket_path: str,
+    buffer_name: str,
+) -> bytes | None:
+    """Read one named tmux buffer exactly, rejecting failures and oversized data.
+
+    ``save-buffer ... -`` writes the raw bytes without ``show-buffer``'s display
+    formatting. ``readexactly(limit + 1)`` distinguishes an in-range buffer
+    (EOF with a partial result) from an oversized one without first buffering
+    an unbounded subprocess result in Python.
+
+    :param tmux: Absolute tmux executable path.
+    :param socket_path: Private tmux server socket.
+    :param buffer_name: Validated tmux buffer name, e.g. ``"buffer0"``.
+    :returns: Raw buffer bytes, or ``None`` when unavailable/oversized.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            tmux,
+            "-S",
+            socket_path,
+            "save-buffer",
+            "-b",
+            buffer_name,
+            "-",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except (OSError, ValueError):
+        return None
+    assert proc.stdout is not None
+
+    async def _kill_and_reap() -> None:
+        """Kill the buffer reader and bound the wait for its process record."""
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(proc.wait(), timeout=_CLIPBOARD_READ_TIMEOUT_S)
+
+    data = b""
+    try:
+        try:
+            await asyncio.wait_for(
+                proc.stdout.readexactly(_CLIPBOARD_MAX_BYTES + 1),
+                timeout=_CLIPBOARD_READ_TIMEOUT_S,
+            )
+            oversized = True
+        except asyncio.IncompleteReadError as exc:
+            data = exc.partial
+            oversized = False
+        if oversized:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        await asyncio.wait_for(proc.wait(), timeout=_CLIPBOARD_READ_TIMEOUT_S)
+    except asyncio.CancelledError:
+        await _kill_and_reap()
+        raise
+    except (asyncio.TimeoutError, OSError):
+        await _kill_and_reap()
+        return None
+    if oversized or proc.returncode != 0:
+        return None
+    return data
+
+
+def _clipboard_buffer_name(line: bytes) -> str | None:
+    """Extract a safe buffer name from a tmux clipboard notification."""
+    if not line.startswith(_CLIPBOARD_BUFFER_CHANGED_PREFIX):
+        return None
+    raw_name = line[len(_CLIPBOARD_BUFFER_CHANGED_PREFIX) :]
+    if _CLIPBOARD_BUFFER_NAME_RE.fullmatch(raw_name) is None:
+        return None
+    return raw_name.decode("ascii")
+
+
+def _hex_send_keys_commands(target: str, data: bytes) -> list[bytes]:
+    """Build ``send-keys -H`` control-mode command line(s) for raw input bytes.
+
+    :param target: The tmux target the keys are sent to, e.g. ``"main"``.
+    :param data: Raw input bytes from the browser (keystrokes, paste, mouse
+        reports, ESC sequences).
+    :returns: One or more newline-terminated command lines, each carrying at
+        most :data:`_SEND_KEYS_HEX_BYTES_PER_CALL` bytes as space-separated hex.
+    """
+    commands: list[bytes] = []
+    for start in range(0, len(data), _SEND_KEYS_HEX_BYTES_PER_CALL):
+        chunk = data[start : start + _SEND_KEYS_HEX_BYTES_PER_CALL]
+        hexs = " ".join(f"{b:02x}" for b in chunk)
+        commands.append(f"send-keys -t {target} -H {hexs}\n".encode())
+    return commands
+
+
+async def _run_tmux_capture(socket_path: str, tmux_target: str) -> bytes | None:
+    """Capture the current pane screen (with escapes) to seed the browser view.
+
+    A control client only receives ``%output`` produced after it attaches, so
+    the pane's pre-attach content must be seeded explicitly. ``-e`` preserves
+    SGR/color escapes so the seed paints identically to the live pane.
+
+    ``capture-pane -p`` separates rows with a **bare LF** (``\\n``, no carriage
+    return). Written verbatim into xterm.js each LF moves the cursor down but
+    not to column 0, so every row starts where the previous one ended — the
+    whole seed staircases to the right. We rewrite each row separator to
+    ``\\r\\n`` so the grid paints flush-left, matching the live ``%output``
+    stream (which already carries CRLF). Home + clear (``\\x1b[H\\x1b[2J``) is
+    prepended so the seed lands on a clean screen at the top-left.
+
+    ``-J`` joins soft-wrapped rows back into their original logical lines, so
+    a long line the pane wrapped across rows is written to xterm as one line
+    and xterm re-wraps it with its own wrapped-line flags. Without it the
+    seed turns every soft wrap into a hard line break, and copying the line
+    back out of the browser terminal inserts a newline at each wrap point
+    (xterm's selection joiner only rejoins rows flagged as wrapped).
+
+    ``capture-pane`` records only the cell contents, not the cursor. Writing
+    the seed leaves the browser cursor wherever the last row ended, not where
+    the application actually parked it (e.g. inside a prompt input box). We
+    query ``#{cursor_x}`` / ``#{cursor_y}`` and append a CUP escape so the
+    cursor is restored to its real position, and honor ``#{cursor_flag}`` so a
+    hidden cursor stays hidden.
+
+    **Scrollback**, conditioned on the screen mode:
+
+    - **Primary screen** (a shell, the polly REPL): capture from the start of
+      history (``-S -``) so the browser recovers the full scrollback, not just
+      the visible screen. The extra history lines scroll into xterm's own
+      scrollback as they're written; the cursor CUP is screen-relative so it
+      still lands correctly on the visible grid.
+    - **Alternate screen** (claude, codex, vim): capture the visible screen
+      only. The alternate buffer has no scrollback, and ``-S -`` would leak the
+      stale *primary*-screen history from before the app switched buffers —
+      lines that were never part of the app's UI — corrupting the seed. tmux's
+      ``#{alternate_on}`` distinguishes the two.
+
+    **Screen/input modes** (alt screen, mouse tracking, DECCKM) are replayed
+    around the content via :func:`_mode_restore_escapes` — capture-pane records
+    cells only, and a TUI that enabled these before this client attached would
+    otherwise be unscrollable in the browser (see that function's docstring).
+
+    :param socket_path: tmux server socket path.
+    :param tmux_target: The ``-t`` target, e.g. ``"main"``.
+    :returns: The captured bytes to write into xterm, or ``None`` on failure
+        (the caller proceeds without a seed rather than aborting the attach).
+    """
+    tmux = shutil.which("tmux")
+    if tmux is None:
+        return None
+    meta = await _capture_pane_metadata(tmux, socket_path, tmux_target)
+    # Only extend the capture into history when on the primary screen; on the
+    # alternate screen ``-S -`` leaks stale primary history (see docstring).
+    # ``-J`` joins soft-wrapped rows into logical lines (see docstring).
+    capture_args = ["capture-pane", "-e", "-p", "-J", "-t", tmux_target]
+    if meta is not None and not meta.alternate_on:
+        capture_args += ["-S", "-"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            tmux,
+            "-S",
+            socket_path,
+            *capture_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+    except (OSError, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    # ``capture-pane -p`` emits one LF per row — INCLUDING a trailing LF after
+    # the final row. Writing that trailing separator paints the last row and
+    # then advances the cursor past it, which on a full-height pane scrolls the
+    # whole screen up by one line (the "extra line" / off-by-one). Strip the
+    # single trailing newline so the last row is painted with no line break
+    # after it; the cursor-restore escape then lands on the correct row.
+    body = stdout[:-1] if stdout.endswith(b"\n") else stdout
+    # Normalize the remaining bare-LF row separators to CRLF (see docstring) and
+    # paint onto a cleared screen from the home cursor so the seed can't
+    # staircase.
+    normalized = _CAPTURE_ROW_SEP_RE.sub(b"\r\n", body)
+    cursor = _cursor_restore_escape(meta)
+    prelude, postlude = _mode_restore_escapes(meta)
+    return prelude + b"\x1b[H\x1b[2J" + normalized + cursor + postlude
+
+
+@dataclass(frozen=True)
+class _PaneMetadata:
+    """Pane state needed to reconstruct the seed: cursor + screen/input modes.
+
+    :param cursor_x: 0-based cursor column from ``#{cursor_x}``.
+    :param cursor_y: 0-based cursor row from ``#{cursor_y}``.
+    :param cursor_visible: Whether ``#{cursor_flag}`` reported the cursor shown.
+    :param alternate_on: Whether the pane is on the alternate screen
+        (``#{alternate_on}`` == 1).
+    :param mouse_standard: DECSET 1000 (button press/release) from
+        ``#{mouse_standard_flag}``.
+    :param mouse_button: DECSET 1002 (press/release + drag) from
+        ``#{mouse_button_flag}``.
+    :param mouse_all: DECSET 1003 (any motion) from ``#{mouse_all_flag}``.
+    :param mouse_sgr: DECSET 1006 (SGR report encoding) from
+        ``#{mouse_sgr_flag}``.
+    :param mouse_utf8: DECSET 1005 (UTF-8 report encoding) from
+        ``#{mouse_utf8_flag}``.
+    :param app_cursor_keys: DECCKM (application cursor keys) from
+        ``#{keypad_cursor_flag}``.
+    :param bracket_paste: DECSET 2004 (bracketed paste) from
+        ``#{bracket_paste_flag}``.
+    """
+
+    cursor_x: int
+    cursor_y: int
+    cursor_visible: bool
+    alternate_on: bool
+    mouse_standard: bool = False
+    mouse_button: bool = False
+    mouse_all: bool = False
+    mouse_sgr: bool = False
+    mouse_utf8: bool = False
+    app_cursor_keys: bool = False
+    bracket_paste: bool = False
+
+
+def _mode_restore_escapes(meta: _PaneMetadata | None) -> tuple[bytes, bytes]:
+    """Build the DECSET escapes that restore the pane program's screen modes.
+
+    ``capture-pane`` replays cell contents only — the mode-set sequences the
+    program emitted at startup (enter alternate screen, enable mouse tracking)
+    happened before this client attached and are never in the ``%output``
+    stream. Without replaying them the browser xterm believes no mouse
+    tracking is active, so a wheel over a TUI that scrolls via mouse reports
+    (OpenCode, claude, vim) sends nothing at all and the view cannot scroll
+    until the program happens to re-toggle its modes.
+
+    tmux tracks each mode as a pane flag, so the seed can reconstruct them:
+
+    - Prelude (before the clear + content): ``?1049h`` when the pane is on the
+      alternate screen, so the seed paints into xterm's alt buffer and never
+      pollutes primary-screen scrollback.
+    - Postlude (after the cursor restore): the mouse tracking mode
+      (``?1000h``/``?1002h``/``?1003h``), its report encoding
+      (``?1005h``/``?1006h``), DECCKM (``?1h``) so wheel-to-arrow
+      fallback picks the encoding the program expects, and bracketed
+      paste (``?2004h``). Without the 2004 replay, a pane program that
+      enabled bracketed paste before this client attached (readline,
+      claude) leaves the browser xterm unaware, so a multi-line paste is
+      sent as raw newlines and readline executes each line on arrival
+      instead of inserting the block. ``#{bracket_paste_flag}`` needs
+      tmux >= 3.7; older tmux expands it empty, degrading to no replay
+      (the pre-replay behavior).
+
+    Only enables are emitted: every attach starts a fresh xterm whose modes
+    default off, so disables would be no-ops.
+
+    :param meta: Pane metadata, or ``None`` (no modes restored).
+    :returns: ``(prelude, postlude)`` byte strings, either possibly empty.
+    """
+    if meta is None:
+        return b"", b""
+    prelude = b"\x1b[?1049h" if meta.alternate_on else b""
+    postlude = b""
+    if meta.mouse_standard:
+        postlude += b"\x1b[?1000h"
+    if meta.mouse_button:
+        postlude += b"\x1b[?1002h"
+    if meta.mouse_all:
+        postlude += b"\x1b[?1003h"
+    if meta.mouse_utf8:
+        postlude += b"\x1b[?1005h"
+    if meta.mouse_sgr:
+        postlude += b"\x1b[?1006h"
+    if meta.app_cursor_keys:
+        postlude += b"\x1b[?1h"
+    if meta.bracket_paste:
+        postlude += b"\x1b[?2004h"
+    return prelude, postlude
+
+
+async def _capture_pane_metadata(
+    tmux: str, socket_path: str, tmux_target: str
+) -> _PaneMetadata | None:
+    """Query cursor position, cursor visibility, and alt-screen state.
+
+    One ``display-message`` fetches every field the seed needs. Returns
+    ``None`` on any failure — the caller degrades gracefully (skips the
+    history extension and the cursor restore) rather than aborting the attach.
+
+    :param tmux: Absolute path to the tmux binary.
+    :param socket_path: tmux server socket path.
+    :param tmux_target: The ``-t`` target, e.g. ``"main"``.
+    :returns: The parsed :class:`_PaneMetadata`, or ``None`` if unavailable.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            tmux,
+            "-S",
+            socket_path,
+            "display-message",
+            "-p",
+            "-t",
+            tmux_target,
+            "#{cursor_x},#{cursor_y},#{cursor_flag},#{alternate_on},"
+            "#{mouse_standard_flag},#{mouse_button_flag},#{mouse_all_flag},"
+            "#{mouse_sgr_flag},#{mouse_utf8_flag},#{keypad_cursor_flag},"
+            "#{bracket_paste_flag}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+    except (OSError, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        fields = [f.strip() for f in stdout.decode().strip().split(",")]
+        if len(fields) < 4:
+            return None
+        # A tmux without some mouse/DECCKM formats expands them to "" (the
+        # field count holds), but pad regardless: a flags anomaly must cost
+        # only the optional mode replay, never the mandatory cursor and
+        # alt-screen state the rest of the seed depends on.
+        fields += ["0"] * (11 - len(fields))
+        x_str, y_str, flag_str, alt_str, std, btn, allm, sgr, utf8, ckm, bpaste = fields[:11]
+        return _PaneMetadata(
+            cursor_x=int(x_str),
+            cursor_y=int(y_str),
+            cursor_visible=flag_str == "1",
+            alternate_on=alt_str == "1",
+            mouse_standard=std == "1",
+            mouse_button=btn == "1",
+            mouse_all=allm == "1",
+            mouse_sgr=sgr == "1",
+            mouse_utf8=utf8 == "1",
+            app_cursor_keys=ckm == "1",
+            bracket_paste=bpaste == "1",
+        )
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _cursor_restore_escape(meta: _PaneMetadata | None) -> bytes:
+    """Build the escape that restores the pane cursor after a seed.
+
+    :param meta: Pane metadata from :func:`_capture_pane_metadata`, or ``None``.
+    :returns: A CUP escape (``\\x1b[{row};{col}H``, 1-based) plus a show/hide
+        escape matching the pane's cursor visibility, or ``b""`` when *meta* is
+        ``None`` (a missing cursor restore is cosmetic, never fatal).
+    """
+    if meta is None:
+        return b""
+    # tmux cursor_x/y are 0-based; CUP is 1-based.
+    cup = f"\x1b[{meta.cursor_y + 1};{meta.cursor_x + 1}H".encode()
+    visibility = b"\x1b[?25h" if meta.cursor_visible else b"\x1b[?25l"
+    return cup + visibility
+
+
+async def bridge_tmux_control_to_websocket(
+    websocket: WebSocket,
+    *,
+    socket_path: str,
+    tmux_target: str,
+    read_only: bool,
+    on_client_interaction: Callable[[], None] | None = None,
+    reader_done: asyncio.Event | None = None,
+    forward_done: asyncio.Event | None = None,
+) -> None:
+    """Bridge a tmux control-mode client to an already-accepted *websocket*.
+
+    Caller must have called ``websocket.accept()``. On exit the control client
+    is torn down and the websocket closed best-effort with the shared
+    4404/4405 codes.
+
+    :param websocket: An accepted FastAPI :class:`WebSocket`.
+    :param socket_path: Filesystem path to the tmux server socket.
+    :param tmux_target: The ``-t`` target string identifying the session.
+    :param read_only: When ``True``, drop inbound binary input frames and
+        attach with ``ignore-size`` so the viewer can't resize the pane.
+    :param on_client_interaction: Optional callback fired on every client
+        interaction (connect, disconnect, each input/resize frame) so the
+        idle watcher can discount client-driven repaints.
+    :param reader_done: Optional test-only event set once the reader has queued
+        the full backlog and the ``None`` EOF sentinel, letting a test await the
+        reader draining tmux instead of sleeping. Inert (never awaited) when
+        ``None``, which is the only case real callers hit.
+    :param forward_done: Optional test-only event set once the forwarder task
+        returns (normal completion or cancellation), letting a test await the
+        backlog fully flushing to the browser. Inert when ``None``.
+    """
+    # Attaching reflows the pane to this client's size — stamp it as a client
+    # interaction so the idle watcher discounts the resulting repaint.
+    if on_client_interaction is not None:
+        on_client_interaction()
+
+    tmux = shutil.which("tmux")
+    if tmux is None:
+        _logger.error("tmux not found on PATH; cannot control-attach target=%s", tmux_target)
+        with contextlib.suppress(*_WS_CLOSE_EXPECTED_ERRORS):
+            await websocket.close(code=WS_CLOSE_INTERNAL_ERROR, reason="tmux not found")
+        return
+
+    # Seed the browser terminal with the current screen BEFORE attaching so no
+    # pre-attach content is missing. Failure is non-fatal — a live pane redraw
+    # will repaint it shortly.
+    seed = await _run_tmux_capture(socket_path, tmux_target)
+    if seed:
+        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+            await websocket.send_bytes(seed)
+
+    argv = [tmux, "-S", socket_path, "-f", "/dev/null", "-C", "attach"]
+    if read_only:
+        # Not ``-r``: tmux >= 3.7 rejects ``send-keys`` whose implicit target
+        # client is read-only, so a viewer would block the harness from typing
+        # into the pane. Input is already dropped below; keep only the
+        # ignore-size half of ``-r`` so a viewer can't resize the owner's pane.
+        argv += ["-f", "ignore-size"]
+    argv += ["-t", tmux_target]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            # Pin the client's TERM so a leaked ``dumb`` from the runner env
+            # can't reach a pane TUI via ``#{client_termname}`` (see
+            # _WEB_TERMINAL_TERM).
+            env={**os.environ, "TERM": _WEB_TERMINAL_TERM},
+            # Raise the stdout StreamReader buffer above the 64 KiB default so a
+            # single ``read`` can pull a whole output burst (see
+            # _CONTROL_STDOUT_BUFFER_LIMIT).
+            limit=_CONTROL_STDOUT_BUFFER_LIMIT,
+        )
+    except (OSError, ValueError):
+        _logger.exception("control-attach spawn failed target=%s", tmux_target)
+        with contextlib.suppress(*_WS_CLOSE_EXPECTED_ERRORS):
+            await websocket.close(code=WS_CLOSE_INTERNAL_ERROR, reason="control attach failed")
+        return
+
+    assert proc.stdin is not None and proc.stdout is not None
+    stdin = proc.stdin
+    stdout = proc.stdout
+
+    # Decoded ``%output`` payloads flow reader → forwarder through this queue
+    # (``None`` = EOF sentinel). The forwarder coalesces everything queued into
+    # one bounded ``send_bytes``, so when the browser send lags tmux's firehose
+    # a backlog of tiny per-line payloads collapses into a few large frames.
+    output_chunks: asyncio.Queue[bytes | None] = asyncio.Queue()
+    # Keep at most the newest pending clipboard buffer plus the EOF sentinel.
+    # A noisy pane cannot build an unbounded queue of names/subprocess reads.
+    clipboard_buffers: asyncio.Queue[str | None] = asyncio.Queue(maxsize=2)
+    # Terminal bytes and clipboard JSON have separate producer tasks but one
+    # websocket. Serialize sends so ASGI never sees concurrent send calls.
+    ws_send_lock = asyncio.Lock()
+    # Monotonic stamp of the last forwarded browser input; the forwarder reads
+    # it to shrink the frame cap right after a keystroke (keeping the echo on
+    # xterm's synchronous paint path) and clipboard
+    # forwarding uses it to identify which attached client initiated a copy.
+    last_client_input_at: float | None = None
+
+    def _current_ws_coalesce_limit() -> int:
+        """Per-frame cap: small right after input, larger for output floods."""
+        return _coalesce_limit_after_input(last_client_input_at)
+
+    def _queue_clipboard_buffer(buffer_name: str) -> None:
+        """Replace pending clipboard names with the newest notification."""
+        eof_seen = False
+        while True:
+            try:
+                queued = clipboard_buffers.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if queued is None:
+                eof_seen = True
+        if eof_seen:
+            clipboard_buffers.put_nowait(None)
+        else:
+            clipboard_buffers.put_nowait(buffer_name)
+
+    async def _send_command(line: bytes) -> None:
+        """Write one newline-terminated control command, ignoring a dead pipe."""
+        if stdin.is_closing():
+            return
+        try:
+            stdin.write(line)
+            await stdin.drain()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            return
+
+    def _handle_control_line(line: bytes) -> bool:
+        """Route one protocol line; return ``True`` to keep reading.
+
+        Queues decoded ``%output`` payloads for the forwarder and detects the
+        lifecycle lines that end the stream (session gone / ``%exit`` /
+        window-close). Pure parsing — the actual browser send is the
+        forwarder's job.
+
+        :param line: One control-protocol line, without its trailing newline.
+        :returns: ``True`` to continue reading, ``False`` to stop.
+        """
+        if line.startswith(b"%output "):
+            # %output %<pane-id> <escaped-bytes>
+            parts = line.split(b" ", 2)
+            if len(parts) == 3:
+                output_chunks.put_nowait(unescape_control_output(parts[2]))
+            return True
+        buffer_name = _clipboard_buffer_name(line)
+        if buffer_name is not None:
+            if (
+                not read_only
+                and last_client_input_at is not None
+                and _monotonic() - last_client_input_at <= _CLIPBOARD_RECENT_INPUT_WINDOW_S
+            ):
+                _queue_clipboard_buffer(buffer_name)
+            return True
+        if line.startswith(b"%exit"):
+            return False
+        if line.startswith(b"%window-close"):
+            # The single-pane session's only window closing means the pane is
+            # gone. Let the exit path decide detach-vs-gone via a liveness
+            # probe. (%pane-mode-changed — copy-mode enter/leave — is
+            # deliberately NOT a close trigger.)
+            return False
+        # %begin/%end/%error reply blocks and other notifications
+        # (%layout-change, %session-changed, %window-*) need no browser
+        # forwarding — the browser xterm renders purely from %output.
+        return True
+
+    async def _read_control() -> None:
+        """Read raw control-stream chunks, parse lines, queue %output.
+
+        Reads with ``stdout.read()`` rather than ``readline()`` so one wakeup
+        can pull many buffered ``%output`` lines at once — letting the
+        forwarder coalesce them — and so an oversized line can't raise
+        ``LimitOverrunError``. Always enqueues the ``None`` EOF sentinel on exit
+        so the forwarder terminates.
+        """
+        buffer = b""
+        try:
+            while True:
+                data = await stdout.read(_CONTROL_READ_CHUNK)
+                if not data:
+                    # tmux control client closed its stdout — server/session gone.
+                    return
+                buffer += data
+                # Parse all COMPLETE lines; keep any trailing partial for next read.
+                *lines, buffer = buffer.split(b"\n")
+                for raw_line in lines:
+                    if not _handle_control_line(raw_line.rstrip(b"\r")):
+                        return
+        finally:
+            output_chunks.put_nowait(None)
+            clipboard_buffers.put_nowait(None)
+            if reader_done is not None:
+                reader_done.set()
+
+    async def _forward_clipboard_updates() -> None:
+        """Read copied tmux buffers and send bounded clipboard control frames."""
+        while True:
+            buffer_name = await clipboard_buffers.get()
+            if buffer_name is None:
+                return
+
+            # When several copies arrive before the subprocess starts, only the
+            # newest clipboard value matters. Preserve an EOF sentinel so the
+            # task exits after forwarding that final value.
+            eof_seen = False
+            while True:
+                try:
+                    next_name = clipboard_buffers.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if next_name is None:
+                    eof_seen = True
+                    break
+                buffer_name = next_name
+
+            data = await _read_tmux_buffer(tmux, socket_path, buffer_name)
+            if data is not None:
+                message = json.dumps(
+                    {
+                        "type": "clipboard-write",
+                        "encoding": "base64",
+                        "data": base64.b64encode(data).decode("ascii"),
+                    },
+                    separators=(",", ":"),
+                )
+                try:
+                    async with ws_send_lock:
+                        await websocket.send_text(message)
+                except (RuntimeError, WebSocketDisconnect):
+                    return
+            if eof_seen:
+                return
+
+    async def _ws_to_control() -> None:
+        """Read browser frames; resize via refresh-client -C, input via -H hex."""
+        nonlocal last_client_input_at
+        try:
+            while True:
+                msg = await websocket.receive()
+                if on_client_interaction is not None:
+                    on_client_interaction()
+                if msg.get("type") == "websocket.disconnect":
+                    return
+                text = msg.get("text")
+                data = msg.get("bytes")
+                if text is not None:
+                    try:
+                        ctl = json.loads(text)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if isinstance(ctl, dict) and ctl.get("type") == "resize":
+                        try:
+                            cols = int(ctl["cols"])
+                            rows = int(ctl["rows"])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        await _send_command(f"refresh-client -C {cols}x{rows}\n".encode())
+                elif data is not None and not read_only:
+                    # Stamp before sending so the next %output (the echo) takes
+                    # the small interactive frame cap.
+                    last_client_input_at = _monotonic()
+                    for cmd in _hex_send_keys_commands(tmux_target, data):
+                        await _send_command(cmd)
+        except WebSocketDisconnect:
+            return
+
+    # Do NOT prime a default size. A control client leaves the window size
+    # untouched until it issues its first ``refresh-client -C``, so priming
+    # 80x24 here would shrink the window on attach and then grow it again the
+    # instant the browser reports its real dimensions — two spurious SIGWINCHes
+    # per attach (visible as a resize bounce every time the terminal is
+    # re-mounted, e.g. toggling transcript mode). Instead we wait for the
+    # browser's first resize message; tmux dedupes a ``refresh-client -C`` that
+    # matches the current window size, so a re-attach at an unchanged size emits
+    # no resize at all.
+
+    # Reader parses the control stream and queues %output; forwarder coalesces
+    # queued payloads into bounded WebSocket frames; ws task drives input.
+    read_task = asyncio.create_task(_read_control(), name="tmux-control-read")
+    forward_task = asyncio.create_task(
+        _forward_terminal_to_ws(
+            websocket,
+            output_chunks,
+            max_coalesce_bytes=_current_ws_coalesce_limit,
+            send_lock=ws_send_lock,
+        ),
+        name="tmux-control-forward",
+    )
+    clipboard_task = asyncio.create_task(
+        _forward_clipboard_updates(), name="tmux-control-clipboard"
+    )
+    if forward_done is not None:
+        forward_task.add_done_callback(lambda _task: forward_done.set())
+    ws_task = asyncio.create_task(_ws_to_control(), name="tmux-ws-to-control")
+    # "Control side ended" == the reader finished (session gone / %exit /
+    # window-close) — the signal the close-code logic keys on. The forwarder
+    # finishing is downstream (it drains, then sees the EOF sentinel).
+    control_ended_first = False
+    try:
+        # The clipboard task is intentionally not a FIRST_COMPLETED trigger: it
+        # may finish after the reader's EOF sentinel, but the reader itself is
+        # the authoritative control-side completion signal.
+        done, pending = await asyncio.wait(
+            {read_task, forward_task, ws_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        control_ended_first = read_task in done
+        # When the reader finished first it already queued every remaining
+        # %output plus the None EOF sentinel, so the forwarder will drain the
+        # backlog and exit on its own. Await it (bounded) BEFORE cancelling so a
+        # burst-then-exit program's tail isn't dropped mid-drain — the exact
+        # loss the old inline-send loop couldn't have (it flushed each frame
+        # before reading the next line). Bounded so a wedged/stuck-slow send
+        # can't hang teardown; the timeout then falls through to cancel.
+        if control_ended_first and not forward_task.done():
+            # Suppress everything here (TimeoutError → drain took too long, fall
+            # through to cancel; any other error → the forwarder itself raised,
+            # which asyncio.shield propagates out of wait_for instead of
+            # TimeoutError). Letting either escape would skip the cancel/log
+            # bookkeeping below (the finally still runs). A real forwarder error
+            # is still surfaced by the exception-logging loop, since forward_task
+            # is then done() with it stored. ``Exception`` (not BaseException)
+            # so a CancelledError of the outer bridge still propagates.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    asyncio.shield(forward_task), timeout=_FORWARD_DRAIN_TIMEOUT_S
+                )
+        if control_ended_first and not clipboard_task.done():
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    asyncio.shield(clipboard_task), timeout=_FORWARD_DRAIN_TIMEOUT_S
+                )
+        for task in {*pending, clipboard_task}:
+            if task.done():
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        for task in {read_task, forward_task, clipboard_task, ws_task}:
+            if task.done() and not task.cancelled():
+                exc = task.exception()
+                if exc is not None:
+                    _logger.warning("control-attach: bridge task crashed: %r", exc)
+    finally:
+        # Outer route cancellation can bypass the normal post-wait cleanup.
+        # Always stop and join every child task before detaching the tmux client.
+        bridge_tasks = {read_task, forward_task, clipboard_task, ws_task}
+        for task in bridge_tasks:
+            if not task.done():
+                task.cancel()
+        task_results = await asyncio.gather(*bridge_tasks, return_exceptions=True)
+        for result in task_results:
+            if isinstance(result, Exception):
+                _logger.warning("control-attach: bridge task failed during teardown: %r", result)
+        # Detach reflows the pane back to remaining clients — stamp it.
+        if on_client_interaction is not None:
+            on_client_interaction()
+        # Detach the control client: an empty command line detaches cleanly.
+        await _send_command(b"\n")
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+        with contextlib.suppress(*_WS_CLOSE_EXPECTED_ERRORS):
+            if control_ended_first:
+                # The control client ended: distinguish a genuine session-gone
+                # (%exit with a dead/absent pane) from a mere detach. Reuse the
+                # Use the shared pane-dead probe for a single source of truth.
+                pane_dead = await _check_pane_dead_definitive(socket_path, tmux_target)
+                if pane_dead is True or (
+                    pane_dead is None and not await _tmux_session_alive(socket_path, tmux_target)
+                ):
+                    await websocket.close(
+                        code=WS_CLOSE_TERMINAL_NOT_FOUND,
+                        reason="terminal session ended",
+                    )
+                else:
+                    await websocket.close(
+                        code=WS_CLOSE_TERMINAL_DETACHED,
+                        reason="terminal detached",
+                    )
+            else:
+                await websocket.close()
