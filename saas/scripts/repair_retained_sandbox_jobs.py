@@ -77,7 +77,11 @@ def kubernetes_api(directory: Path):
                             method,
                             url,
                             None if body is None else json.dumps(body),
-                            {"Content-Type": "application/json"},
+                            {
+                                "Content-Type": "application/json-patch+json"
+                                if method == "PATCH"
+                                else "application/json"
+                            },
                         )
                         response = connection.getresponse()
                         raw = response.read()
@@ -233,6 +237,43 @@ def main() -> None:
                 )
                 for p in pods
             ):
+                effective_expiry = None
+                if plan["expires_at"] is not None:
+                    current = api("GET", job_url)
+                    started = current.get("status", {}).get("startTime")
+                    if not started:
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("replacement controller start time")
+                        time.sleep(1)
+                        continue
+                    start_time = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                    expiry = datetime.fromisoformat(plan["expires_at"])
+                    remaining = int((expiry - start_time).total_seconds())
+                    if remaining <= 0:
+                        raise RuntimeError("original lifetime elapsed during handoff")
+                    actual = current["spec"]["activeDeadlineSeconds"]
+                    if actual > remaining:
+                        api(
+                            "PATCH",
+                            job_url,
+                            [
+                                {"op": "test", "path": "/metadata/uid", "value": new_uid},
+                                {
+                                    "op": "test",
+                                    "path": "/metadata/resourceVersion",
+                                    "value": current["metadata"]["resourceVersion"],
+                                },
+                                {
+                                    "op": "replace",
+                                    "path": "/spec/activeDeadlineSeconds",
+                                    "value": remaining,
+                                },
+                            ],
+                        )
+                        actual = remaining
+                    effective_expiry = start_time.timestamp() + actual
+                    if effective_expiry > expiry.timestamp():
+                        raise RuntimeError("replacement extended the original lifetime")
                 save(
                     "pass",
                     new_job_uid=new_uid,
@@ -240,6 +281,8 @@ def main() -> None:
                     image=args.image,
                     pod_deleted=False,
                     pvc_deleted=False,
+                    original_expiry=plan["expires_at"],
+                    effective_expiry_epoch=effective_expiry,
                 )
                 print(
                     json.dumps(
