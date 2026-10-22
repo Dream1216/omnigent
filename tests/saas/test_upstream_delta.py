@@ -131,10 +131,21 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 5300
-    assert budget["max_direct_upstream_files"] == 166
+    assert budget["max_direct_upstream_files"] == 167
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    e2e = revision["governed_litellm_e2e_entry"]
+    assert e2e["revision"] == "litellm-governed-e2e-entry-budget-v34"
+    assert e2e["approved_at"] == "2026-10-22"
+    assert e2e["previous_max_direct_upstream_files"] == 166
+    assert e2e["approved_max_direct_upstream_files"] == 167
+    assert e2e["measured_before_integration"] == {
+        "direct_upstream_files": 166,
+        "upstream_net_added_loc": 5291,
+        "active_patches": 9,
+    }
+    assert e2e["scoped_paths"] == ["tests/e2e/test_governed_litellm_e2e.py"]
     pagination = revision["pagination_test_followup"]
     assert pagination["revision"] == "litellm-customer-pagination-tests-budget-v33"
     assert pagination["approved_at"] == "2026-10-20"

@@ -48,11 +48,27 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 166,
+    "max_direct_upstream_files": 167,
     "max_upstream_net_added_loc": 5300,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "governed_litellm_e2e_entry": {
+      "revision": "litellm-governed-e2e-entry-budget-v34",
+      "approved_at": "2026-10-22",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 166,
+      "approved_max_direct_upstream_files": 167,
+      "measured_before_integration": {
+        "direct_upstream_files": 166,
+        "upstream_net_added_loc": 5291,
+        "active_patches": 9
+      },
+      "scoped_paths": [
+        "tests/e2e/test_governed_litellm_e2e.py"
+      ],
+      "reason": "The account owner explicitly approved raising only the direct upstream file ceiling from 166 to 167 for the eight-line governed LiteLLM E2E entry. Reuse the maintained controller, Host, LiteLLM and PostgreSQL billing scenario; missing runtime prerequisites must remain explicit skips, not passes. Preserve the 5,300-net-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production gate. This scope approval is not CI, independent review, image admission, a shared release-window authorization or production acceptance."
+    },
     "pagination_test_followup": {
       "revision": "litellm-customer-pagination-tests-budget-v33",
       "approved_at": "2026-10-20",
