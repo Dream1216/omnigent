@@ -705,6 +705,51 @@ def test_retained_facts_without_any_run_refuse_before_all_inverse_mutation(
             }
         assert after == before
         assert before["saas_runs"] == before["saas_execution_sessions"] == []
+        # The same retained rows cannot pass P15, but are legal T facts because
+        # no T migration or data guard is crossed by an explicit T inverse.
+        tables = tuple(
+            sorted(
+                name
+                for name in sa.inspect(engine).get_table_names(schema="public")
+                if name not in {"alembic_version", "saas_alembic_version"}
+            )
+        )
+        snapshot = runtime_native.capture_t_preserved_facts(
+            owner,
+            maintenance=maintenance,
+            expected_identity=identity,
+            expected_tables=tables,
+            max_copy_bytes=16 * 1024 * 1024,
+            expected_head="p0s000000018",
+        )
+        retained_table = (
+            "saas_model_provider_budget_reservations"
+            if retained == "budget_without_run"
+            else "saas_platform_audit_events"
+        )
+        assert snapshot["tables"][retained_table]["row_count"] == 1
+        assert (
+            runtime_native.capture_t_preserved_facts(
+                owner,
+                maintenance=maintenance,
+                expected_identity=identity,
+                expected_tables=tables,
+                max_copy_bytes=16 * 1024 * 1024,
+                expected_head="p0s000000018",
+            )
+            == snapshot
+        )
+        with pytest.raises(db.Refused):
+            runtime_native.capture_t_preserved_facts(
+                owner,
+                maintenance=app,
+                expected_identity=identity,
+                expected_tables=tables,
+                max_copy_bytes=16 * 1024 * 1024,
+                expected_head="p0s000000018",
+            )
+        assert native.head(owner) == "p0s000000018"
+        assert runtime_native.policy_snapshot(owner) == policies
     finally:
         app.close()
         owner.close()

@@ -6,6 +6,7 @@ these unit cases exercise the public API's effect ordering with no database I/O.
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from types import SimpleNamespace
@@ -254,3 +255,275 @@ def test_policy_snapshot_uses_canonical_context_and_restores_caller(monkeypatch)
     assert connection.search_path == "public,fixture"
     assert len(snapshots) == 4
     assert all(row["raw_ast_and_OID_and_deparsed_fields"] is sentinel for row in snapshots)
+
+
+def _explicit_t_fixture(boundary, **changes):
+    operation = recovery.ExplicitTRecoveryOperation(
+        **{
+            **asdict(boundary.operation),
+            "contract_version": recovery.T_PROTOCOL,
+            "rollback_saas_target": recovery.T_HEAD,
+            "rollback_host_digest": "sha256:" + "5" * 64,
+            "rollback_upstream_revision": "6" * 40,
+            "rollback_adapter_contract_version": "0.2.0",
+            **changes,
+        }
+    )
+    gold = {**boundary.gold, "rollback_target": operation.target_contract()}
+    operation = replace(operation, source_gold_sha256=adapter.sha(adapter.canonical(gold)))
+    return operation, gold
+
+
+def test_original_p15_operation_json_fields_remain_exact(recovery_boundary):
+    operation = replace(
+        recovery_boundary.operation, operation_id="00000000-0000-0000-0000-000000000001"
+    )
+    assert tuple(asdict(operation)) == (
+        "operation_id",
+        "candidate_product_revision",
+        "candidate_server_digest",
+        "rollback_product_revision",
+        "rollback_server_digest",
+        "database_identity",
+        "backup_object_uri",
+        "backup_object_version",
+        "backup_ciphertext_sha256",
+        "backup_manifest_sha256",
+        "backup_kms_key_version",
+        "fence_generation",
+        "fence_scope_sha256",
+        "fence_record_sha256",
+        "source_gold_sha256",
+    )
+    document = adapter.canonical(asdict(operation))
+    assert adapter.sha(document) == (
+        "29e8514fda8fb96f2c201f4419b570317490d50c733353a6d026796ae54fbd0f"
+    )
+    decoded = recovery.load_operation_document(json.loads(document))
+    assert type(decoded) is recovery.RecoveryOperation
+    assert adapter.canonical(asdict(decoded)) == document
+    control, state = recovery_boundary.make(supplied_operation=decoded)
+    records = []
+    control.checkpoint = lambda phase, value: records.append(
+        adapter.canonical({"checkpoint_phase": phase, "state": value})
+    )
+    control._save("prepared", state)
+    assert adapter.sha(records[0]) == (
+        "4e8018d9759724428ba25d5aaa9087063053b4a8649c5bcc3bb12ad614e8b040"
+    )
+
+
+def test_explicit_t_json_roundtrip_is_versioned_and_bound(recovery_boundary):
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    raw = adapter.canonical(asdict(operation))
+    document = json.loads(raw)
+    assert len(document) == 20
+    assert type(document["contract_version"]) is str
+    assert type(document["rollback_saas_target"]) is str
+    decoded = recovery.load_operation_document(document)
+    assert type(decoded) is recovery.ExplicitTRecoveryOperation
+    assert adapter.canonical(asdict(decoded)) == raw
+    control, state = recovery_boundary.make(supplied_operation=decoded, supplied_gold=gold)
+    recovery.require_checkpoint_operation(json.loads(adapter.canonical(state)), decoded)
+    assert gold["rollback_target"]["contract_version"] == recovery.T_PROTOCOL
+    assert recovery._rollback_revision(control.operation) == "lm2t00000001"
+    assert recovery._rollback_revision(recovery_boundary.operation) == "p0s000000015"
+    assert recovery_boundary.events == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"contract_version": "unknown"},
+        {"rollback_saas_target": "p0s000000015"},
+        {"rollback_saas_target": True},
+        {"rollback_host_digest": "mutable:latest"},
+        {"rollback_upstream_revision": "unknown"},
+        {"rollback_adapter_contract_version": "unknown"},
+    ],
+)
+def test_explicit_t_unknown_contract_or_pair_stops_before_io(recovery_boundary, change):
+    operation, gold = _explicit_t_fixture(recovery_boundary, **change)
+    with pytest.raises(adapter.Refused):
+        recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    assert recovery_boundary.events == []
+
+
+@pytest.mark.parametrize("document", [None, True, [], "unknown"])
+def test_operation_loader_rejects_non_objects(document):
+    with pytest.raises(adapter.Refused, match="operation_document_must_be_object"):
+        recovery.load_operation_document(document)
+
+
+@pytest.mark.parametrize("variation", ["extra", "missing", "unknown-version", "old-enum-shape"])
+def test_operation_loader_never_repairs_unknown_shapes(recovery_boundary, variation):
+    operation, _gold = _explicit_t_fixture(recovery_boundary)
+    document = json.loads(adapter.canonical(asdict(operation)))
+    if variation == "extra":
+        document["extra"] = "unknown"
+    elif variation == "missing":
+        del document["rollback_host_digest"]
+    elif variation == "unknown-version":
+        document["contract_version"] = "unknown"
+    else:
+        document = {
+            **asdict(recovery_boundary.operation),
+            "rollback_saas_target": "p0s000000015",
+            "rollback_host_digest": None,
+            "rollback_upstream_revision": None,
+            "rollback_adapter_contract_version": None,
+        }
+    before = adapter.canonical(document)
+    with pytest.raises(adapter.Refused, match="operation_document_version_or_shape_unknown"):
+        recovery.load_operation_document(document)
+    assert adapter.canonical(document) == before
+    assert recovery_boundary.events == []
+
+
+@pytest.mark.parametrize(
+    "change", [{"fence_generation": True}, {"database_identity": None}, {"operation_id": "bad"}]
+)
+def test_operation_loader_invalid_values_fail_closed(recovery_boundary, change):
+    document = {**asdict(recovery_boundary.operation), **change}
+    with pytest.raises(adapter.Refused, match="operation_document_"):
+        recovery.load_operation_document(document)
+    assert recovery_boundary.events == []
+
+
+def test_loader_preserves_bad_gold_and_source_pins_for_original_checks(recovery_boundary):
+    for field, value, reason in [
+        ("source_gold_sha256", "0" * 64, "source_gold_bytes_mismatch"),
+        ("candidate_product_revision", "0" * 40, "candidate_product_mismatch"),
+    ]:
+        operation = recovery.load_operation_document(
+            {**asdict(recovery_boundary.operation), field: value}
+        )
+        assert getattr(operation, field) == value
+        with pytest.raises(adapter.Refused, match=reason):
+            recovery_boundary.make(supplied_operation=operation)
+    assert recovery_boundary.events == []
+
+
+def test_unknown_operation_subclass_is_not_a_target_authority(recovery_boundary):
+    class UnknownOperation(recovery.RecoveryOperation):
+        pass
+
+    with pytest.raises(adapter.Refused, match="operation_type_unknown"):
+        recovery_boundary.make(
+            supplied_operation=UnknownOperation(**asdict(recovery_boundary.operation))
+        )
+    assert recovery_boundary.events == []
+
+
+def test_t_checkpoint_cannot_cross_target_or_fence(recovery_boundary):
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    _control, state = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    for expected in [recovery_boundary.operation, replace(operation, fence_generation=2)]:
+        with pytest.raises(adapter.Refused, match="checkpoint_operation_mismatch"):
+            recovery.require_checkpoint_operation(json.loads(adapter.canonical(state)), expected)
+    with pytest.raises(adapter.Refused, match="checkpoint_operation_mismatch"):
+        recovery.require_checkpoint_operation(
+            {"operation": asdict(recovery_boundary.operation)}, operation
+        )
+    assert recovery_boundary.events == []
+
+
+def test_explicit_t_requires_versioned_target_gold(recovery_boundary):
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    gold = {**gold, "rollback_target": {**gold["rollback_target"]}}
+    del gold["rollback_target"]["contract_version"]
+    operation = replace(operation, source_gold_sha256=adapter.sha(adapter.canonical(gold)))
+    with pytest.raises(adapter.Refused, match="explicit_t_target_gold_mismatch"):
+        recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    assert recovery_boundary.events == []
+
+
+@pytest.mark.parametrize("callback", ["before", "checkpoint"])
+def test_explicit_t_has_no_missing_callback_default(recovery_boundary, callback):
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    with pytest.raises(adapter.Refused, match="coordinator_callbacks_required"):
+        recovery_boundary.make(
+            supplied_operation=operation, supplied_gold=gold, **{callback: False}
+        )
+    assert recovery_boundary.events == []
+
+
+def test_wrong_t_source_gold_stops_before_source_preflight(recovery_boundary, monkeypatch):
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    gold = {**gold, "old_inventory_sha256": "0" * 64, "old_security_sha256": "0" * 64}
+    operation = replace(operation, source_gold_sha256=adapter.sha(adapter.canonical(gold)))
+    control, state = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    monkeypatch.setattr(
+        recovery, "replace", lambda *_args, **_kw: SimpleNamespace(service_role_graph=None)
+    )
+    with pytest.raises(adapter.Refused, match="explicit_t_old_source_gold_required"):
+        control.inverse(json.loads(adapter.canonical(state)))
+    assert recovery_boundary.events == []
+
+
+@pytest.mark.parametrize("method", ["inverse", "reattach"])
+def test_explicit_t_unknown_phase_stops_before_callbacks(recovery_boundary, method):
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    control, state = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    state["phase"] = "unknown"
+    with pytest.raises(adapter.Refused, match=r"operation_required|inverse_state_required"):
+        getattr(control, method)(json.loads(adapter.canonical(state)))
+    assert recovery_boundary.events == []
+
+
+def test_explicit_t_json_dispatches_only_to_t_then_mm(recovery_boundary, monkeypatch):
+    """Real API/JSON phase wiring only; COPY and signed-stack require the PG drill."""
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    gold = {
+        **gold,
+        "old_role_edges": [],
+        "candidate_role_edges": [],
+        "old_access": {},
+        "candidate_access": {},
+    }
+    operation = replace(operation, source_gold_sha256=adapter.sha(adapter.canonical(gold)))
+    control, state = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    facts = {"tables": {}, "builtin_pg_notify": {"raw_acl": None}}
+    state.update(
+        t_before=facts,
+        p17_source_snapshot={},
+        archive=adapter.archive_name(operation.operation_id),
+    )
+    migrations = []
+    monkeypatch.setattr(control, "_t_source_gold", lambda: None)
+    monkeypatch.setattr(control, "_t_old_catalog", lambda: None)
+    monkeypatch.setattr(control, "_t_facts", lambda *_args, **_kwargs: facts)
+    monkeypatch.setattr(control, "_capture", lambda *_args: {"tables": {}})
+    monkeypatch.setattr(adapter, "move_receipts", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(adapter, "archive_catalog", lambda *_args: {})
+    monkeypatch.setattr(native, "remove_sources", lambda *_args: None)
+    monkeypatch.setattr(native, "reverse_additive_role_edges", lambda *_args: None)
+    monkeypatch.setattr(native, "change_additive_access", lambda *_args: None)
+    monkeypatch.setattr(native, "head", lambda *_args: "lm2t00000001")
+    monkeypatch.setattr(
+        recovery.runtime_native,
+        "require_source_inverse_possible",
+        lambda *_args, **_kwargs: pytest.fail("explicit T must not cross T's retained guard"),
+    )
+    monkeypatch.setattr(
+        recovery,
+        "_migrate",
+        lambda engine, kind, revision, **kw: migrations.append(
+            (kind, revision, kw.get("down", False))
+        ),
+    )
+    control.engines = {"official_owner": object(), "saas_owner": object()}
+    assert (
+        control.inverse(json.loads(adapter.canonical(state)))["phase"]
+        == "inverse_complete_old_signed_image_verification_required"
+    )
+    assert migrations == [("saas", "lm2t00000001", True), ("official", "mm1a2b3c4d5e", True)]
+
+
+def test_t_gold_mutation_is_refused_before_callbacks(recovery_boundary):
+    operation, gold = _explicit_t_fixture(recovery_boundary)
+    control, state = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    gold["unexpected-change"] = "not a new source-gold authority"
+    with pytest.raises(adapter.Refused, match="explicit_t_source_gold_binding_changed"):
+        control.inverse(json.loads(adapter.canonical(state)))
+    assert recovery_boundary.events == []

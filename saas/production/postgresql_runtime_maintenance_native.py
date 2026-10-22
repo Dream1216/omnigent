@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import psycopg
 from psycopg import sql
 
@@ -159,3 +161,180 @@ def remove_p18_policies(connection, expected: list[dict]) -> None:
             (contract.down_revision, contract.revision),
         ).fetchall()
         db.need(changed == [(contract.down_revision,)], "p18_inverse_head_CAS_failed")
+
+
+def capture_t_preserved_facts(
+    owner,
+    *,
+    maintenance,
+    expected_identity: dict,
+    expected_tables: tuple[str, ...],
+    max_copy_bytes: int,
+    expected_head: str,
+    receipt_schema: str = "public",
+) -> dict:
+    """Full bounded COPY under the existing independent maintenance authority.
+
+    Table names come only from the source-verified inventory in prepare. All
+    ordinary tables except the two intentional version rows are retained. This
+    does not authorize a pair or establish consumer ACKs; the live coordinator
+    must independently prove both before each phase while keeping its fence.
+    """
+    db.need(expected_head in {"p0s000000018", "lm2t00000001"}, "t_fact_head_invalid")
+    db.need(
+        expected_tables == tuple(sorted(set(expected_tables)))
+        and set(db.TABLES) <= set(expected_tables)
+        and not {"alembic_version", "saas_alembic_version"} & set(expected_tables),
+        "t_fact_inventory_invalid",
+    )
+    db.need(type(max_copy_bytes) is int and max_copy_bytes > 0, "copy_bound_required")
+    db.require_idle(owner)
+    db.require_idle(maintenance)
+    try:
+        db.need(native.head(owner) == expected_head, "t_fact_head_changed")
+        db.need(
+            db.database_identity(owner, maintenance) == expected_identity,
+            "actual_database_identity_mismatch",
+        )
+        with maintenance.transaction():
+            maintenance.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            maintenance.execute("SET LOCAL row_security=on")
+            maintenance.execute("SET LOCAL search_path=pg_catalog,pg_temp")
+            maintenance.execute("SET LOCAL statement_timeout='60s'")
+            reader = db.one(
+                maintenance,
+                "SELECT current_user AS login,session_user AS session_login,"
+                "(r.rolsuper OR pg_has_role(current_user,'pg_read_all_stats','USAGE')) "
+                "AS all_activity_visible FROM pg_catalog.pg_roles r WHERE r.rolname=current_user",
+            )
+            db.need(
+                reader["login"] == reader["session_login"] != owner.info.user
+                and reader["all_activity_visible"] is True,
+                "independent_existing_full_reader_required",
+            )
+            db.need(
+                maintenance.execute(
+                    "SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_prepared_xacts "
+                    "WHERE database=current_database()) AND NOT EXISTS("
+                    "SELECT 1 FROM pg_catalog.pg_stat_activity WHERE datname=current_database() "
+                    "AND pid<>pg_backend_pid() AND xact_start IS NOT NULL)"
+                ).fetchone()[0]
+                is True,
+                "t_recovery_has_inflight_or_prepared_transactions",
+            )
+            db.need(
+                maintenance.execute(
+                    "SELECT NOT EXISTS(SELECT 1 FROM public.saas_runs WHERE "
+                    "terminal_at IS NULL OR lease_expires_at>clock_timestamp()) "
+                    "AND NOT EXISTS(SELECT 1 FROM public.saas_worktree_instances WHERE "
+                    "lease_expires_at>clock_timestamp() OR status IN "
+                    "('reserved','materializing','ready','checkpointing')) "
+                    "AND NOT EXISTS(SELECT 1 FROM public.saas_capability_tokens WHERE "
+                    "revoked_at IS NULL AND expires_at>clock_timestamp()) "
+                    "AND NOT EXISTS(SELECT 1 FROM public.saas_runner_registrations "
+                    "WHERE active_leases>0)"
+                ).fetchone()[0]
+                is True,
+                "t_execution_not_drained",
+            )
+            actual = db.rows(
+                maintenance,
+                "SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
+                "ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') "
+                "AND c.relname NOT IN ('alembic_version','saas_alembic_version') "
+                "ORDER BY c.relname",
+            )
+            public_expected = set(expected_tables)
+            if receipt_schema != "public":
+                public_expected -= set(db.TABLES)
+            db.need(
+                [r["relname"] for r in actual] == sorted(public_expected),
+                "t_complete_table_inventory_changed",
+            )
+            facts, total = {}, 0
+            for table in expected_tables:
+                schema = receipt_schema if table in db.TABLES else "public"
+                relation = db.one(
+                    maintenance,
+                    "SELECT c.oid::bigint,c.relkind::text,"
+                    "has_table_privilege(current_user,c.oid,'SELECT') AS can_select,"
+                    "pg_catalog.row_security_active(c.oid) AS rls_active "
+                    "FROM pg_catalog.pg_class c WHERE c.oid=to_regclass(%s)",
+                    (schema + "." + table,),
+                )
+                db.need(
+                    relation["relkind"] == "r"
+                    and relation["can_select"] is True
+                    and relation["rls_active"] is False,
+                    "existing_maintenance_full_visibility_required",
+                )
+                columns = [
+                    r["attname"]
+                    for r in db.rows(
+                        maintenance,
+                        "SELECT attname FROM pg_catalog.pg_attribute WHERE attrelid=%s "
+                        "AND attnum>0 AND NOT attisdropped ORDER BY attnum",
+                        (relation["oid"],),
+                    )
+                ]
+                primary = db.one(
+                    maintenance,
+                    "SELECT array_agg(a.attname ORDER BY k.position) AS columns "
+                    "FROM pg_catalog.pg_constraint c JOIN LATERAL unnest(c.conkey) "
+                    "WITH ORDINALITY k(attnum,position) ON true JOIN pg_catalog.pg_attribute a "
+                    "ON a.attrelid=c.conrelid AND a.attnum=k.attnum "
+                    "WHERE c.conrelid=%s AND c.contype='p' GROUP BY c.oid",
+                    (relation["oid"],),
+                )["columns"]
+                db.need(bool(columns) and bool(primary), "t_fact_primary_key_required")
+                query = sql.SQL(
+                    "COPY (SELECT {} FROM {}.{} ORDER BY {}) TO STDOUT (FORMAT binary)"
+                ).format(
+                    sql.SQL(",").join(map(sql.Identifier, columns)),
+                    sql.Identifier(schema),
+                    sql.Identifier(table),
+                    sql.SQL(",").join(map(sql.Identifier, primary)),
+                )
+                digest, size = hashlib.sha256(), 0
+                with maintenance.cursor() as cursor, cursor.copy(query) as stream:
+                    for block in stream:
+                        size += len(block)
+                        total += len(block)
+                        db.need(total <= max_copy_bytes, "t_total_copy_budget_exceeded")
+                        digest.update(block)
+                count = maintenance.execute(
+                    sql.SQL("SELECT count(*) FROM {}.{}").format(
+                        sql.Identifier(schema), sql.Identifier(table)
+                    )
+                ).fetchone()[0]
+                facts[table] = {
+                    "oid": relation["oid"],
+                    "columns": columns,
+                    "primary_key": primary,
+                    "copy_sha256": digest.hexdigest(),
+                    "copy_bytes": size,
+                    "row_count": count,
+                }
+            builtin = db.one(
+                maintenance,
+                "SELECT p.oid::bigint,pg_get_userbyid(p.proowner) AS owner,"
+                "p.proacl::text AS raw_acl FROM pg_catalog.pg_proc p "
+                "WHERE p.oid=to_regprocedure('pg_catalog.pg_notify(text,text)')",
+            )
+            builtin["entries"] = db.rows(
+                maintenance,
+                "SELECT pg_get_userbyid(a.grantor) AS grantor,"
+                "CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END "
+                "AS grantee,a.privilege_type,a.is_grantable FROM pg_catalog.pg_proc p "
+                "CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a "
+                "WHERE p.oid=to_regprocedure('pg_catalog.pg_notify(text,text)') "
+                "ORDER BY 1,2,3,4",
+            )
+            return {
+                "database_identity": expected_identity,
+                "reader": reader["login"],
+                "tables": facts,
+                "builtin_pg_notify": builtin,
+            }
+    except psycopg.Error:
+        raise db.Refused("t_preservation_full_reader_unavailable") from None

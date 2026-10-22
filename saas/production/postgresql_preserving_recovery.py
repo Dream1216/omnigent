@@ -16,8 +16,9 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, replace
 from importlib.resources import files
+from typing import TypeGuard
 from uuid import UUID
 
 from alembic import command
@@ -86,6 +87,109 @@ class RecoveryOperation:
         adapter.need(
             self.database_identity.get("server_major") in (16, 18), "database_major_invalid"
         )
+
+
+T_PROTOCOL = "omnigent.postgresql-preserving-explicit-t/v1"
+T_HEAD = "lm2t00000001"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExplicitTRecoveryOperation(RecoveryOperation):
+    contract_version: str
+    rollback_saas_target: str
+    rollback_host_digest: str
+    rollback_upstream_revision: str
+    rollback_adapter_contract_version: str
+
+    def validate(self) -> None:
+        super().validate()
+        adapter.need(
+            type(self.contract_version) is str
+            and self.contract_version == T_PROTOCOL
+            and type(self.rollback_saas_target) is str
+            and self.rollback_saas_target == T_HEAD,
+            "explicit_t_protocol_or_target_invalid",
+        )
+        adapter.need(
+            type(self.rollback_host_digest) is str
+            and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", self.rollback_host_digest))
+            and type(self.rollback_upstream_revision) is str
+            and bool(re.fullmatch(r"[0-9a-f]{40}", self.rollback_upstream_revision))
+            and type(self.rollback_adapter_contract_version) is str
+            and self.rollback_adapter_contract_version == "0.2.0",
+            "explicit_t_pair_and_contract_required",
+        )
+
+    def target_contract(self) -> dict:
+        return {
+            "contract_version": self.contract_version,
+            "saas_head": T_HEAD,
+            "official_head": "mm1a2b3c4d5e",
+            "product_revision": self.rollback_product_revision,
+            "server_digest": self.rollback_server_digest,
+            "host_digest": self.rollback_host_digest,
+            "upstream_revision": self.rollback_upstream_revision,
+            "adapter_contract_version": self.rollback_adapter_contract_version,
+        }
+
+
+def load_operation_document(document: object) -> RecoveryOperation:
+    """Strict decoding; no field fill/rebase/hash recompute or authority effect."""
+    if not isinstance(document, dict) or type(document) is not dict:
+        raise adapter.Refused("operation_document_must_be_object")
+    old_keys = {f.name for f in fields(RecoveryOperation)}
+    t_keys = {f.name for f in fields(ExplicitTRecoveryOperation)}
+    if set(document) == old_keys:
+        operation = RecoveryOperation(**document)
+    else:
+        adapter.need(
+            set(document) == t_keys and document.get("contract_version") == T_PROTOCOL,
+            "operation_document_version_or_shape_unknown",
+        )
+        operation = ExplicitTRecoveryOperation(**document)
+    adapter.need(
+        all(
+            type(value) is str
+            for name, value in document.items()
+            if name not in {"database_identity", "fence_generation"}
+        )
+        and type(document["database_identity"]) is dict
+        and type(document["fence_generation"]) is int,
+        "operation_document_field_types_invalid",
+    )
+    try:
+        operation.validate()
+    except (TypeError, ValueError, AttributeError):
+        raise adapter.Refused("operation_document_invalid") from None
+    return operation
+
+
+def require_checkpoint_operation(state: dict, expected_operation: RecoveryOperation) -> None:
+    """Pure binding check; phase/catalog/actual authority are still mandatory."""
+    adapter.need(
+        type(expected_operation) in {RecoveryOperation, ExplicitTRecoveryOperation},
+        "operation_type_unknown",
+    )
+    expected_operation.validate()
+    adapter.need(type(state) is dict, "checkpoint_document_must_be_object")
+    operation = load_operation_document(state.get("operation"))
+    adapter.need(
+        type(operation) is type(expected_operation)
+        and asdict(operation) == asdict(expected_operation),
+        "checkpoint_operation_mismatch",
+    )
+
+
+def _is_explicit_t(operation: RecoveryOperation) -> TypeGuard[ExplicitTRecoveryOperation]:
+    adapter.need(
+        type(operation) in {RecoveryOperation, ExplicitTRecoveryOperation},
+        "operation_type_unknown",
+    )
+    return type(operation) is ExplicitTRecoveryOperation
+
+
+def _rollback_revision(operation: RecoveryOperation) -> str:
+    return T_HEAD if _is_explicit_t(operation) else "p0s000000015"
 
 
 def _manifest():
@@ -193,6 +297,7 @@ class PreservingPostgreSqlRecovery:
         checkpoint: Callable[[str, dict], None],
         max_copy_bytes: int,
     ) -> None:
+        _is_explicit_t(operation)
         operation.validate()
         adapter.need(
             callable(before_mutation) and callable(checkpoint), "coordinator_callbacks_required"
@@ -210,6 +315,11 @@ class PreservingPostgreSqlRecovery:
         self.plan, self.engines = plan, engines
         self.owner, self.database_owner, self.maintenance = owner, database_owner, maintenance
         self.operation, self.gold = operation, source_gold
+        if _is_explicit_t(operation):
+            adapter.need(
+                source_gold.get("rollback_target") == operation.target_contract(),
+                "explicit_t_target_gold_mismatch",
+            )
         self.before_mutation, self.checkpoint = before_mutation, checkpoint
         self.maximum = max_copy_bytes
         self.manifest = _manifest()
@@ -252,9 +362,58 @@ class PreservingPostgreSqlRecovery:
     def _save(self, phase, state):
         self.checkpoint(phase, state)
 
+    def _t_source_gold(self) -> None:
+        operation = self.operation
+        if not _is_explicit_t(operation):
+            raise adapter.Refused("explicit_t_operation_required")
+        adapter.need(
+            adapter.sha(adapter.canonical(self.gold)) == operation.source_gold_sha256
+            and self.gold.get("rollback_target") == operation.target_contract(),
+            "explicit_t_source_gold_binding_changed",
+        )
+        old_plan = replace(self.plan, business_delivery_service_role_bindings=None)
+        key = (self.operation.database_identity["server_major"], "mm1a2b3c4d5e", "lm2t00000001")
+        inventory = migration._PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
+        security = migration._source_security_catalog_baselines(old_plan.service_role_graph).get(
+            key
+        )
+        adapter.need(
+            inventory is not None
+            and security is not None
+            and self.gold.get("old_inventory_sha256") == inventory
+            and self.gold.get("old_security_sha256") == security,
+            "explicit_t_old_source_gold_required",
+        )
+
+    def _t_facts(self, tables, *, head, receipt_schema="public"):
+        return runtime_native.capture_t_preserved_facts(
+            self.owner,
+            maintenance=self.maintenance,
+            expected_identity=self.operation.database_identity,
+            expected_tables=tuple(tables),
+            max_copy_bytes=self.maximum,
+            expected_head=head,
+            receipt_schema=receipt_schema,
+        )
+
+    def _t_old_catalog(self) -> None:
+        old_plan = replace(self.plan, business_delivery_service_role_bindings=None)
+        observed = _source_projection(old_plan, self.engines)
+        adapter.need(
+            observed["inventory_sha256"] == self.gold["old_inventory_sha256"]
+            and observed["security_sha256"] == self.gold["old_security_sha256"]
+            and native.role_edges(self.maintenance) == self.gold["old_role_edges"]
+            and native.object_access(self.database_owner) == self.gold["old_access"],
+            "explicit_t_old_catalog_mismatch",
+        )
+
     def prepare(self) -> dict:
         """Read only; source verifier and complete owner/maintenance COPY coverage."""
+        if _is_explicit_t(self.operation):
+            self._t_source_gold()
         self._identity()
+        if _is_explicit_t(self.operation):
+            self._begin("prepare_explicit_t_target_and_drain")
         verified = migration._verify_state(self.plan, dict(self.engines))
         adapter.need(
             verified.official_head == "nf12ab34cd56" and verified.saas_head == "p0s000000018",
@@ -291,6 +450,32 @@ class PreservingPostgreSqlRecovery:
             "p18_policy_snapshot": runtime_native.policy_snapshot(self.owner),
             "archive": adapter.archive_name(self.operation.operation_id),
         }
+        if _is_explicit_t(self.operation):
+            adapter.need(
+                not any(
+                    row[0] == "relation" and row[1].startswith("p:")
+                    for row in projection["inventory"]
+                ),
+                "t_partitioned_layout_not_qualified",
+            )
+            tables = sorted(
+                row[1][2:]
+                for row in projection["inventory"]
+                if row[0] == "relation"
+                and row[1].startswith("r:")
+                and row[1][2:] not in {"alembic_version", "saas_alembic_version"}
+            )
+            state["t_before"] = self._t_facts(tables, head="p0s000000018")
+            adapter.need(
+                self.gold.get("old_builtin_pg_notify")
+                == {
+                    k: v
+                    for k, v in state["t_before"]["builtin_pg_notify"].items()
+                    if k not in {"oid", "raw_acl"}
+                }
+                | {"acl_is_null": state["t_before"]["builtin_pg_notify"]["raw_acl"] is None},
+                "explicit_t_builtin_acl_target_mismatch",
+            )
         self._save("prepared", state)
         return state
 
@@ -300,14 +485,21 @@ class PreservingPostgreSqlRecovery:
             state["phase"] == "prepared" and state["operation"] == asdict(self.operation),
             "prepared_operation_required",
         )
+        require_checkpoint_operation(state, self.operation)
         # This current P16 lineage includes T. Do not detach receipts or remove
         # policies before discovering any original retained-data refusal.
+        if _is_explicit_t(self.operation):
+            self._t_source_gold()
         self._begin("preflight_source_inverse")
-        preflight = runtime_native.require_source_inverse_possible(
-            self.owner,
-            maintenance=self.maintenance,
-            expected_identity=self.operation.database_identity,
-        )
+        if _is_explicit_t(self.operation):
+            preflight = self._t_facts(state["t_before"]["tables"], head="p0s000000018")
+            adapter.need(preflight == state["t_before"], "t_prepared_facts_CAS_failed")
+        else:
+            preflight = runtime_native.require_source_inverse_possible(
+                self.owner,
+                maintenance=self.maintenance,
+                expected_identity=self.operation.database_identity,
+            )
         state = {**state, "source_inverse_preflight": preflight}
         self._save("source_inverse_preflight_passed", state)
         self._begin("remove_p18_owner_policies")
@@ -357,11 +549,30 @@ class PreservingPostgreSqlRecovery:
         )
         self._save("old_role_graph_and_acls_restored", state)
         self._begin("original_p16_downgrade")
-        _migrate(self.engines["saas_owner"], "saas", "p0s000000015", down=True)
+        _migrate(
+            self.engines["saas_owner"],
+            "saas",
+            _rollback_revision(self.operation),
+            down=True,
+        )
         self._save("p16_downgraded", state)
         self._begin("original_nf_downgrade")
         _migrate(self.engines["official_owner"], "official", "mm1a2b3c4d5e", down=True)
-        adapter.need(native.head(self.owner) == "p0s000000015", "old_saas_head_missing")
+        adapter.need(
+            native.head(self.owner) == _rollback_revision(self.operation),
+            "old_saas_head_missing",
+        )
+        if _is_explicit_t(self.operation):
+            self._t_old_catalog()
+            adapter.need(
+                self._t_facts(
+                    state["t_before"]["tables"],
+                    head="lm2t00000001",
+                    receipt_schema=state["archive"],
+                )
+                == state["t_before"],
+                "t_retained_facts_or_builtin_acl_changed",
+            )
         adapter.need(
             self._capture(self.owner, state["archive"])["tables"] == archived["tables"],
             "archived_receipt_drift",
@@ -377,6 +588,22 @@ class PreservingPostgreSqlRecovery:
             and state["operation"] == asdict(self.operation),
             "known_inverse_state_required",
         )
+        require_checkpoint_operation(state, self.operation)
+        if _is_explicit_t(self.operation):
+            self._t_source_gold()
+            self._begin("prepare_explicit_t_reentry_backup_and_drain")
+            self._t_old_catalog()
+            current = self._t_facts(
+                state["t_before"]["tables"], head="lm2t00000001", receipt_schema=state["archive"]
+            )
+            adapter.need(
+                current["builtin_pg_notify"] == state["t_before"]["builtin_pg_notify"]
+                and {k: current["tables"][k] for k in adapter.TABLES}
+                == {k: state["t_before"]["tables"][k] for k in adapter.TABLES},
+                "t_archived_receipts_or_builtin_acl_changed",
+            )
+            state = {**state, "t_reentry_before": current}
+            self._save("t_reentry_fenced_facts_captured", state)
         self._begin("original_nf_p16_reupgrade")
         _migrate(self.engines["official_owner"], "official", "nf12ab34cd56")
         _migrate(self.engines["saas_owner"], "saas", "p0s000000016")
@@ -434,6 +661,12 @@ class PreservingPostgreSqlRecovery:
         # P18 policies are recreated by their real migration. P17 receipt table
         # OIDs/rows/FKs remain the exact archived originals.
         migration._verify_state(self.plan, dict(self.engines))
+        if _is_explicit_t(self.operation):
+            adapter.need(
+                self._t_facts(state["t_before"]["tables"], head="p0s000000018")
+                == state["t_reentry_before"],
+                "t_reentry_facts_or_builtin_acl_changed",
+            )
         state = {
             **state,
             "phase": "reattached_candidate_runtime_and_real_65s_epoch_required",

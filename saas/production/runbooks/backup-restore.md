@@ -100,3 +100,37 @@ backup/object readback, original signed immutable Server/Host stack, database
 recovery, history/auth/revocation/billing/audit checks and independent admission.
 Re-upgrade requires the real new 65-second LISTEN-epoch readiness barrier; old
 per-process ACKs cannot be replayed as a restarted process's success.
+
+
+### Explicit T preserving target
+
+The preserving coordinator defaults to P15. `ExplicitTRecoveryOperation` is a separate,
+explicit typed maintenance proposal; it does not approve or select a new N−1 release.
+The original P15 operation retains its exact 15 fields and checkpoint bytes. T
+requires version `omnigent.postgresql-preserving-explicit-t/v1` and five explicit
+fields; JSON decoding refuses missing/extra fields or an unknown version/target,
+without filling defaults, recomputing pins or rebasing an old checkpoint.
+Its operation must bind the original Server/Host pair, product, upstream,
+adapter and `mm1a2b3c4d5e`/`lm2t00000001` tuple. Independent target source gold
+must match the source-owned T inventory/security profile, role edges, database
+and public/default ACLs. The current `pg_notify` raw ACL, including NULL versus
+an array, owner, grantor/grantee and grant options, is preserved exactly. An
+incompatible target ACL is refused; this primitive never edits system catalogs.
+
+The existing coordinator must validate the actual retained encrypted backup,
+KMS version, current write fence, exact original signed pair and drained typed
+consumers/current-replica ACK set before every T phase. No production verifier
+or no-op callback is supplied. Whole-table bounded COPY requires an independent
+existing full reader and refuses prepared/in-flight writes, active execution,
+unsupported tables or missing proof. All three P17 receipt objects retain OIDs,
+rows, guards, indexes, FKs and ACLs through the original archive move.
+
+The fixed inverse ends at 18→17→16→T and nf→mm; it never crosses T's retained
+data guard. Ordinary P18/P17 Alembic downgrade remains refused. Reentry captures
+newly committed, freshly fenced T facts before T→16 and exact receipt reattach,
+then restores the original SOURCE-only objects and real P18 migration. New
+rollback-period Usage/Audit/Outbox facts must be delivered with their original
+IDs and hashes; old process ACKs are never replayed as a new process success.
+The real 65-second epoch barrier, original signed pair startup/business tests,
+RPO≤300 seconds, full ≤900-second drill and independent target approval remain
+required. Unit phase routing or COPY hashes alone do not establish them.
