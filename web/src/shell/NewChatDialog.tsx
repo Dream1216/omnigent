@@ -3783,7 +3783,7 @@ export function NewChatLandingScreen() {
           </>
         )}
         <ComposerConfigSections
-          managedCandidates
+          managedCandidates={managedModelsEnabled}
           managedSelection={{
             target: managedTarget,
             selectedRevision: activeManagedModel?.configuration_revision,

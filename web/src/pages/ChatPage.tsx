@@ -239,7 +239,7 @@ import {
   formatModelEffortStatusLabel,
 } from "@/lib/composerModelLabel";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
-import type { ServerInfo } from "@/lib/capabilities";
+import { getCachedServerInfo, type ServerInfo } from "@/lib/capabilities";
 import { MainTerminalView } from "@/shell/MainTerminalView";
 import { UNTITLED_CONVERSATION_LABEL } from "@/shell/sidebarNav";
 import { ComposerAgentIcon, NewChatLandingScreen } from "@/shell/NewChatDialog";
@@ -4780,7 +4780,7 @@ function SessionHarnessPicker({
         </>
       )}
       <ComposerConfigSections
-        managedCandidates
+        managedCandidates={getCachedServerInfo()?.login_url === "/saas/login"}
         models={
           showModels
             ? {

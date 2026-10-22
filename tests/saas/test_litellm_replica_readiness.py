@@ -217,6 +217,14 @@ async def test_failed_replica_cancels_other_endpoint_reads_before_returning():
         return httpx.Response(200, json={"data": []})
 
     authority, storage, _, arguments, _ = _setup(handler=manage)
-    with pytest.raises(LiteLLMReplicaReadinessError):
-        await asyncio.wait_for(authority.attest(**arguments), timeout=2)
-    assert cancelled.is_set() and storage.calls == 1
+    task = asyncio.create_task(authority.attest(**arguments))
+    try:
+        # Start the cancellation deadline after the blocking endpoint is entered,
+        # not while the initial storage read waits for a CI executor thread.
+        await asyncio.wait_for(entered.wait(), timeout=10)
+        with pytest.raises(LiteLLMReplicaReadinessError):
+            await asyncio.wait_for(task, timeout=2)
+        assert cancelled.is_set() and storage.calls == 1
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
