@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import { DropdownMenuCheckboxItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { PickerSectionHeader } from "./HarnessMenuRow";
+import {
+  TenantModelCandidatesSection,
+  type ManagedModelSelection,
+} from "./TenantModelCandidatesSection";
 
 /** One checkbox row in a Models or Effort section. */
 export interface ComposerConfigChoice {
@@ -64,6 +68,8 @@ export function ComposerConfigSections({
   models,
   efforts,
   extra,
+  managedCandidates = false,
+  managedSelection,
 }: {
   sdk?: ComposerConfigSection;
   models?: ComposerConfigSection;
@@ -71,6 +77,8 @@ export function ComposerConfigSections({
   // Additional sections rendered after Models/Effort — e.g. Devin Fusion's
   // Lead / Effort / Sidekick selectors. Each gets its own separator + header.
   extra?: readonly ComposerConfigSection[];
+  managedCandidates?: boolean;
+  managedSelection?: ManagedModelSelection;
 }) {
   const sections = [
     ...(sdk ? [sdk] : []),
@@ -88,6 +96,7 @@ export function ComposerConfigSections({
           <ConfigChoices choices={section.choices} />
         </div>
       ))}
+      {managedCandidates ? <TenantModelCandidatesSection selection={managedSelection} /> : null}
     </>
   );
 }

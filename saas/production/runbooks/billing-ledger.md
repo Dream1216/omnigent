@@ -51,9 +51,13 @@ scheduler composition, or production commercial acceptance.
   time. It is not itself a customer settlement or Provider cost.
 - Every machine-created Usage fact has exactly one immutable metering receipt binding
   it to Runner connection generation, certificate fingerprint, capability, Dispatch
-  generation, Run fence, idempotency key, and request hash. A replay must revalidate the
-  current certificate, capability, Runner, Dispatch, Run lease/fence, Subscription, and
-  Pricing authority before returning the existing receipt.
+  generation, Run fence, idempotency key, and request hash. New Usage requires the
+  current certificate, capability, Runner, Dispatch, Run lease/fence, Subscription,
+  and Pricing authority. Recovering an already committed receipt still requires a
+  current machine certificate and Runner incarnation, the original scoped capability,
+  exact request identity and unchanged facts. It returns the original price and receipt
+  without requiring an active Run, capability, or Subscription, and never creates Usage
+  or settles a budget again.
 - Pricing Snapshots and Usage facts are never updated or deleted. Corrections require a
   new snapshot or an explicit reversing/correcting ledger fact.
 - One Tenant billing account has one currency in this slice. A currency change requires
@@ -109,6 +113,13 @@ scheduler composition, or production commercial acceptance.
 
 ## Failure, reconciliation, and rollback
 
+- If a metering confirmation is lost, resend exactly the original request and key
+  through the mTLS transport. An authenticated same-incarnation Runner can recover its
+  committed receipt after Run termination or capability expiry/revocation. A changed
+  request, revoked/expired certificate, disconnected incarnation, or new fact is not
+  recovery. Usage that was never committed before authority expired remains an explicit
+  reconciliation item; do not create a new Run, use a human identity, or replay inference
+  to obtain a receipt.
 - On an unavailable Provider before acceptance, release the Reservation. After possible
   acceptance with a lost response, preserve it as reserved and recover by the stable
   Provider Request ID; a blind retry can double-charge.

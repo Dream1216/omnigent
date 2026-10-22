@@ -223,6 +223,7 @@ class ProductionServerConfig:
     secrets: ProductionServerSecrets = field(repr=False)
     preview_root_domain: str | None = None
     preview_lease_seconds: int = 300
+    interactive_controller_enabled: bool = False
     delivery_config: DeliveryConfig | None = field(default=None, repr=False)
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
@@ -1069,6 +1070,18 @@ def load_production_server_config(
         )
     runner_adapter_factory = _factory_reference(source, capability="runner")
     preview_adapter_factory = _factory_reference(source, capability="preview")
+    interactive_flag = source.get("OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED", "false")
+    if interactive_flag not in {"true", "false"}:
+        raise ProductionServerConfigError("interactive controller flag must be true or false")
+    interactive_controller_enabled = interactive_flag == "true"
+    if interactive_controller_enabled and (
+        runner_adapter_factory
+        != "saas.production.interactive_controller_adapter:build_production_interactive_controller"
+        or source.get("OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND") != "true"
+    ):
+        raise ProductionServerConfigError(
+            "interactive controller requires its reviewed factory and controller-bound Hosts"
+        )
     for capability, factory in (
         ("runner", runner_adapter_factory),
         ("preview", preview_adapter_factory),
@@ -1166,6 +1179,7 @@ def load_production_server_config(
         secrets=secrets,
         preview_root_domain=preview_root_domain,
         preview_lease_seconds=preview_lease_seconds,
+        interactive_controller_enabled=interactive_controller_enabled,
         delivery_config=delivery_config,
     )
 

@@ -17,7 +17,7 @@ from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from omnigent.db.db_models import workspace_scope
+from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.host.identity import MANAGED_HOST_TOKEN_HEADER, MANAGED_HOST_WORKSPACE_HEADER
 from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -325,17 +325,30 @@ class SaasAuthProvider(AuthProvider):
     def mint_runner_token(self, user_id: str, ttl_seconds: int) -> str | None:
         """Issue a revocable short-lived bearer for one delegated Runner owner."""
 
+        if ttl_seconds <= 0:
+            return None
+        workspace_id = current_workspace_id()
+        if workspace_id > 0:
+            actor_id = self._lifecycle.resolve_runner_actor(
+                workspace_id=workspace_id, runtime_user_key=user_id
+            )
+            if actor_id is None:
+                return None
+        else:
+            try:
+                actor_id = UUID(user_id)
+            except (AttributeError, TypeError, ValueError):
+                return None
+            if str(actor_id) != user_id:
+                return None
         try:
-            actor_id = UUID(user_id)
-        except (AttributeError, TypeError, ValueError):
+            issued = self._lifecycle.issue_auth_session(
+                user_id=actor_id,
+                authn_method="delegated-runner",
+                expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
+            )
+        except LifecycleError:
             return None
-        if str(actor_id) != user_id or ttl_seconds <= 0:
-            return None
-        issued = self._lifecycle.issue_auth_session(
-            user_id=actor_id,
-            authn_method="delegated-runner",
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
-        )
         return issued.token
 
 

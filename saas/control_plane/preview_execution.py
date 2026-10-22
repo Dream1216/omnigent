@@ -41,6 +41,7 @@ from saas.control_plane.preview_models import (
     PreviewSessionRecord,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
 from saas.control_plane.runner_execution_spec import (
     STATIC_WEB_PREVIEW_PROFILE,
     ManagedRunExecutionSpecError,
@@ -322,6 +323,7 @@ class PreviewExecutionControlPlane:
                 adapter_contract_version=parent.adapter_contract_version,
                 fence_token=0,
             )
+            freeze_sqlite_customer_pricing(db, child)
             db.add(child)
             db.flush()
             reservation_id = uuid4()

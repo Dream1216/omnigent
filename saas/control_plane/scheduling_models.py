@@ -201,6 +201,7 @@ class RunDispatchRecord(SaasBase):
     dead_letter_reason: Mapped[str | None] = mapped_column(sa.String(256))
     recovery_quarantined_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     recovery_quarantine_reason: Mapped[str | None] = mapped_column(sa.String(128))
+    physical_recovery_fence: Mapped[int | None] = mapped_column(sa.BigInteger)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -212,6 +213,10 @@ class RunDispatchRecord(SaasBase):
     )
 
     __table_args__ = (
+        sa.CheckConstraint(
+            "physical_recovery_fence IS NULL OR physical_recovery_fence > 0",
+            name="ck_run_dispatch_physical_recovery_fence",
+        ),
         sa.ForeignKeyConstraint(
             ("run_id", "tenant_id", "space_id", "project_id"),
             ("saas_runs.id", "saas_runs.tenant_id", "saas_runs.space_id", "saas_runs.project_id"),

@@ -1,0 +1,6 @@
+**
+!.litellm-runtime
+!.litellm-runtime/**
+!deploy/
+!deploy/litellm/
+!deploy/litellm/LICENSE.upstream

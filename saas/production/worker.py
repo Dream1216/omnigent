@@ -29,6 +29,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.control_plane.model_revocation_execution import ModelRevocationSchedulerRecovery
 from saas.control_plane.outbox import (
     DispatchResult,
     OutboxClaimRoute,
@@ -1213,7 +1214,7 @@ def build_production_worker(
         worktree_recovery = WorktreeControlPlane(executor_sessions, scheduler=recovery)
         worker = ProductionSchedulerWorker(
             dispatcher,
-            recovery,
+            ModelRevocationSchedulerRecovery(executor_sessions, recovery),
             adapters,
             batch_size=config.batch_size,
             idle_interval_seconds=config.idle_interval_seconds,

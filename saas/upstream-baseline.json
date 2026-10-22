@@ -48,12 +48,85 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 150,
-    "max_upstream_net_added_loc": 4576,
+    "max_direct_upstream_files": 167,
+    "max_upstream_net_added_loc": 5300,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "governed_litellm_e2e_entry": {
+      "revision": "litellm-governed-e2e-entry-budget-v34",
+      "approved_at": "2026-10-22",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 166,
+      "approved_max_direct_upstream_files": 167,
+      "measured_before_integration": {
+        "direct_upstream_files": 166,
+        "upstream_net_added_loc": 5291,
+        "active_patches": 9
+      },
+      "scoped_paths": [
+        "tests/e2e/test_governed_litellm_e2e.py"
+      ],
+      "reason": "The account owner explicitly approved raising only the direct upstream file ceiling from 166 to 167 for the eight-line governed LiteLLM E2E entry. Reuse the maintained controller, Host, LiteLLM and PostgreSQL billing scenario; missing runtime prerequisites must remain explicit skips, not passes. Preserve the 5,300-net-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production gate. This scope approval is not CI, independent review, image admission, a shared release-window authorization or production acceptance."
+    },
+    "pagination_test_followup": {
+      "revision": "litellm-customer-pagination-tests-budget-v33",
+      "approved_at": "2026-10-20",
+      "governance_mode": "single_owner_beta",
+      "previous_max_upstream_net_added_loc": 5000,
+      "approved_max_upstream_net_added_loc": 5300,
+      "measured_before_integration": 4990,
+      "scoped_paths": [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "tests/browser_ui/chat/test_tenant_model_candidates.py",
+        "feature-map/composer.md",
+        "feature-map/platform-managed-models.md"
+      ],
+      "reason": "The account owner explicitly approved raising only the net-added-line ceiling to 5,300 for maintained customer catalog pagination, GET retry, target-switch and desktop/mobile regression coverage. No new feature scope. Preserve the 166-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production gate. This approval is not CI, independent review, image or production admission."
+    },
     "followup": {
+      "revision": "litellm-customer-model-picker-budget-v32",
+      "approved_at": "2026-10-20",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 166,
+      "previous_max_upstream_net_added_loc": 4576,
+      "approved_max_upstream_net_added_loc": 5000,
+      "scoped_paths": [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "web/src/components/composer/ComposerConfigSections.tsx",
+        "web/src/shell/NewChatDialog.tsx",
+        "web/src/shell/NewChatDialog.test.tsx"
+      ],
+      "reason": "The account owner explicitly approved raising only the LiteLLM upstream net-added-line ceiling from 4,576 to 5,000 to integrate the customer model picker. The pre-integration measurement is 4,574 plus a 355-net-line draft, an estimated 4,929 that must be remeasured after integration. Retain the 166-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production acceptance gate. This scope approval does not imply independent review, CI success, image admission or production acceptance.",
+      "previous_revision": {
+      "revision": "litellm-interactive-admission-budget-v31",
+      "approved_at": "2026-10-17",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 150,
+      "measured_direct_upstream_files": 166,
+      "previous_max_upstream_net_added_loc": 4576,
+      "scoped_paths": [
+        ".github/workflows/litellm-contract.yml",
+        ".gitignore",
+        "deploy/litellm/Dockerfile",
+        "deploy/litellm/Dockerfile.dockerignore",
+        "deploy/litellm/LICENSE.upstream",
+        "deploy/litellm/README.md",
+        "deploy/litellm/postgresql_attestation_grants.sql",
+        "deploy/litellm/postgresql_attestation_principals.sql",
+        "feature-map/composer.md",
+        "feature-map/platform-managed-models.md",
+        "omnigent/server/routes/sessions/routes_events.py",
+        "tests/browser_ui/chat/session_contract.py",
+        "tests/browser_ui/chat/test_tenant_model_candidates.py",
+        "web/src/components/composer/ComposerConfigSections.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.tsx"
+      ],
+      "reason": "The requester explicitly approved the exact 166-file scope for the LiteLLM integration after the audit measured 165 existing divergent upstream paths and one additional message-admission route. Raise only the direct-file ceiling from 150 to 166. Preserve the 4,576-net-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and all production acceptance gates. This Single-Owner Beta scope authorization is not independent review, a CI waiver, image admission or production acceptance.",
+      "previous_revision": {
       "revision": "platform-model-token-renewal-budget-v30",
       "approved_at": "2026-10-15",
       "governance_mode": "single_owner_beta",
@@ -91,6 +164,8 @@
           "scoped_delta": {"omnigent/server/routes/_sessions/orchestration.py": 8},
           "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
         }
+      }
+      }
       }
     },
     "approved_at": "2026-10-07",

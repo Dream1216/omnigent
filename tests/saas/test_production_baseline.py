@@ -68,6 +68,15 @@ def test_production_baseline_rejects_revision_drift() -> None:
     )
 
 
+def test_production_baseline_tracks_typed_and_untyped_alembic_revisions() -> None:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(_repo() / "saas/control_plane/alembic.ini"))
+    config.set_main_option("script_location", str(_repo() / "saas/control_plane/migrations"))
+    assert _migration_heads(_repo()) == set(ScriptDirectory.from_config(config).get_heads())
+
+
 def test_migration_graph_tracks_typed_and_untyped_revisions(tmp_path: Path) -> None:
     versions = tmp_path / "saas/control_plane/migrations/versions"
     versions.mkdir(parents=True)

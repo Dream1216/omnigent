@@ -143,6 +143,28 @@ def production_replay(
         hashlib.sha256(platform_admin_document.encode()).hexdigest(),
         platform_admin_bindings,
     )
+    projection_bindings = (
+        (
+            ProductionServiceRoleBinding(
+                service="model_projection",
+                login="replay_model_projection",
+                base_role="saas_model_projection",
+            ),
+        )
+        if os.environ.get("OMNIGENT_SAAS_REPLAY_MODEL_PROJECTION") == "true"
+        else ()
+    )
+    projection_manifest = None
+    if projection_bindings:
+        projection_document = render_production_service_role_bindings(projection_bindings)
+        projection_path = tmp_path / "model-projection-bindings.json"
+        projection_path.write_text(projection_document)
+        projection_path.chmod(0o400)
+        projection_manifest = ProductionServiceRoleBindings(
+            projection_path,
+            hashlib.sha256(projection_document.encode()).hexdigest(),
+            projection_bindings,
+        )
     roles = {
         "principal_operator": "replay_principal",
         "database_owner": "replay_database",
@@ -168,7 +190,12 @@ def production_replay(
             )
         all_bindings = {
             binding.login: binding
-            for binding in (*bindings, *platform_bindings, *platform_admin_bindings)
+            for binding in (
+                *bindings,
+                *platform_bindings,
+                *platform_admin_bindings,
+                *projection_bindings,
+            )
         }
         for binding in all_bindings.values():
             connection.exec_driver_sql(
@@ -200,6 +227,7 @@ def production_replay(
         service_role_bindings=manifest,
         platform_model_service_role_bindings=platform_manifest,
         platform_admin_service_role_bindings=platform_admin_manifest,
+        model_projection_service_role_bindings=projection_manifest,
         require_tls=True,
     )
     yield plan
@@ -215,11 +243,31 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     first = migration.run_production_postgresql_migration(plan)
     assert first.status == "pass" and first.official_head == target
     assert first.service_role_graph_sha256 == plan.service_role_graph.sha256
-    assert len(plan.service_role_graph.bindings) == 18
+    assert len(plan.service_role_graph.bindings) == (
+        19 if plan.model_projection_service_role_bindings else 18
+    )
     verified = migration.run_production_postgresql_migration(plan, verify_only=True)
     assert verified.catalog_sha256 == first.catalog_sha256
     repeated = migration.run_production_postgresql_migration(plan)
     assert repeated.catalog_sha256 == first.catalog_sha256
+
+    if plan.model_projection_service_role_bindings is None:
+        control = sa.create_engine(plan.saas_owner.url)
+        try:
+            config = migration._migration_config("saas")
+            with control.connect() as connection:
+                config.attributes["connection"] = connection
+                command.downgrade(config, "lm1a00000001")
+            with control.connect() as connection:
+                assert (
+                    connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                    == "lm1a00000001"
+                )
+            restored = migration.run_production_postgresql_migration(plan)
+            assert restored.saas_head == migration._expected_head("saas")
+            assert restored.catalog_sha256 == first.catalog_sha256
+        finally:
+            control.dispose()
 
     owner = sa.create_engine(plan.official_owner.url)
     try:
@@ -236,7 +284,9 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         with monkeypatch.context() as context:
             context.setattr(
                 migration,
-                "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                "_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256"
+                if plan.model_projection_service_role_bindings
+                else "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
                 {},
             )
             with pytest.raises(migration.PostgreSqlMigrationError) as absent:
@@ -374,12 +424,12 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             print(f"CLEAN_REPLAY_PREVIEW_SECURITY_PG{major}={digest}")
-            assert (
-                digest
-                == migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(
-                    key
-                )
+            baselines = (
+                migration._PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+                if plan.model_projection_service_role_bindings
+                else migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
             )
+            assert digest == baselines.get(key)
             return key, digest
     finally:
         engine.dispose()
@@ -415,6 +465,8 @@ def _verify_preview_deployment_and_startup(
         config, refreshed = _startup_config(plan, preview_receipt, tmp_path)
         try:
             migration.verify_production_postgresql_state(engines=refreshed, config=config)
+            if plan.model_projection_service_role_bindings is not None:
+                _verify_projection_deployment_startup(plan, config)
             sessions = create_role_session_factories(
                 config,  # type: ignore[arg-type]
                 verify_state=lambda service_engines, service_config: (
@@ -444,6 +496,36 @@ def _verify_preview_deployment_and_startup(
         admin.dispose()
         for engine in engines.values():
             engine.dispose()
+
+
+def _verify_projection_deployment_startup(
+    plan: migration.ProductionPostgreSqlPlan, config: SimpleNamespace
+) -> None:
+    url = plan.saas_owner.url.set(username=plan.service_role_graph.login_for("model_projection"))
+    engine = sa.create_engine(url)
+    owner = sa.create_engine(plan.saas_owner.url)
+    try:
+        migration.verify_model_projection_postgresql_state(
+            engine=engine, database_url=url.render_as_string(hide_password=False), config=config
+        )
+        with owner.begin() as connection:
+            connection.exec_driver_sql(
+                "GRANT UPDATE ON saas_model_credential_versions TO saas_model_projection"
+            )
+        with pytest.raises(migration.PostgreSqlMigrationError) as drift:
+            migration.verify_model_projection_postgresql_state(
+                engine=engine,
+                database_url=url.render_as_string(hide_password=False),
+                config=config,
+            )
+        assert drift.value.code == "source_security_catalog_drifted"
+    finally:
+        with owner.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE UPDATE ON saas_model_credential_versions FROM saas_model_projection"
+            )
+        owner.dispose()
+        engine.dispose()
 
 
 def _verify_runner_deployment_and_startup(

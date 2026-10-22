@@ -102,6 +102,12 @@ class ExecutionSessionRecord(SaasBase):
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     space_id: Mapped[UUID] = mapped_column(nullable=False)
     project_id: Mapped[UUID] = mapped_column(nullable=False)
+    customer_pricing_frozen: Mapped[bool] = mapped_column(
+        nullable=False, server_default=sa.false()
+    )
+    customer_pricing_snapshot_id: Mapped[UUID | None] = mapped_column(
+        server_default=sa.FetchedValue()
+    )
     created_by: Mapped[UUID] = mapped_column(
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -119,6 +125,10 @@ class ExecutionSessionRecord(SaasBase):
     )
 
     __table_args__ = (
+        sa.CheckConstraint(
+            "customer_pricing_frozen OR customer_pricing_snapshot_id IS NULL",
+            name="ck_session_customer_pricing",
+        ),
         sa.ForeignKeyConstraint(
             ("tenant_id", "space_id", "project_id"),
             ("saas_projects.tenant_id", "saas_projects.space_id", "saas_projects.id"),
@@ -218,6 +228,12 @@ class RunRecord(SaasBase):
     tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     space_id: Mapped[UUID] = mapped_column(nullable=False)
     project_id: Mapped[UUID] = mapped_column(nullable=False)
+    customer_pricing_frozen: Mapped[bool] = mapped_column(
+        nullable=False, server_default=sa.false()
+    )
+    customer_pricing_snapshot_id: Mapped[UUID | None] = mapped_column(
+        server_default=sa.FetchedValue()
+    )
     task_id: Mapped[UUID] = mapped_column(nullable=False)
     session_id: Mapped[UUID | None] = mapped_column()
     parent_run_id: Mapped[UUID | None] = mapped_column()
@@ -256,6 +272,10 @@ class RunRecord(SaasBase):
     )
 
     __table_args__ = (
+        sa.CheckConstraint(
+            "customer_pricing_frozen OR customer_pricing_snapshot_id IS NULL",
+            name="ck_run_customer_pricing",
+        ),
         sa.ForeignKeyConstraint(
             ("task_id", "tenant_id", "space_id", "project_id"),
             (

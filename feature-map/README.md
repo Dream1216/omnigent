@@ -87,6 +87,7 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
 
 ## Features
 
+- [Platform managed model candidates](./platform-managed-models.md) covers the independent Staff console's encrypted connections, immutable drafts, platform test funding, and recovery after lost receipts.
 - [Composer](./composer.md) covers the session and new-session composers,
   the model/effort pill, the configuration gear, and slash commands.
 - [Terminals](./terminals.md) covers the Chat/Terminal switcher, the agent

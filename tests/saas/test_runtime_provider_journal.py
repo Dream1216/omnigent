@@ -35,7 +35,7 @@ from saas.control_plane.runtime_provider import (
 from saas.control_plane.runtime_provider_journal import (
     PostgresqlRuntimeProviderOperationJournal,
 )
-from saas.production.postgresql_migration import _expected_head
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 
 _JOURNAL_ROLE = "saas_runtime_provider_journal"
 _TABLE = "saas_runtime_provider_operation_journal"
@@ -1445,9 +1445,10 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
             migration_transaction.rollback()
             migration_connection.close()
         with owner_engine.connect() as connection:
-            assert connection.scalar(
-                sa.text("SELECT version_num FROM saas_alembic_version")
-            ) == _expected_head("saas")
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                == CONTROL_PLANE_SCHEMA_REVISION
+            )
             assert (
                 connection.scalar(
                     sa.text(

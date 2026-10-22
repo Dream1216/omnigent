@@ -87,7 +87,9 @@ def _produce_schema():
 
 def _upgrade_runner_schema_if_requested(engine, *, schema_owner: str) -> str:
     requested = os.environ.get("OMNIGENT_SAAS_RUNNER_SCHEMA_REPLAY")
-    if requested in {None, "p0"}:
+    if requested is None:
+        return migration._expected_head("saas")
+    if requested == "p0":
         return _P0
     assert requested == "r"
     root, revision = _producer_source()

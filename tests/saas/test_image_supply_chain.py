@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.scripts.check_image_supply_chain import (
+    candidate_schema_revision,
     canonical_release_evidence_sha256,
     load_release_evidence,
     validate_candidate_build_contract,
@@ -42,8 +44,7 @@ def _digest(character: str) -> str:
 def _valid_evidence() -> dict[str, object]:
     policy = _policy()
     upstream = json.loads((_repo() / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
-    baseline = json.loads((_repo() / "saas/production/baseline.json").read_text(encoding="utf-8"))
-    schema_revision = baseline["revision_contract"]["control_plane_schema_revision"]
+    schema_revision = CONTROL_PLANE_SCHEMA_REVISION
     product_revision = "a" * 40
     labels = {
         "org.opencontainers.image.revision": product_revision,
@@ -239,6 +240,8 @@ def _candidate_contract_repo(tmp_path: Path) -> Path:
         ".github/workflows/saas-image-candidate.yml",
         ".github/workflows/saas-n1-compat-image.yml",
         "saas/actions/build-oci-candidate/action.yml",
+        "saas/control_plane/schema_revision.py",
+        "deploy/litellm/Dockerfile",
     ):
         target = repo / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1379,8 +1382,11 @@ def test_candidate_composite_build_contract_rejects_path_drift(tmp_path: Path) -
 
     violations = validate_candidate_build_contract(repo)
 
-    assert "candidate workflow must invoke four repeated composite builds" in violations
-    assert "candidate workflow build coordinates must cover server and host twice" in violations
+    assert "candidate workflow must invoke six repeated composite builds" in violations
+    assert (
+        "candidate workflow build coordinates must cover application and LiteLLM twice"
+        in violations
+    )
 
 
 @pytest.mark.parametrize(
@@ -1454,7 +1460,7 @@ def test_candidate_contract_rejects_unprotected_or_unsigned_release(tmp_path: Pa
     violations = validate_candidate_build_contract(repo)
 
     assert "protected signed release workflow contract is incomplete" in violations
-    assert "protected release must sign the wheel and both OCI images" in violations
+    assert "protected release must sign the wheel and all three OCI images" in violations
 
 
 def test_candidate_contract_rejects_missing_published_runtime_revision_check(
@@ -1494,6 +1500,277 @@ def test_candidate_contract_rejects_missing_published_host_harness_check(
     assert (
         "protected release must verify both published runtime revisions before signing"
         in violations
+    )
+
+
+def _publication_platform_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, str]]:
+    """Execute real workflow shell against offline CLI doubles, not real scanners."""
+    runtime = tmp_path / "runtime"
+    tools = runtime / "supply-chain-tools"
+    tools.mkdir(parents=True)
+    fixture = {
+        f"registry.invalid/{name}@{_digest(parent)}": {
+            f"linux/{arch}": f"registry.invalid/{name}@{_digest(child)}"
+            for arch, child in zip(("amd64", "arm64"), children, strict=True)
+        }
+        for name, parent, children in (
+            ("server", "a", "de"),
+            ("host", "b", "f1"),
+            ("litellm", "c", "23"),
+        )
+    }
+    monkeypatch.setenv("PLATFORM_FIXTURE", json.dumps(fixture))
+    monkeypatch.setenv("PLATFORM_CALLS", str(tmp_path / "calls.jsonl"))
+    monkeypatch.setenv("PLATFORM_CACHE", str(tmp_path / "cache.json"))
+    monkeypatch.setenv("RUNNER_TEMP", str(runtime))
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    program = tools / "platform-tool"
+    program.write_text(
+        f"#!{sys.executable}\n"
+        + r"""
+import hashlib,json,os,sys
+from pathlib import Path
+tool,args=Path(sys.argv[0]).name,sys.argv[1:]
+fixture=json.loads(os.environ["PLATFORM_FIXTURE"])
+with Path(os.environ["PLATFORM_CALLS"]).open("a") as output:
+    output.write(json.dumps({"tool":tool,"args":args})+"\n")
+def platform():
+    return args[args.index("--platform")+1]
+def reference():
+    return next(value for value in args if value.startswith("registry.invalid/"))
+if tool=="docker":
+    image=reference()
+    cache_file=Path(os.environ["PLATFORM_CACHE"])
+    cache=json.loads(cache_file.read_text()) if cache_file.exists() else {}
+    if image in cache and cache[image]!=platform():
+        print("cannot overwrite digest",file=sys.stderr)
+        sys.exit(125)
+    cache[image]=platform()
+    cache_file.write_text(json.dumps(cache))
+elif tool=="syft":
+    for index,value in enumerate(args):
+        if value=="-o":
+            output=Path(args[index+1].split("=",1)[1])
+            output.parent.mkdir(parents=True,exist_ok=True)
+            output.write_text(json.dumps({"fixture_source":reference()}))
+elif tool=="grype":
+    if args[:2]==["db","status"]:
+        print(json.dumps({"fixture":True}))
+    else:
+        severity=os.environ.get("PLATFORM_FINDING","")
+        rows=[{"vulnerability":{"severity":severity}}] if severity in ("Critical","High") else []
+        print(json.dumps({"matches":rows,
+            "ignoredMatches":[{}] if severity=="Ignored" else []}))
+elif tool=="sha256sum":
+    for value in args:
+        print(hashlib.sha256(Path(value).read_bytes()).hexdigest()+"  "+value)
+else:
+    sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    program.chmod(0o755)
+    for name in ("docker", "syft", "grype", "sha256sum"):
+        (tools / name).symlink_to(program)
+    admitted = {
+        name: {
+            "facts": {
+                "platforms": {
+                    platform: {"manifest_digest": image.split("@", 1)[1]}
+                    for platform, image in platforms.items()
+                }
+            }
+        }
+        for index, platforms in fixture.items()
+        for name in (index.split("/", 1)[1].split("@", 1)[0],)
+    }
+    for directory, names in (
+        ("admitted-oci", ("server", "host")),
+        ("admitted-litellm", ("litellm",)),
+    ):
+        destination = runtime / directory / "oci-promotion-manifest.json"
+        destination.parent.mkdir()
+        destination.write_text(json.dumps({"images": {name: admitted[name] for name in names}}))
+    release = tmp_path / "saas/production/litellm_release.json"
+    release.parent.mkdir(parents=True)
+    release.write_bytes((_repo() / "saas/production/litellm_release.json").read_bytes())
+    scans = tmp_path / "artifacts/litellm-current-scans/grype"
+    scans.mkdir(parents=True)
+    for arch in ("amd64", "arm64"):
+        (scans / f"litellm-{arch}-grype.json").write_text('{"matches":[],"ignoredMatches":[]}')
+    references = {
+        name.upper() + "_IMAGE": next(
+            ref for ref in fixture if ref.startswith(f"registry.invalid/{name}@")
+        )
+        for name in ("server", "host", "litellm")
+    }
+    return tmp_path, references
+
+
+def _execute_publication_step(
+    name: str, root: Path, references: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    workflow = (_repo() / ".github/workflows/saas-image-candidate.yml").read_text()
+    step = workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - name:", 1)[0]
+    body = step.split("        run: |\n", 1)[1]
+    shell = "\n".join(line[10:] for line in body.splitlines())
+    return subprocess.run(
+        ["bash", "-c", shell],
+        cwd=root,
+        env={**os.environ, **references},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_published_architecture_steps_use_platform_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, references = _publication_platform_fixture(tmp_path, monkeypatch)
+    for name in (
+        "Generate per-architecture SBOMs and check raw findings",
+        "Verify published LiteLLM runtime on both architectures",
+        "Generate LiteLLM per-architecture SBOMs and check raw findings",
+    ):
+        result = _execute_publication_step(name, root, references)
+        assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+    fixture = json.loads(os.environ["PLATFORM_FIXTURE"])
+    children = {image for platforms in fixture.values() for image in platforms.values()}
+    observed = []
+    for call in calls:
+        if call["tool"] not in {"docker", "syft", "grype"} or call["args"][:2] == ["db", "status"]:
+            continue
+        image = next(value for value in call["args"] if value.startswith("registry.invalid/"))
+        platform = call["args"][call["args"].index("--platform") + 1]
+        assert image in children and any(
+            images.get(platform) == image for images in fixture.values()
+        )
+        observed.append(image)
+    assert set(observed) == children
+    assert sum(call["tool"] == "docker" for call in calls) == 10
+    assert sum(call["tool"] == "syft" for call in calls) == 6
+    bindings = list(root.glob("artifacts/**/*.image-binding.json"))
+    assert len(bindings) == 2
+    for path in bindings:
+        binding = json.loads(path.read_text())
+        assert fixture[binding["index"]][binding["platform"]] == binding["manifest"]
+
+
+@pytest.mark.parametrize(
+    ("step_name", "fragment", "fallback"),
+    [
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            '--entrypoint /usr/local/bin/python "$child_image"',
+            "$image",
+        ),
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            '--entrypoint /bin/sh "$child_image"',
+            "$image",
+        ),
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            'supply-chain-tools/syft" "$child_image"',
+            "$image",
+        ),
+        (
+            "Generate per-architecture SBOMs and check raw findings",
+            'supply-chain-tools/grype" "$child_image"',
+            "$image",
+        ),
+        (
+            "Verify published LiteLLM runtime on both architectures",
+            '"$arch_image" -B -I -c',
+            "$LITELLM_IMAGE",
+        ),
+        (
+            "Generate LiteLLM per-architecture SBOMs and check raw findings",
+            'supply-chain-tools/syft" "$arch_image"',
+            "$LITELLM_IMAGE",
+        ),
+    ],
+)
+def test_candidate_contract_rejects_platform_manifest_probe_drift(
+    tmp_path: Path, step_name: str, fragment: str, fallback: str
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text()
+    marker = f"      - name: {step_name}\n"
+    before, remainder = source.split(marker, 1)
+    step, separator, after = remainder.partition("\n      - name:")
+    assert step.count(fragment) == 1
+    replacement = fragment.replace("$child_image", fallback).replace("$arch_image", fallback)
+    step = step.replace(fragment, replacement)
+    workflow.write_text(before + marker + step + separator + after)
+    assert (
+        "published probes and scanners must bind platform manifest digests"
+        in validate_candidate_build_contract(repo)
+    )
+
+
+@pytest.mark.parametrize("finding", ["Critical", "High", "Ignored"])
+def test_published_platform_scan_still_rejects_raw_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finding: str
+) -> None:
+    root, references = _publication_platform_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("PLATFORM_FINDING", finding)
+    result = _execute_publication_step(
+        "Generate per-architecture SBOMs and check raw findings", root, references
+    )
+    assert result.returncode != 0
+
+
+def test_published_platform_resolution_failure_cannot_fall_back_to_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, references = _publication_platform_fixture(tmp_path, monkeypatch)
+    manifest = root / "runtime/admitted-oci/oci-promotion-manifest.json"
+    admitted = json.loads(manifest.read_text())
+    del admitted["images"]["server"]["facts"]["platforms"]["linux/amd64"]["manifest_digest"]
+    manifest.write_text(json.dumps(admitted))
+    result = _execute_publication_step(
+        "Generate per-architecture SBOMs and check raw findings", root, references
+    )
+    assert result.returncode == 1
+    calls_file = root / "calls.jsonl"
+    calls = (
+        [json.loads(line) for line in calls_file.read_text().splitlines()]
+        if calls_file.exists()
+        else []
+    )
+    assert not any(call["tool"] == "docker" for call in calls)
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        '--entrypoint /usr/local/bin/python "$child_image"',
+        '--entrypoint /bin/sh "$child_image"',
+        'supply-chain-tools/syft" "$child_image"',
+        'supply-chain-tools/grype" "$child_image"',
+    ],
+)
+def test_main_publication_requires_platform_manifest_consumers(
+    tmp_path: Path, fragment: str
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text()
+    marker = "      - name: Generate per-architecture SBOMs and check raw findings\n"
+    before, remainder = source.split(marker, 1)
+    step, separator, after = remainder.partition("\n      - name:")
+    assert step.count(fragment) == 1
+    step = step.replace(fragment, fragment.replace("$child_image", "$image"))
+    workflow.write_text(before + marker + step + separator + after)
+    assert (
+        "published probes and scanners must bind platform manifest digests"
+        in validate_candidate_build_contract(repo)
     )
 
 
@@ -1542,6 +1819,139 @@ def test_complete_image_evidence_satisfies_policy() -> None:
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
     assert report["blockers"] == []
+
+
+def test_candidate_schema_matches_packaged_alembic_head() -> None:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(_repo() / "saas/control_plane/alembic.ini"))
+    config.set_main_option("script_location", str(_repo() / "saas/control_plane/migrations"))
+    assert candidate_schema_revision(_repo()) == CONTROL_PLANE_SCHEMA_REVISION
+    assert (
+        candidate_schema_revision(_repo())
+        == ScriptDirectory.from_config(config).get_current_head()
+    )
+
+
+def test_candidate_schema_cli_emits_only_packaged_revision() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "saas.scripts.check_image_supply_chain", "--print-schema-revision"],
+        cwd=_repo(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout == f"{CONTROL_PLANE_SCHEMA_REVISION}\n"
+    assert result.stderr == ""
+
+
+def test_candidate_schema_print_cannot_satisfy_require_ready() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "saas.scripts.check_image_supply_chain",
+            "--print-schema-revision",
+            "--require-ready",
+        ],
+        cwd=_repo(),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "not allowed with argument" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("relative", "expected_installs"),
+    [
+        (".github/workflows/saas-upstream-compat.yml", 1),
+        (".github/workflows/saas-image-candidate.yml", 3),
+    ],
+)
+def test_saas_ci_installs_sdk_for_required_managed_runtime_tests(
+    relative: str, expected_installs: int
+) -> None:
+    installs = [
+        line.strip()
+        for line in (_repo() / relative).read_text().splitlines()
+        if line.strip().startswith("run: uv sync --frozen --extra all --group dev --extra saas")
+    ]
+    assert len(installs) == expected_installs
+    assert all(line.endswith("--extra kubernetes") for line in installs)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "",
+        "CONTROL_PLANE_SCHEMA_REVISION = 42",
+        'CONTROL_PLANE_SCHEMA_REVISION = "../schema"',
+        'CONTROL_PLANE_SCHEMA_REVISION = "r" * 12',
+        'CONTROL_PLANE_SCHEMA_REVISION = "first"\nCONTROL_PLANE_SCHEMA_REVISION = "second"',
+        'import os\nCONTROL_PLANE_SCHEMA_REVISION = "first"',
+        "CONTROL_PLANE_SCHEMA_REVISION =",
+    ],
+)
+def test_candidate_schema_rejects_ambiguous_or_executable_source(
+    tmp_path: Path, source: str
+) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    (repo / "saas/control_plane/schema_revision.py").write_text(source, encoding="utf-8")
+    with pytest.raises(ValueError, match="schema binding is invalid"):
+        candidate_schema_revision(repo)
+    assert "packaged control-plane schema binding is invalid" in validate_candidate_build_contract(
+        repo
+    )
+
+
+def test_candidate_schema_rejects_missing_or_symlink_source(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    path = repo / "saas/control_plane/schema_revision.py"
+    original = path.read_text()
+    path.unlink()
+    with pytest.raises(ValueError, match="schema binding is invalid"):
+        candidate_schema_revision(repo)
+    outside = tmp_path / "schema.py"
+    outside.write_text(original)
+    path.symlink_to(outside)
+    with pytest.raises(ValueError, match="schema binding is invalid"):
+        candidate_schema_revision(repo)
+
+
+@pytest.mark.parametrize("old_schema", ["p0s000000015", "p0s000000012"])
+def test_image_evidence_cannot_reuse_old_production_schema_binding(old_schema: str) -> None:
+    baseline_path = _repo() / "saas/production/baseline.json"
+    baseline_bytes = baseline_path.read_bytes()
+    assert old_schema != CONTROL_PLANE_SCHEMA_REVISION
+    evidence = _valid_evidence()
+    evidence["control_plane_schema_revision"] = old_schema
+    for image in evidence["images"]:  # type: ignore[union-attr]
+        image["labels"]["ai.omnigent.saas.schema-revision"] = old_schema
+    _resign(evidence)
+    report = validate_release(_repo(), _policy(), evidence, now=_NOW)
+    assert report["production_readiness"] == "blocked"
+    assert "image evidence schema revision does not match packaged source" in report["blockers"]
+    assert baseline_path.read_bytes() == baseline_bytes
+
+
+def test_candidate_workflow_rejects_old_production_schema_label_source(tmp_path: Path) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    path = repo / ".github/workflows/saas-image-candidate.yml"
+    path.write_text(
+        path.read_text().replace(
+            "schema_revision=$(uv run python -m saas.scripts.check_image_supply_chain "
+            "--print-schema-revision)",
+            "schema_revision=$(jq -r .revision_contract.control_plane_schema_revision "
+            "saas/production/baseline.json)",
+        )
+    )
+    assert (
+        "candidate workflow build materials are not source-derived"
+        in validate_candidate_build_contract(repo)
+    )
 
 
 def test_image_evidence_rejects_floating_material_and_lock_drift() -> None:
@@ -1789,6 +2199,10 @@ def _write_oci(
                 "ai.omnigent.saas.n1.contract-version": "contract-v1",
             }
         )
+    elif label_profile == "litellm":
+        from saas.scripts.litellm_oci_promotion import runtime_labels
+
+        labels = runtime_labels(_repo(), revision)
     elif label_profile != "executable":
         raise ValueError(f"unsupported test label profile: {label_profile}")
     if missing_label is not None:
@@ -1973,7 +2387,7 @@ def test_oci_rebuild_comparison_ignores_attestation_time_but_not_image_drift(
     )
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize("label_profile", ["executable", "n1", "litellm"])
 def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     tmp_path: Path, label_profile: str
 ) -> None:
@@ -1993,6 +2407,7 @@ def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     [
         ("executable", "ai.omnigent.saas.adapter-contract-version"),
         ("n1", "ai.omnigent.saas.n1.contract-version"),
+        ("litellm", "io.omnigent.litellm.upstream.digest"),
     ],
 )
 def test_oci_rebuild_rejects_a_missing_profile_label(
@@ -2012,7 +2427,7 @@ def test_oci_rebuild_rejects_a_missing_profile_label(
         compare_archives(first, second, label_profile=label_profile)
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize("label_profile", ["executable", "n1", "litellm"])
 def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profile: str) -> None:
     first = tmp_path / f"first-extra-{label_profile}.tar"
     second = tmp_path / f"second-extra-{label_profile}.tar"
@@ -2030,7 +2445,12 @@ def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profil
 
 @pytest.mark.parametrize(
     ("archive_profile", "selected_profile"),
-    [("executable", "n1"), ("n1", "executable")],
+    [
+        ("executable", "n1"),
+        ("n1", "executable"),
+        ("executable", "litellm"),
+        ("litellm", "executable"),
+    ],
 )
 def test_oci_rebuild_rejects_cross_profile_label_contracts(
     tmp_path: Path, archive_profile: str, selected_profile: str

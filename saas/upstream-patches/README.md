@@ -19,6 +19,13 @@ Patch 0010 preserves host ownership and workspace validation order. An Agent
 whose bundle is absent is rejected as invalid input rather than returning a
 server error. This stays in an existing direct upstream file.
 
+Patch 0010 also lets a composed conversation store own archived-session teardown
+after the persisted Undo guard. The managed controller preserves Owner checks,
+durable cancellation and exact physical stop receipts; ordinary stores keep the
+official path and worktree cleanup. Downstream controller and authenticated HTTP
+tests cover refusal, active/idle stops and Undo. This adds three net upstream
+lines in an already-divergent file, not a new patch or a production waiver.
+
 The session-model renewal change extends patch 0006 with a generic Host-owned
 loopback transport override at provider-family resolution. Saved inference
 profiles and their launch hashes stay unchanged. Issuance, eight-hour lifetime,
@@ -34,6 +41,28 @@ not replace either security boundary. Patch 0003 owns the complete
 `host/connect.py` delta so the Host factory, Runner entrypoint, interactive
 shell inventory and external workspace propagation remain one replayable file;
 patch 0005 owns the remaining external Host bridge paths.
+
+Patch 0003 also admits a Controller-pinned external inference snapshot only
+when it equals the value read under the original Host/session ownership locks.
+Ordinary launch routes do not supply this override and still reject Sandbox
+profiles on external hosts. The Controller additionally pins the exact Run's
+publication, session, Host and workspace; `tests/saas/test_interactive_host_admission.py`
+covers drift and refusal, alongside the original Host-store/binding regressions.
+
+The same Host-store patch adds an optional retired-snapshot predicate to managed
+generation replacement. It runs under the existing lifecycle row lock and
+requires empty resource names and credentials; ordinary callers keep the prior
+semantics. Downstream generation tests cover heartbeat, active-generation,
+tombstone and pending-cleanup refusal. This is not a name-only resume or a
+source-budget increase, and it does not add another patch slot.
+
+The Host-store detachment seam also accepts an exact already-revoked snapshot
+under the existing lifecycle row lock. Both credential columns must be empty;
+a changed owner, account generation, heartbeat or same-second re-arm is rejected.
+Ordinary callers retain the original token-hash predicate. The downstream
+managed-suspension tests cover the locked predicate and revoked startup failure;
+live provider acceptance is still required before release. This stays within
+the existing file, line and nine-patch ceilings.
 
 The 2026-09-13 external Host registration correction is carried by patch 0005.
 The token resolver and atomic registration both reject `expires_at <= now`.
@@ -236,11 +265,11 @@ nine-patch ceiling and existing source-delta ceilings remain unchanged.
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `825f8500` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
-| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry and revocation matrix | External Host lifecycle proposal pending | `825f8500` | Remove when upstream exposes equivalent external Host lifecycle semantics |
+| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry/revocation, trusted tombstone lookup, credential-fenced managed detachment and retired-snapshot replacement | External Host and managed lifecycle proposals pending | `825f8500` | Remove when upstream exposes equivalent external Host and managed lifecycle semantics |
 | `0004-agent-cache-legacy-recovery.patch` | Runtime Compatibility | `omnigent/onboarding/harness_install.py` | Harness install and managed-image version contracts | Harness fleet proposal pending | `825f8500` | Remove when upstream ships the managed fleet versions and install behavior |
 | `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/host/identity_env.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/server/routes/host_tunnel.py` | owner-only rotatable token file; workspace propagation; revocation heartbeat; Kubernetes proc binding | External Host bridge proposal pending | `825f8500` | Remove when upstream supports the complete managed Host credential and workspace route |
 | `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/bridge.py`; `omnigent/onboarding/provider_config.py` | Platform gateway catalog and delegated workspace callback routing | Gateway catalog proposal pending | `825f8500` | Remove when upstream publishes configured gateway models and managed callback routing |
 | `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py` | OpenCode synthetic-token platform routing | Provider fallback proposal pending | `825f8500` | Remove when upstream routes OpenCode through configured OpenAI-compatible providers without persisting credentials |
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `825f8500` | Remove when upstream supports the same credential-free platform routing |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `825f8500` | Remove when upstream exposes the equivalent dual managed runtime provider |
-| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
+| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/server/routes/sessions/routes_events.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, owned reaper factory, reported harness readiness, exact-retry idempotency, configured initial SPA title, store-owned inference selection, and durable message admission after input policy | Managed Host/reaper, Agent readiness, branding, inference-selection, and input-admission proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host/reaper, Agent readiness, replay, initial-title, inference-selection, and durable input-admission semantics |

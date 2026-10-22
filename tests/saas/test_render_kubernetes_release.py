@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 import saas.scripts.render_kubernetes_release as release_renderer_module
-from saas.production.postgresql_migration import _expected_head
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.production.service_bindings import EXPECTED_PRODUCTION_SERVICE_ROLES
 from saas.scripts.render_kubernetes_namespace import MANIFEST_NAMES, TARGET_NAMESPACE
 from saas.scripts.render_kubernetes_release import (
@@ -148,7 +148,7 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
             "region": "cn-east-1",
             "store_uri": store_uri,
         },
-        "control_plane_schema_revision": _expected_head("saas"),
+        "control_plane_schema_revision": CONTROL_PLANE_SCHEMA_REVISION,
         "image_digest": "sha256:" + ("3" * 64),
         "ingress": {"namespace": "kube-system", "workload": "traefik"},
         "mode": mode,

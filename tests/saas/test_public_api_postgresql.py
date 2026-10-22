@@ -19,7 +19,7 @@ from saas.control_plane.api_credentials import ValidatedApiCredential
 from saas.control_plane.api_http import create_public_api_router
 from saas.control_plane.http_auth import SaasMachinePrincipal
 from saas.control_plane.public_api import PublicApiError, PublicApiExecutionService
-from saas.production.postgresql_migration import _expected_head
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.public_api_contract import PUBLIC_API_PREFIX, FilterBoundCursorCodec
 
 
@@ -124,9 +124,12 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
-        assert connection.execute(
-            sa.text("SELECT version_num FROM saas_alembic_version")
-        ).scalar_one() == _expected_head("saas")
+        assert (
+            connection.execute(
+                sa.text("SELECT version_num FROM saas_alembic_version")
+            ).scalar_one()
+            == CONTROL_PLANE_SCHEMA_REVISION
+        )
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         connection.execute(
             sa.text(
