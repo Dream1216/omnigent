@@ -38,7 +38,7 @@ async def test_security_intent_stops_accepted_io_before_worker_cancel_without_ze
 ):
     _settings(monkeypatch)
     p = await _setup(interactive_http, tmp_path)
-    closed = asyncio.Event()
+    closed, changed = asyncio.Event(), asyncio.Event()
     known = phase == "known-body"
 
     def revoke():
@@ -46,6 +46,7 @@ async def test_security_intent_stops_accepted_io_before_worker_cancel_without_ze
         with p.f.factory() as db:
             assert db.get(RunRecord, p.lease.run_id).status == "running"
             assert db.get(CapabilityTokenRecord, p.lease.capability_id).revoked_at is None
+        changed.set()
 
     class Body(httpx.AsyncByteStream):
         async def __aiter__(self):
@@ -68,7 +69,7 @@ async def test_security_intent_stops_accepted_io_before_worker_cancel_without_ze
 
     p.gateway._client_factory = lambda: httpx.AsyncClient(transport=httpx.MockTransport(upstream))
     call = uuid4()
-    result = await _request(p, call)
+    result = await _request(p, call, after=changed)
     assert result.status_code == (403 if phase == "headers" else 200)
     assert closed.is_set() and len(p.calls) == 1
     assert _state(p, call) == (("settled", 13, 0) if known else ("uncertain", 0, 0))

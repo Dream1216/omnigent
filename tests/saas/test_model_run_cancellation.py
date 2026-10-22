@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from threading import Event
 from uuid import uuid4
@@ -36,27 +37,38 @@ def _settings(monkeypatch):
     monkeypatch.setattr(gateway_module, "_RUN_AUTHORITY_TIMEOUT_SECONDS", 0.1, raising=False)
 
 
-async def _request(p, call, *, timeout=2):
+async def _request(p, call, *, timeout=2, after=None):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_platform_model_gateway_app(p.gateway)),
         base_url="https://gateway.test",
     ) as client:
-        try:
-            return await asyncio.wait_for(
-                client.post(
-                    "/v1/responses" if p.responses else "/v1/chat/completions",
-                    json=_document(
-                        p.grant.configuration["public_model_id"], responses=p.responses, limit=32
-                    ),
-                    headers={
-                        "Authorization": "Bearer " + p.issued.value,
-                        "X-Omnigent-Gateway-Call": str(call),
-                    },
+        pending = asyncio.create_task(
+            client.post(
+                "/v1/responses" if p.responses else "/v1/chat/completions",
+                json=_document(
+                    p.grant.configuration["public_model_id"], responses=p.responses, limit=32
                 ),
-                timeout=timeout,
+                headers={
+                    "Authorization": "Bearer " + p.issued.value,
+                    "X-Omnigent-Gateway-Call": str(call),
+                },
             )
+        )
+        try:
+            if after is not None:
+                # Credential admission is not part of the cancellation deadline.
+                try:
+                    async with asyncio.timeout(30):
+                        while not after.is_set() and not pending.done():
+                            await asyncio.sleep(0.01)
+                except TimeoutError:
+                    pytest.fail("Managed inference never reached the durable authority change")
+            return await asyncio.wait_for(pending, timeout=timeout)
         except TimeoutError:
             pytest.fail("Managed inference ignored durable cancellation or authority failure")
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
 
 
 def _cancel(p):
@@ -97,7 +109,17 @@ async def test_durable_cancel_stops_a_request_waiting_for_supplier_headers(
 ):
     _settings(monkeypatch)
     p = await _setup(interactive_http, tmp_path)
-    closed = asyncio.Event()
+    closed, changed = asyncio.Event(), asyncio.Event()
+    if change == "cancel" and not p.responses:
+        authorize, delayed = p.service.authorize, []
+
+        def delayed_authorization(*args, **kwargs):
+            if not delayed:
+                delayed.append(True)
+                time.sleep(2.1)
+            return authorize(*args, **kwargs)
+
+        monkeypatch.setattr(p.service, "authorize", delayed_authorization)
 
     async def upstream(request):
         p.calls.append(request)
@@ -115,6 +137,7 @@ async def test_durable_cancel_stops_a_request_waiting_for_supplier_headers(
                     db.get(RunRecord, p.lease.run_id).lease_expires_at = datetime.now(
                         timezone.utc
                     ) - timedelta(seconds=1)
+        changed.set()
         try:
             await asyncio.Event().wait()
         finally:
@@ -129,7 +152,7 @@ async def test_durable_cancel_stops_a_request_waiting_for_supplier_headers(
 
     p.gateway._client_factory = transport
     call = uuid4()
-    response = await _request(p, call)
+    response = await _request(p, call, after=changed)
     assert response.status_code == 403 and closed.is_set()
     assert response.json()["error"]["code"] == "platform_model_run_authority_unavailable"
     assert len(p.calls) == 1 and all(client.is_closed for client in clients)
