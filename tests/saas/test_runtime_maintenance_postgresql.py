@@ -17,6 +17,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 import sqlalchemy as sa
+from psycopg import sql
 from sqlalchemy.orm import Session
 
 from saas.control_plane.db_models import (
@@ -414,7 +415,26 @@ def test_native_owner_maintenance_preserves_complete_scope_and_reverses_policy_c
         assert len(state["before"]["partitions"]) == 2
         assert len(state["before"]["bindings"]) == 2
         before_aliases = state["before"]["aliases"]
+        search_path = owner.execute("SHOW search_path").fetchone()[0]
         policies = runtime_native.policy_snapshot(owner)
+        assert owner.execute("SHOW search_path").fetchone()[0] == search_path
+        with owner.transaction():
+            owner.execute("SET LOCAL search_path=pg_catalog,pg_temp")
+            assert runtime_native.policy_snapshot(owner) == policies
+        assert owner.execute("SHOW search_path").fetchone()[0] == search_path
+        # Actual role drift must still refuse before any DROP/head change.
+        table, policy, _command = runtime_native.contract.POLICIES[0]
+        alter = sql.SQL("ALTER POLICY {} ON public.{} TO ").format(
+            sql.Identifier(policy), sql.Identifier(table)
+        )
+        owner.execute(alter + sql.SQL("CURRENT_USER"))
+        try:
+            with pytest.raises(db.Refused, match="p18_policy_contract_drift"):
+                runtime_native.remove_p18_policies(owner, policies)
+            assert native.head(owner) == "p0s000000018"
+        finally:
+            owner.execute(alter + sql.SQL("PUBLIC"))
+        assert runtime_native.policy_snapshot(owner) == policies
         runtime_native.remove_p18_policies(owner, policies)
         assert native.head(owner) == "p0s000000017"
         with owner.transaction():

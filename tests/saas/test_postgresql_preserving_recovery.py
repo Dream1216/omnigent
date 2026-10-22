@@ -6,6 +6,7 @@ these unit cases exercise the public API's effect ordering with no database I/O.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from types import SimpleNamespace
 from uuid import uuid4
@@ -213,3 +214,43 @@ def test_retained_guard_failure_prevents_every_inverse_mutation(recovery_boundar
     with pytest.raises(adapter.Refused, match="require_original_database_restore"):
         control.inverse(state)
     assert recovery_boundary.events == ["preflight_source_inverse"]
+
+
+def test_policy_snapshot_uses_canonical_context_and_restores_caller(monkeypatch):
+    inverse = recovery.runtime_native
+    sentinel = object()
+
+    class Connection:
+        search_path = "public,fixture"
+
+        @contextmanager
+        def transaction(self, *, force_rollback):
+            assert force_rollback is True
+            old = self.search_path
+            try:
+                yield
+            finally:
+                self.search_path = old
+
+        def execute(self, statement):
+            assert statement == "SET LOCAL search_path=pg_catalog,pg_temp"
+            self.search_path = "pg_catalog,pg_temp"
+
+    def read(connection, statement, parameters):
+        assert connection.search_path == "pg_catalog,pg_temp"
+        row = next(p for p in inverse.contract.POLICIES if p[1] == parameters[1])
+        return {
+            "polcmd": "w" if row[2] == "UPDATE" else "r",
+            "polpermissive": True,
+            "polroles": "{0}",
+            "relrowsecurity": True,
+            "relforcerowsecurity": True,
+            "raw_ast_and_OID_and_deparsed_fields": sentinel,
+        }
+
+    monkeypatch.setattr(inverse.db, "one", read)
+    connection = Connection()
+    snapshots = inverse.policy_snapshot(connection)
+    assert connection.search_path == "public,fixture"
+    assert len(snapshots) == 4
+    assert all(row["raw_ast_and_OID_and_deparsed_fields"] is sentinel for row in snapshots)

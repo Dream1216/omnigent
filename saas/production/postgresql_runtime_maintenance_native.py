@@ -15,28 +15,30 @@ from saas.production.postgresql_restore import _R_MODEL_HASH_TABLES
 
 def policy_snapshot(connection) -> list[dict]:
     result = []
-    for table, name, command in contract.POLICIES:
-        row = db.one(
-            connection,
-            "SELECT p.oid::bigint,p.polrelid::bigint,p.polname,p.polcmd::text,"
-            "p.polpermissive,p.polroles::text,p.polqual::text,p.polwithcheck::text,"
-            "pg_get_expr(p.polqual,p.polrelid) AS using_expression,"
-            "pg_get_expr(p.polwithcheck,p.polrelid) AS check_expression,"
-            "c.relowner::bigint,pg_get_userbyid(c.relowner) AS owner,"
-            "c.relrowsecurity,c.relforcerowsecurity FROM pg_catalog.pg_policy p "
-            "JOIN pg_catalog.pg_class c ON c.oid=p.polrelid "
-            "WHERE p.polrelid=to_regclass(%s) AND p.polname=%s",
-            ("public." + table, name),
-        )
-        db.need(
-            row["polcmd"] == ("w" if command == "UPDATE" else "r")
-            and row["polpermissive"] is True
-            and row["polroles"] == "{0}"
-            and row["relrowsecurity"] is True
-            and row["relforcerowsecurity"] is True,
-            "p18_policy_contract_drift",
-        )
-        result.append({"table": table, **row})
+    with connection.transaction(force_rollback=True):
+        connection.execute("SET LOCAL search_path=pg_catalog,pg_temp")
+        for table, name, command in contract.POLICIES:
+            row = db.one(
+                connection,
+                "SELECT p.oid::bigint,p.polrelid::bigint,p.polname,p.polcmd::text,"
+                "p.polpermissive,p.polroles::text,p.polqual::text,p.polwithcheck::text,"
+                "pg_get_expr(p.polqual,p.polrelid) AS using_expression,"
+                "pg_get_expr(p.polwithcheck,p.polrelid) AS check_expression,"
+                "c.relowner::bigint,pg_get_userbyid(c.relowner) AS owner,"
+                "c.relrowsecurity,c.relforcerowsecurity FROM pg_catalog.pg_policy p "
+                "JOIN pg_catalog.pg_class c ON c.oid=p.polrelid "
+                "WHERE p.polrelid=to_regclass(%s) AND p.polname=%s",
+                ("public." + table, name),
+            )
+            db.need(
+                row["polcmd"] == ("w" if command == "UPDATE" else "r")
+                and row["polpermissive"] is True
+                and row["polroles"] == "{0}"
+                and row["relrowsecurity"] is True
+                and row["relforcerowsecurity"] is True,
+                "p18_policy_contract_drift",
+            )
+            result.append({"table": table, **row})
     return result
 
 
