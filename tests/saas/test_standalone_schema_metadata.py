@@ -15,7 +15,7 @@ from saas.control_plane.migrations.schema_metadata import (
     _MODEL_TABLES,
     control_plane_migration_metadata,
 )
-from tests.saas.test_control_plane_migration import _migration_config
+from tests.saas.test_control_plane_migration import _migration_config, _migration_head
 from tests.saas.test_execution_control_plane import _admitted_run, _execution_fixture
 
 _R = "lm2r00000001"
@@ -96,7 +96,7 @@ def test_fresh_schema_matches_the_ordinary_unfiltered_alembic_check(schema_datab
         command.check(_migration_config(connection))
         assert (
             connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-            == _T
+            == _migration_head()
         )
     assert _foreign_keys(schema_database) == set()
 
@@ -172,7 +172,7 @@ def test_nonempty_p0_execution_survives_schema_upgrade_with_foreign_keys_enabled
 
 
 def test_schema_downgrade_refuses_retained_execution_without_erasing_data(schema_database):
-    _upgrade(schema_database)
+    _upgrade(schema_database, _T)
     factory, run, session = _legacy_run(schema_database)
     with pytest.raises(RuntimeError, match="retained execution"):
         with schema_database.begin() as connection:
@@ -189,11 +189,11 @@ def test_schema_downgrade_refuses_retained_execution_without_erasing_data(schema
 
 
 def test_empty_schema_can_restore_original_constraints_then_upgrade_again(schema_database):
-    _upgrade(schema_database)
+    _upgrade(schema_database, _T)
     with schema_database.begin() as connection:
         command.downgrade(_migration_config(connection), _R)
     assert _foreign_keys(schema_database) == _PRICE_KEYS
-    _upgrade(schema_database)
+    _upgrade(schema_database, _T)
     assert _foreign_keys(schema_database) == set()
 
 
