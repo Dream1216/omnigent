@@ -281,6 +281,67 @@ def production_replay(
             cleanup.dispose()
 
 
+def _run_original_migration_cli(
+    plan: migration.ProductionPostgreSqlPlan,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+) -> dict[str, object]:
+    import omnigent
+    from saas.scripts import run_postgresql_migration as cli
+
+    output = tmp_path / f"native-cli-{label}.json"
+    with monkeypatch.context() as context:
+        # Keep the original installed-build guard active with the fixture's own revision.
+        context.setattr(
+            omnigent,
+            "_build_info",
+            SimpleNamespace(COMMIT_SHA=plan.product_revision),
+            raising=False,
+        )
+        for field, name in cli._URL_ENVIRONMENTS.items():
+            authority = getattr(plan, field.removesuffix("_url"))
+            path = tmp_path / f"native-cli-{label}-{field}"
+            path.write_text(authority.url.render_as_string(hide_password=False))
+            path.chmod(0o400)
+            context.setenv(name, str(path))
+        for name in cli._DIRECT_URL_ENVIRONMENTS:
+            context.delenv(name, raising=False)
+        for name in ("OMNIGENT_SAAS_SOURCE_SHA", "OMNIGENT_SAAS_PRODUCT_REVISION"):
+            context.setenv(name, plan.product_revision)
+        for name, profile in (
+            ("SERVICE_ROLE_BINDINGS", plan.service_role_bindings),
+            ("PLATFORM_MODEL_SERVICE_ROLE_BINDINGS", plan.platform_model_service_role_bindings),
+            ("PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS", plan.platform_admin_service_role_bindings),
+            (
+                "MODEL_PROJECTION_SERVICE_ROLE_BINDINGS",
+                plan.model_projection_service_role_bindings,
+            ),
+            (
+                "BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS",
+                plan.business_delivery_service_role_bindings,
+            ),
+        ):
+            prefix = "OMNIGENT_SAAS_" + name
+            for suffix in ("_FILE", "_SHA256"):
+                context.delenv(prefix + suffix, raising=False)
+            if profile is not None:
+                context.setenv(prefix + "_FILE", str(profile.path))
+                context.setenv(prefix + "_SHA256", profile.sha256)
+        context.setattr(
+            "sys.argv",
+            [
+                "run_postgresql_migration",
+                "--product-revision",
+                plan.product_revision,
+                "--output",
+                str(output),
+            ],
+        )
+        assert cli.main() == 0
+    return json.loads(output.read_text())
+
+
 def test_real_clean_replay_upgrade_and_catalog_rejections(
     production_replay: migration.ProductionPostgreSqlPlan,
     monkeypatch: pytest.MonkeyPatch,
@@ -347,6 +408,104 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         upgraded = migration.run_production_postgresql_migration(plan)
         assert upgraded.official_head == target
         assert upgraded.catalog_sha256 == first.catalog_sha256
+
+        historical_users = [(1_234_567, f"trgm-a-{uuid4()}"), (1_234_568, f"trgm-b-{uuid4()}")]
+        with owner.begin() as connection:
+            for workspace, user in historical_users:
+                connection.execute(
+                    sa.text("SELECT set_config('app.runtime_workspace_id', :workspace, true)"),
+                    {"workspace": str(workspace)},
+                )
+                connection.execute(
+                    sa.text("INSERT INTO users (workspace_id,id) VALUES (:workspace,:user)"),
+                    {"workspace": workspace, "user": user},
+                )
+        operator = sa.create_engine(
+            sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"]).set(
+                database=plan.official_owner.url.database
+            )
+        )
+        try:
+            for predecessor in ("hh1b2c3d4e5f", "mm1a2b3c4d5e"):
+                with owner.connect() as connection:
+                    config.attributes["connection"] = connection
+                    command.downgrade(config, predecessor)
+                with owner.connect() as connection:
+                    assert (
+                        connection.exec_driver_sql(
+                            "SELECT version_num FROM alembic_version"
+                        ).scalar_one()
+                        == predecessor
+                    )
+                    assert connection.exec_driver_sql(
+                        "SELECT indexname FROM pg_indexes WHERE schemaname='public' "
+                        "AND indexname IN ('ix_conversations_title_trgm', "
+                        "'ix_conversation_items_search_text_trgm') ORDER BY indexname"
+                    ).scalars().all() == ["ix_conversations_title_trgm"]
+                with owner.begin() as connection:
+                    connection.exec_driver_sql(
+                        "CREATE INDEX replay_unreviewed_title_trgm ON public.conversations "
+                        "USING gin (lower(title) gin_trgm_ops)"
+                    )
+                try:
+                    with pytest.raises(migration.PostgreSqlMigrationError) as extra:
+                        migration.run_production_postgresql_migration(plan)
+                    assert extra.value.code == "pg_trgm_index_contract_drifted"
+                finally:
+                    with owner.begin() as connection:
+                        connection.exec_driver_sql("DROP INDEX replay_unreviewed_title_trgm")
+                with owner.begin() as connection:
+                    connection.exec_driver_sql("DROP INDEX ix_conversations_title_trgm")
+                    connection.exec_driver_sql(
+                        "CREATE INDEX ix_conversations_title_trgm ON public.conversations "
+                        "USING gin ((lower(title) || 'drift') gin_trgm_ops)"
+                    )
+                try:
+                    with pytest.raises(migration.PostgreSqlMigrationError) as expression:
+                        migration.run_production_postgresql_migration(plan)
+                    assert expression.value.code == "pg_trgm_index_contract_drifted"
+                finally:
+                    with owner.begin() as connection:
+                        connection.exec_driver_sql("DROP INDEX ix_conversations_title_trgm")
+                        connection.exec_driver_sql(
+                            "CREATE INDEX ix_conversations_title_trgm ON public.conversations "
+                            "USING gin (lower(title) gin_trgm_ops)"
+                        )
+                with operator.begin() as connection:
+                    quote = connection.dialect.identifier_preparer.quote
+                    connection.exec_driver_sql(
+                        "ALTER TABLE public.conversations OWNER TO "
+                        + quote(plan.database_owner.login)
+                    )
+                try:
+                    with pytest.raises(migration.PostgreSqlMigrationError) as ownership:
+                        migration.run_production_postgresql_migration(plan)
+                    assert ownership.value.code == "pg_trgm_index_contract_drifted"
+                finally:
+                    with operator.begin() as connection:
+                        quote = connection.dialect.identifier_preparer.quote
+                        connection.exec_driver_sql(
+                            "ALTER TABLE public.conversations OWNER TO "
+                            + quote(plan.official_owner.login)
+                        )
+                receipt = _run_original_migration_cli(plan, tmp_path, monkeypatch, predecessor)
+                assert receipt["status"] == "pass" and receipt["official_head"] == target
+                assert receipt["catalog_sha256"] == first.catalog_sha256
+                assert receipt["service_role_graph_sha256"] == plan.service_role_graph.sha256
+                with owner.begin() as connection:
+                    for workspace, user in historical_users:
+                        connection.execute(
+                            sa.text(
+                                "SELECT set_config('app.runtime_workspace_id', :workspace, true)"
+                            ),
+                            {"workspace": str(workspace)},
+                        )
+                        assert connection.execute(
+                            sa.text("SELECT workspace_id,id FROM users WHERE id=:user"),
+                            {"user": user},
+                        ).all() == [(workspace, user)]
+        finally:
+            operator.dispose()
 
         with owner.begin() as connection:
             connection.exec_driver_sql("UPDATE alembic_version SET version_num='unknown'")

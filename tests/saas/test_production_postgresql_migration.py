@@ -888,6 +888,63 @@ def test_existing_extension_accepts_only_source_pinned_migration_ancestors(
     assert not migration._source_pinned_pg_trgm_predecessor("ga1b2c3d4e5f", 17)
 
 
+@pytest.mark.parametrize(
+    ("revision", "server_major", "content_index_present"),
+    [
+        (revision, major, has_content)
+        for revision, has_content in [
+            ("ga1b2c3d4e5f", True),
+            ("ge1b2c3d4e5f", True),
+            ("hh1b2c3d4e5f", False),
+            ("mm1a2b3c4d5e", False),
+            ("nf12ab34cd56", False),
+        ]
+        for major in (16, 18)
+    ]
+    + [
+        ("unknown", 18, None),
+        ("gb1b2c3d4e5f", 18, None),
+        ("gf1b2c3d4e5f", 18, None),
+        ("mm1a2b3c4d5e", 17, None),
+    ],
+)
+def test_existing_extension_uses_only_anchored_source_ancestry_index_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    server_major: int,
+    revision: str,
+    content_index_present: bool | None,
+) -> None:
+    catalog_results = iter((True, "alembic_version", [revision], server_major * 10000))
+
+    def execute(_statement: object) -> SimpleNamespace:
+        value = next(catalog_results)
+        return SimpleNamespace(scalar_one=lambda: value, scalars=lambda: value)
+
+    observed = []
+    monkeypatch.setattr(
+        migration,
+        "_pg_trgm_security_catalog",
+        lambda _connection, **kwargs: observed.append(kwargs),
+    )
+    connection = SimpleNamespace(execute=execute)
+    if content_index_present is None:
+        with pytest.raises(migration.PostgreSqlMigrationError) as error:
+            migration._preflight_pg_trgm_extension(connection, official_owner="original_owner")
+        assert error.value.code == "pg_trgm_preexisting_before_head"
+        assert observed == []
+        return
+    migration._preflight_pg_trgm_extension(connection, official_owner="original_owner")
+    assert len(observed) == 1
+    assert observed[0]["official_owner"] == "original_owner"
+    expected = {"ix_conversations_title_trgm": ("conversations", "lower((title)::text)")}
+    if content_index_present:
+        expected["ix_conversation_items_search_text_trgm"] = (
+            "conversation_items",
+            "lower(search_text)",
+        )
+    assert observed[0]["expected_indexes"] == expected
+
+
 def test_source_security_catalog_sorts_rows_after_role_aliasing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

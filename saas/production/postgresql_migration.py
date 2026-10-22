@@ -5850,7 +5850,13 @@ def _preflight_pg_trgm_extension(connection: Connection, *, official_owner: str)
     if revision == _expected_head("official"):
         expected_indexes = _PG_TRGM_INDEXES
     elif _source_pinned_pg_trgm_predecessor(revision, server_major):
-        expected_indexes = _PG_TRGM_PREDECESSOR_INDEXES
+        scripts = ScriptDirectory.from_config(_migration_config("official"))
+        content_index_was_dropped = any(
+            item.revision == "gf1b2c3d4e5f" for item in scripts.walk_revisions(head=revision)
+        )
+        expected_indexes = (
+            _PG_TRGM_INDEXES if content_index_was_dropped else _PG_TRGM_PREDECESSOR_INDEXES
+        )
     else:
         raise PostgreSqlMigrationError("pg_trgm_preexisting_before_head", "official_alembic")
     _pg_trgm_security_catalog(
