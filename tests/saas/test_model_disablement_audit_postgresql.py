@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from alembic import command
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import sessionmaker
 
@@ -27,6 +26,7 @@ from saas.control_plane.platform_security import PlatformAuthorizationService
 from saas.control_plane.retained_model_audit import RetainedModelAuditPublisher
 from saas.outbox_worker import verify_dispatcher_database_role
 from tests.saas import test_model_projection
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _Cipher
 from tests.saas.test_model_gateway_audit_postgresql import (
     _event,
@@ -201,10 +201,9 @@ def test_real_disablement_audit_concurrent_reordering_never_duplicates(audit_dis
         list(pool.map(lambda event: f.publisher.publish(**_event(event)), events * 4))
     assert _audit_count(f) == 3
     assert f.audit_service.verify_audit_chain(f.actor) and _state(f) == before
-    with pytest.raises(RuntimeError, match="retained model disablement audit"):
-        with f.owner.begin() as db:
-            f.config.attributes["connection"] = db
-            command.downgrade(f.config, "lm2l00000001")
+    assert_retained_downgrade_refused(
+        f.owner, "lm2l00000001", expected_pattern="retained model disablement audit"
+    )
 
 
 def test_real_disablement_audit_storage_failure_rolls_back_before_outbox_ack(audit_disablement):
@@ -271,10 +270,9 @@ def test_real_disablement_audit_rejects_forged_reference_and_pending_downgrade(a
     assert rejected.value.code == "model_disablement_audit_evidence_rejected"
     assert not rejected.value.retryable and rejected.value.pre_side_effect
     assert _audit_count(f) == 1
-    with pytest.raises(RuntimeError, match="retained model disablement audit"):
-        with f.owner.begin() as db:
-            f.config.attributes["connection"] = db
-            command.downgrade(f.config, "lm2l00000001")
+    assert_retained_downgrade_refused(
+        f.owner, "lm2l00000001", expected_pattern="retained model disablement audit"
+    )
     result = _dispatch(f)
     assert (result.published, result.failed) == (1, 0)
 

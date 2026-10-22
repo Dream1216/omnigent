@@ -18,6 +18,7 @@ from saas.control_plane.model_budget import (
 )
 from saas.control_plane.platform_models import ModelProviderConfigurationRecord
 from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _fixture
 
 
@@ -112,10 +113,9 @@ def test_real_postgresql_single_budget_attempt_keeps_unknown_costs_until_evidenc
             ).one() == (900, 0)
 
         def assert_evidence_cannot_be_removed():
-            with pytest.raises(RuntimeError, match="retained model budget attempt evidence"):
-                with owner.begin() as connection:
-                    config.attributes["connection"] = connection
-                    command.downgrade(config, "lm1c00000001")
+            assert_retained_downgrade_refused(
+                owner, "lm1c00000001", expected_pattern="retained model budget attempt evidence"
+            )
             with owner.connect() as connection:
                 assert (
                     connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))

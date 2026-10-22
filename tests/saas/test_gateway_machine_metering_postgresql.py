@@ -3,15 +3,12 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from time import sleep
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.orm import sessionmaker
 
 from saas.billing_metering_transport import (
@@ -29,6 +26,7 @@ from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 from saas.control_plane.model_usage import ModelTokenUsage
 from saas.control_plane.platform_models import ModelProviderMonthlyBudgetRecord
 from saas.control_plane.scheduling_models import CapabilityTokenRecord
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_billing_metering_transport import (
     _client_context,
     _server_context,
@@ -265,13 +263,11 @@ def test_actual_login_and_mtls_record_late_gateway_usage_without_double_cost(
                 ).scalar_one()
                 == 0
             )
-        with (
-            pytest.raises(RuntimeError, match=r"^retained execution schema cannot be downgraded$"),
-            f.engine.begin() as db,
-        ):
-            config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
-            config.attributes["connection"] = db
-            command.downgrade(config, "lm2g00000001")
+        assert_retained_downgrade_refused(
+            f.engine,
+            "lm2g00000001",
+            expected_pattern=r"^retained execution schema cannot be downgraded$",
+        )
 
 
 def test_database_guard_rolls_back_tampered_usage_receipt_and_outbox(

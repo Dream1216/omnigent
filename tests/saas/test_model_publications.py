@@ -4,6 +4,7 @@ import json
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -95,11 +96,13 @@ def _fixture(*, stored=True, settle=True, hook=None, stale=False, responses=Fals
     )
 
     def readiness_clock():
+        at = datetime.now(timezone.utc)
         engine = factory.kw["bind"]
         if engine.dialect.name == "postgresql":
             with engine.connect() as connection:
-                return connection.scalar(sa.select(sa.func.clock_timestamp()))
-        return datetime.now(timezone.utc)
+                # The mock proof must be non-future on both process and SQL clocks.
+                return min(at, connection.scalar(sa.select(sa.func.clock_timestamp())))
+        return at
 
     readiness = _Readiness(hook, stale=stale, clock=readiness_clock)
     worker = ModelPublicationPublisher(
@@ -117,6 +120,26 @@ def _fixture(*, stored=True, settle=True, hook=None, stale=False, responses=Fals
         "idempotency_key": "publish-isolated-001",
     }
     return service, worker, factory, actor, request, calls
+
+
+@pytest.mark.parametrize("offset", (-1, 1))
+def test_fixture_readiness_is_not_future_on_either_sampled_clock(monkeypatch, offset):
+    _, worker, factory, *_ = _fixture()
+    before = datetime.now(timezone.utc)
+    database_at = before + timedelta(seconds=offset)
+
+    @contextmanager
+    def connect():
+        yield SimpleNamespace(scalar=lambda _statement: database_at)
+
+    monkeypatch.setitem(
+        factory.kw,
+        "bind",
+        SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), connect=connect),
+    )
+    observed = worker._readiness.clock()
+    assert observed <= database_at and observed <= datetime.now(timezone.utc)
+    assert observed == database_at if offset < 0 else observed >= before
 
 
 def _envelope(factory, operation_id):

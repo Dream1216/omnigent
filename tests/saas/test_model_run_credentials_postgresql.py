@@ -4,14 +4,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import fields, replace
 from datetime import datetime, timedelta, timezone
-from time import sleep
+from time import monotonic, sleep
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
@@ -30,6 +28,7 @@ from saas.runner_adapter.platform_model_gateway import (
     PlatformModelGatewayTokenError,
     PlatformModelGatewayTokenExpired,
 )
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_interactive_dispatch_postgresql import _worker_logins
 from tests.saas.test_interactive_execution_http import _message, _queued_worker, _scheduling
 from tests.saas.test_interactive_execution_postgresql import (
@@ -105,6 +104,11 @@ def _claim(fixture, workers, *, include_controller=False):
         "connection_token": connection.connection_token,
     }
     claim = control.claim_run(**machine)
+    deadline = monotonic() + 5
+    while claim is None and monotonic() < deadline:
+        # A queued dispatch can become eligible after the Runner's first poll.
+        sleep(0.01)
+        claim = control.claim_run(**machine)
     assert claim is not None
     for status in ("starting", "running"):
         control.transition_run(
@@ -140,11 +144,25 @@ def _claim(fixture, workers, *, include_controller=False):
 def test_real_app_and_authenticator_logins_enforce_run_credential_boundaries(
     interactive_postgresql,
     short_lived,
+    monkeypatch,
 ):
     fixture = interactive_postgresql
     f = fixture.base
+    original_claim = ProductionRunnerMachineAuthority.claim_run
+    polls = 0
+
+    def initially_unavailable(controller, **machine):
+        nonlocal polls
+        polls += 1
+        return None if polls <= 2 else original_claim(controller, **machine)
+
+    monkeypatch.setattr(ProductionRunnerMachineAuthority, "claim_run", initially_unavailable)
     with _worker_logins(f) as workers, _authenticator_login(f) as authentication:
         authority, authorized, lease = _claim(fixture, workers)
+        assert polls >= 3
+        with f.factory() as db:
+            assert db.scalar(sa.text("SELECT count(*) FROM saas_runs")) == 1
+            assert db.scalar(sa.text("SELECT count(*) FROM saas_run_dispatches")) == 1
         service = ModelRunCredentialService(
             app_sessions=f.app_factory,
             authenticator_sessions=authentication,
@@ -223,13 +241,11 @@ def test_real_app_and_authenticator_logins_enforce_run_credential_boundaries(
             assert rejected.value.orig.sqlstate == "23514"
         with pytest.raises(PlatformModelGatewayTokenError):
             service.authenticate("mrt_" + "0" * 64)
-        with f.engine.connect() as connection:
-            config = Config(str(f.role_sql.parent / "alembic.ini"))
-            config.attributes["connection"] = connection
-            with pytest.raises(
-                RuntimeError, match=r"^retained execution schema cannot be downgraded$"
-            ):
-                command.downgrade(config, "lm2e00000001")
+        assert_retained_downgrade_refused(
+            f.engine,
+            "lm2e00000001",
+            expected_pattern=r"^retained execution schema cannot be downgraded$",
+        )
         with f.factory() as db:
             assert db.scalar(sa.select(sa.func.count()).select_from(ModelRunTokenRecord)) == (
                 2 if short_lived else 1

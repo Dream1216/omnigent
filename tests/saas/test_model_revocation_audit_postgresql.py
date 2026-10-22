@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
 
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
@@ -23,6 +20,7 @@ from saas.control_plane.platform_security import PlatformSecurityError, Platform
 from saas.control_plane.retained_model_audit import RetainedModelAuditPublisher
 from saas.control_plane.rls import PlatformRlsContext, apply_platform_rls_context
 from saas.outbox_worker import verify_dispatcher_database_role
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_disablement_audit_postgresql import (
     audit_disablement as audit_disablement,
 )
@@ -109,11 +107,9 @@ def test_real_staff_revocation_and_dispatcher_lost_ack_retain_one_shared_audit_f
     ):
         with pytest.raises(DBAPIError, match="immutable"), f.owner.begin() as db:
             db.exec_driver_sql(statement)
-    with pytest.raises(RuntimeError, match="retained model security revocation"):
-        with f.owner.begin() as db:
-            config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
-            config.attributes["connection"] = db
-            command.downgrade(config, "lm2m00000001")
+    assert_retained_downgrade_refused(
+        f.owner, "lm2m00000001", expected_pattern="retained model security revocation"
+    )
     with f.owner.connect() as db:
         assert db.exec_driver_sql(
             "SELECT relforcerowsecurity FROM pg_class "

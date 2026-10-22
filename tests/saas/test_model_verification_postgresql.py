@@ -42,6 +42,7 @@ from saas.production.model_protocol_probe import (
 )
 from saas.production.model_publication import ModelPublicationPublisher
 from saas.production.model_verification import ModelVerificationPublisher
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _KEY, _fixture
 from tests.saas.test_model_deployments import _command
 from tests.saas.test_model_protocol_probe import _body, _events
@@ -130,7 +131,7 @@ def test_real_postgresql_empty_verification_downgrade_restores_authority(
 
 
 def test_real_postgresql_model_test_requires_staff_projection_and_billing_identities(
-    isolated_postgres_url: str, monkeypatch
+    isolated_postgres_url: str, monkeypatch, *, schema_revision: str = "head"
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     owner = sa.create_engine(isolated_postgres_url)
@@ -147,7 +148,7 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
         with owner.begin() as connection:
             config = Config(root / "saas/control_plane/alembic.ini")
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            command.upgrade(config, schema_revision)
             connection.exec_driver_sql(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text()
             )
@@ -395,10 +396,9 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
                 )
             )
         assert getattr(wrong_binding.value.orig, "sqlstate", None) == "42501"
-        with pytest.raises(RuntimeError, match="retained evidence"):
-            with owner.begin() as connection:
-                config.attributes["connection"] = connection
-                command.downgrade(config, "lm1e00000001")
+        assert_retained_downgrade_refused(
+            owner, "lm1e00000001", expected_pattern="retained evidence"
+        )
         with owner.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT count(*) FROM saas_customer_ledger_entries"))

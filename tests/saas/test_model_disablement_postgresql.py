@@ -8,8 +8,6 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.orm import sessionmaker
 
 from saas.control_plane import model_publications
@@ -21,6 +19,7 @@ from saas.control_plane.platform_security import PlatformAuthorizationService
 from saas.control_plane.rls import PlatformRlsContext, apply_platform_rls_context
 from saas.control_plane.tenant_model_catalog import TenantModelCatalog
 from tests.saas import test_model_projection
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_agent_catalog import _runtime
 from tests.saas.test_model_connections import _fixture as _connection_fixture
 from tests.saas.test_model_publications import _envelope, _fixture
@@ -194,11 +193,9 @@ def test_real_staff_disablement_and_customer_column_authority(
                     )
                 )
         assert customer.list(runtime)[0]["generation"] == 2
-        with pytest.raises(RuntimeError, match="retained model disablement"):
-            with f.engine.begin() as connection:
-                config = Config(f.role_sql.parent / "alembic.ini")
-                config.attributes["connection"] = connection
-                command.downgrade(config, "lm2k00000001")
+        assert_retained_downgrade_refused(
+            f.engine, "lm2k00000001", expected_pattern="retained model disablement"
+        )
         with f.engine.connect() as connection:
             assert connection.exec_driver_sql(
                 "SELECT relforcerowsecurity FROM pg_class "

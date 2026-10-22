@@ -24,6 +24,7 @@ from saas.control_plane.platform_models import (
     ModelProviderConfigurationRecord,
 )
 from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _fixture as _staff_fixture
 from tests.saas.test_platform_model_gateway import SESSION_ID, TENANT_ID
 from tests.saas.test_platform_model_gateway_attempts import _body, _fixture, _row
@@ -32,7 +33,7 @@ from tests.saas.test_platform_model_gateway_attempts import _body, _fixture, _ro
 @pytest.mark.parametrize("responses", (False, True))
 @pytest.mark.parametrize("zero", (False, True))
 def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
-    tmp_path, isolated_postgres_url, responses, zero
+    tmp_path, isolated_postgres_url, responses, zero, *, schema_revision: str = "head"
 ):
     root = Path(__file__).resolve().parents[2]
     owner = sa.create_engine(isolated_postgres_url)
@@ -42,11 +43,14 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
     database = sa.make_url(isolated_postgres_url).database
     billing = None
     created = False
+    expected_revision = (
+        CONTROL_PLANE_SCHEMA_REVISION if schema_revision == "head" else schema_revision
+    )
     try:
         with owner.begin() as connection:
             config = Config(root / "saas/control_plane/alembic.ini")
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            command.upgrade(config, schema_revision)
             connection.exec_driver_sql(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text()
             )
@@ -259,16 +263,13 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
                 "UPDATE saas_model_gateway_evidence SET canonical_evidence='{}'"
             )
         assert denied.value.orig.sqlstate == "42501"
-        with (
-            pytest.raises(RuntimeError, match="retained gateway evidence"),
-            owner.begin() as connection,
-        ):
-            config.attributes["connection"] = connection
-            command.downgrade(config, "lm2a00000001")
+        assert_retained_downgrade_refused(
+            owner, "lm2a00000001", expected_pattern="retained gateway evidence"
+        )
         with owner.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-                == CONTROL_PLANE_SCHEMA_REVISION
+                == expected_revision
             )
             assert connection.scalar(
                 sa.text(

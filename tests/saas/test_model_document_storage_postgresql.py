@@ -33,6 +33,9 @@ def _roundtrip(engine, expected_tables):
         for value in row[1:]
     )
     with engine.connect() as connection:
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            "lm2q00000001"
+        )
         assert verify_gateway_audit_function(connection) is not None
         authority = _authority(connection)
     assert (
@@ -81,7 +84,9 @@ def _authority(connection):
 def test_real_postgresql_staff_financial_chain_survives_document_and_relationship_roundtrip(
     isolated_postgres_url, monkeypatch
 ):
-    _staff_chain(isolated_postgres_url, monkeypatch)
+    # Start at the document migration's real historical schema, not by removing
+    # the newer retained-budget policy from a populated current schema.
+    _staff_chain(isolated_postgres_url, monkeypatch, schema_revision="lm2q00000001")
     engine = sa.create_engine(isolated_postgres_url)
     try:
         _roundtrip(
@@ -99,7 +104,13 @@ def test_real_postgresql_staff_financial_chain_survives_document_and_relationshi
 def test_real_postgresql_billing_attempt_survives_gateway_document_roundtrip(
     tmp_path, isolated_postgres_url
 ):
-    _gateway_chain(tmp_path, isolated_postgres_url, responses=False, zero=False)
+    _gateway_chain(
+        tmp_path,
+        isolated_postgres_url,
+        responses=False,
+        zero=False,
+        schema_revision="lm2q00000001",
+    )
     engine = sa.create_engine(isolated_postgres_url)
     try:
         _roundtrip(engine, {"saas_model_gateway_evidence"})

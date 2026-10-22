@@ -5,14 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from alembic import command
-from alembic.config import Config
 from psycopg import Binary
 from sqlalchemy.orm import sessionmaker
 
@@ -32,6 +29,7 @@ from saas.control_plane.platform_models import (
 from saas.control_plane.scheduling_models import CapabilityTokenRecord
 from saas.production.model_run_credentials import ModelRunCredentialService
 from tests.saas import test_tenant_model_catalog_postgresql
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_interactive_dispatch_postgresql import _worker_logins
 from tests.saas.test_interactive_execution_postgresql import (
     interactive_postgresql as interactive_postgresql,
@@ -194,13 +192,11 @@ def test_actual_billing_login_retains_real_run_and_late_outcome_on_the_existing_
                 )
                 == 4
             )
-        with (
-            pytest.raises(RuntimeError, match=r"^retained execution schema cannot be downgraded$"),
-            f.engine.begin() as db,
-        ):
-            config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
-            config.attributes["connection"] = db
-            command.downgrade(config, "lm2f00000001")
+        assert_retained_downgrade_refused(
+            f.engine,
+            "lm2f00000001",
+            expected_pattern=r"^retained execution schema cannot be downgraded$",
+        )
         for factory in (f.app_factory, authentication, workers["executor"]):
             with factory() as db:
                 assert not db.scalar(

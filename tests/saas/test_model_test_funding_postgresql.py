@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
 from saas.control_plane.model_test_funding import ModelTestFundingPolicy, ModelTestFundingService
 from saas.control_plane.platform_security import PlatformAuthorizationService
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _fixture
 
 
@@ -123,10 +124,9 @@ def test_real_postgresql_platform_funding_and_billing_are_separate_authorities(
             actor, expected_version=1, policy=replace(policy, enabled=False)
         )
         assert disabled.version == 2
-        with pytest.raises(RuntimeError, match="retained platform test funding evidence"):
-            with owner.begin() as connection:
-                config.attributes["connection"] = connection
-                command.downgrade(config, "lm1d00000001")
+        assert_retained_downgrade_refused(
+            owner, "lm1d00000001", expected_pattern="retained platform test funding evidence"
+        )
         with owner.connect() as connection:
             assert (
                 connection.exec_driver_sql(

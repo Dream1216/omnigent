@@ -33,6 +33,7 @@ from saas.control_plane.platform_models import (
 )
 from saas.control_plane.retained_model_audit import RetainedModelAuditPublisher
 from saas.outbox_worker import verify_dispatcher_database_role
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _fixture as _staff_fixture
 from tests.saas.test_platform_model_gateway import TENANT_ID
 from tests.saas.test_platform_model_gateway_attempts import _body, _fixture
@@ -321,12 +322,9 @@ def test_real_postgresql_gateway_audit_deduplicates_concurrent_out_of_order_deli
             f.publisher.publish(**{**first, "payload": {**first["payload"], **mutation}})
         assert rejected.value.code == "model_gateway_audit_evidence_rejected"
         assert not rejected.value.retryable and rejected.value.pre_side_effect
-    with (
-        pytest.raises(RuntimeError, match="retained gateway audit"),
-        f.owner.begin() as connection,
-    ):
-        f.config.attributes["connection"] = connection
-        command.downgrade(f.config, "lm2b00000001")
+    assert_retained_downgrade_refused(
+        f.owner, "lm2b00000001", expected_pattern="retained gateway audit"
+    )
     with f.dispatcher.connect() as connection:
         assert verify_gateway_audit_function(connection) is not None
 
@@ -461,7 +459,8 @@ def test_real_postgresql_gateway_audit_source_and_acl_drift_are_rejected(audit_g
     with f.owner.begin() as connection:
         f.config.attributes["connection"] = connection
         command.downgrade(f.config, "lm2b00000001")
-    verify_dispatcher_database_role(f.dispatcher)
+    with pytest.raises(RuntimeError, match="retained_model_audit_schema_contract_rejected"):
+        verify_dispatcher_database_role(f.dispatcher)
     with pytest.raises(RuntimeError, match="function_unavailable"):
         f.publisher.validate_outbox_configuration()
     with f.owner.begin() as connection:
