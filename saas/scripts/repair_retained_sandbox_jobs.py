@@ -14,6 +14,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Literal, overload
 from urllib.parse import quote
 
 from saas.production.retained_sandbox_job import plan_retained_job_image_repair
@@ -49,7 +50,27 @@ def kubernetes_api(directory: Path):
                     time.sleep(0.1)
                 Path(path).chmod(0o600)
 
-                def request(method: str, url: str, body=None, *, missing_ok=False):
+                @overload
+                def request(
+                    method: str,
+                    url: str,
+                    body: object = None,
+                    *,
+                    missing_ok: Literal[False] = False,
+                ) -> dict[str, Any]: ...
+
+                @overload
+                def request(
+                    method: str,
+                    url: str,
+                    body: object = None,
+                    *,
+                    missing_ok: Literal[True],
+                ) -> dict[str, Any] | None: ...
+
+                def request(
+                    method: str, url: str, body: object = None, *, missing_ok: bool = False
+                ) -> dict[str, Any] | None:
                     connection = UnixConnection(path)
                     try:
                         connection.request(
@@ -183,6 +204,8 @@ def main() -> None:
             if time.monotonic() > deadline:
                 raise TimeoutError("original controller orphaning")
             time.sleep(1)
+        if current is None:
+            raise RuntimeError("replacement controller is missing")
         new_uid = current["metadata"]["uid"]
         if current["spec"].get("manualSelector") is not True:
             raise RuntimeError("replacement selector mode changed")
