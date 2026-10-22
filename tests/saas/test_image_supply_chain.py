@@ -333,13 +333,18 @@ def test_image_material_lock_rejects_nested_host_node_modules(
     )
 
 
+@pytest.mark.parametrize(
+    ("package", "vulnerable"), [("source-map-js", "1.2.1"), ("next", "16.3.8")]
+)
 def test_image_material_lock_rejects_login_dependency_regression(
     tmp_path: Path,
+    package: str,
+    vulnerable: str,
 ) -> None:
     repo = _material_lock_repo(tmp_path)
     lock_path = repo / "saas/login_web/package-lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["packages"]["node_modules/source-map-js"]["version"] = "1.2.1"
+    lock["packages"][f"node_modules/{package}"]["version"] = vulnerable
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
 
     assert any(

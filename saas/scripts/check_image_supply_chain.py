@@ -915,12 +915,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             "sharp": login_packages["node_modules/sharp"]["version"],
             "source-map-js": login_packages["node_modules/source-map-js"]["version"],
         }
-        if login_manifest_data["dependencies"].get("next") != "16.3.8" or (
-            login_packages[""]["dependencies"].get("next") != "16.3.8"
+        if login_manifest_data["dependencies"].get("next") != "16.4.1" or (
+            login_packages[""]["dependencies"].get("next") != "16.4.1"
         ):
             raise ValueError("Next.js manifest and lock root are not fixed")
         if login_versions != {
-            "next": "16.3.8",
+            "next": "16.4.1",
             "sharp": "0.35.5",
             "source-map-js": "1.2.2",
         }:
