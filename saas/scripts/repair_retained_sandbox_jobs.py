@@ -34,11 +34,11 @@ class UnixConnection(http.client.HTTPConnection):
 @contextlib.contextmanager
 def kubernetes_api(directory: Path):
     """Keep kubectl's existing authentication inside a private Unix socket."""
-    with tempfile.TemporaryDirectory(prefix="kube-api-", dir=directory) as temporary:
+    with tempfile.TemporaryDirectory(prefix="omnigent-kube-api-") as temporary:
         path = str(Path(temporary) / "api.sock")
         with (directory / "proxy.stderr").open("ab") as log:
             process = subprocess.Popen(
-                ["kubectl", "proxy", "--unix-socket=" + path, "--port=0"],
+                ["kubectl", "proxy", "--unix-socket=" + path],
                 stdout=log,
                 stderr=log,
             )
