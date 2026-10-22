@@ -8,6 +8,7 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from psycopg import sql
 
 from saas.n1_outbox_admission import (
@@ -212,12 +213,26 @@ def test_n1_roles_replay_p0s8_through_p0s15_reuse_exact_p0s7_rate_contracts() ->
     assert {
         revision for revision, digest in consume_hashes.items() if digest == p0s7_consume_hash
     } == set(forward_revisions)
-    assert (
-        "schema_revision IN ( 'p0s000000006', 'p0s000000007', "
-        "'p0s000000008', 'p0s000000009', 'p0s000000010', 'p0s000000011', "
-        "'p0s000000012', 'p0s000000013', 'p0s000000014', 'p0s000000015' )"
-        in normalized_constraint_contract
+    constraint_revisions = re.search(
+        r"schema_revision IN \((.*?)\) AND rate_constraint_contract_hash",
+        normalized_constraint_contract,
     )
+    assert constraint_revisions is not None
+    config = Config()
+    config.set_main_option(
+        "script_location",
+        str(Path(__file__).resolve().parents[2] / "saas/control_plane/migrations"),
+    )
+    routing_revisions = {
+        item.revision
+        for item in ScriptDirectory.from_config(config).walk_revisions()
+        if item.revision.startswith("lm")
+    }
+    assert set(re.findall(r"'([^']+)'", constraint_revisions.group(1))) == {
+        "p0s000000006",
+        *forward_revisions,
+        *routing_revisions,
+    }
     assert set(re.findall(r"'((?:p0s)[0-9]{9})'", normalized_constraint_contract)) == {
         "p0s000000005",
         "p0s000000006",

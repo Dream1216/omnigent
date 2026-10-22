@@ -13,6 +13,7 @@ from saas.production import postgresql_restore as restore
 _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
+_T = "lm2t00000001"
 _R_TABLES = {
     "saas_model_connections",
     "saas_model_credential_versions",
@@ -60,7 +61,7 @@ def _populate(connection, head):
         )
 
 
-@pytest.mark.parametrize("head", [_R, _S])
+@pytest.mark.parametrize("head", [_R, _S, _T])
 def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope(head):
     old = restore._digest_tables_for_schema(_P0)
     new = restore._digest_tables_for_schema(head)
@@ -70,7 +71,7 @@ def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope(head
     assert len(new) == len(set(new)) == len(old) + 15
 
 
-@pytest.mark.parametrize("head", [_P0, _R, _S])
+@pytest.mark.parametrize("head", [_P0, _R, _S, _T])
 def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_connection, head):
     _populate(digest_connection, head)
     digest, counts = restore._digest_on_connection(digest_connection)
@@ -88,7 +89,7 @@ def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_c
     assert set(counts) == set(canonical)
 
 
-@pytest.mark.parametrize("head", [_R, _S])
+@pytest.mark.parametrize("head", [_R, _S, _T])
 def test_r_evidence_change_changes_the_digest_even_if_legacy_rows_do_not_change(
     digest_connection, head
 ):
@@ -116,7 +117,7 @@ def test_unknown_or_ambiguous_schema_is_rejected_before_other_table_reads(
         restore._digest_on_connection(digest_connection)
 
 
-@pytest.mark.parametrize("head", [_R, _S])
+@pytest.mark.parametrize("head", [_R, _S, _T])
 def test_fixture_limit_is_not_a_silent_truncation(digest_connection, head):
     _populate(digest_connection, head)
     digest_connection.execute(
@@ -130,7 +131,7 @@ def test_fixture_limit_is_not_a_silent_truncation(digest_connection, head):
         restore._digest_on_connection(digest_connection)
 
 
-@pytest.mark.parametrize("head", [_R, _S])
+@pytest.mark.parametrize("head", [_R, _S, _T])
 def test_missing_r_table_is_not_treated_as_an_empty_restored_table(digest_connection, head):
     _populate(digest_connection, head)
     digest_connection.exec_driver_sql("DROP TABLE public.saas_model_gateway_evidence")
