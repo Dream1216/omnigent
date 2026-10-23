@@ -1463,6 +1463,92 @@ def assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit
             )
 
 
+class _TGuardObserver:
+    """Test-only, failure-only metadata from the original maintenance connection."""
+
+    _guard = (
+        "SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_prepared_xacts "
+        "WHERE database=current_database()) AND NOT EXISTS("
+        "SELECT 1 FROM pg_catalog.pg_stat_activity WHERE datname=current_database() "
+        "AND pid<>pg_backend_pid() AND xact_start IS NOT NULL)"
+    )
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, statement, *args, **kwargs):
+        cursor = self._connection.execute(statement, *args, **kwargs)
+        return _TGuardCursor(cursor, self) if statement == self._guard else cursor
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def record_failure(self):
+        # Do not clear statistics or leave the original observer transaction.
+        result = {
+            "original_guard_boolean": False,
+            "observed_at": datetime.now(UTC).isoformat(),
+            "observer_backend_pid": self._connection.info.backend_pid,
+            "transaction_status": self._connection.info.transaction_status.name,
+        }
+        try:
+            remaining = 64
+            for key, statement in (
+                (
+                    "activity",
+                    "SELECT pid,backend_type,state,xact_start,query_start,state_change,"
+                    "backend_xid::text,backend_xmin::text,wait_event_type,wait_event,"
+                    "pg_catalog.pg_blocking_pids(pid) AS blocker_pids "
+                    "FROM pg_catalog.pg_stat_activity WHERE datname=current_database() "
+                    "AND pid<>pg_backend_pid() AND xact_start IS NOT NULL ORDER BY pid",
+                ),
+                (
+                    "prepared",
+                    "SELECT transaction::text AS transaction_id,prepared "
+                    "FROM pg_catalog.pg_prepared_xacts WHERE database=current_database() "
+                    "ORDER BY prepared,transaction",
+                ),
+            ):
+                with self._connection.cursor() as cursor:
+                    cursor.execute(statement + " LIMIT " + str(remaining + 1))
+                    names = [column.name for column in cursor.description]
+                    rows = cursor.fetchall()
+                result[key] = [dict(zip(names, row, strict=True)) for row in rows[:remaining]]
+                result[key + "_truncated"] = len(rows) > remaining
+                remaining -= len(result[key])
+        except Exception as exc:
+            # Never emit query text, parameters, appname, GID, URLs or exception messages.
+            result["diagnostic_error_type"] = type(exc).__name__
+        try:
+            payload = json.dumps(result, default=str)
+            prefix = "OMNIGENT_T_INFLIGHT_METADATA "
+            if len((prefix + payload + "\n").encode()) > 65536:
+                payload = (
+                    '{"original_guard_boolean":false,"diagnostic_error_type":"BoundExceeded"}'
+                )
+            print(prefix + payload, flush=True)
+        except Exception:
+            pass  # Diagnostic failure must not replace the original False/Refused.
+
+
+class _TGuardCursor:
+    def __init__(self, cursor, observer):
+        self._cursor = cursor
+        self._observer = observer
+
+    def fetchone(self, *args, **kwargs):
+        row = self._cursor.fetchone(*args, **kwargs)
+        if row is not None and row[0] is False:
+            try:
+                self._observer.record_failure()
+            except Exception:
+                return row  # Observer/encoding failures preserve original False/Refused.
+        return row
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
 def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
     production_replay, tmp_path
 ):
@@ -1487,7 +1573,7 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
             engines=context.engines,
             owner=context.owner,
             database_owner=database_owner,
-            maintenance=context.reader,
+            maintenance=_TGuardObserver(context.reader),
             operation=operation,
             source_gold=gold,
             before_mutation=fixture_fence,
