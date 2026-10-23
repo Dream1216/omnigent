@@ -32,6 +32,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
     ProductionServiceRoleGraph,
     compose_production_service_role_graph,
+    load_machine_metering_service_role_bindings,
     load_model_projection_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
@@ -229,6 +230,9 @@ class ProductionServerConfig:
     )
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
+    machine_metering_service_role_bindings: ProductionServiceRoleBindings | None = field(
+        default=None, repr=False
+    )
 
     @property
     def service_role_graph(self) -> ProductionServiceRoleGraph:
@@ -239,6 +243,7 @@ class ProductionServerConfig:
             self.platform_model_service_role_bindings,
             self.platform_admin_service_role_bindings,
             self.model_projection_service_role_bindings,
+            self.machine_metering_service_role_bindings,
         )
 
     @property
@@ -1020,11 +1025,20 @@ def load_production_server_config(
             if "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE" in source
             else None
         )
+        machine_metering_service_role_bindings = (
+            load_machine_metering_service_role_bindings(source)
+            if any(
+                "OMNIGENT_SAAS_MACHINE_METERING_SERVICE_ROLE_BINDINGS" + suffix in source
+                for suffix in ("_FILE", "_SHA256")
+            )
+            else None
+        )
         service_role_graph = compose_production_service_role_graph(
             service_role_bindings,
             platform_model_service_role_bindings,
             platform_admin_service_role_bindings,
             model_projection_service_role_bindings,
+            machine_metering_service_role_bindings,
         )
     except ProductionServiceRoleBindingsError as error:
         raise ProductionServerConfigError(str(error)) from error
@@ -1161,6 +1175,7 @@ def load_production_server_config(
         platform_model_service_role_bindings=platform_model_service_role_bindings,
         platform_admin_service_role_bindings=platform_admin_service_role_bindings,
         model_projection_service_role_bindings=model_projection_service_role_bindings,
+        machine_metering_service_role_bindings=machine_metering_service_role_bindings,
         migration_receipt=receipt,
         artifact_admission_receipt=artifact_admission_receipt,
         secrets=secrets,

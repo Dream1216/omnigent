@@ -53,6 +53,9 @@ EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
 EXPECTED_MODEL_PROJECTION_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
     {"model_projection": "saas_model_projection"}
 )
+EXPECTED_MACHINE_METERING_SERVICE_ROLES: Mapping[str, str] = MappingProxyType(
+    {"metering": "saas_metering"}
+)
 OPTIONAL_SERVICE_ROLE_PROFILES: tuple[tuple[str, str, Mapping[str, str]], ...] = (
     (
         "OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS",
@@ -68,6 +71,11 @@ OPTIONAL_SERVICE_ROLE_PROFILES: tuple[tuple[str, str, Mapping[str, str]], ...] =
         "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS",
         "model-projection-service-role-bindings.json",
         EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+    ),
+    (
+        "OMNIGENT_SAAS_MACHINE_METERING_SERVICE_ROLE_BINDINGS",
+        "machine-metering-service-role-bindings.json",
+        EXPECTED_MACHINE_METERING_SERVICE_ROLES,
     ),
 )
 
@@ -164,6 +172,7 @@ def compose_production_service_role_graph(
     platform_model: ProductionServiceRoleBindings | None = None,
     platform_admin: ProductionServiceRoleBindings | None = None,
     model_projection: ProductionServiceRoleBindings | None = None,
+    machine_metering: ProductionServiceRoleBindings | None = None,
 ) -> ProductionServiceRoleGraph:
     """Compose profiles without permitting an overlap or login to change meaning."""
 
@@ -172,7 +181,7 @@ def compose_production_service_role_graph(
             "model projection requires both Platform model and Staff admin profiles"
         )
     by_service = {binding.service: binding for binding in production.bindings}
-    for extension in (platform_model, platform_admin, model_projection):
+    for extension in (platform_model, platform_admin, model_projection, machine_metering):
         if extension is None:
             continue
         for binding in extension.bindings:
@@ -227,7 +236,7 @@ def load_production_service_role_graph(
         else None
         for prefix, _filename, roles in OPTIONAL_SERVICE_ROLE_PROFILES
     )
-    return compose_production_service_role_graph(core, optional[0], optional[1], optional[2])
+    return compose_production_service_role_graph(core, *optional)
 
 
 def load_platform_model_service_role_bindings(
@@ -263,6 +272,17 @@ def load_model_projection_service_role_bindings(
         source,
         name="OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE",
         expected_roles=EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+    )
+
+
+def load_machine_metering_service_role_bindings(
+    source: Mapping[str, str],
+) -> ProductionServiceRoleBindings:
+    """Load the optional isolated machine-metering login metadata."""
+    return _load_service_role_bindings(
+        source,
+        name="OMNIGENT_SAAS_MACHINE_METERING_SERVICE_ROLE_BINDINGS_FILE",
+        expected_roles=EXPECTED_MACHINE_METERING_SERVICE_ROLES,
     )
 
 
@@ -350,6 +370,7 @@ def _load_service_role_bindings(
 
 
 __all__ = [
+    "EXPECTED_MACHINE_METERING_SERVICE_ROLES",
     "EXPECTED_MODEL_PROJECTION_SERVICE_ROLES",
     "EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES",
     "EXPECTED_PLATFORM_MODEL_SERVICE_ROLES",
@@ -360,6 +381,7 @@ __all__ = [
     "ProductionServiceRoleBindingsError",
     "ProductionServiceRoleGraph",
     "compose_production_service_role_graph",
+    "load_machine_metering_service_role_bindings",
     "load_model_projection_service_role_bindings",
     "load_platform_admin_service_role_bindings",
     "load_platform_model_service_role_bindings",
