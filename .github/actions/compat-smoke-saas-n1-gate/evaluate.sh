@@ -16,8 +16,8 @@ POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
 POSTGRESQL_N1_TRUSTED_INPUTS=(
-  "pyproject.toml|b597e4be6e44533bebaeb8924a6d89a448fec70616a00547fea5e9de27692299,60f744ddfde3ea8269830631c991a87a2c9f108afd3ace8a8c30507794abe471"
-  "uv.lock|ea461ebf87f5aaa2fad7ad89ef8bf31963bbe293770d57f3e3ec824c5db56615,1966ee6220ecf80274e85edad6eb9bae5c3a23751f9fe68f7de27c8419ac0d58"
+  "pyproject.toml|60f744ddfde3ea8269830631c991a87a2c9f108afd3ace8a8c30507794abe471,5b58f73afcc97e4a7f5f2853e3c358a4c9ad177dd1f234dca92f365028d1fe8d"
+  "uv.lock|1966ee6220ecf80274e85edad6eb9bae5c3a23751f9fe68f7de27c8419ac0d58,460fd307e2817f4680b9e5c954e9ded8faa5566d3cabca56df29da635d375e4f"
   "tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   "tests/_model_pools.py|d25fda757b12bffbaa6a42e468f625f715cc3ee37df7f9b5af4b8d70af781362"
   "tests/_token_usage.py|25dbfbc0caea11edd4be3bb3eb530e2a784e9c98e6e2f652beeddae7b7071fa8"
