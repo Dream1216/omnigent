@@ -125,7 +125,10 @@ def test_real_postgresql_platform_funding_and_billing_are_separate_authorities(
         )
         assert disabled.version == 2
         assert_retained_downgrade_refused(
-            owner, "lm1d00000001", expected_pattern="retained platform test funding evidence"
+            owner,
+            "lm1d00000001",
+            expected_pattern=r"^cannot remove retained platform test funding evidence$",
+            guard_revision="lm1e00000001",
         )
         with owner.connect() as connection:
             assert (

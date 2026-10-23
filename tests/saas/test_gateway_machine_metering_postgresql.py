@@ -267,6 +267,7 @@ def test_actual_login_and_mtls_record_late_gateway_usage_without_double_cost(
             f.engine,
             "lm2g00000001",
             expected_pattern=r"^retained execution schema cannot be downgraded$",
+            guard_revision="lm2s00000001",
         )
 
 

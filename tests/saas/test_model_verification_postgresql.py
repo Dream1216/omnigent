@@ -54,6 +54,7 @@ from tests.saas.test_model_verifications import _pricing
 def test_real_postgresql_empty_verification_downgrade_restores_authority(
     isolated_postgres_url: str,
 ) -> None:
+    """Verify the feature inverse separately from P18's reviewed-release barrier."""
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(isolated_postgres_url)
     roles = (root / "saas/control_plane/postgresql_roles.sql").read_text()
@@ -102,7 +103,7 @@ def test_real_postgresql_empty_verification_downgrade_restores_authority(
             command.upgrade(config, "lm1e00000001")
             connection.exec_driver_sql(roles)
             baseline = authority(connection)
-            command.upgrade(config, "head")
+            command.upgrade(config, "lm1f00000001")
             connection.exec_driver_sql(roles)
             assert (
                 connection.scalar(
@@ -122,6 +123,21 @@ def test_real_postgresql_empty_verification_downgrade_restores_authority(
             assert authority(connection) == baseline
             command.upgrade(config, "head")
             connection.exec_driver_sql(roles)
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                == CONTROL_PLANE_SCHEMA_REVISION
+            )
+            current = authority(connection)
+            with (
+                pytest.raises(
+                    RuntimeError,
+                    match=r"^P18 downgrade requires reviewed runtime-maintenance inverse; "
+                    r"never remove policy contracts implicitly$",
+                ),
+                connection.begin_nested(),
+            ):
+                command.downgrade(config, "lm1e00000001")
+            assert authority(connection) == current
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
                 == CONTROL_PLANE_SCHEMA_REVISION
@@ -397,7 +413,10 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
             )
         assert getattr(wrong_binding.value.orig, "sqlstate", None) == "42501"
         assert_retained_downgrade_refused(
-            owner, "lm1e00000001", expected_pattern="retained evidence"
+            owner,
+            "lm1e00000001",
+            expected_pattern=r"^cannot remove retained model verification evidence$",
+            guard_revision="lm1f00000001",
         )
         with owner.connect() as connection:
             assert (

@@ -196,6 +196,7 @@ def test_actual_billing_login_retains_real_run_and_late_outcome_on_the_existing_
             f.engine,
             "lm2f00000001",
             expected_pattern=r"^retained execution schema cannot be downgraded$",
+            guard_revision="lm2s00000001",
         )
         for factory in (f.app_factory, authentication, workers["executor"]):
             with factory() as db:

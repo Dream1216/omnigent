@@ -245,6 +245,7 @@ def test_real_app_and_authenticator_logins_enforce_run_credential_boundaries(
             f.engine,
             "lm2e00000001",
             expected_pattern=r"^retained execution schema cannot be downgraded$",
+            guard_revision="lm2s00000001",
         )
         with f.factory() as db:
             assert db.scalar(sa.select(sa.func.count()).select_from(ModelRunTokenRecord)) == (

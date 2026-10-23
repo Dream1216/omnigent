@@ -264,7 +264,10 @@ def test_real_postgresql_gateway_uses_billing_login_for_one_sent_attempt(
             )
         assert denied.value.orig.sqlstate == "42501"
         assert_retained_downgrade_refused(
-            owner, "lm2a00000001", expected_pattern="retained gateway evidence"
+            owner,
+            "lm2a00000001",
+            expected_pattern=r"^cannot remove retained gateway evidence$",
+            guard_revision="lm2b00000001",
         )
         with owner.connect() as connection:
             assert (
@@ -345,7 +348,7 @@ def test_real_postgresql_empty_gateway_downgrade_restores_previous_authority(
     try:
         with owner.begin() as connection:
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            command.upgrade(config, "lm2b00000001")
             connection.exec_driver_sql(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text()
             )
@@ -368,6 +371,19 @@ def test_real_postgresql_empty_gateway_downgrade_restores_previous_authority(
                     "SELECT relforcerowsecurity FROM pg_class "
                     "WHERE oid='saas_model_gateway_evidence'::regclass"
                 )
+            )
+            with (
+                pytest.raises(
+                    RuntimeError,
+                    match=r"^P18 downgrade requires reviewed runtime-maintenance inverse; "
+                    r"never remove policy contracts implicitly$",
+                ),
+                connection.begin_nested(),
+            ):
+                command.downgrade(config, "lm2a00000001")
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                == "p0s000000018"
             )
     finally:
         owner.dispose()

@@ -202,7 +202,10 @@ def test_real_disablement_audit_concurrent_reordering_never_duplicates(audit_dis
     assert _audit_count(f) == 3
     assert f.audit_service.verify_audit_chain(f.actor) and _state(f) == before
     assert_retained_downgrade_refused(
-        f.owner, "lm2l00000001", expected_pattern="retained model disablement audit"
+        f.owner,
+        "lm2l00000001",
+        expected_pattern=r"^cannot remove retained model disablement audit authority$",
+        guard_revision="lm2m00000001",
     )
 
 
@@ -271,7 +274,10 @@ def test_real_disablement_audit_rejects_forged_reference_and_pending_downgrade(a
     assert not rejected.value.retryable and rejected.value.pre_side_effect
     assert _audit_count(f) == 1
     assert_retained_downgrade_refused(
-        f.owner, "lm2l00000001", expected_pattern="retained model disablement audit"
+        f.owner,
+        "lm2l00000001",
+        expected_pattern=r"^cannot remove retained model disablement audit authority$",
+        guard_revision="lm2m00000001",
     )
     result = _dispatch(f)
     assert (result.published, result.failed) == (1, 0)

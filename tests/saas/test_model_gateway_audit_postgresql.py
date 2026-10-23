@@ -13,6 +13,9 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import sessionmaker
 
@@ -23,7 +26,11 @@ from saas.control_plane.model_gateway_audit import (
     ModelGatewayAuditPublisher,
     verify_gateway_audit_function,
 )
-from saas.control_plane.outbox import OutboxDispatcher, OutboxPublishError
+from saas.control_plane.model_gateway_evidence import (
+    GATEWAY_EVIDENCE_AGGREGATE,
+    GATEWAY_EVIDENCE_EVENT,
+)
+from saas.control_plane.outbox import OutboxClaimRoute, OutboxDispatcher, OutboxPublishError
 from saas.control_plane.permissions import PLATFORM_ROLE_PERMISSIONS
 from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
 from saas.control_plane.platform_governed_models import PlatformAuditEventRecord
@@ -37,6 +44,10 @@ from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _fixture as _staff_fixture
 from tests.saas.test_platform_model_gateway import TENANT_ID
 from tests.saas.test_platform_model_gateway_attempts import _body, _fixture
+
+_GATEWAY_ROUTE = OutboxClaimRoute(
+    GATEWAY_EVIDENCE_AGGREGATE, GATEWAY_EVIDENCE_EVENT, GATEWAY_EVIDENCE_EVENT
+)
 
 
 def _assign_control_plane_owner(connection, current_owner, target):
@@ -241,6 +252,9 @@ def test_real_postgresql_gateway_audit_survives_lost_ack_and_preserves_shared_ch
     f.publisher.validate_outbox_configuration()
     assert f.client.post(f.path, **f.request).status_code == 200
     before = _state(f)
+    unrelated_statement = sa.select(ControlPlaneOutboxEvent.__table__).where(
+        ~_GATEWAY_ROUTE.predicate()
+    )
     service = PlatformGovernedAccessService(f.sessions)
     with f.sessions.begin() as db:
         service._append_audit(
@@ -263,18 +277,42 @@ def test_real_postgresql_gateway_audit_survives_lost_ack_and_preserves_shared_ch
     now = datetime.now(timezone.utc)
     dispatcher_sessions = sessionmaker(f.dispatcher, expire_on_commit=False)
     with pytest.raises(OSError, match="acknowledgement"):
-        AckLost(dispatcher_sessions, f.publisher).dispatch_once(now=now)
+        AckLost(dispatcher_sessions, f.publisher, claim_routes=(_GATEWAY_ROUTE,)).dispatch_once(
+            now=now
+        )
     with f.sessions() as db:
         assert db.scalar(sa.select(sa.func.count()).select_from(PlatformAuditEventRecord)) == 2
         assert all(
             row.published_at is None for row in db.scalars(sa.select(ControlPlaneOutboxEvent))
         )
-    result = OutboxDispatcher(dispatcher_sessions, f.publisher).dispatch_once(
-        now=now + timedelta(minutes=2)
-    )
+        unrelated_before = db.execute(unrelated_statement).all()
+        assert unrelated_before
+    result = OutboxDispatcher(
+        dispatcher_sessions, f.publisher, claim_routes=(_GATEWAY_ROUTE,)
+    ).dispatch_once(now=now + timedelta(minutes=2))
     assert (result.claimed, result.published, result.failed) == (3, 3, 0)
     with f.sessions() as db:
-        events = db.scalars(sa.select(ControlPlaneOutboxEvent)).all()
+        events = db.scalars(
+            sa.select(ControlPlaneOutboxEvent).where(_GATEWAY_ROUTE.predicate())
+        ).all()
+        unrelated_after = db.execute(unrelated_statement).all()
+        by_id = {row.id: row for row in unrelated_after}
+        assert len(unrelated_before) == 2 and len(unrelated_after) == 4
+        assert all(by_id[row.id] == row for row in unrelated_before)
+        assert all(
+            row.aggregate_type == "platform_audit"
+            and row.event_type == "platform.audit.persisted"
+            and row.attempt_count == 0
+            and row.claimed_at is None
+            and row.claim_token is None
+            and row.published_at is None
+            and row.quarantined_at is None
+            and row.last_error_code is None
+            for row in unrelated_after
+        )
+        assert {row.aggregate_key for row in unrelated_after} == {
+            str(identity) for identity in db.scalars(sa.select(PlatformAuditEventRecord.id))
+        }
         assert db.scalar(sa.select(sa.func.count()).select_from(PlatformAuditEventRecord)) == 4
     for event in events:
         f.publisher.publish(**_event(event))
@@ -303,7 +341,9 @@ def test_real_postgresql_gateway_audit_deduplicates_concurrent_out_of_order_deli
     assert f.client.post(f.path, **f.request).status_code == 200
     with f.sessions() as db:
         events = db.scalars(
-            sa.select(ControlPlaneOutboxEvent).order_by(ControlPlaneOutboxEvent.created_at)
+            sa.select(ControlPlaneOutboxEvent)
+            .order_by(ControlPlaneOutboxEvent.created_at)
+            .where(_GATEWAY_ROUTE.predicate())
         ).all()
     reordered = [events[2], events[0], events[1]]
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -323,7 +363,10 @@ def test_real_postgresql_gateway_audit_deduplicates_concurrent_out_of_order_deli
         assert rejected.value.code == "model_gateway_audit_evidence_rejected"
         assert not rejected.value.retryable and rejected.value.pre_side_effect
     assert_retained_downgrade_refused(
-        f.owner, "lm2b00000001", expected_pattern="retained gateway audit"
+        f.owner,
+        "lm2b00000001",
+        expected_pattern=r"^cannot remove retained gateway audit authority$",
+        guard_revision="lm2c00000001",
     )
     with f.dispatcher.connect() as connection:
         assert verify_gateway_audit_function(connection) is not None
@@ -343,7 +386,11 @@ def test_real_postgresql_gateway_audit_transaction_failure_is_retried_without_pa
             ON public.saas_platform_audit_chain_heads FOR EACH ROW
             EXECUTE FUNCTION public.isolated_audit_failure();
         """)
-    dispatcher = OutboxDispatcher(sessionmaker(f.dispatcher, expire_on_commit=False), f.publisher)
+    dispatcher = OutboxDispatcher(
+        sessionmaker(f.dispatcher, expire_on_commit=False),
+        f.publisher,
+        claim_routes=(_GATEWAY_ROUTE,),
+    )
     now = datetime.now(timezone.utc)
     result = dispatcher.dispatch_once(now=now)
     assert (result.claimed, result.published, result.failed) == (3, 0, 3)
@@ -376,7 +423,7 @@ def test_real_postgresql_gateway_audit_recovers_a_committed_rpc_reply_loss(audit
     f = audit_gateway
     assert f.client.post(f.path, **f.request).status_code == 200
     with f.sessions() as db:
-        event = db.scalar(sa.select(ControlPlaneOutboxEvent))
+        event = db.scalar(sa.select(ControlPlaneOutboxEvent).where(_GATEWAY_ROUTE.predicate()))
 
     class ReplyLost(Exception):
         sqlstate = "08006"
@@ -399,7 +446,9 @@ def test_real_postgresql_gateway_audit_recovers_a_committed_rpc_reply_loss(audit
         assert db.scalar(sa.select(sa.func.count()).select_from(PlatformAuditEventRecord)) == 1
         assert db.get(ControlPlaneOutboxEvent, event.id).published_at is None
     result = OutboxDispatcher(
-        sessionmaker(f.dispatcher, expire_on_commit=False), f.publisher
+        sessionmaker(f.dispatcher, expire_on_commit=False),
+        f.publisher,
+        claim_routes=(_GATEWAY_ROUTE,),
     ).dispatch_once()
     assert (result.claimed, result.published, result.failed) == (3, 3, 0)
     with f.sessions() as db:
@@ -456,10 +505,23 @@ def test_real_postgresql_gateway_audit_source_and_acl_drift_are_rejected(audit_g
     with f.owner.begin() as connection:
         connection.exec_driver_sql("DROP FUNCTION public.isolated_unrelated_rpc()")
     verify_dispatcher_database_role(f.dispatcher)
+    feature = ScriptDirectory.from_config(f.config).get_revision("lm2c00000001")
+    assert feature is not None
     with f.owner.begin() as connection:
         f.config.attributes["connection"] = connection
-        command.downgrade(f.config, "lm2b00000001")
-    with pytest.raises(RuntimeError, match="retained_model_audit_schema_contract_rejected"):
+        with (
+            pytest.raises(
+                RuntimeError,
+                match=r"^P18 downgrade requires reviewed runtime-maintenance inverse; "
+                r"never remove policy contracts implicitly$",
+            ),
+            connection.begin_nested(),
+        ):
+            command.downgrade(f.config, "lm2b00000001")
+        # Component fault injection leaves the release head and barrier intact.
+        with Operations.context(MigrationContext.configure(connection)):
+            feature.module.downgrade()
+    with pytest.raises(RuntimeError, match=r"^retained_model_audit_function_set_incomplete$"):
         verify_dispatcher_database_role(f.dispatcher)
     with pytest.raises(RuntimeError, match="function_unavailable"):
         f.publisher.validate_outbox_configuration()
@@ -468,8 +530,15 @@ def test_real_postgresql_gateway_audit_source_and_acl_drift_are_rejected(audit_g
         connection.exec_driver_sql(f"GRANT CREATE ON SCHEMA public TO {quoted}")
         connection.exec_driver_sql(f"SET LOCAL ROLE {quoted}")
         f.config.attributes["connection"] = connection
-        command.upgrade(f.config, "head")
+        with Operations.context(MigrationContext.configure(connection)):
+            feature.module.upgrade()
+        # Later migrations refine the function; restore the exact pre-fault body.
+        connection.execute(sa.text(definition))
         connection.exec_driver_sql("RESET ROLE")
         connection.exec_driver_sql(f"REVOKE CREATE ON SCHEMA public FROM {quoted}")
+        assert (
+            connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+            == "p0s000000018"
+        )
     verify_dispatcher_database_role(f.dispatcher)
     f.publisher.validate_outbox_configuration()

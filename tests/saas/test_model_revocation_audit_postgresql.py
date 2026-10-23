@@ -108,7 +108,10 @@ def test_real_staff_revocation_and_dispatcher_lost_ack_retain_one_shared_audit_f
         with pytest.raises(DBAPIError, match="immutable"), f.owner.begin() as db:
             db.exec_driver_sql(statement)
     assert_retained_downgrade_refused(
-        f.owner, "lm2m00000001", expected_pattern="retained model security revocation"
+        f.owner,
+        "lm2m00000001",
+        expected_pattern=r"^cannot remove retained model security revocation authority$",
+        guard_revision="lm2n00000001",
     )
     with f.owner.connect() as db:
         assert db.exec_driver_sql(

@@ -12,6 +12,9 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 
 
 def snapshot_nonempty_model_facts(connection: sa.Connection) -> dict[str, dict[str, int | str]]:
@@ -282,9 +285,13 @@ def _snapshot(connection: sa.Connection, *, details: dict | None = None) -> str:
 
 
 def assert_retained_downgrade_refused(
-    engine: sa.Engine, target: str, *, expected_pattern: str
+    engine: sa.Engine,
+    target: str,
+    *,
+    expected_pattern: str,
+    guard_revision: str | None = None,
 ) -> None:
-    """Keep the new earlier budget guard and the original feature guard strict."""
+    """Keep release refusal and explicit feature guards separate and non-destructive."""
     with engine.begin() as connection:
         before = _snapshot(connection)
         owner_policy = connection.scalar(
@@ -294,12 +301,49 @@ def assert_retained_downgrade_refused(
                 "AND polname='rls_model_budget_owner_settlement')"
             )
         )
-        if owner_policy and connection.scalar(
+        retained_budgets = owner_policy and connection.scalar(
             sa.text("SELECT EXISTS(SELECT 1 FROM public.saas_model_provider_budget_reservations)")
-        ):
-            expected_pattern = r"^retained model budgets require owner settlement policy$"
+        )
         config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
         config.attributes["connection"] = connection
+        head = connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+        if head == "p0s000000018" and guard_revision is not None:
+            with (
+                pytest.raises(
+                    RuntimeError,
+                    match=r"^P18 downgrade requires reviewed runtime-maintenance inverse; "
+                    r"never remove policy contracts implicitly$",
+                ),
+                connection.begin_nested(),
+            ):
+                command.downgrade(config, target)
+            assert _snapshot(connection) == before
+            scripts = ScriptDirectory.from_config(config)
+            path = {step.revision for step in scripts.iterate_revisions(head, target)}
+            guards = [(guard_revision, expected_pattern)]
+            if retained_budgets:
+                guards.insert(
+                    0,
+                    (
+                        "lm2t00000001",
+                        r"^retained model budgets require owner settlement policy$",
+                    ),
+                )
+            # Component probes roll back every change without crossing the release barrier.
+            for revision, pattern in guards:
+                assert revision in path
+                script = scripts.get_revision(revision)
+                assert script is not None
+                with (
+                    pytest.raises(RuntimeError, match=pattern),
+                    connection.begin_nested(),
+                    Operations.context(MigrationContext.configure(connection)),
+                ):
+                    script.module.downgrade()
+                assert _snapshot(connection) == before
+            return
+        if retained_budgets:
+            expected_pattern = r"^retained model budgets require owner settlement policy$"
         with pytest.raises(RuntimeError, match=expected_pattern), connection.begin_nested():
             command.downgrade(config, target)
         assert _snapshot(connection) == before

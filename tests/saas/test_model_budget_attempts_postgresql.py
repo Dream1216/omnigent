@@ -114,7 +114,10 @@ def test_real_postgresql_single_budget_attempt_keeps_unknown_costs_until_evidenc
 
         def assert_evidence_cannot_be_removed():
             assert_retained_downgrade_refused(
-                owner, "lm1c00000001", expected_pattern="retained model budget attempt evidence"
+                owner,
+                "lm1c00000001",
+                expected_pattern=r"^cannot remove retained model budget attempt evidence$",
+                guard_revision="lm1d00000001",
             )
             with owner.connect() as connection:
                 assert (

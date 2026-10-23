@@ -194,7 +194,10 @@ def test_real_staff_disablement_and_customer_column_authority(
                 )
         assert customer.list(runtime)[0]["generation"] == 2
         assert_retained_downgrade_refused(
-            f.engine, "lm2k00000001", expected_pattern="retained model disablement"
+            f.engine,
+            "lm2k00000001",
+            expected_pattern=r"^cannot remove retained model disablement authority$",
+            guard_revision="lm2l00000001",
         )
         with f.engine.connect() as connection:
             assert connection.exec_driver_sql(
