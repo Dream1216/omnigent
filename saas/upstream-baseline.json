@@ -48,11 +48,24 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 153,
+    "max_direct_upstream_files": 154,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "upstream_composer_recovery_budget_followup": {
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 153,
+      "max_direct_upstream_files": 154,
+      "measured_upstream_net_added_loc": 3600,
+      "scoped_paths": [
+        "web/src/pages/ChatPage.tsx",
+        "web/src/pages/ChatPage.composer.test.tsx"
+      ],
+      "new_official_path": "web/src/pages/ChatPage.composer.test.tsx",
+      "upstream_revision": "3138c7dfeb24a12f2aaf6d7ffeffc9d491d69df1",
+      "reason": "Requester explicitly approved only the old018 rollback branch 153-to154 increase for the exact pinned-target upstream Composer draft-restoration fix and owning regression. The 0.19 cap remains 157 because that target already contains both. Preserve product assertions, 4576 net LOC, nine patches, .85 isolation and all release gates. The final source requires its own mandatory technical CI before merge."
+    },
     "host_ping_test_budget_followup": {
       "approved_at": "2026-10-23",
       "previous_max_direct_upstream_files": 151,
