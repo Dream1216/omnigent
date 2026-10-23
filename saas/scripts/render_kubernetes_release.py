@@ -35,6 +35,7 @@ from saas.production.postgresql_migration import (
     _runtime_saas_head,
 )
 from saas.production.service_bindings import (
+    EXPECTED_MACHINE_METERING_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     OPTIONAL_SERVICE_ROLE_PROFILES,
@@ -935,14 +936,18 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         document.get("service_logins"),
         name="service_logins",
     )
-    if set(login_rows) not in (
+    metering_roles = set(EXPECTED_MACHINE_METERING_SERVICE_ROLES)
+    legacy_roles = set(_RELEASE_SERVICE_ROLES) - metering_roles
+    if set(login_rows) - metering_roles not in (
         set(EXPECTED_PRODUCTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES),
+        legacy_roles - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+        legacy_roles,
     ):
         raise ReleaseRenderError(
             "service_logins must contain a complete core or full release profile"
         )
+    if metering_roles & set(login_rows) and control_plane_schema_revision != "lm2t00000001":
+        raise ReleaseRenderError("machine metering profile requires the T schema")
     if "model_projection" in login_rows and control_plane_schema_revision not in {
         "lm2r00000001",
         "lm2s00000001",
