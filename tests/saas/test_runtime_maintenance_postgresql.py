@@ -15,12 +15,13 @@ import os
 import subprocess
 import sys
 import tarfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -1475,6 +1476,7 @@ class _TGuardObserver:
 
     def __init__(self, connection):
         self._connection = connection
+        self._reported = False
 
     def execute(self, statement, *args, **kwargs):
         cursor = self._connection.execute(statement, *args, **kwargs)
@@ -1484,6 +1486,11 @@ class _TGuardObserver:
         return getattr(self._connection, name)
 
     def record_failure(self):
+        # One bounded first-False record for this borrowed scope, even if the
+        # public reader legitimately reobserves more than once.
+        if self._reported:
+            return
+        self._reported = True
         # Do not clear statistics or leave the original observer transaction.
         result = {
             "original_guard_boolean": False,
@@ -1506,7 +1513,7 @@ class _TGuardObserver:
                     "prepared",
                     "SELECT transaction::text AS transaction_id,prepared "
                     "FROM pg_catalog.pg_prepared_xacts WHERE database=current_database() "
-                    "ORDER BY prepared,transaction",
+                    "ORDER BY prepared,transaction::text",
                 ),
             ):
                 with self._connection.cursor() as cursor:
@@ -1547,6 +1554,75 @@ class _TGuardCursor:
 
     def __getattr__(self, name):
         return getattr(self._cursor, name)
+
+
+def _assert_native_t_readonly_observation(context, coordinator, state):
+    """Real client transactions; no provider, paired image or backup claim."""
+    capture = {
+        "expected_identity": context.identity,
+        "expected_tables": tuple(sorted(state["before_runtime_facts"]["tables"])),
+        "max_copy_bytes": coordinator.preserving.maximum,
+        "expected_head": "p0s000000018",
+    }
+    blocker = native.connect_url(context.plan.saas_owner.url)
+    try:
+        with blocker.transaction():
+            blocker.execute("SELECT 1")
+            started = time.monotonic()
+            with pytest.raises(
+                db.Refused, match=r"^t_recovery_has_inflight_or_prepared_transactions$"
+            ):
+                runtime_native.capture_t_preserved_facts(
+                    context.owner, maintenance=context.reader, **capture
+                )
+            assert time.monotonic() - started >= 5.0
+            assert context.reader.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+    finally:
+        blocker.close()
+
+    ready, release = Barrier(2), Event()
+    project_id = context.scopes[0][3]
+
+    def commit_new_business_fact():
+        with context.engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL statement_timeout='5s'")
+            changed = connection.execute(
+                sa.text("UPDATE saas_projects SET name=:name WHERE id=:id"),
+                {"id": project_id, "name": "fresh-observation-" + uuid4().hex},
+            ).rowcount
+            ready.wait(timeout=10)
+            assert release.wait(timeout=10), "observer never encountered the live transaction"
+        return changed  # The actual COMMIT has completed before this return.
+
+    class ReleaseAfterOriginalFalse(_TGuardObserver):
+        def record_failure(self):
+            release.set()  # No SQL, snapshot clearing or fake guard result.
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(commit_new_business_fact)
+        try:
+            ready.wait(timeout=10)
+            fresh = runtime_native.capture_t_preserved_facts(
+                context.owner,
+                maintenance=ReleaseAfterOriginalFalse(context.reader),
+                **capture,
+            )
+        finally:
+            release.set()
+        assert future.result(timeout=10) == 1
+    assert release.is_set()
+    assert (
+        fresh["tables"]["saas_projects"]["copy_sha256"]
+        != state["before_runtime_facts"]["tables"]["saas_projects"]["copy_sha256"]
+    )
+    before_rows = coordinator._rows()
+    with pytest.raises(db.Refused, match=r"^t_runtime_prepared_CAS_failed$"):
+        coordinator.inverse(state)
+    assert coordinator._rows() == before_rows
+    assert native.head(context.owner) == "p0s000000018"
+    # Accept the independently observed committed data only through a new full
+    # prepare. All original inverse/old verifier/reattach assertions still run.
+    return coordinator.prepare()
 
 
 def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
@@ -1639,6 +1715,7 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
         )
         try:
             state = coordinator.prepare()
+            state = _assert_native_t_readonly_observation(context, coordinator, state)
             original = state["before_runtime_facts"]
             for table in db.TABLES:
                 assert original["tables"][table]["row_count"] == 2

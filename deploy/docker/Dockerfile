@@ -480,6 +480,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       bzip2=1.0.8-r25 \
       coreutils=9.12-r4 \
       curl=8.23.0-r1 \
+      db=2026.10.7.1-r0 \
       findutils=4.11.0-r3 \
       gcc=16.2.0-r1 \
       git=2.56.0-r0 \

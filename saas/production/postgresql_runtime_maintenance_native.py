@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 
 import psycopg
 from psycopg import sql
@@ -164,6 +165,48 @@ def remove_p18_policies(connection, expected: list[dict]) -> None:
 
 
 def capture_t_preserved_facts(
+    owner,
+    *,
+    maintenance,
+    expected_identity: dict,
+    expected_tables: tuple[str, ...],
+    max_copy_bytes: int,
+    expected_head: str,
+    receipt_schema: str = "public",
+) -> dict:
+    """Reobserve only a refused idle prerequisite in a fresh read-only snapshot.
+
+    Five seconds bounds starting further observations; an in-flight original
+    query retains its existing timeout. No COPY or mutation is ever retried.
+    The original once function exits its transaction before this handler runs.
+    """
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            return _capture_t_preserved_facts_once(
+                owner,
+                maintenance=maintenance,
+                expected_identity=expected_identity,
+                expected_tables=expected_tables,
+                max_copy_bytes=max_copy_bytes,
+                expected_head=expected_head,
+                receipt_schema=receipt_schema,
+            )
+        except db.Refused as exc:
+            if str(exc) != "t_recovery_has_inflight_or_prepared_transactions":
+                raise
+            # Never sleep with the rejected REPEATABLE READ snapshot open.
+            db.require_idle(owner)
+            db.require_idle(maintenance)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.05, remaining))
+            if time.monotonic() >= deadline:
+                raise
+
+
+def _capture_t_preserved_facts_once(
     owner,
     *,
     maintenance,

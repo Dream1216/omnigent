@@ -986,3 +986,143 @@ def test_original_role_inverse_revokes_dependent_grant_before_bootstrap_admin(mo
     assert result == [leaf, root]
     assert current == []
     assert len(statements) == 2 and all("CASCADE" not in text for text in statements)
+
+
+@pytest.fixture
+def readonly_observation(monkeypatch):
+    from psycopg.pq import TransactionStatus
+
+    from saas.production import postgresql_runtime_maintenance_native as observed
+
+    clock = SimpleNamespace(now=0.0, sleeps=[])
+
+    def sleep(seconds):
+        clock.sleeps.append(seconds)
+        clock.now += seconds
+
+    monkeypatch.setattr(
+        observed, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep)
+    )
+    owner = SimpleNamespace(info=SimpleNamespace(transaction_status=TransactionStatus.IDLE))
+    reader = SimpleNamespace(info=SimpleNamespace(transaction_status=TransactionStatus.IDLE))
+    kwargs = {
+        "maintenance": reader,
+        "expected_identity": {"unit_only": True},
+        "expected_tables": ("unit_only",),
+        "max_copy_bytes": 100,
+        "expected_head": "p0s000000018",
+        "receipt_schema": "public",
+    }
+    return SimpleNamespace(module=observed, owner=owner, reader=reader, kwargs=kwargs, clock=clock)
+
+
+def test_readonly_observation_success_is_one_original_call(readonly_observation, monkeypatch):
+    f = readonly_observation
+    result, calls = {}, []
+
+    def once(owner, **kwargs):
+        assert owner is f.owner and kwargs["maintenance"] is f.reader
+        assert kwargs["expected_identity"] is f.kwargs["expected_identity"]
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(f.module, "_capture_t_preserved_facts_once", once)
+    assert f.module.capture_t_preserved_facts(f.owner, **f.kwargs) is result
+    assert len(calls) == 1 and f.clock.sleeps == []
+
+
+def test_readonly_observation_new_call_returns_fresh_facts(readonly_observation, monkeypatch):
+    f = readonly_observation
+    calls, committed = [], {"generation": 1}
+
+    def once(owner, **kwargs):
+        db.require_idle(owner)
+        db.require_idle(kwargs["maintenance"])
+        calls.append(committed["generation"])
+        if len(calls) == 1:
+            committed["generation"] = 2
+            raise db.Refused("t_recovery_has_inflight_or_prepared_transactions")
+        return dict(committed)
+
+    monkeypatch.setattr(f.module, "_capture_t_preserved_facts_once", once)
+    assert f.module.capture_t_preserved_facts(f.owner, **f.kwargs) == {"generation": 2}
+    assert calls == [1, 2] and f.clock.sleeps == [0.05]
+
+
+def test_readonly_observation_persistent_transaction_keeps_original_refusal(
+    readonly_observation, monkeypatch
+):
+    f = readonly_observation
+    original = db.Refused("t_recovery_has_inflight_or_prepared_transactions")
+    calls = []
+
+    def once(*args, **kwargs):
+        calls.append(f.clock.now)
+        raise original
+
+    monkeypatch.setattr(f.module, "_capture_t_preserved_facts_once", once)
+    with pytest.raises(db.Refused) as caught:
+        f.module.capture_t_preserved_facts(f.owner, **f.kwargs)
+    assert caught.value is original
+    assert f.clock.now == 5.0 and max(calls) < 5.0
+    assert all(0 < seconds <= 0.05 for seconds in f.clock.sleeps)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        db.Refused("t_execution_not_drained"),
+        db.Refused("t_complete_table_inventory_changed"),
+        db.Refused("t_preservation_full_reader_unavailable"),
+        RuntimeError("unknown_commit_is_not_an_observation_refusal"),
+    ],
+)
+def test_readonly_observation_never_retries_other_failures(
+    readonly_observation, monkeypatch, error
+):
+    f = readonly_observation
+    calls = []
+
+    def once(*args, **kwargs):
+        calls.append(True)
+        raise error
+
+    monkeypatch.setattr(f.module, "_capture_t_preserved_facts_once", once)
+    with pytest.raises(type(error)) as caught:
+        f.module.capture_t_preserved_facts(f.owner, **f.kwargs)
+    assert caught.value is error
+    assert calls == [True] and f.clock.sleeps == []
+
+
+def test_readonly_observation_refuses_without_closed_snapshot(readonly_observation, monkeypatch):
+    from psycopg.pq import TransactionStatus
+
+    f = readonly_observation
+    calls = []
+
+    def once(*args, **kwargs):
+        calls.append(True)
+        f.reader.info.transaction_status = TransactionStatus.INTRANS
+        raise db.Refused("t_recovery_has_inflight_or_prepared_transactions")
+
+    monkeypatch.setattr(f.module, "_capture_t_preserved_facts_once", once)
+    with pytest.raises(db.Refused, match="dedicated_idle_connection_required"):
+        f.module.capture_t_preserved_facts(f.owner, **f.kwargs)
+    assert calls == [True] and f.clock.sleeps == []
+
+
+def test_readonly_observation_deadline_does_not_start_another_call(
+    readonly_observation, monkeypatch
+):
+    f = readonly_observation
+    calls = []
+
+    def once(*args, **kwargs):
+        calls.append(True)
+        f.clock.now = 6.0
+        raise db.Refused("t_recovery_has_inflight_or_prepared_transactions")
+
+    monkeypatch.setattr(f.module, "_capture_t_preserved_facts_once", once)
+    with pytest.raises(db.Refused, match="t_recovery_has_inflight_or_prepared_transactions"):
+        f.module.capture_t_preserved_facts(f.owner, **f.kwargs)
+    assert calls == [True] and f.clock.sleeps == []
