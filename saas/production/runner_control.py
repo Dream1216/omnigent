@@ -48,6 +48,7 @@ from saas.control_plane.execution import (
     RunLease,
     RunMutation,
 )
+from saas.control_plane.interactive_run_route import INTERACTIVE_EXECUTION_KIND
 from saas.control_plane.preview_tunnel_registration import (
     PreviewTunnelRegistrationError,
     PreviewTunnelRegistrationGrant,
@@ -233,6 +234,31 @@ class RunnerMachineAuthority(Protocol):
         fence_token: int,
     ) -> bool: ...
 
+    def inspect_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+    ) -> bool: ...
+
+    def confirm_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+        cleanup_kind: str = "physical_stop",
+    ) -> bool: ...
+
     def mint_preview_tunnel(
         self,
         *,
@@ -244,6 +270,36 @@ class RunnerMachineAuthority(Protocol):
 
 
 class _SchedulingAuthority(Protocol):
+    def inspect_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+    ) -> bool: ...
+
+    def confirm_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+        cleanup_kind: str = "physical_stop",
+        now: datetime | None = None,
+    ) -> bool: ...
+
     def heartbeat_runner(
         self,
         *,
@@ -264,6 +320,7 @@ class _SchedulingAuthority(Protocol):
         capability_resource_scope: dict[str, str],
         expected_product_revision: str | None = None,
         product_image_digest: str | None = None,
+        interactive_capability_actions: tuple[str, ...] | None = None,
         heartbeat_timeout: timedelta = timedelta(seconds=30),
         now: datetime | None = None,
     ) -> FairRunLease | None: ...
@@ -415,6 +472,7 @@ class ProductionRunnerMachineAuthority:
             capability_resource_scope=dict(_CAPABILITY_SCOPE),
             expected_product_revision=self._product_revision,
             product_image_digest=self._image_digest,
+            interactive_capability_actions=("run.execute", "runtime.interactive.execute"),
         )
 
     def heartbeat_run(
@@ -488,6 +546,62 @@ class ProductionRunnerMachineAuthority:
             connection_token=connection_token,
             fence_token=fence_token,
             requeue=False,
+        )
+
+    def inspect_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+    ) -> bool:
+        if self._product_revision is None or self._image_digest is None:
+            raise RunnerControlError(
+                "runner_control_interactive_recovery_unavailable", "Recovery is unavailable"
+            )
+        return self._scheduling.inspect_interactive_recovery(
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            run_id=run_id,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            expected_product_revision=self._product_revision,
+            product_image_digest=self._image_digest,
+        )
+
+    def confirm_interactive_recovery(
+        self,
+        *,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+        cleanup_kind: str = "physical_stop",
+    ) -> bool:
+        if self._product_revision is None or self._image_digest is None:
+            raise RunnerControlError(
+                "runner_control_interactive_recovery_unavailable", "Recovery is unavailable"
+            )
+        return self._scheduling.confirm_interactive_recovery(
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            run_id=run_id,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            proof_sha256=proof_sha256,
+            certificate_fingerprint_sha256=certificate_fingerprint_sha256,
+            expected_product_revision=self._product_revision,
+            product_image_digest=self._image_digest,
+            cleanup_kind=cleanup_kind,
         )
 
     def mint_preview_tunnel(
@@ -632,6 +746,13 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
         _exact(document, fields)
     elif action == "release_run":
         _exact(document, common | {"fence_token", "run_id"})
+    elif action == "inspect_interactive_recovery":
+        _exact(document, common | {"fence_token", "run_id", "capability_token"})
+    elif action == "confirm_interactive_recovery":
+        fields = common | {"fence_token", "run_id", "capability_token", "proof_sha256"}
+        if "cleanup_kind" in document:
+            fields.add("cleanup_kind")
+        _exact(document, fields)
     else:
         raise ValueError("action is invalid")
     values: dict[str, object] = {
@@ -651,6 +772,16 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
         if not isinstance(target, str) or target not in _RUNNER_TRANSITIONS:
             raise ValueError("target status is invalid")
         values["target_status"] = target
+    if "proof_sha256" in document:
+        proof = document["proof_sha256"]
+        if not isinstance(proof, str) or re.fullmatch(r"[0-9a-f]{64}", proof) is None:
+            raise ValueError("proof digest is invalid")
+        values["proof_sha256"] = proof
+    if "cleanup_kind" in document:
+        kind = document["cleanup_kind"]
+        if not isinstance(kind, str) or kind not in {"physical_stop", "never_started"}:
+            raise ValueError("cleanup kind is invalid")
+        values["cleanup_kind"] = kind
     return cast(str, action), values
 
 
@@ -680,7 +811,9 @@ def _lease_document(lease: FairRunLease | None) -> dict[str, object]:
             "lease_token": str(lease.lease_token),
             "run_id": str(lease.run_id),
             "execution_envelope": {
-                "change_set_id": str(envelope.change_set_id),
+                "change_set_id": str(envelope.change_set_id)
+                if envelope.change_set_id is not None
+                else None,
                 "egress_policy_hash": envelope.egress_policy_hash,
                 "egress_policy_id": str(envelope.egress_policy_id),
                 "execution_profile_hash": envelope.execution_profile_hash,
@@ -767,6 +900,19 @@ def _dispatch(
     if action == "release_run":
         replayed = authority.release_run(**kwargs)  # type: ignore[arg-type]
         return {"replayed": replayed, "version": _PROTOCOL_VERSION}
+    if action == "confirm_interactive_recovery":
+        replayed = authority.confirm_interactive_recovery(**kwargs)  # type: ignore[arg-type]
+        return {"replayed": replayed, "version": _PROTOCOL_VERSION}
+    if action == "inspect_interactive_recovery":
+        revoked = authority.inspect_interactive_recovery(
+            runner_id=runner_id,
+            connection_generation=cast(int, values["connection_generation"]),
+            connection_token=cast(str, values["connection_token"]),
+            run_id=cast(UUID, values["run_id"]),
+            fence_token=cast(int, values["fence_token"]),
+            capability_token=cast(str, values["capability_token"]),
+        )
+        return {"security_revoked": revoked, "version": _PROTOCOL_VERSION}
     raise AssertionError("unreachable Runner control action")
 
 
@@ -860,7 +1006,7 @@ class MutualTlsRunnerControlServer:
                 raise RunnerControlError(
                     "runner_control_request_invalid", "Runner control request is invalid"
                 ) from error
-            if action == "mint_preview_tunnel":
+            if action in {"mint_preview_tunnel", "confirm_interactive_recovery"}:
                 values["certificate_fingerprint_sha256"] = hashlib.sha256(
                     certificate_der
                 ).hexdigest()
@@ -1091,6 +1237,62 @@ class MutualTlsRunnerControlClient:
             )
         return cast(str, response["status"])
 
+    async def inspect_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+    ) -> bool:
+        response = await self._request(
+            "inspect_interactive_recovery",
+            {
+                "run_id": str(run_id),
+                "fence_token": fence_token,
+                "capability_token": capability_token,
+            },
+        )
+        if (
+            set(response) != {"security_revoked", "version"}
+            or type(response["security_revoked"]) is not bool
+        ):
+            raise RunnerControlError(
+                "runner_control_response_invalid", "Runner control response is invalid"
+            )
+        return response["security_revoked"]
+
+    async def confirm_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        cleanup_kind: str = "physical_stop",
+    ) -> bool:
+        if not isinstance(cleanup_kind, str) or cleanup_kind not in {
+            "physical_stop",
+            "never_started",
+        }:
+            raise RunnerControlError("runner_control_request_invalid", "Cleanup kind is invalid")
+        fields = {
+            "run_id": str(run_id),
+            "fence_token": fence_token,
+            "capability_token": capability_token,
+            "proof_sha256": proof_sha256,
+        }
+        if cleanup_kind != "physical_stop":
+            fields["cleanup_kind"] = cleanup_kind
+        response = await self._request(
+            "confirm_interactive_recovery",
+            fields,
+        )
+        if set(response) != {"replayed", "version"} or type(response["replayed"]) is not bool:
+            raise RunnerControlError(
+                "runner_control_response_invalid", "Runner control response is invalid"
+            )
+        return response["replayed"]
+
     async def claim_run(self) -> RunnerControlClientLease | None:
         response = await self._request("claim_run", {})
         if set(response) != {"lease", "version"}:
@@ -1124,7 +1326,7 @@ class MutualTlsRunnerControlClient:
             ):
                 raise ValueError("failure domain invalid")
             raw_envelope = value["execution_envelope"]
-            if not isinstance(raw_envelope, dict) or set(raw_envelope) != {
+            envelope_fields = {
                 "change_set_id",
                 "egress_policy_hash",
                 "egress_policy_id",
@@ -1143,7 +1345,8 @@ class MutualTlsRunnerControlClient:
                 "runner_id",
                 "space_id",
                 "tenant_id",
-            }:
+            }
+            if not isinstance(raw_envelope, dict) or set(raw_envelope) != envelope_fields:
                 raise ValueError("execution envelope fields invalid")
             image_digest = raw_envelope["image_digest"]
             product_revision = raw_envelope["product_revision"]
@@ -1163,14 +1366,26 @@ class MutualTlsRunnerControlClient:
                 or re.fullmatch(r"[0-9a-f]{64}", egress_hash) is None
                 or not isinstance(execution_spec_hash, str)
                 or re.fullmatch(r"[0-9a-f]{64}", execution_spec_hash) is None
-                or execution_kind not in {"omnigent.agent.v1", "omnigent.preview.v1"}
+                or execution_kind
+                not in {"omnigent.agent.v1", "omnigent.preview.v1", INTERACTIVE_EXECUTION_KIND}
                 or not isinstance(launch_argv, list)
                 or any(not isinstance(value, str) for value in launch_argv)
             ):
                 raise ValueError("execution envelope release identity invalid")
             preview_execution_id: UUID | None = None
             checkpoint_revision: str | None = None
-            if execution_kind == "omnigent.agent.v1":
+            normalized_spec = None
+            if execution_kind == INTERACTIVE_EXECUTION_KIND:
+                # The Runtime executor must fetch and hash-check the leased Run;
+                # control frames carry no user input.
+                if (
+                    launch_argv
+                    or raw_envelope["change_set_id"] is not None
+                    or raw_envelope["preview_execution_id"] is not None
+                    or raw_envelope["checkpoint_revision"] is not None
+                ):
+                    raise ValueError("execution envelope interactive fields invalid")
+            elif execution_kind == "omnigent.agent.v1":
                 if (
                     len(launch_argv) != 10
                     or raw_envelope["preview_execution_id"] is not None
@@ -1202,13 +1417,15 @@ class MutualTlsRunnerControlClient:
                         },
                     }
                 )
-            if (
+            if normalized_spec is not None and (
                 tuple(launch_argv) != normalized_spec.launch_argv
                 or execution_spec_hash != normalized_spec.spec_hash
             ):
                 raise ValueError("execution envelope launch specification invalid")
             envelope = RunnerExecutionEnvelope(
-                change_set_id=_canonical_uuid(raw_envelope["change_set_id"]),
+                change_set_id=None
+                if execution_kind == INTERACTIVE_EXECUTION_KIND
+                else _canonical_uuid(raw_envelope["change_set_id"]),
                 tenant_id=_canonical_uuid(raw_envelope["tenant_id"]),
                 space_id=_canonical_uuid(raw_envelope["space_id"]),
                 project_id=_canonical_uuid(raw_envelope["project_id"]),
@@ -1222,7 +1439,7 @@ class MutualTlsRunnerControlClient:
                 product_revision=product_revision,
                 image_digest=image_digest,
                 execution_spec_hash=execution_spec_hash,
-                launch_argv=normalized_spec.launch_argv,
+                launch_argv=tuple(launch_argv),
                 execution_kind=execution_kind,
                 preview_execution_id=preview_execution_id,
                 checkpoint_revision=checkpoint_revision,
@@ -1340,11 +1557,19 @@ class MutualTlsRunnerControlClient:
             "transition_run", {**self._run_values(lease), "target_status": target_status}
         )
         required = {"event_sequence", "run_id", "run_version", "status", "version"}
-        if (
-            set(response) != required
-            or response["run_id"] != str(lease.run_id)
-            or response["status"] != target_status
-        ):
+        if set(response) != required or response["run_id"] != str(lease.run_id):
+            raise RunnerControlError(
+                "runner_control_response_invalid", "Runner control response is invalid"
+            )
+        if response["status"] == "cancelling" and target_status in {
+            "succeeded",
+            "failed",
+            "timed_out",
+        }:
+            raise RunnerControlError(
+                "runner_control_cancellation_required", "Durable cancellation requires cleanup"
+            )
+        if response["status"] != target_status:
             raise RunnerControlError(
                 "runner_control_response_invalid", "Runner control response is invalid"
             )
@@ -1702,7 +1927,18 @@ def load_runner_machine_certificate_authorizer(
     return cast(RunnerMachineCertificateAuthorizer, value)
 
 
-def build_server_tls_context(config: ProductionRunnerControlConfig) -> ssl.SSLContext:
+class ServerTlsFiles(Protocol):
+    @property
+    def ca_certificate_path(self) -> Path: ...
+
+    @property
+    def server_certificate_path(self) -> Path: ...
+
+    @property
+    def server_key_path(self) -> Path: ...
+
+
+def build_server_tls_context(config: ServerTlsFiles) -> ssl.SSLContext:
     context = ssl.create_default_context(
         ssl.Purpose.CLIENT_AUTH, cafile=str(config.ca_certificate_path)
     )

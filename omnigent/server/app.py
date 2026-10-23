@@ -1822,7 +1822,10 @@ def create_app(
                     "the reaper will not run"
                 )
             else:
-                managed_sandbox_reaper = ManagedSandboxReaper(
+                reaper_factory = getattr(
+                    app_inst.state, "managed_sandbox_reaper_factory", ManagedSandboxReaper
+                )
+                managed_sandbox_reaper = reaper_factory(
                     host_store=host_store,
                     sandbox_config=sandbox_config,
                 )
@@ -4024,6 +4027,8 @@ def create_app(
                     if fresh is None or fresh.runner_id != runner_id:
                         return
                     conv = fresh
+                    owns_input = getattr(conversation_store, "owns_session_input", None)
+                    managed_input = bool(owns_input and owns_input(conv))
                     runner_session_initializer.require_generation(
                         runner_id, client, connection.generation
                     )
@@ -4040,6 +4045,7 @@ def create_app(
                             timeout=10.0,
                             generation=connection.generation,
                             store_slots=store_slots,
+                            suppress_recovery_turn=managed_input,
                         )
                         # A removed agent was already logged as expected.
                         if is_session_agent_removed(response):
@@ -4052,7 +4058,7 @@ def create_app(
                         await _publish_runner_recovered_status(
                             conv.id, conversation_store, require_disconnect_code=True
                         )
-                    if initialize_runtime:
+                    if initialize_runtime and not managed_input:
                         await restore_active_children(
                             conv,
                             client,

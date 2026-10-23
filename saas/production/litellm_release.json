@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "release": "v1.105.1",
+  "source_repository": "https://github.com/BerriAI/litellm",
+  "source_revision": "d665dc1a6315847fcad6cc2c1264ceb47c06abce",
+  "image": "ghcr.io/berriai/litellm@sha256:b7b9e2c306343721802253d0dd9436b9634a2eb4e14da7c7cf06c5c7b7530802",
+  "platform_manifests": {
+    "linux/amd64": "sha256:b4239fbb9be0d915c312632ccdcccea441db9994a341536fdbf32cae82e15f9c",
+    "linux/arm64": "sha256:9aa3d115784191dcaa36a906339e27d055d3e82a22a02c7ed74309e272bd41cb"
+  },
+  "platform_configs": {
+    "linux/amd64": "sha256:b764a559f0200ed74f4e7c2841df34b26c6f3a402e0e8a4e9a0e3c6eee20d90f",
+    "linux/arm64": "sha256:a62efd42ac1d9d2450b0ad78afe42abcd453fa83c99414d46f566f9180283c68"
+  },
+  "signature_public_key": "https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub",
+  "license": {
+    "upstream_license": "MIT except enterprise/",
+    "runtime_profile": "oss-core",
+    "excluded_distribution": "litellm-enterprise==0.1.73",
+    "excluded_source_directory": "/app/enterprise",
+    "required_enterprise_capabilities": [],
+    "source": "https://github.com/BerriAI/litellm/blob/d665dc1a6315847fcad6cc2c1264ceb47c06abce/LICENSE"
+  },
+  "runtime_patch": {
+    "repository": "https://apk.cgr.dev/chainguard",
+    "openssl_version": "3.6.5-r2",
+    "python_installer": {
+      "version": "26.2",
+      "wheels": {
+        "any": {
+          "filename": "pip-26.2-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/62/36/a3aed958d60531cb442b7ab4596cda7b3621cfb916f8ae1d6769795c7dc1/pip-26.2-py3-none-any.whl",
+          "sha256": "931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad",
+          "uploaded_at": "2026-07-29T21:57:54.763549Z"
+        }
+      }
+    },
+    "python_packages": {
+      "certifi": {
+        "version": "2026.10.19",
+        "wheels": {
+          "any": {
+            "filename": "certifi-2026.10.19-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/c4/51/29046e48f693c54e5b7412216d447a1d8362c9653148d98c02cdf65fa733/certifi-2026.10.19-py3-none-any.whl",
+            "sha256": "42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b",
+            "uploaded_at": "2026-10-20T02:24:15.072385Z"
+          }
+        }
+      },
+      "aiohttp": {
+        "version": "3.14.4",
+        "wheels": {
+          "aarch64": {
+            "filename": "aiohttp-3.14.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "url": "https://files.pythonhosted.org/packages/14/fc/33d6e24a5f8ac32423230088c415e2a1c6efee23d902b62f20506631e40b/aiohttp-3.14.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "sha256": "6e2eb0f8b03b4f2bd154ed8cf7c1a119a1ad04808c258bf58f90138c83b8c6d5",
+            "uploaded_at": "2026-10-05T17:39:42.182009Z"
+          },
+          "x86_64": {
+            "filename": "aiohttp-3.14.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "url": "https://files.pythonhosted.org/packages/69/c0/70667e82ec041f4122a17afce711bbcf94a71bec5888b69a49aed8817be2/aiohttp-3.14.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "sha256": "ff4b366510c733974adb7a4102c094e4a6308e6f369315a4cf14d2d0a619cf82",
+            "uploaded_at": "2026-10-05T17:39:50.304364Z"
+          }
+        }
+      },
+      "yarl": {
+        "version": "1.25.1",
+        "wheels": {
+          "aarch64": {
+            "filename": "yarl-1.25.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "url": "https://files.pythonhosted.org/packages/30/d2/7d1e0ab9f8390e1fbcede5a6dbf70d23c96ad09b8c5567f3a514d1ddb0e2/yarl-1.25.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+            "sha256": "14b79a30a93a3ce2e8832603fd0ab780ada281b0ba5110b519a634f2d7d7d1fc",
+            "uploaded_at": "2026-09-15T19:31:44.371013Z"
+          },
+          "x86_64": {
+            "filename": "yarl-1.25.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "url": "https://files.pythonhosted.org/packages/0e/b7/a82a49bf88340b837ef6972b508a1604ae377b9e6904b46b10cf5f1cf925/yarl-1.25.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "sha256": "be80550d9bfe83d9b62398a37081a90434e6df2d978ec345c3d2820de6beddab",
+            "uploaded_at": "2026-09-15T19:31:53.189308Z"
+          }
+        }
+      }
+    },
+    "packages": {
+      "x86_64": {
+        "libcrypto3-3.6.5-r2.apk": "16c94b04de2329a99b873d22f868aa71d1b23a7788d7035b2d528c7cfe5e8940",
+        "libssl3-3.6.5-r2.apk": "4e43402567bfbac732f9eb1005ffa220f41792cf8f9ad6dd576bca44eefef84d"
+      },
+      "aarch64": {
+        "libcrypto3-3.6.5-r2.apk": "2f72673545c7f2c0a17b3d09f1c0c587babe8281e455a40c7c7f85df1802740f",
+        "libssl3-3.6.5-r2.apk": "1907c6283822ea5dde176852ecf5c6efb62f04e027e9dc9376603ff7bd691828"
+      }
+    }
+  },
+  "management_contract": {
+    "create_credential": ["POST", "/credentials"],
+    "list_credentials": ["GET", "/credentials"],
+    "create_model": ["POST", "/model/new"],
+    "list_models": ["GET", "/model/info"],
+    "delete_model": ["POST", "/model/delete"],
+    "create_inference_key": ["POST", "/key/generate"]
+  },
+  "production_enabled_by_default": false
+}

@@ -100,3 +100,109 @@ backup/object readback, original signed immutable Server/Host stack, database
 recovery, history/auth/revocation/billing/audit checks and independent admission.
 Re-upgrade requires the real new 65-second LISTEN-epoch readiness barrier; old
 per-process ACKs cannot be replayed as a restarted process's success.
+
+
+### Explicit T preserving target
+
+The preserving coordinator defaults to P15. `ExplicitTRecoveryOperation` is a separate,
+explicit typed maintenance proposal; it does not approve or select a new N−1 release.
+The original P15 operation retains its exact 15 fields and checkpoint bytes. T
+requires version `omnigent.postgresql-preserving-explicit-t/v1` and five explicit
+fields; JSON decoding refuses missing/extra fields or an unknown version/target,
+without filling defaults, recomputing pins or rebasing an old checkpoint.
+Its operation must bind the original Server/Host pair, product, upstream,
+adapter and `mm1a2b3c4d5e`/`lm2t00000001` tuple. Independent target source gold
+must match the source-owned T inventory/security profile, role edges, database
+and public/default ACLs. The current `pg_notify` raw ACL, including NULL versus
+an array, owner, grantor/grantee and grant options, is preserved exactly. An
+incompatible target ACL is refused; this primitive never edits system catalogs.
+
+The existing coordinator must validate the actual retained encrypted backup,
+KMS version, current write fence, exact original signed pair and drained typed
+consumers/current-replica ACK set before every T phase. No production verifier
+or no-op callback is supplied. Whole-table bounded COPY requires an independent
+existing full reader and refuses prepared/in-flight writes, active execution,
+unsupported tables or missing proof. All three P17 receipt objects retain OIDs,
+rows, guards, indexes, FKs and ACLs through the original archive move.
+
+The fixed inverse ends at 18→17→16→T and nf→mm; it never crosses T's retained
+data guard. Ordinary P18/P17 Alembic downgrade remains refused. Reentry captures
+newly committed, freshly fenced T facts before T→16 and exact receipt reattach,
+then restores the original SOURCE-only objects and real P18 migration. New
+rollback-period Usage/Audit/Outbox facts must be delivered with their original
+IDs and hashes; old process ACKs are never replayed as a new process success.
+The real 65-second epoch barrier, original signed pair startup/business tests,
+RPO≤300 seconds, full ≤900-second drill and independent target approval remain
+required. Unit phase routing or COPY hashes alone do not establish them.
+
+
+### Fenced T runtime binding composition
+
+`FencedTRuntimeRecovery` is a maintenance composition around the existing explicit
+T recovery. It adds no HTTP endpoint, role grant or default proof adapter. The
+original P15 operation/checkpoint protocol, source guard, migration SQL and gold
+remain unchanged. A supplied operation must pin the existing original 3264
+Server/Host pair; the target still requires separate release approval and fresh
+image/security verification.
+
+A database-only inverse preserves new runtime metadata, so it cannot by itself
+make the original 0.18 App accept the same projects. Under a real write fence,
+the composition first verifies the full current source and independent T gold.
+While P18's owner policies still exist, the existing owner maintenance primitive
+projects only the fixed placement schema, partition version/upstream/adapter and
+monotonic partition/binding generations to the original 0.18/825/mm tuple. Every
+active Omnigent placement must appear exactly once. Identity, tenant/space/project,
+aliases, workspace/resource IDs and every other column remain unchanged. A
+complete-table COPY comparison permits only those exact projections and the one
+native source Outbox event per placement; no original Outbox fact is omitted.
+
+The original preserving coordinator then prepares again, capturing the staged
+metadata and its actual committed event, before the fixed 18→17→16→T/nf→mm
+inverse. This is staged metadata under a fence, not proof an old provider is ready
+against the still-current database. `verify_transition` must read the actual
+installed candidate, namespace/cluster/database identity, provider workspace
+inventory and retained original pair, without waiting for another connection to
+see this transaction's uncommitted metadata. The existing live backup/fence
+callback is called again immediately before commit. It must cover the bounded
+commit and retain the fence on every failure.
+
+After inverse, `verify_pair` must boot the actual original immutable Server AND
+Host, verify their original receipts and run the original strict same-project
+history/auth/Session/billing/audit checks. A JSON digest, boolean flag, current
+binding validator or database fixture cannot replace that adapter. Old Runner
+pools are a separate unresolved compatibility prerequisite: the original managed
+projector selects upstream825/mm, while the same original fleet/readiness binds
+its one admitted pool to Product3264. Those literal SHAs differ. The actual
+transition adapter must refuse an unsatisfied approved execution scope before
+staged metadata writes; a direct Host-only probe cannot silently substitute for
+required managed Run recovery. The composition does not rewrite pool or Run
+history or relabel upstream as Product. The old generic unscoped Outbox worker must remain
+fenced from new runtime-maintenance events; an attempted claim, retry, terminal
+change or missing event is refused rather than fabricated as published.
+
+Reentry requires the original pair to be fenced and verified again. Existing
+preserving reattachment first restores the same P17 receipt objects and the real
+P18 policies, preserving all original and legitimate rollback-period facts. The
+same owner primitive then projects the fresh complete scope back to the candidate
+with a second generation increment. New global placements require separate
+review and are refused; new projects in an existing placement remain in its fresh
+complete scope. Actual new 65-second LISTEN epochs, delivery catch-up and business
+checks remain required before removing the fence. A final state explicitly says
+those checks are still outstanding and never grants production admission.
+
+Checkpoints use the existing private durable recovery writer. Failure or unknown
+COMMIT stops the composition. `reconcile_runtime_unknown_commit` is read-only and
+checks the stable native source receipt and exact scope; it does not retry SQL,
+run the inverse or resume reattachment. Retain the actual backup, file spool,
+provider fence, source gold and private checkpoints for controlled reconciliation.
+The full ≤900-second/RPO≤300-second drill must time the real signed stack and
+actual adapters. Database fixture callbacks in the native test are explicitly
+not operational backup/provider/image qualifications.
+
+The fenced T composition binds Product, Server and Host through the unchanged
+20-key `ExplicitTRecoveryOperation` and its independently derived target Gold.
+Its target remains original upstream 825/mm/T, adapter 0.2 and runtime 0.18.
+Changing the exact immutable pair requires the actual transition/pair adapters
+to verify that separately approved signed target; valid-shaped pins and source
+Gold never constitute approval. The known 3264 managed-pool conflict remains a
+negative regression target, not a default recovery target.

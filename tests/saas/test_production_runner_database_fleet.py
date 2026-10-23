@@ -25,7 +25,9 @@ from saas.control_plane import (
     RuntimePlacementRecord,
     SaasBase,
 )
-from saas.production.postgresql_migration import _expected_head
+from saas.control_plane.schema_revision import (
+    CONTROL_PLANE_SCHEMA_REVISION as _CONTROL_PLANE_SCHEMA_REVISION,
+)
 from saas.production.runner_database_fleet import (
     RUNNER_DATABASE_FLEET_ADMIN_URL_FILE_ENV,
     RUNNER_DATABASE_FLEET_ATTESTATION_FILE_ENV,
@@ -85,7 +87,6 @@ _POOL = UUID("44444444-4444-4444-8444-444444444444")
 _PLACEMENT = UUID("55555555-5555-4555-8555-555555555555")
 _SERVICE = UUID("66666666-6666-4666-8666-666666666666")
 _OFFICIAL_SCHEMA_REVISION = "official-head-v1"
-_CONTROL_PLANE_SCHEMA_REVISION = _expected_head("saas")
 _CAPABILITIES = ("shell",)
 _CAPABILITIES_SHA256 = hashlib.sha256(b'["shell"]').hexdigest()
 

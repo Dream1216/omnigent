@@ -1,0 +1,19 @@
+model_list: []
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: true
+  encryption_algorithm: aes-256-gcm
+  proxy_config_reload_interval_seconds: 3600
+  disable_error_logs: true
+  disable_spend_logs: true
+  store_prompts_in_spend_logs: false
+  trusted_proxy_ranges: []
+litellm_settings:
+  num_retries: 0
+  cache: false
+  set_verbose: false
+  json_logs: true
+  turn_off_message_logging: true
+router_settings:
+  num_retries: 0
+  fallbacks: []

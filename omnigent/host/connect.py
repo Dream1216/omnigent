@@ -4732,6 +4732,9 @@ class HostProcess:
             _logger.debug("Could not obtain auth token", exc_info=True)
         return None
 
+    def _hello_capabilities(self) -> list[str]:
+        return list(HOST_CAPABILITIES)
+
     def _diagnostics_for(
         self, ws: websockets.asyncio.client.ClientConnection
     ) -> TunnelDiagnostics | None:
@@ -4779,7 +4782,7 @@ class HostProcess:
             interactive_shells=self._interactive_shells,
             telemetry_opt_out=_tel_opt_out,
             installation_id=_tel_install_id,
-            capabilities=list(HOST_CAPABILITIES),
+            capabilities=self._hello_capabilities(),
             connection_id=connection_id,
         )
         try:

@@ -24,6 +24,7 @@ import os
 import re
 import stat
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -936,7 +937,15 @@ def build_production_onboarding_outbox_composition(
 def build_production_onboarding_outbox_publisher() -> OutboxPublisher:
     """Zero-argument factory used by ``saas.outbox_worker`` in production."""
 
-    return cast(OutboxPublisher, build_production_onboarding_outbox_composition())
+    from saas.production.model_projection import wrap_production_model_projection
+
+    fallback = build_production_onboarding_outbox_composition()
+    try:
+        return wrap_production_model_projection(os.environ, fallback=fallback)
+    except Exception:
+        with suppress(Exception):
+            fallback.close()
+        raise
 
 
 __all__ = [

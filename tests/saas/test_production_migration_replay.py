@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -371,6 +372,24 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     repeated = migration.run_production_postgresql_migration(plan)
     assert repeated.catalog_sha256 == first.catalog_sha256
 
+    if plan.model_projection_service_role_bindings is None:
+        control = sa.create_engine(plan.saas_owner.url)
+        try:
+            config = migration._migration_config("saas")
+            with control.connect() as connection:
+                config.attributes["connection"] = connection
+                command.downgrade(config, "lm1a00000001")
+            with control.connect() as connection:
+                assert (
+                    connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                    == "lm1a00000001"
+                )
+            restored = migration.run_production_postgresql_migration(plan)
+            assert restored.saas_head == migration._expected_head("saas")
+            assert restored.catalog_sha256 == first.catalog_sha256
+        finally:
+            control.dispose()
+
     owner = sa.create_engine(plan.official_owner.url)
     try:
         # Reproduce a deployed predecessor that already has the valid extension.
@@ -557,6 +576,113 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
                 engine.dispose()
 
 
+def _with_machine_metering_profile(plan, tmp_path):
+    binding = ProductionServiceRoleBinding("metering", "replay_metering", "saas_metering")
+    document = render_production_service_role_bindings((binding,))
+    path = tmp_path / "machine-metering-bindings.json"
+    path.write_text(document)
+    path.chmod(0o400)
+    profile = ProductionServiceRoleBindings(
+        path, hashlib.sha256(document.encode()).hexdigest(), (binding,)
+    )
+    plan = replace(plan, machine_metering_service_role_bindings=profile)
+    admin = sa.create_engine(
+        os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"],
+        isolation_level="AUTOCOMMIT",
+    )
+    try:
+        with admin.connect() as connection:
+            connection.exec_driver_sql(
+                "CREATE ROLE replay_metering LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                "INHERIT NOREPLICATION NOBYPASSRLS PASSWORD 'production-replay-test'"
+            )
+    finally:
+        admin.dispose()
+    return plan
+
+
+def test_real_qualified_machine_metering_profile_and_catalog_denials(
+    production_replay, tmp_path, monkeypatch
+):
+    plan = _with_machine_metering_profile(production_replay, tmp_path)
+    receipt = migration.run_production_postgresql_migration(plan)
+    assert receipt.service_role_graph_sha256 == plan.service_role_graph.sha256
+    assert (receipt.official_head, receipt.saas_head) == ("nf12ab34cd56", "p0s000000018")
+    config, application_engines = _startup_config(plan, receipt, tmp_path)
+    metering_url = plan.saas_owner.url.set(
+        username=plan.service_role_graph.login_for("metering")
+    ).render_as_string(hide_password=False)
+    meter = sa.create_engine(metering_url, hide_parameters=True)
+    authorities = migration._create_engines(plan)
+    try:
+        migration.verify_production_postgresql_state(engines=application_engines, config=config)
+
+        def verify_metering():
+            migration.verify_machine_metering_postgresql_state(
+                engine=meter, database_url=metering_url, config=config
+            )
+
+        verify_metering()
+        with authorities["principal_operator"].begin() as connection:
+            connection.exec_driver_sql(
+                "GRANT saas_app TO replay_metering WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+            )
+        try:
+            with pytest.raises(migration.PostgreSqlMigrationError) as refused:
+                verify_metering()
+            assert refused.value.code == "service_login_authority_drifted"
+        finally:
+            with authorities["principal_operator"].begin() as connection:
+                connection.exec_driver_sql("REVOKE saas_app FROM replay_metering")
+        verify_metering()
+        with authorities["database_owner"].begin() as connection:
+            database = connection.dialect.identifier_preparer.quote(
+                str(plan.database_owner.url.database)
+            )
+            connection.exec_driver_sql(f"GRANT CONNECT ON DATABASE {database} TO replay_metering")
+        try:
+            with pytest.raises(migration.PostgreSqlMigrationError) as refused:
+                verify_metering()
+            assert refused.value.code == "service_login_authority_drifted"
+        finally:
+            with authorities["database_owner"].begin() as connection:
+                connection.exec_driver_sql(
+                    f"REVOKE CONNECT ON DATABASE {database} FROM replay_metering"
+                )
+        verify_metering()
+        final = migration.run_production_postgresql_migration(plan, verify_only=True)
+        assert final.catalog_sha256 == receipt.catalog_sha256
+        if plan.platform_admin_service_role_bindings is not None:
+            preview_root = tmp_path / "reviewed-preview"
+            preview_root.mkdir()
+            selected = (
+                "projection"
+                if plan.model_projection_service_role_bindings is not None
+                else "admin"
+            )
+
+            def require_own_preview_pin():
+                with monkeypatch.context() as context:
+                    context.setitem(
+                        migration._MACHINE_METERING_PREVIEW_SOURCE_SECURITY_CATALOGS,
+                        (selected, True),
+                        {},
+                    )
+                    with pytest.raises(migration.PostgreSqlMigrationError) as refused:
+                        migration.run_production_postgresql_migration(plan, verify_only=True)
+                    assert refused.value.code == "source_security_catalog_drifted"
+                migration.run_production_postgresql_migration(plan, verify_only=True)
+
+            _verify_preview_deployment_and_startup(
+                plan, receipt, preview_root, check_preview=require_own_preview_pin
+            )
+    finally:
+        meter.dispose()
+        migration._dispose_engines(authorities)
+        for engine in application_engines.values():
+            engine.dispose()
+
+
 def _startup_config(
     plan: migration.ProductionPostgreSqlPlan,
     receipt: migration.PostgreSqlMigrationReceipt,
@@ -670,6 +796,15 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 if plan.model_projection_service_role_bindings is not None
                 else migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
             )
+            if plan.machine_metering_service_role_bindings is not None:
+                profile = (
+                    "projection"
+                    if plan.model_projection_service_role_bindings is not None
+                    else "admin"
+                )
+                expected_security = migration._MACHINE_METERING_PREVIEW_SOURCE_SECURITY_CATALOGS[
+                    (profile, plan.business_delivery_service_role_bindings is not None)
+                ]
             assert digest == expected_security.get(key)
             return key, digest
     finally:
@@ -680,6 +815,8 @@ def _verify_preview_deployment_and_startup(
     plan: migration.ProductionPostgreSqlPlan,
     clean_receipt: migration.PostgreSqlMigrationReceipt,
     tmp_path: Path,
+    *,
+    check_preview=None,
 ) -> None:
     config, engines = _startup_config(plan, clean_receipt, tmp_path)
     admin = sa.create_engine(
@@ -706,6 +843,8 @@ def _verify_preview_deployment_and_startup(
         config, refreshed = _startup_config(plan, preview_receipt, tmp_path)
         try:
             migration.verify_production_postgresql_state(engines=refreshed, config=config)
+            if plan.model_projection_service_role_bindings is not None:
+                _verify_projection_deployment_startup(plan, config)
             sessions = create_role_session_factories(
                 config,  # type: ignore[arg-type]
                 verify_state=lambda service_engines, service_config: (
@@ -715,6 +854,8 @@ def _verify_preview_deployment_and_startup(
                 ),
             )
             sessions.close()
+            if check_preview is not None:
+                check_preview()
             _verify_runner_deployment_and_startup(plan, preview_receipt, config, refreshed, admin)
             with admin.begin() as connection:
                 connection.exec_driver_sql(
@@ -735,6 +876,36 @@ def _verify_preview_deployment_and_startup(
         admin.dispose()
         for engine in engines.values():
             engine.dispose()
+
+
+def _verify_projection_deployment_startup(
+    plan: migration.ProductionPostgreSqlPlan, config: SimpleNamespace
+) -> None:
+    url = plan.saas_owner.url.set(username=plan.service_role_graph.login_for("model_projection"))
+    engine = sa.create_engine(url)
+    owner = sa.create_engine(plan.saas_owner.url)
+    try:
+        migration.verify_model_projection_postgresql_state(
+            engine=engine, database_url=url.render_as_string(hide_password=False), config=config
+        )
+        with owner.begin() as connection:
+            connection.exec_driver_sql(
+                "GRANT UPDATE ON saas_model_credential_versions TO saas_model_projection"
+            )
+        with pytest.raises(migration.PostgreSqlMigrationError) as drift:
+            migration.verify_model_projection_postgresql_state(
+                engine=engine,
+                database_url=url.render_as_string(hide_password=False),
+                config=config,
+            )
+        assert drift.value.code == "source_security_catalog_drifted"
+    finally:
+        with owner.begin() as connection:
+            connection.exec_driver_sql(
+                "REVOKE UPDATE ON saas_model_credential_versions FROM saas_model_projection"
+            )
+        owner.dispose()
+        engine.dispose()
 
 
 def _verify_runner_deployment_and_startup(
@@ -797,4 +968,28 @@ def _verify_runner_deployment_and_startup(
     migration.verify_production_postgresql_state(engines=engines, config=config)
     print(
         "RUNNER_REVOKED_MANAGEMENT_STARTUP=pass; original_receipt=unchanged; unsafe_edges=rejected"
+    )
+
+
+@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
+def test_real_fenced_t_runtime_rebinding_commit_and_complete_facts(production_replay):
+    """Run the native maintenance scenario in the existing two-major replay lane."""
+    from tests.saas.test_runtime_maintenance_postgresql import (
+        assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome,
+    )
+
+    assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome(
+        production_replay
+    )
+
+
+@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
+def test_real_fenced_t_inverse_and_same_oid_reattach(production_replay, tmp_path):
+    """Derive clean original T gold; fixture callbacks do not qualify old images."""
+    from tests.saas.test_runtime_maintenance_postgresql import (
+        assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold,
+    )
+
+    assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
+        production_replay, tmp_path
     )

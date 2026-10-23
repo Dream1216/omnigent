@@ -99,6 +99,25 @@ def test_prune_failure_is_not_ignored(archives, monkeypatch):
         storage.reclaim_build_cache(archives, "builder-synthetic-fixture")
 
 
+def test_runtime_scope_preserves_both_archives_without_accepting_application_inputs(
+    tmp_path, monkeypatch
+):
+    for name in storage.LITELLM_ARCHIVES:
+        (tmp_path / name).write_bytes(b"runtime archive")
+    monkeypatch.setattr(storage.subprocess, "run", Mock())
+    monkeypatch.setattr(
+        storage.shutil, "disk_usage", Mock(return_value=SimpleNamespace(free=10 * 1024**3))
+    )
+    result = storage.reclaim_build_cache(
+        tmp_path, "builder-runtime-fixture", archives=storage.LITELLM_ARCHIVES
+    )
+    assert set(result["archive_sizes"]) == set(storage.LITELLM_ARCHIVES)
+    with pytest.raises(FileNotFoundError):
+        storage.reclaim_build_cache(tmp_path, "builder-runtime-fixture")
+    with pytest.raises(ValueError, match="unsupported candidate archive scope"):
+        storage.reclaim_build_cache(tmp_path, "builder-runtime-fixture", archives=("../outside",))
+
+
 def test_workflow_reclaims_after_builds_without_removing_any_gate():
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load((root / ".github/workflows/saas-image-candidate.yml").read_text())

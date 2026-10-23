@@ -33,6 +33,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleGraph,
     compose_production_service_role_graph,
     load_business_delivery_service_role_bindings,
+    load_machine_metering_service_role_bindings,
     load_model_projection_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
@@ -227,12 +228,16 @@ class ProductionServerConfig:
     secrets: ProductionServerSecrets = field(repr=False)
     preview_root_domain: str | None = None
     preview_lease_seconds: int = 300
+    interactive_controller_enabled: bool = False
     delivery_config: DeliveryConfig | None = field(default=None, repr=False)
     host_sharded: bool = False
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
     )
     business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = field(
+        default=None, repr=False
+    )
+    machine_metering_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
     )
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
@@ -248,6 +253,7 @@ class ProductionServerConfig:
             self.platform_admin_service_role_bindings,
             self.model_projection_service_role_bindings,
             self.business_delivery_service_role_bindings,
+            self.machine_metering_service_role_bindings,
         )
 
     @property
@@ -1046,6 +1052,14 @@ def load_production_server_config(
             if "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE" in source
             else None
         )
+        machine_metering_service_role_bindings = (
+            load_machine_metering_service_role_bindings(source)
+            if any(
+                "OMNIGENT_SAAS_MACHINE_METERING_SERVICE_ROLE_BINDINGS" + suffix in source
+                for suffix in ("_FILE", "_SHA256")
+            )
+            else None
+        )
         if (
             source.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION")
             in {"p0s000000017", "p0s000000018"}
@@ -1058,6 +1072,7 @@ def load_production_server_config(
             platform_admin_service_role_bindings,
             model_projection_service_role_bindings,
             business_delivery_service_role_bindings,
+            machine_metering_service_role_bindings,
         )
     except ProductionServiceRoleBindingsError as error:
         raise ProductionServerConfigError(str(error)) from error
@@ -1102,6 +1117,18 @@ def load_production_server_config(
         )
     runner_adapter_factory = _factory_reference(source, capability="runner")
     preview_adapter_factory = _factory_reference(source, capability="preview")
+    interactive_flag = source.get("OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED", "false")
+    if interactive_flag not in {"true", "false"}:
+        raise ProductionServerConfigError("interactive controller flag must be true or false")
+    interactive_controller_enabled = interactive_flag == "true"
+    if interactive_controller_enabled and (
+        runner_adapter_factory
+        != "saas.production.interactive_controller_adapter:build_production_interactive_controller"
+        or source.get("OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND") != "true"
+    ):
+        raise ProductionServerConfigError(
+            "interactive controller requires its reviewed factory and controller-bound Hosts"
+        )
     for capability, factory in (
         ("runner", runner_adapter_factory),
         ("preview", preview_adapter_factory),
@@ -1195,11 +1222,13 @@ def load_production_server_config(
         platform_admin_service_role_bindings=platform_admin_service_role_bindings,
         model_projection_service_role_bindings=model_projection_service_role_bindings,
         business_delivery_service_role_bindings=business_delivery_service_role_bindings,
+        machine_metering_service_role_bindings=machine_metering_service_role_bindings,
         migration_receipt=receipt,
         artifact_admission_receipt=artifact_admission_receipt,
         secrets=secrets,
         preview_root_domain=preview_root_domain,
         preview_lease_seconds=preview_lease_seconds,
+        interactive_controller_enabled=interactive_controller_enabled,
         delivery_config=delivery_config,
         host_sharded=host_sharded == "true",
     )

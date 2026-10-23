@@ -57,7 +57,15 @@ def legacy_packaged_schema(monkeypatch):
     monkeypatch.setattr(renderer, "_expected_head", head)
 
 
-def _spec(tmp_path, *, count=19, head="lm2r00000001", mode="stage", login_suffix=""):
+def _spec(
+    tmp_path,
+    *,
+    count=19,
+    head="lm2r00000001",
+    mode="stage",
+    login_suffix="",
+    machine_metering=False,
+):
     document = _spec_document(mode=mode, schema_head=head)
     roles = dict(bindings.EXPECTED_PRODUCTION_SERVICE_ROLES)
     base_count = count - 3 if head in {"p0s000000017", "p0s000000018"} else count
@@ -67,6 +75,8 @@ def _spec(tmp_path, *, count=19, head="lm2r00000001", mode="stage", login_suffix
         roles.update(bindings.EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
     if base_count == 19:
         roles.update(bindings.EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)
+    if machine_metering:
+        roles.update(bindings.EXPECTED_MACHINE_METERING_SERVICE_ROLES)
     for service in roles:
         if service not in document["service_logins"]:
             document["service_logins"][service] = f"release_{service}_login{login_suffix}"
@@ -110,12 +120,14 @@ def _render(tmp_path, **kwargs):
 )
 @pytest.mark.parametrize("mode", ["stage", "final"])
 def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
-    tmp_path, monkeypatch, count, head, mode
+    tmp_path, monkeypatch, count, head, mode, machine_metering=False
 ):
     packaged_head = head if head.startswith("p0s") else "p0s000000015"
     monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: packaged_head)
     monkeypatch.setattr(renderer, "_expected_head", lambda _kind: packaged_head)
-    migration, production, evidence = _render(tmp_path, count=count, head=head, mode=mode)
+    migration, production, evidence = _render(
+        tmp_path, count=count, head=head, mode=mode, machine_metering=machine_metering
+    )
     migration_bindings = _resource(
         migration, kind="ConfigMap", data_key="service-role-bindings.json"
     )
@@ -128,6 +140,13 @@ def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
     active = _PROFILES[:count_profiles]
     if head in {"p0s000000017", "p0s000000018"}:
         active += _PROFILES[3:]
+    if machine_metering:
+        active += (
+            (
+                "OMNIGENT_SAAS_MACHINE_METERING_SERVICE_ROLE_BINDINGS",
+                "machine-metering-service-role-bindings.json",
+            ),
+        )
     assert set(migration_bindings["data"]) == {
         "service-role-bindings.json",
         *(filename for _, filename in active),
@@ -146,7 +165,7 @@ def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
         environment[prefix + "_FILE"] = str(path)
         environment[prefix + "_SHA256"] = hashlib.sha256(raw).hexdigest()
     graph = bindings.load_production_service_role_graph(environment)
-    assert len(graph.bindings) == count
+    assert len(graph.bindings) == count + int(machine_metering)
     assert production_bindings["metadata"]["name"].endswith(graph.sha256[:12])
     assert (
         evidence["service_role_bindings_sha256"]
@@ -205,6 +224,65 @@ def test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
         }
         with pytest.raises(ProductionServerConfigError, match="verification facts"):
             load_production_migration_receipt(stripped, **facts)
+
+
+@pytest.mark.parametrize(
+    "count,head",
+    [
+        (15, "lm2t00000001"),
+        (18, "lm2t00000001"),
+        (19, "lm2t00000001"),
+        (18, "p0s000000018"),
+        (20, "p0s000000018"),
+        (21, "p0s000000018"),
+        (22, "p0s000000018"),
+    ],
+)
+@pytest.mark.parametrize("mode", ["stage", "final"])
+def test_optional_metering_keeps_complete_profiles_exactly_projected_and_receipt_bound(
+    tmp_path, monkeypatch, count, head, mode
+):
+    test_complete_role_profiles_are_exactly_projected_and_receipt_bound(
+        tmp_path, monkeypatch, count, head, mode, machine_metering=True
+    )
+
+
+@pytest.mark.parametrize(
+    "head",
+    ["p0s000000015", "p0s000000016", "p0s000000017", "lm2r00000001", "lm2s00000001"],
+)
+def test_optional_metering_requires_an_independently_pinned_schema(tmp_path, monkeypatch, head):
+    packaged_head = head if head.startswith("p0s") else "p0s000000015"
+    monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: packaged_head)
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: packaged_head)
+    count = 18 if head == "p0s000000017" else 15
+    with pytest.raises(renderer.ReleaseRenderError, match=r"metering.*T.*P18"):
+        renderer.load_public_release_spec(
+            _spec(tmp_path, count=count, head=head, machine_metering=True)
+        )
+
+
+@pytest.mark.parametrize("change", ["missing_core", "shared_login", "base_role", "unknown"])
+def test_optional_metering_does_not_relax_complete_distinct_narrow_roles(
+    tmp_path, monkeypatch, change
+):
+    monkeypatch.setattr(postgresql_migration, "_expected_head", lambda _kind: "p0s000000018")
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "p0s000000018")
+    spec = _spec(tmp_path, count=22, head="p0s000000018", machine_metering=True)
+    document = json.loads(spec.read_text())
+    roles = document["service_logins"]
+    if change == "missing_core":
+        roles.pop("executor")
+    elif change == "shared_login":
+        roles["metering"] = roles["app"]
+    elif change == "base_role":
+        roles["metering"] = "saas_metering"
+    else:
+        roles["unexpected"] = "release_unexpected_login"
+    spec.write_bytes(_canonical_json(document))
+    with pytest.raises(renderer.ReleaseRenderError, match="service_logins"):
+        renderer.render_kubernetes_release(spec, _copy_sources(tmp_path), tmp_path / "rendered")
+    assert not (tmp_path / "rendered").exists()
 
 
 def test_extension_login_change_rekeys_the_immutable_bindings_without_changing_core_bytes(

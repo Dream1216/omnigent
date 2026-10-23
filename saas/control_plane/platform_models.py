@@ -8,7 +8,8 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
-from saas.control_plane.db_models import SaasBase, _values
+from saas.control_plane.db_models import SaasBase, _hex64, _values
+from saas.control_plane.model_document_storage import ModelDocumentStorage, model_document_format
 
 PLATFORM_STAFF_STATUSES = ("active", "suspended", "deleted")
 PLATFORM_ASSIGNMENT_STATUSES = ("active", "revoked", "expired")
@@ -48,6 +49,8 @@ MODEL_PROVIDER_RECEIPT_ACTIONS = (
 )
 MODEL_PROVIDER_BUDGET_RESERVATION_STATUSES = (
     "reserved",
+    "in_flight",
+    "uncertain",
     "settled",
     "released",
     "rejected",
@@ -495,6 +498,42 @@ class ModelProviderConfigurationReceiptRecord(SaasBase):
     )
 
 
+class ModelTestFundingPolicyRecord(SaasBase):
+    """Append-only platform-funded verification limits; contains no credentials."""
+
+    __tablename__ = "saas_model_test_funding_policies"
+
+    provider_id: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(nullable=False)
+    monthly_budget_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    daily_test_budget_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    daily_test_token_limit: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    max_test_microusd: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    max_test_tokens: Mapped[int] = mapped_column(nullable=False)
+    daily_test_attempt_limit: Mapped[int] = mapped_column(nullable=False)
+    actor_principal_id: Mapped[UUID] = mapped_column(nullable=False)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "provider_id = 'deepseek' AND version > 0", name="ck_model_test_policy_identity"
+        ),
+        sa.CheckConstraint(
+            "monthly_budget_microusd BETWEEN 1 AND 1000000000000000 "
+            "AND daily_test_budget_microusd BETWEEN 1 AND monthly_budget_microusd "
+            "AND max_test_microusd BETWEEN 1 AND daily_test_budget_microusd "
+            "AND daily_test_token_limit BETWEEN 1 AND 1000000000 "
+            "AND max_test_tokens BETWEEN 1 AND 2048 "
+            "AND max_test_tokens <= daily_test_token_limit "
+            "AND daily_test_attempt_limit BETWEEN 1 AND 1000",
+            name="ck_model_test_policy_limits",
+        ),
+        sa.CheckConstraint(_hex64("request_hash"), name="ck_model_test_policy_hash"),
+    )
+
+
 class ModelProviderMonthlyBudgetRecord(SaasBase):
     """Serialized Platform-wide monthly spend counter for one Provider."""
 
@@ -559,8 +598,15 @@ class ModelProviderBudgetReservationRecord(SaasBase):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     provider_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
-    run_id: Mapped[UUID] = mapped_column(nullable=False)
+    tenant_id: Mapped[UUID | None] = mapped_column()
+    run_id: Mapped[UUID | None] = mapped_column()
+    purpose: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="tenant_run", server_default="tenant_run"
+    )
+    test_operation_id: Mapped[UUID | None] = mapped_column()
+    test_actor_principal_id: Mapped[UUID | None] = mapped_column()
+    test_policy_version: Mapped[int | None] = mapped_column()
+    test_configuration_sha256: Mapped[str | None] = mapped_column(sa.String(64))
     operation_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     configuration_version: Mapped[int] = mapped_column(nullable=False)
@@ -576,12 +622,31 @@ class ModelProviderBudgetReservationRecord(SaasBase):
     released_tokens: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, default=0)
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     rejection_code: Mapped[str | None] = mapped_column(sa.String(64))
+    outcome_evidence_sha256: Mapped[str | None] = mapped_column(sa.String(64))
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     version: Mapped[int] = mapped_column(nullable=False, default=1)
 
     __table_args__ = (
+        sa.UniqueConstraint("test_operation_id", name="uq_model_budget_test_operation"),
+        sa.UniqueConstraint(
+            "test_operation_id",
+            "id",
+            "test_configuration_sha256",
+            "test_policy_version",
+            name="uq_model_budget_verification_binding",
+        ),
+        sa.CheckConstraint(
+            "(purpose = 'tenant_run' AND tenant_id IS NOT NULL AND run_id IS NOT NULL "
+            "AND test_operation_id IS NULL AND test_actor_principal_id IS NULL "
+            "AND test_policy_version IS NULL AND test_configuration_sha256 IS NULL) OR "
+            "(purpose = 'platform_test' AND tenant_id IS NULL AND run_id IS NULL "
+            "AND test_operation_id IS NOT NULL AND test_actor_principal_id IS NOT NULL "
+            "AND test_policy_version IS NOT NULL AND test_configuration_sha256 IS NOT NULL "
+            "AND test_policy_version > 0 AND " + _hex64("test_configuration_sha256") + ")",
+            name="ck_model_budget_funding_scope",
+        ),
         sa.CheckConstraint(
             f"provider_id IN ({_values(MODEL_PROVIDER_IDS)})",
             name="ck_model_provider_budget_reservation_provider",
@@ -602,16 +667,17 @@ class ModelProviderBudgetReservationRecord(SaasBase):
         sa.CheckConstraint(
             "settled_microusd >= 0 AND released_microusd >= 0 "
             "AND settled_tokens >= 0 AND released_tokens >= 0 "
-            "AND ((status = 'reserved' AND released_microusd = 0 "
+            "AND ((status IN ('reserved', 'in_flight', 'uncertain') AND released_microusd = 0 "
             "AND released_tokens = 0 AND settled_microusd <= admitted_microusd "
             "AND settled_tokens <= admitted_tokens) "
-            "OR (status <> 'reserved' "
+            "OR (status NOT IN ('reserved', 'in_flight', 'uncertain') "
             "AND settled_microusd + released_microusd = admitted_microusd "
             "AND settled_tokens + released_tokens = admitted_tokens))",
             name="ck_model_provider_budget_reservation_conservation",
         ),
         sa.CheckConstraint(
-            "(status = 'reserved' AND admitted_microusd = requested_microusd "
+            "(status IN ('reserved', 'in_flight', 'uncertain') "
+            "AND admitted_microusd = requested_microusd "
             "AND admitted_tokens = requested_tokens "
             "AND released_microusd = 0 AND released_tokens = 0 "
             "AND rejection_code IS NULL) OR "
@@ -623,6 +689,12 @@ class ModelProviderBudgetReservationRecord(SaasBase):
             "(status = 'rejected' AND admitted_microusd = 0 AND admitted_tokens = 0 "
             "AND rejection_code IS NOT NULL)",
             name="ck_model_provider_budget_reservation_state",
+        ),
+        sa.CheckConstraint(
+            "outcome_evidence_sha256 IS NULL OR (status IN ('settled', 'released') AND "
+            + _hex64("outcome_evidence_sha256")
+            + ")",
+            name="ck_model_provider_budget_outcome_evidence",
         ),
         sa.CheckConstraint(
             "length(operation_key) > 0 AND length(request_hash) = 64",
@@ -654,11 +726,53 @@ class ModelProviderBudgetReservationRecord(SaasBase):
             "id",
         ),
         sa.Index(
+            "ix_model_budget_admitted_test_day",
+            "provider_id",
+            "purpose",
+            "usage_date",
+            "id",
+            postgresql_where=sa.text("admitted_microusd > 0"),
+            sqlite_where=sa.text("admitted_microusd > 0"),
+        ),
+        sa.Index(
             "ix_model_provider_budget_reservation_run",
             "tenant_id",
             "run_id",
             "id",
         ),
+    )
+
+
+class ModelGatewayEvidenceRecord(SaasBase):
+    """Append-only, content-blind facts behind a gateway budget transition."""
+
+    __tablename__ = "saas_model_gateway_evidence"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
+    reservation_id: Mapped[UUID] = mapped_column(nullable=False)
+    phase: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    budget_version: Mapped[int] = mapped_column(nullable=False)
+    canonical_evidence: Mapped[str] = mapped_column(ModelDocumentStorage(), nullable=False)
+    evidence_sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint("reservation_id", "phase", name="uq_model_gateway_evidence_phase"),
+        sa.UniqueConstraint(
+            "reservation_id", "budget_version", name="uq_model_gateway_evidence_version"
+        ),
+        sa.CheckConstraint(
+            "phase IN ('request', 'in_flight', 'uncertain', 'settled', 'released', 'expired')",
+            name="ck_model_gateway_evidence_phase",
+        ),
+        sa.CheckConstraint("budget_version > 0", name="ck_model_gateway_evidence_version"),
+        sa.CheckConstraint(_hex64("evidence_sha256"), name="ck_model_gateway_evidence_hash"),
+        sa.CheckConstraint(
+            "length(canonical_evidence) BETWEEN 8 AND 16383",
+            name="ck_model_gateway_evidence_bound",
+        ),
+        *model_document_format("ck_model_gateway_evidence_format", "canonical_evidence"),
     )
 
 

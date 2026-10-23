@@ -134,10 +134,23 @@ def test_fixed_initial_series_capture_first_real_http_failure_and_slow_stage(mon
     )  # First calls never create a new metric series.
 
 
-def _admit(service, scope, request):
+def _admit(service, scope, request, *, new_task=False):
     service.configure_quota(
         request, project_id=scope.project_id, resource="run_units", limit_units=3
     )
+    if new_task:
+        session_id = service.create_session(request, project_id=scope.project_id)
+        return lambda: service.admit_task_run(
+            request,
+            project_id=scope.project_id,
+            session_id=session_id,
+            title="Commit boundary",
+            input_payload={"prompt": "private customer text"},
+            quota_resource="run_units",
+            quota_units=1,
+            idempotency_key="exact-retry",
+            revisions=_revisions(),
+        )
     task = service.create_task(request, project_id=scope.project_id, title="Commit boundary")
     return lambda: service.admit_run(
         request,
@@ -152,11 +165,13 @@ def _admit(service, scope, request):
     )
 
 
+@pytest.mark.parametrize("new_task", [False, True], ids=["run", "task-run"])
 def test_witness_failure_after_real_commit_blocks_ack_and_idempotent_retry_recovers(
     execution_control_plane,
+    new_task,
 ):
     factory, service, scope, request = execution_control_plane
-    admit = _admit(service, scope, request)
+    admit = _admit(service, scope, request, new_task=new_task)
     runtime, store = _runtime(factory)
     store.fail = True
     with runtime_scope(runtime), pytest.raises(WitnessUnavailable):

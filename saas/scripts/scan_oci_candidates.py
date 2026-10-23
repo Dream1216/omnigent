@@ -17,7 +17,11 @@ GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 SEVERITIES = ("Critical", "High")
-SCAN_SCOPES = {"complete": {"server", "host"}, "server-preflight": {"server"}}
+SCAN_SCOPES = {
+    "complete": {"server", "host"},
+    "server-preflight": {"server"},
+    "litellm-runtime": {"litellm"},
+}
 
 
 class ScanReport(TypedDict):
@@ -113,8 +117,8 @@ def main() -> int:
     images = {}
     for item in args.image:
         name, separator, path = item.partition("=")
-        if separator != "=" or name not in {"server", "host"} or name in images:
-            parser.error("images must be unique server= and host= OCI archives")
+        if separator != "=" or name not in {"server", "host", "litellm"} or name in images:
+            parser.error("images must be unique server=, host=, or litellm= OCI archives")
         archive = Path(path)
         if not archive.is_file():
             parser.error(f"OCI archive is missing: {archive}")

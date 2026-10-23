@@ -20,105 +20,132 @@
     "omnigent/runner/native/",
     "omnigent/runtime/workflow.py"
   ],
-  "official_schema_heads": [
-    "nf12ab34cd56"
-  ],
+  "official_schema_heads": ["nf12ab34cd56"],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
   "runtime_rls_tables": {
-    "account_tokens": [
-      "workspace_id",
-      "id"
-    ],
-    "agents": [
-      "workspace_id",
-      "id"
-    ],
-    "comments": [
-      "workspace_id",
-      "conversation_id",
-      "id"
-    ],
+    "account_tokens": ["workspace_id", "id"],
+    "agents": ["workspace_id", "id"],
+    "comments": ["workspace_id", "conversation_id", "id"],
     "conversation_items": [
       "workspace_id",
       "conversation_id",
       "id",
       "created_at"
     ],
-    "conversation_labels": [
-      "workspace_id",
-      "conversation_id",
-      "key"
-    ],
-    "conversations": [
-      "workspace_id",
-      "id"
-    ],
-    "connections": [
-      "workspace_id",
-      "user_id",
-      "provider",
-      "account_id"
-    ],
-    "device_grants": [
-      "workspace_id",
-      "id"
-    ],
-    "files": [
-      "workspace_id",
-      "id"
-    ],
-    "hosts": [
-      "workspace_id",
-      "host_id"
-    ],
-    "omnigent_conversation_metadata": [
-      "workspace_id",
-      "id"
-    ],
-    "policies": [
-      "workspace_id",
-      "id"
-    ],
-    "preferences": [
-      "workspace_id",
-      "user_id",
-      "key"
-    ],
-    "projects": [
-      "workspace_id",
-      "id"
-    ],
-    "scheduled_task_runs": [
-      "workspace_id",
-      "id"
-    ],
-    "scheduled_tasks": [
-      "workspace_id",
-      "id"
-    ],
-    "session_permissions": [
-      "workspace_id",
-      "user_id",
-      "conversation_id"
-    ],
-    "user_daily_cost": [
-      "workspace_id",
-      "user_id",
-      "day_utc"
-    ],
-    "users": [
-      "workspace_id",
-      "id"
-    ]
+    "conversation_labels": ["workspace_id", "conversation_id", "key"],
+    "conversations": ["workspace_id", "id"],
+    "connections": ["workspace_id", "user_id", "provider", "account_id"],
+    "device_grants": ["workspace_id", "id"],
+    "files": ["workspace_id", "id"],
+    "hosts": ["workspace_id", "host_id"],
+    "omnigent_conversation_metadata": ["workspace_id", "id"],
+    "policies": ["workspace_id", "id"],
+    "preferences": ["workspace_id", "user_id", "key"],
+    "projects": ["workspace_id", "id"],
+    "scheduled_task_runs": ["workspace_id", "id"],
+    "scheduled_tasks": ["workspace_id", "id"],
+    "session_permissions": ["workspace_id", "user_id", "conversation_id"],
+    "user_daily_cost": ["workspace_id", "user_id", "day_utc"],
+    "users": ["workspace_id", "id"]
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 156,
-    "max_upstream_net_added_loc": 4576,
+    "max_direct_upstream_files": 167,
+    "max_upstream_net_added_loc": 5300,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "litellm_deployment_path_followup": {
+      "approved_at": "2026-10-23",
+      "governance_mode": "single_owner_beta",
+      "previous_prefix": "deploy/litellm/",
+      "current_prefix": "saas/deployment/litellm/",
+      "files": [
+        "Dockerfile",
+        "Dockerfile.dockerignore",
+        "LICENSE.upstream",
+        "README.md",
+        "postgresql_attestation_grants.sql",
+        "postgresql_attestation_principals.sql"
+      ],
+      "reason": "The requester explicitly approved moving only these six deployment files and updating all active references, followed by fresh verification. Preserve historical scoped paths below, the existing ownership prefixes, 167-file/5,300-net-line/nine-patch ceilings and every release protection. This path approval is not CI, image, signing or production admission."
+    },
+    "governed_litellm_e2e_entry": {
+      "revision": "litellm-governed-e2e-entry-budget-v34",
+      "approved_at": "2026-10-22",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 166,
+      "approved_max_direct_upstream_files": 167,
+      "measured_before_integration": {
+        "direct_upstream_files": 166,
+        "upstream_net_added_loc": 5291,
+        "active_patches": 9
+      },
+      "scoped_paths": ["tests/e2e/test_governed_litellm_e2e.py"],
+      "reason": "The account owner explicitly approved raising only the direct upstream file ceiling from 166 to 167 for the eight-line governed LiteLLM E2E entry. Reuse the maintained controller, Host, LiteLLM and PostgreSQL billing scenario; missing runtime prerequisites must remain explicit skips, not passes. Preserve the 5,300-net-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production gate. This scope approval is not CI, independent review, image admission, a shared release-window authorization or production acceptance."
+    },
+    "pagination_test_followup": {
+      "revision": "litellm-customer-pagination-tests-budget-v33",
+      "approved_at": "2026-10-20",
+      "governance_mode": "single_owner_beta",
+      "previous_max_upstream_net_added_loc": 5000,
+      "approved_max_upstream_net_added_loc": 5300,
+      "measured_before_integration": 4990,
+      "scoped_paths": [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "tests/browser_ui/chat/test_tenant_model_candidates.py",
+        "feature-map/composer.md",
+        "feature-map/platform-managed-models.md"
+      ],
+      "reason": "The account owner explicitly approved raising only the net-added-line ceiling to 5,300 for maintained customer catalog pagination, GET retry, target-switch and desktop/mobile regression coverage. No new feature scope. Preserve the 166-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production gate. This approval is not CI, independent review, image or production admission."
+    },
+    "litellm_application_followup": {
+      "applies_to_upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
+      "revision": "litellm-customer-model-picker-budget-v32",
+      "approved_at": "2026-10-20",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 166,
+      "previous_max_upstream_net_added_loc": 4576,
+      "approved_max_upstream_net_added_loc": 5000,
+      "scoped_paths": [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "web/src/components/composer/ComposerConfigSections.tsx",
+        "web/src/shell/NewChatDialog.tsx",
+        "web/src/shell/NewChatDialog.test.tsx"
+      ],
+      "reason": "The account owner explicitly approved raising only the LiteLLM upstream net-added-line ceiling from 4,576 to 5,000 to integrate the customer model picker. The pre-integration measurement is 4,574 plus a 355-net-line draft, an estimated 4,929 that must be remeasured after integration. Retain the 166-file ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production acceptance gate. This scope approval does not imply independent review, CI success, image admission or production acceptance.",
+      "previous_revision": {
+        "revision": "litellm-interactive-admission-budget-v31",
+        "approved_at": "2026-10-17",
+        "governance_mode": "single_owner_beta",
+        "previous_max_direct_upstream_files": 150,
+        "measured_direct_upstream_files": 166,
+        "previous_max_upstream_net_added_loc": 4576,
+        "scoped_paths": [
+          ".github/workflows/litellm-contract.yml",
+          ".gitignore",
+          "deploy/litellm/Dockerfile",
+          "deploy/litellm/Dockerfile.dockerignore",
+          "deploy/litellm/LICENSE.upstream",
+          "deploy/litellm/README.md",
+          "deploy/litellm/postgresql_attestation_grants.sql",
+          "deploy/litellm/postgresql_attestation_principals.sql",
+          "feature-map/composer.md",
+          "feature-map/platform-managed-models.md",
+          "omnigent/server/routes/sessions/routes_events.py",
+          "tests/browser_ui/chat/session_contract.py",
+          "tests/browser_ui/chat/test_tenant_model_candidates.py",
+          "web/src/components/composer/ComposerConfigSections.tsx",
+          "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+          "web/src/components/composer/TenantModelCandidatesSection.tsx"
+        ],
+        "reason": "The requester explicitly approved the exact 166-file scope for the LiteLLM integration after the audit measured 165 existing divergent upstream paths and one additional message-admission route. Raise only the direct-file ceiling from 150 to 166. Preserve the 4,576-net-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and all production acceptance gates. This Single-Owner Beta scope authorization is not independent review, a CI waiver, image admission or production acceptance.",
+        "previous_revision_reference": "platform-model-token-renewal-budget-v30"
+      }
+    },
     "followup": {
       "revision": "upstream-019-mcp-compat-version-test-budget-v35",
       "approved_at": "2026-10-21",
@@ -127,9 +154,7 @@
       "measured_direct_upstream_files": 156,
       "previous_max_upstream_net_added_loc": 4576,
       "measured_upstream_net_added_loc": 3453,
-      "scoped_paths": [
-        "tests/e2e/test_mcp_registry_compat_e2e.py"
-      ],
+      "scoped_paths": ["tests/e2e/test_mcp_registry_compat_e2e.py"],
       "reason": "The requester explicitly approved only the 155-to-156 direct-file ceiling increase for the upstream b4b08f5c test correction. Use the real Server version to retain strict pre-0.19 transport/header expectations while checking Registry support in stable0.19 and current builds. Exact tagged0.18, tagged0.19 and current real Server/Runner HTTP cases pass with zero pytest retries; all bundle, selection-header and root/child tool restrictions remain asserted. Product code and Managed MCP production enablement are unchanged. Preserve the 4,576-line ceiling, nine-patch ceiling,0.85 isolation floor, protected-policy review and all CI, OCI, real P4, signing, restore, canary, rollback and independent admission gates. This source-budget approval is not production admission.",
       "previous_revision": {
         "revision": "upstream-019-toast-cleanup-test-budget-v34",
@@ -139,9 +164,7 @@
         "measured_direct_upstream_files": 155,
         "previous_max_upstream_net_added_loc": 4576,
         "measured_upstream_net_added_loc": 3416,
-        "scoped_paths": [
-          "web/src/shell/archiveUndoToast.test.tsx"
-        ],
+        "scoped_paths": ["web/src/shell/archiveUndoToast.test.tsx"],
         "reason": "The requester explicitly authorized sequential execution of the final-source freeze, candidate OCI, all P4 acceptance and conditional P5. This approves the reviewed 154-to-155 file proposal for awaiting actual Sonner toast removal before test DOM teardown. Preserve all existing assertions, the 4,576-line ceiling, nine patches, 0.85 isolation floor and all technical/live/signing/restore/canary/independent admission gates. This source-scope approval is not a passed acceptance result.",
         "previous_revision": {
           "revision": "upstream-019-abrupt-death-test-budget-v33",
@@ -151,9 +174,7 @@
           "measured_direct_upstream_files": 154,
           "previous_max_upstream_net_added_loc": 4576,
           "measured_upstream_net_added_loc": 3415,
-          "scoped_paths": [
-            "tests/inner/test_brokered_auth_abrupt_death.py"
-          ],
+          "scoped_paths": ["tests/inner/test_brokered_auth_abrupt_death.py"],
           "reason": "The requester explicitly approved only the direct-file ceiling increase from 153 to 154 for atomic publication of the upstream abrupt-death test fixture. A deterministic pipe handshake reproduces the empty JSON read before the fix; macOS and Linux real-process scenarios pass without retries after writing the complete state to a same-directory temporary file and atomically replacing state.json. Retain every SIGKILL, descendant and socket cleanup assertion; no product runtime code changes. The approved main c90a079c build metadata fix adds four net official lines, resulting in 3,415 measured lines. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and all release gates. This Single-Owner Beta approval is not independent production review or release admission.",
           "previous_revision": {
             "revision": "upstream-019-terminal-reconnect-test-budget-v32",

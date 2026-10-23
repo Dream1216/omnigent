@@ -53,7 +53,7 @@ index a406ca477..a5cd88c70 100644
 @@ -1107,0 +1147 @@ def reset_for_tests() -> None:
 +        _committed.clear()
 diff --git a/omnigent/server/app.py b/omnigent/server/app.py
-index d3e1b451e..f166af284 100644
+index d3e1b451e..ca27e2c73 100644
 --- a/omnigent/server/app.py
 +++ b/omnigent/server/app.py
 @@ -14,0 +15 @@ from contextlib import asynccontextmanager, suppress
@@ -68,7 +68,21 @@ index d3e1b451e..f166af284 100644
 +        rewritten = rewritten.replace(
 +            "<title>Omnigent</title>", f"<title>{escape_html(app_name)}</title>", 1
 +        )
-@@ -4521 +4527,6 @@ def create_app(
+@@ -1819 +1825,4 @@ def create_app(
+-                managed_sandbox_reaper = ManagedSandboxReaper(
++                reaper_factory = getattr(
++                    app_inst.state, "managed_sandbox_reaper_factory", ManagedSandboxReaper
++                )
++                managed_sandbox_reaper = reaper_factory(
+@@ -4020,0 +4030,2 @@ def create_app(
++                    owns_input = getattr(conversation_store, "owns_session_input", None)
++                    managed_input = bool(owns_input and owns_input(conv))
+@@ -4036,0 +4048 @@ def create_app(
++                            suppress_recovery_turn=managed_input,
+@@ -4049 +4061 @@ def create_app(
+-                    if initialize_runtime:
++                    if initialize_runtime and not managed_input:
+@@ -4521 +4533,6 @@ def create_app(
 -                _SPAStaticFiles(directory=web_ui_dist, html=True, base_path=resolved_base_path),
 +                _SPAStaticFiles(
 +                    directory=web_ui_dist,
@@ -76,12 +90,12 @@ index d3e1b451e..f166af284 100644
 +                    base_path=resolved_base_path,
 +                    app_name=branding_snapshot.app_name,
 +                ),
-@@ -4571 +4582,3 @@ class _SPAStaticFiles(StaticFiles):
+@@ -4571 +4588,3 @@ class _SPAStaticFiles(StaticFiles):
 -    def __init__(self, *args: Any, base_path: str = "", **kwargs: Any) -> None:
 +    def __init__(
 +        self, *args: Any, base_path: str = "", app_name: str | None = None, **kwargs: Any
 +    ) -> None:
-@@ -4577 +4590,3 @@ class _SPAStaticFiles(StaticFiles):
+@@ -4577 +4596,3 @@ class _SPAStaticFiles(StaticFiles):
 -            html = _rewrite_web_ui_index(index_file.read_text(encoding="utf-8"), base_path)
 +            html = _rewrite_web_ui_index(
 +                index_file.read_text(encoding="utf-8"), base_path, app_name
@@ -137,21 +151,102 @@ index 198f99201..1d7afeaed 100644
 @@ -3490,0 +3530 @@ def _kubernetes_launcher_factory(
 +            host_command=host_command,
 diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
-index a564a6e61..b0774ff7e 100644
+index a564a6e61..04172cef7 100644
 --- a/omnigent/server/routes/_sessions/orchestration.py
 +++ b/omnigent/server/routes/_sessions/orchestration.py
-@@ -3095,0 +3096,2 @@ async def _persist_external_conversation_item_unlocked(
+@@ -253,0 +254 @@ from omnigent.server.routes._sessions.helpers import (
++    _build_actor,
+@@ -981,2 +982,5 @@ async def _archive_stop(
+-    await _facade._best_effort_stop(session_id, conversation_store, runner_router)
+-    if conv.host_id and conv.runner_id:
++    managed_stop = getattr(conversation_store, "stop_archived_session", None)
++    managed_stopped = managed_stop is not None and await managed_stop(conv)
++    if not managed_stopped:
++        await _facade._best_effort_stop(session_id, conversation_store, runner_router)
++    if not managed_stopped and conv.host_id and conv.runner_id:
+@@ -3095,0 +3100,2 @@ async def _persist_external_conversation_item_unlocked(
 +    if drained is not None and drained.stable_id is not None:
 +        pending_inputs.remember_committed(session_id, drained.stable_id, persisted.id)
-@@ -3105,0 +3108,2 @@ async def _persist_external_conversation_item_unlocked(
+@@ -3105,0 +3112,2 @@ async def _persist_external_conversation_item_unlocked(
 +        if skipped.stable_id is not None:
 +            pending_inputs.remember_committed(session_id, skipped.stable_id, persisted_user.id)
-@@ -6795,0 +6800,4 @@ async def _forward_event_to_runner(
+@@ -6795,0 +6804,4 @@ async def _forward_event_to_runner(
 +    elif item.stable_id is not None and persisted_items[0].deduplicated:
 +        # The same logical web submission already reached this persist-before-
 +        # forward boundary. Re-dispatching it would execute the turn twice.
 +        return persisted_items[0].id
-@@ -7715,0 +7724,21 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -7519,0 +7532,60 @@ def _list_status_with_starting(
++async def _dispatch_session_input_override(
++    session_id: str,
++    conversation: Conversation,
++    body: SessionEventInput,
++    conversation_store: ConversationStore,
++    *,
++    created_by: str | None,
++    input_policy_checked: bool = False,
++) -> dict[str, bool | str] | None:
++    """Allow a managed store composition to own durable input admission."""
++    dispatch = getattr(conversation_store, "dispatch_session_input", None)
++    if dispatch is None:
++        return None
++    return await dispatch(
++        session_id,
++        conversation,
++        body,
++        created_by=created_by,
++        input_policy_checked=input_policy_checked,
++    )
++
++
++async def _admit_initial_session_inputs(
++    request: Request,
++    conv: Conversation,
++    body: SessionCreateInput,
++    conversation_store: ConversationStore,
++    agent_store: AgentStore,
++    runner_router: RunnerRouter | None,
++    *,
++    user_id: str | None,
++    file_store: FileStore | None,
++    artifact_store: ArtifactStore | None,
++) -> None:
++    """Recover marked initial input through the same policy and idempotency path."""
++    for item in body.initial_items or []:
++        verdict = await _evaluate_input_policy(
++            request,
++            conv.id,
++            conv,
++            item,
++            conversation_store,
++            agent_store,
++            runner_router,
++            actor=_build_actor(user_id),
++            file_store=file_store,
++            artifact_store=artifact_store,
++        )
++        if verdict is not None:
++            raise OmnigentError("Initial input denied by policy", code=ErrorCode.FORBIDDEN)
++        await _dispatch_session_input_override(
++            conv.id,
++            conv,
++            item,
++            conversation_store,
++            created_by=_attribution_user(user_id),
++            input_policy_checked=True,
++        )
++
++
+@@ -7703,0 +7776,9 @@ async def _dispatch_session_event_to_runner_impl(
++    managed = await _dispatch_session_input_override(
++        session_id,
++        conv,
++        body,
++        conversation_store,
++        created_by=created_by,
++    )
++    if managed is not None:
++        return _SessionEventDispatchResult(item_id=None, pending_id=None)
+@@ -7715,0 +7797,21 @@ async def _dispatch_session_event_to_runner_impl(
 +        raw_stable_id = body.data.get("stable_id")
 +        web_stable_id = (
 +            raw_stable_id
@@ -173,17 +268,17 @@ index a564a6e61..b0774ff7e 100644
 +                    attributes=pending_inputs.delivery_attributes_for(session_id, live_pending_id),
 +                )
 +                return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
-@@ -7753,6 +7781,0 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -7753,6 +7854,0 @@ async def _dispatch_session_event_to_runner_impl(
 -        raw_stable_id = body.data.get("stable_id")
 -        web_stable_id = (
 -            raw_stable_id
 -            if isinstance(raw_stable_id, str) and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
 -            else None
 -        )
-@@ -10613 +10636 @@ async def _routing_host_for_create(
+@@ -10613 +10709 @@ async def _routing_host_for_create(
 -    body: SessionCreateInput,
 +    body: SessionCreateInput | SessionCreateMetadata,
-@@ -10675,0 +10699,56 @@ def _create_resolved_harness(
+@@ -10675,0 +10772,56 @@ def _create_resolved_harness(
 +def _reported_harness_failure(host: Host, harness: str) -> str | None:
 +    """Return an actionable failure only when a Host supplied readiness data."""
 +    from omnigent.harness_availability import harness_launch_availability
@@ -240,7 +335,7 @@ index a564a6e61..b0774ff7e 100644
 +            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
 +
 +
-@@ -10961,0 +11041,13 @@ async def _resolve_native_smart_routing(
+@@ -10961,0 +11114,13 @@ async def _resolve_native_smart_routing(
 +_CLIENT_CREATE_TOKEN_LABEL = "omnigent.client_create_token"
 +
 +
@@ -254,7 +349,40 @@ index a564a6e61..b0774ff7e 100644
 +    return None
 +
 +
-@@ -11376,8 +11468,16 @@ async def _create_session_from_existing_agent(
+@@ -11319,8 +11484,12 @@ async def _create_session_from_existing_agent(
+-            inference_snapshot, model_override = await prepare_create_inference(
+-                request,
+-                body,
+-                selection_spec,
+-                user_id,
+-                conversation_store,
+-                harness_override=harness_override,
+-                model_override=model_override,
++            prepare_override = getattr(conversation_store, "prepare_session_inference", None)
++            prepared = (
++                await prepare_override(
++                    request,
++                    body,
++                    selection_spec,
++                    user_id,
++                    harness_override=harness_override,
++                    model_override=model_override,
++                )
++                if prepare_override is not None
++                else None
+@@ -11327,0 +11497,11 @@ async def _create_session_from_existing_agent(
++            if prepared is None:
++                prepared = await prepare_create_inference(
++                    request,
++                    body,
++                    selection_spec,
++                    user_id,
++                    conversation_store,
++                    harness_override=harness_override,
++                    model_override=model_override,
++                )
++            inference_snapshot, model_override = prepared
+@@ -11376,8 +11556,16 @@ async def _create_session_from_existing_agent(
 -        canonical_workspace = await _validate_session_workspace(
 -            user_id=user_id,
 -            host_id=body.host_id,
@@ -279,19 +407,89 @@ index a564a6e61..b0774ff7e 100644
 +                    code=ErrorCode.INVALID_INPUT,
 +                ) from exc
 +            raise
-@@ -11413,0 +11514 @@ async def _create_session_from_existing_agent(
+@@ -11413,0 +11602 @@ async def _create_session_from_existing_agent(
 +    await _reject_unavailable_harness_for_create(body, request, user_id, selected_harness)
-@@ -11623,0 +11725 @@ async def _create_session_from_existing_agent(
+@@ -11623,0 +11813 @@ async def _create_session_from_existing_agent(
 +                conversation_id=_client_create_token(body),
+@@ -11806 +11996,6 @@ async def _create_session_from_existing_agent(
+-    if body.initial_items:
++    initial_items = body.initial_items
++    owns_input = getattr(conversation_store, "owns_session_input", None)
++    if initial_items and owns_input is not None and owns_input(conv):
++        # The route grants ownership before durable admission or replay recovery.
++        initial_items = []
++    if initial_items:
+@@ -11823 +12018 @@ async def _create_session_from_existing_agent(
+-                for item in body.initial_items
++                for item in initial_items
+@@ -11836 +12031 @@ async def _create_session_from_existing_agent(
+-            for item in body.initial_items:
++            for item in initial_items:
 diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
-index 03f1724c9..eb9a7497e 100644
+index 03f1724c9..251196b63 100644
 --- a/omnigent/server/routes/sessions/routes_core.py
 +++ b/omnigent/server/routes/sessions/routes_core.py
-@@ -174,0 +175 @@ from omnigent.server.routes._sessions.orchestration import (
+@@ -11 +11 @@ import time
+-from collections.abc import Callable
++from collections.abc import Awaitable, Callable
+@@ -170,0 +171 @@ from omnigent.server.routes._sessions.orchestration import (
++    _admit_initial_session_inputs,
+@@ -174,0 +176 @@ from omnigent.server.routes._sessions.orchestration import (
 +    _client_create_token,
-@@ -220,0 +222 @@ from omnigent.stores.conversation_store import (
+@@ -220,0 +223 @@ from omnigent.stores.conversation_store import (
 +    ConversationAlreadyExistsError,
-@@ -946,15 +948,63 @@ def register_core_routes(
+@@ -439 +442,6 @@ def register_core_routes(
+-        request: Request, session_id: str, event: SessionEventInput | None, user_id: str | None
++        request: Request,
++        session_id: str,
++        event: SessionEventInput | None,
++        user_id: str | None,
++        *,
++        admit: Callable[[SessionEventInput], Awaitable[None]] | None = None,
+@@ -477 +485,4 @@ def register_core_routes(
+-            await startup.enqueue(session_id, event, user_id=user_id, headers=request.headers)
++            if admit is None:
++                await startup.enqueue(session_id, event, user_id=user_id, headers=request.headers)
++            else:
++                await admit(event)
+@@ -478,0 +490,3 @@ def register_core_routes(
++            if admit is not None:
++                # Durable admission may have committed before acknowledgement failed.
++                raise
+@@ -489,0 +504,32 @@ def register_core_routes(
++    async def _admit_managed_initial_input(
++        request: Request,
++        conv: Conversation,
++        body: SessionCreateRequest | ProjectSessionCreateRequest,
++        user_id: str | None,
++    ) -> None:
++        async def admit(event: SessionEventInput | None) -> None:
++            admitted_body = body
++            if event is not None:
++                from omnigent.server.startup_inputs import initial_input_id
++
++                event = event.model_copy(
++                    update={"data": {**event.data, "stable_id": initial_input_id(conv.id)}}
++                )
++                admitted_body = body.model_copy(update={"initial_items": [event]})
++            await _admit_initial_session_inputs(
++                request,
++                conv,
++                admitted_body,
++                conversation_store,
++                agent_store,
++                runner_router,
++                user_id=user_id,
++                file_store=file_store,
++                artifact_store=artifact_store,
++            )
++
++        if body.initial_input is None:
++            await admit(None)
++        else:
++            await _accept_initial_input(request, conv.id, body.initial_input, user_id, admit=admit)
++
+@@ -946,15 +992,87 @@ def register_core_routes(
 -        resp, conv = await _create_session_from_existing_agent(
 -            conversation_store,
 -            agent_store,
@@ -351,6 +549,16 @@ index 03f1724c9..eb9a7497e 100644
 +                        if exc.code != ErrorCode.NOT_FOUND:
 +                            raise
 +                    else:
++                        owns_input = getattr(conversation_store, "owns_session_input", None)
++                        if owns_input is not None and owns_input(existing):
++                            await _require_access_and_level(
++                                user_id,
++                                create_token,
++                                LEVEL_EDIT,
++                                permission_store,
++                                conversation_store,
++                            )
++                            await _admit_managed_initial_input(request, existing, body, user_id)
 +                        return await _get_session_snapshot(
 +                            conversation_store,
 +                            create_token,
@@ -370,7 +578,21 @@ index 03f1724c9..eb9a7497e 100644
 +                "replay of this request",
 +                code=ErrorCode.CONFLICT,
 +            ) from collision
-@@ -1274,0 +1325,7 @@ def register_core_routes(
++        owns_input = getattr(conversation_store, "owns_session_input", None)
++        if conv is not None and owns_input is not None and owns_input(conv):
++            if permission_store is not None and user_id is not None:
++                await asyncio.to_thread(permission_store.ensure_user, user_id)
++                grant = await asyncio.to_thread(
++                    permission_store.grant,
++                    user_id,
++                    resp.id,
++                    LEVEL_OWNER,
++                )
++                resp.permission_level = grant.level
++            await _admit_managed_initial_input(request, conv, body, user_id)
++            _announce_session_added(user_id, resp.id)
++            return resp
+@@ -1274,0 +1393,7 @@ def register_core_routes(
 +        from omnigent.server.routes._sessions.orchestration import (
 +            _reject_unavailable_harness_for_create,
 +        )
@@ -378,3 +600,54 @@ index 03f1724c9..eb9a7497e 100644
 +        await _reject_unavailable_harness_for_create(
 +            parsed_metadata, request, user_id, spec_harness(spec)
 +        )
+@@ -3519,0 +3645,5 @@ def register_core_routes(
++        owns_input = getattr(conversation_store, "owns_session_input", None)
++        if owns_input is not None and owns_input(source):
++            raise OmnigentError(
++                "interactive_fork_requires_managed_lifecycle", code=ErrorCode.INVALID_INPUT
++            )
+diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
+index 62975f1f5..3c51a5860 100644
+--- a/omnigent/server/routes/sessions/routes_events.py
++++ b/omnigent/server/routes/sessions/routes_events.py
+@@ -236,0 +237 @@ from omnigent.server.routes._sessions.orchestration import (
++    _dispatch_session_input_override,
+@@ -1231 +1232,3 @@ def register_events_routes(
+-        if body.type == _RETRY_SESSION_TYPE:
++        owns_input = getattr(conversation_store, "owns_session_input", None)
++        managed_input = bool(owns_input and owns_input(conv))
++        if body.type == _RETRY_SESSION_TYPE and not managed_input:
+@@ -1257 +1260,2 @@ def register_events_routes(
+-            not isinstance(request, (StartupInputContext, _RunnerEventContext))
++            not managed_input
++            and not isinstance(request, (StartupInputContext, _RunnerEventContext))
+@@ -1435,0 +1440,21 @@ def register_events_routes(
++        managed = await _dispatch_session_input_override(
++            session_id,
++            conv,
++            body,
++            conversation_store,
++            created_by=created_by,
++            input_policy_checked=True,
++        )
++        if managed is not None:
++            return managed
++        if body.type == _RETRY_SESSION_TYPE:
++            return await _retry_session_single_flight(
++                request=cast("Request", request),
++                session_id=session_id,
++                conversation=conv,
++                conversation_store=conversation_store,
++                runner_router=runner_router,
++                user_id=user_id,
++                permission_store=permission_store,
++            )
++
+@@ -1959,0 +1985,3 @@ def register_events_routes(
++            observer = getattr(conversation_store, "observe_session_runtime_status", None)
++            if observer is not None and _has_runner_created_by_authority(request, conv):
++                await observer(conv, {**body.data, "interrupted": True})
+@@ -2084,0 +2113,3 @@ def register_events_routes(
++            observer = getattr(conversation_store, "observe_session_runtime_status", None)
++            if observer is not None and _has_runner_created_by_authority(request, conv):
++                await observer(conv, data)

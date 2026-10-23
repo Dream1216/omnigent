@@ -35,6 +35,7 @@ from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, ver
 
 from .service_bindings import (
     EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
+    EXPECTED_MACHINE_METERING_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
@@ -3067,6 +3068,162 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
         ): "9a6749caa1b40c6ca947c4be8d1ec2330fa9e22106e0dbe8c366480b098d499b",
     },
 }
+# Derived independently from fixed main254 T and frozen A7 P18 SQL. The only
+# additions are the metering login's membership and its base role's CONNECT.
+_MACHINE_METERING_SOURCE_SECURITY_CATALOGS: dict[
+    tuple[str, bool], dict[tuple[int, str, str], str]
+] = {
+    ("core", False): {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "68dd0a0c6b17c98da5e03070a9deb39c4020098e81f85af29936256ca71292c9",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "38103d006eb2cdcbc2b788bc59768ad6ca5b7a507dac338a5e334550984152f4",
+    },
+    ("core", True): {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "d6a18893fa24e2cd530149d3714e97300784c40fe29d3750f09a6f9cf3a7e240",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "536c8f536c7a234609a4107594686a80db9b650883b2be0fcef97902d015f823",
+    },
+    ("model", False): {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "2e7eca66c2291d6372002a8e219221e26e8a2b1132955fd8ad2d01ffb588e29e",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "74edb080629f0e85dd2f0732b868c709f4a9cca691a77882578a0ac4d4eeea99",
+    },
+    ("model", True): {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "03e0462c3c0cee732dee4cc25de96b9d83756cb1f10b834883afe6a43c9b3ba8",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "45b8413042acae943aacaf1faa2bbe5d935b83c2d0bc151e43faaf6a9334b573",
+    },
+    ("admin", False): {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "3dfce3c60bd08a57e207e126d4e7bffe23bdf1f2d362b415106939db918fc801",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "af8919d45447185aa4bba7752e6f2ef97f26df1a4a768e9f5b463621e14a106b",
+    },
+    ("admin", True): {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "9ea730daf2cac2a5c1a1b37b404d37acedb1c2673b84b1b521cadaf46d84cf91",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "2a1652abeaeb6caf19d9494765c8d2431cf570643ed774784b974fef4f9aaa08",
+    },
+    ("projection", False): {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "9d2687cc8529ef3e922d1630df296200781520e07b785eb22ceabccf0d5005b1",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "50828cd29f8110a88981bd2b59afa371f73d460c71de4daf6fcee84f6cc72d15",
+    },
+    ("projection", True): {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "da2ce1fa8b15269cdfbdc349837ed7334e98813442ffeec06ad0b047e6e22da5",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "9a82377bc968178b29c7306abc11009b0f4707970d45d4d3fbe4e5d7330f8f6a",
+    },
+}
+# Independent reviewed-Preview replays add only the declared metering edge and
+# base-role CONNECT; the original Preview and clean catalog pins stay unchanged.
+_MACHINE_METERING_PREVIEW_SOURCE_SECURITY_CATALOGS: dict[
+    tuple[str, bool], dict[tuple[int, str, str], str]
+] = {
+    ("admin", False): {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "8aa2ad7b7897cf7cd21bfd39d77f73a504eacc69c026963e659fdfaa098e484f",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "46811e0057f71e199704c3d473c0586baaea76125bf4a0f32867ad563da982f5",
+    },
+    ("admin", True): {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "75f549ccc143571c3e2be0b2b546a3bc9f12e593d32e3ebf2bebe07568bb2b7f",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "42d8f923a9ca88c80c971324014917841a8cf931ccdab40191a386b2adba1106",
+    },
+    ("projection", False): {
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "3572c1b9a64514cc97ae01f8d5dbb366e71066dc5266b957065ab574bea34967",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "lm2t00000001",
+        ): "8820121c7378670115128c4e3e64cba2ced7223e285083da31e54130052ce677",
+    },
+    ("projection", True): {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "b624b5afcb46b2f15d0ff1dab3d743557ee5fa69771b59d0cb716b40526b389f",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "53ed2b8699e64c5bf3ae02f8577ebfc30cb39a23e15f58d62a94e8343f6dfb29",
+    },
+}
 _CAPABILITY_ROLES = (
     "saas_app",
     "saas_authenticator",
@@ -3149,6 +3306,7 @@ class ProductionPostgreSqlPlan:
     platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None
     business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = None
+    machine_metering_service_role_bindings: ProductionServiceRoleBindings | None = None
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
     verification_saas_head: str | None = None
@@ -3167,6 +3325,7 @@ class ProductionPostgreSqlPlan:
         platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None,
         model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None,
         business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = None,
+        machine_metering_service_role_bindings: ProductionServiceRoleBindings | None = None,
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
         verification_saas_head: str | None = None,
@@ -3198,6 +3357,7 @@ class ProductionPostgreSqlPlan:
             platform_admin_service_role_bindings=platform_admin_service_role_bindings,
             model_projection_service_role_bindings=model_projection_service_role_bindings,
             business_delivery_service_role_bindings=business_delivery_service_role_bindings,
+            machine_metering_service_role_bindings=machine_metering_service_role_bindings,
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
             verification_saas_head=verification_saas_head,
@@ -3222,6 +3382,7 @@ class ProductionPostgreSqlPlan:
                 self.platform_admin_service_role_bindings,
                 self.model_projection_service_role_bindings,
                 self.business_delivery_service_role_bindings,
+                self.machine_metering_service_role_bindings,
             )
         except ProductionServiceRoleBindingsError as error:
             raise PostgreSqlMigrationError(
@@ -3460,6 +3621,16 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
         raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
     if _expected_head("saas") in {"p0s000000017", "p0s000000018"} and delivery_bindings is None:
         raise PostgreSqlMigrationError("business_delivery_profile_required", "configuration")
+    metering = plan.machine_metering_service_role_bindings
+    if metering is not None and (
+        {binding.service: binding.base_role for binding in metering.bindings}
+        != dict(EXPECTED_MACHINE_METERING_SERVICE_ROLES)
+        or len(metering.bindings) != 1
+        or any(binding.login in _CAPABILITY_ROLES for binding in metering.bindings)
+        or set(logins) & {binding.login for binding in metering.bindings}
+        or _SHA256.fullmatch(metering.sha256) is None
+    ):
+        raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
     graph = plan.service_role_graph
     if set(logins) & {binding.login for binding in graph.bindings}:
         raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
@@ -3693,37 +3864,35 @@ def _source_security_catalog_baselines(
     if bindings is None:
         return _SOURCE_SECURITY_CATALOG_SHA256
     observed = {binding.service: binding.base_role for binding in bindings.bindings}
+    has_metering = "metering" in observed
+    if (
+        has_metering
+        and observed.pop("metering") != EXPECTED_MACHINE_METERING_SERVICE_ROLES["metering"]
+    ):
+        raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
     delivery = dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
     has_delivery = all(observed.get(key) == value for key, value in delivery.items())
     if has_delivery:
         observed = {key: value for key, value in observed.items() if key not in delivery}
     core = dict(EXPECTED_PRODUCTION_SERVICE_ROLES)
-    if observed == core:
-        return (
-            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["core"]
-            if has_delivery
-            else _SOURCE_SECURITY_CATALOG_SHA256
-        )
     platform_model = {**core, **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)}
-    if observed == platform_model:
-        return (
-            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["model"]
-            if has_delivery
-            else _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256
-        )
     platform_admin = {**platform_model, **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)}
-    if observed == platform_admin:
-        return (
-            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["admin"]
-            if has_delivery
-            else _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
-        )
-    if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
-        return (
-            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["projection"]
-            if has_delivery
-            else _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
-        )
+    for profile, expected, original in (
+        ("core", core, _SOURCE_SECURITY_CATALOG_SHA256),
+        ("model", platform_model, _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256),
+        ("admin", platform_admin, _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256),
+        (
+            "projection",
+            {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)},
+            _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256,
+        ),
+    ):
+        if observed == expected:
+            if has_metering:
+                return _MACHINE_METERING_SOURCE_SECURITY_CATALOGS[(profile, has_delivery)]
+            return (
+                _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS[profile] if has_delivery else original
+            )
     raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
 
 
@@ -5132,8 +5301,12 @@ def _verify_source_security_catalog_digest(
     accepted_digests = {_source_security_catalog_baselines(bindings).get(key)}
     if bindings is not None:
         observed = {binding.service: binding.base_role for binding in bindings.bindings}
+        has_metering = "metering" in observed
+        if has_metering:
+            observed.pop("metering")
         delivery = dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
-        if all(observed.get(service) == role for service, role in delivery.items()):
+        has_delivery = all(observed.get(service) == role for service, role in delivery.items())
+        if has_delivery:
             observed = {
                 service: role for service, role in observed.items() if service not in delivery
             }
@@ -5144,11 +5317,21 @@ def _verify_source_security_catalog_digest(
         }
         if observed == platform_admin:
             accepted_digests.add(
-                _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+                (
+                    _MACHINE_METERING_PREVIEW_SOURCE_SECURITY_CATALOGS[("admin", has_delivery)]
+                    if has_metering
+                    else _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
+                ).get(key)
             )
         if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
             accepted_digests.add(
-                _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+                (
+                    _MACHINE_METERING_PREVIEW_SOURCE_SECURITY_CATALOGS[
+                        ("projection", has_delivery)
+                    ]
+                    if has_metering
+                    else _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+                ).get(key)
             )
     if digest not in accepted_digests:
         raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
@@ -6661,6 +6844,18 @@ def verify_business_delivery_postgresql_state(
     )
 
 
+def verify_machine_metering_postgresql_state(
+    *, engine: Engine, database_url: str, config: Any
+) -> None:
+    """Verify the receiver through the existing complete receipt/catalog boundary."""
+    _verify_service_postgresql_state(
+        engines={"metering": engine},
+        config=config,
+        expected_service_roles=EXPECTED_MACHINE_METERING_SERVICE_ROLES,
+        configured_urls={"metering": database_url},
+    )
+
+
 def _verify_service_postgresql_state(
     *,
     engines: Mapping[str, Engine],
@@ -6969,6 +7164,7 @@ __all__ = [
     "parse_production_postgresql_url",
     "run_production_postgresql_migration",
     "verify_business_delivery_postgresql_state",
+    "verify_machine_metering_postgresql_state",
     "verify_model_projection_postgresql_state",
     "verify_production_postgresql_state",
 ]

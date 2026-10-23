@@ -36,6 +36,7 @@ from saas.production.postgresql_migration import (
 )
 from saas.production.service_bindings import (
     EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
+    EXPECTED_MACHINE_METERING_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
@@ -939,6 +940,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         name="service_logins",
     )
     core_roles = set(EXPECTED_PRODUCTION_SERVICE_ROLES)
+    metering_roles = set(EXPECTED_MACHINE_METERING_SERVICE_ROLES)
     if control_plane_schema_revision in {"p0s000000017", "p0s000000018"}:
         required_roles = core_roles | set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
         model_roles = required_roles | set(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
@@ -950,16 +952,25 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
             admin_roles | set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
         )
     else:
-        legacy_roles = set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        legacy_roles = (
+            set(_RELEASE_SERVICE_ROLES)
+            - set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+            - metering_roles
+        )
         allowed_profiles = (
             core_roles,
             legacy_roles - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
             legacy_roles,
         )
-    if set(login_rows) not in allowed_profiles:
+    if set(login_rows) - metering_roles not in allowed_profiles:
         raise ReleaseRenderError(
             "service_logins must contain a complete schema-bound release profile"
         )
+    if metering_roles & set(login_rows) and control_plane_schema_revision not in {
+        "lm2t00000001",
+        "p0s000000018",
+    }:
+        raise ReleaseRenderError("machine metering profile requires the T or P18 schema")
     if "model_projection" in login_rows and control_plane_schema_revision not in {
         "lm2r00000001",
         "lm2s00000001",

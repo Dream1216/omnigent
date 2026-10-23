@@ -249,8 +249,9 @@ class _CertificateAuthorizer:
 
 
 class _ServerThread:
-    def __init__(self, server: MutualTlsBillingMeteringServer) -> None:
+    def __init__(self, server: MutualTlsBillingMeteringServer, *, bind_port: int = 0) -> None:
         self._server = server
+        self._bind_port = bind_port
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._startup_error: BaseException | None = None
@@ -261,7 +262,7 @@ class _ServerThread:
     def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
         try:
-            self._loop.run_until_complete(self._server.start())
+            self._loop.run_until_complete(self._server.start(port=self._bind_port))
         except BaseException as exc:
             self._startup_error = exc
             self._ready.set()

@@ -16,6 +16,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from saas.control_plane.client_network import TrustedClientNetworkConfig
+from saas.control_plane.model_connections import ModelConnectionService
+from saas.control_plane.model_deployments import ModelDeploymentService
+from saas.control_plane.model_publications import ModelPublicationService
+from saas.control_plane.model_test_funding import ModelTestFundingService
+from saas.control_plane.model_verifications import ModelVerificationService
 from saas.control_plane.platform_http import PlatformHttpConfig, create_platform_admin_app
 from saas.control_plane.platform_password_auth import PlatformPasswordAuthenticationService
 from saas.control_plane.platform_security import (
@@ -23,6 +28,14 @@ from saas.control_plane.platform_security import (
     PlatformProjectionService,
     PlatformSessionService,
 )
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+from saas.production.model_publication import model_publication_enabled
+from saas.production.model_verification import (
+    model_configuration_attestation_enabled,
+    model_verification_enabled,
+)
+from saas.production.onboarding import build_production_secret_cipher
+from saas.production.platform_model_gateway import load_platform_model_pricing
 from saas.production.postgresql_migration import PostgreSqlMigrationError, _inspect_service_login
 from saas.production.server_config import (
     ProductionServerConfigError,
@@ -152,10 +165,63 @@ def build_platform_admin(
             origin=config.origin,
             audience=config.audience,
         )
+        authorization = PlatformAuthorizationService(application)
+        enabled = environ.get("OMNIGENT_SAAS_MODEL_CONNECTIONS_ENABLED", "false")
+        if enabled not in {"true", "false"}:
+            raise ValueError("Platform model connection flag is invalid")
+        model_connections = None
+        model_deployments = None
+        model_test_funding = None
+        model_verifications = None
+        model_publications = None
+        verification_enabled = model_verification_enabled(environ)
+        publication_enabled = model_publication_enabled(environ)
+        if publication_enabled and not (
+            verification_enabled and model_configuration_attestation_enabled(environ)
+        ):
+            raise ValueError("Model publication requires priced testing and storage attestation")
+        if verification_enabled and enabled != "true":
+            raise ValueError("Priced model testing requires model connections")
+        if (
+            verification_enabled
+            and environ.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION")
+            != CONTROL_PLANE_SCHEMA_REVISION
+        ):
+            raise ValueError("Priced model testing requires the current control-plane schema")
+        if enabled == "true":
+            try:
+                cipher = build_production_secret_cipher(environ)
+                if cipher is None:
+                    raise ValueError
+            except Exception:  # noqa: BLE001 - KMS deployment details stay private.
+                raise ValueError("Platform model connection cipher is unavailable") from None
+            model_connections = ModelConnectionService(
+                application, authorization=authorization, secret_cipher=cipher
+            )
+            model_deployments = ModelDeploymentService(engines[1], authorization=authorization)
+            model_test_funding = ModelTestFundingService(engines[1], authorization=authorization)
+            if verification_enabled:
+                pricing = load_platform_model_pricing(environ)
+                model_verifications = ModelVerificationService(
+                    engines[1],
+                    authorization=authorization,
+                    pricing=pricing,
+                )
+                if publication_enabled:
+                    model_publications = ModelPublicationService(
+                        engines[1],
+                        authorization=authorization,
+                        pricing=pricing,
+                    )
         app = create_platform_admin_app(
             config=config,
             sessions=sessions,
-            authorization=PlatformAuthorizationService(application),
+            authorization=authorization,
+            model_connections=model_connections,
+            model_deployments=model_deployments,
+            model_test_funding=model_test_funding,
+            model_verifications=model_verifications,
+            model_publications=model_publications,
             projections=PlatformProjectionService(application),
             password_authentication=PlatformPasswordAuthenticationService(
                 authenticator,

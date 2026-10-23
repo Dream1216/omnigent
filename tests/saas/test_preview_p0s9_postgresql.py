@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from queue import Queue
 from time import monotonic, sleep
@@ -33,7 +33,7 @@ def _set_local(connection: sa.Connection, setting: str, value: str) -> None:
 
 
 def _seed_ready_preview(connection: sa.Connection) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+    now = connection.execute(sa.text("SELECT clock_timestamp()")).scalar_one()
     identifiers: dict[str, Any] = {
         "execution_id": uuid4(),
         "tenant_id": uuid4(),
@@ -1114,6 +1114,18 @@ def test_preview_owner_gateway_lease_is_token_cas_and_raw_dml_is_denied(
         ).one()
         assert row == ("released", "preview_owner_shutdown")
     engine.dispose()
+
+
+def test_preview_gateway_heartbeat_does_not_depend_on_host_clock(
+    isolated_postgres_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ForwardClock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            return super().now(tz) + timedelta(seconds=30)
+
+    monkeypatch.setattr(f"{__name__}.datetime", ForwardClock)
+    test_preview_owner_gateway_lease_is_token_cas_and_raw_dml_is_denied(isolated_postgres_url)
 
 
 def test_preview_executor_registration_is_narrow_and_runner_incarnation_bound(

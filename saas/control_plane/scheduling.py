@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -12,7 +13,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from saas.control_plane.db_models import ControlPlaneOutboxEvent, RuntimePlacementRecord
 from saas.control_plane.dispatch_binding import (
@@ -20,8 +21,15 @@ from saas.control_plane.dispatch_binding import (
 )
 from saas.control_plane.execution import ExecutionControlPlane, RunLease, RunMutation
 from saas.control_plane.execution_models import TERMINAL_RUN_STATUSES, RunRecord
+from saas.control_plane.interactive_run_route import (
+    INTERACTIVE_EXECUTION_KIND,
+    INTERACTIVE_QUEUE_CLASS,
+    decode_interactive_run_route,
+)
 from saas.control_plane.isolation_models import EgressPolicyRecord, ExecutionProfileRecord
+from saas.control_plane.outbox import OutboxPublishError
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_dispatch_projection import RunQueuedDispatchProjection
 from saas.control_plane.runner_execution_spec import (
     ManagedRunExecutionSpecError,
     production_run_execution_spec,
@@ -105,7 +113,7 @@ class RunnerConnection:
 class RunnerExecutionEnvelope:
     """Server-derived immutable facts consumed by one managed Runner launch."""
 
-    change_set_id: UUID
+    change_set_id: UUID | None
     tenant_id: UUID
     space_id: UUID
     project_id: UUID
@@ -517,6 +525,7 @@ class SchedulingControlPlane:
         heartbeat_timeout: timedelta = timedelta(seconds=30),
         expected_product_revision: str | None = None,
         product_image_digest: str | None = None,
+        interactive_capability_actions: tuple[str, ...] | None = None,
         now: datetime | None = None,
     ) -> FairRunLease | None:
         """Atomically choose a tenant by weighted virtual runtime and lease one Run."""
@@ -580,9 +589,13 @@ class SchedulingControlPlane:
                         "run_execution_envelope_invalid",
                         "Run does not have a valid managed execution specification",
                     ) from exc
+                interactive = execution_spec.kind == INTERACTIVE_EXECUTION_KIND
+                if interactive != (run.queue_class == INTERACTIVE_QUEUE_CLASS):
+                    raise SchedulingError(
+                        "interactive_run_scope_invalid", "Execution kind and queue do not match"
+                    )
                 if (
-                    change_set_id is None
-                    or change_set_id.int == 0
+                    (not interactive and (change_set_id is None or change_set_id.int == 0))
                     or expected_product_revision is None
                     or product_image_digest is None
                     or run.product_revision != expected_product_revision
@@ -598,8 +611,37 @@ class SchedulingControlPlane:
                     raise SchedulingError(
                         "run_execution_envelope_invalid", "Runner image digest is invalid"
                     )
+                if interactive:
+                    if interactive_capability_actions is None:
+                        raise SchedulingError(
+                            "interactive_executor_required",
+                            "Interactive execution requires an explicit controller policy",
+                        )
+                    actions = _normalized_values(
+                        interactive_capability_actions, field="capability_action"
+                    )
+                    if set(actions) != {"run.execute", "runtime.interactive.execute"}:
+                        raise SchedulingError(
+                            "interactive_executor_policy_invalid",
+                            "Interactive execution policy is invalid",
+                        )
+                    try:
+                        placement, _partition = RunQueuedDispatchProjection._resolve_runtime(
+                            db, run
+                        )
+                    except OutboxPublishError as error:
+                        raise SchedulingError(
+                            "interactive_runtime_route_stale", "Interactive Runtime route changed"
+                        ) from error
+                    if placement.id != pool.placement_id:
+                        raise SchedulingError(
+                            "interactive_runtime_route_stale",
+                            "Interactive Runtime placement changed",
+                        )
                 required_actions = (
-                    {"preview.serve", "run.execute", "worktree.read"}
+                    {"run.execute", "runtime.interactive.execute"}
+                    if interactive
+                    else {"preview.serve", "run.execute", "worktree.read"}
                     if execution_spec.kind == "omnigent.preview.v1"
                     else {"run.execute", "sandbox.launch", "worktree.write"}
                 )
@@ -609,6 +651,11 @@ class SchedulingControlPlane:
                         "Production Runner capability actions are incomplete",
                     )
             else:
+                if run.queue_class == INTERACTIVE_QUEUE_CLASS:
+                    raise SchedulingError(
+                        "interactive_executor_required",
+                        "Interactive execution requires an exact production release",
+                    )
                 execution_spec = None
             authoritative_scope = {
                 "tenant_id": str(run.tenant_id),
@@ -619,6 +666,18 @@ class SchedulingControlPlane:
             }
             if change_set_id is not None:
                 authoritative_scope["change_set_id"] = str(change_set_id)
+            if execution_spec is not None and execution_spec.kind == INTERACTIVE_EXECUTION_KIND:
+                route = decode_interactive_run_route(run.input)
+                authoritative_scope.update(
+                    {
+                        "session_id": str(run.session_id),
+                        "runtime_partition_id": str(route.partition_id),
+                        "runtime_partition_generation": str(route.partition_generation),
+                        "runtime_session_id": route.session_id,
+                        "runtime_project_id": route.project_id,
+                        "execution_spec_hash": execution_spec.spec_hash,
+                    }
+                )
             for key, value in authoritative_scope.items():
                 supplied = resource_scope.get(key)
                 if supplied is not None and supplied != value:
@@ -681,11 +740,7 @@ class SchedulingControlPlane:
                 trace_id=f"runner:{runner.id}",
             )
             envelope = None
-            if (
-                change_set_id is not None
-                and product_image_digest is not None
-                and execution_spec is not None
-            ):
+            if product_image_digest is not None and execution_spec is not None:
                 envelope = RunnerExecutionEnvelope(
                     change_set_id=change_set_id,
                     tenant_id=run.tenant_id,
@@ -825,6 +880,55 @@ class SchedulingControlPlane:
                     project_id=capability.project_id,
                 ),
             )
+            if _pool.queue_class == INTERACTIVE_QUEUE_CLASS and target_status in {
+                "succeeded",
+                "failed",
+                "timed_out",
+            }:
+                from saas.control_plane.model_revocations import (
+                    executor_run_revocation,
+                    lock_model_security_scope,
+                )
+
+                run = execution._run(db, run_id, lock=True)
+                execution._require_lease(run, lease_token, fence_token, checked_at)
+                marker = cast(dict[str, object], run.input.get("execution", {})).get(
+                    "model_publication"
+                )
+                if marker is not None:
+                    if (
+                        not isinstance(marker, dict)
+                        or not isinstance(marker.get("public_model_id"), str)
+                        or marker.get("wire_api")
+                        not in {"openai_chat_completions", "openai_responses"}
+                    ):
+                        raise SchedulingError(
+                            "interactive_model_publication_invalid", "Model binding is invalid"
+                        )
+                    lock_model_security_scope(
+                        db,
+                        tenant_id=run.tenant_id,
+                        public_model_id=marker["public_model_id"],
+                        wire_api=marker["wire_api"],
+                    )
+                    checked_at = checked_at if now is not None else _utcnow()
+                    if now is None and db.get_bind().dialect.name == "postgresql":
+                        checked_at = cast(
+                            datetime, db.scalar(sa.select(sa.func.clock_timestamp()))
+                        )
+                    execution._require_lease(run, lease_token, fence_token, checked_at)
+                    revocation = executor_run_revocation(db, run_id)
+                    if revocation is not None:
+                        return execution._cancel_in_session(
+                            db,
+                            run,
+                            requested_at=checked_at,
+                            payload={
+                                "reason": "managed_model_security_revocation",
+                                "model_revocation_id": str(revocation),
+                            },
+                            trace_id=_text(trace_id, field="trace_id", maximum=128),
+                        )
             return execution.transition_run_in_transaction(
                 db,
                 run_id=run_id,
@@ -928,6 +1032,195 @@ class SchedulingControlPlane:
             dict(capability.resource_scope),
             _aware(capability.expires_at),
         )
+
+    @contextmanager
+    def _interactive_recovery_binding(
+        self,
+        *,
+        run_id: UUID,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        fence_token: int,
+        capability_token: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+    ):
+        if (
+            type(fence_token) is not int
+            or fence_token < 1
+            or not isinstance(expected_product_revision, str)
+            or len(expected_product_revision) != 40
+            or set(expected_product_revision) - _HASH_ALPHABET
+            or not isinstance(product_image_digest, str)
+            or not product_image_digest.startswith("sha256:")
+            or len(product_image_digest) != 71
+            or set(product_image_digest[7:]) - _HASH_ALPHABET
+        ):
+            raise SchedulingError(
+                "interactive_recovery_binding_invalid", "Recovery is unavailable"
+            )
+        with self._session_factory.begin() as db:
+            pool, runner = self._lock_pool_then_runner(db, runner_id)
+            self._require_runner_connection(
+                runner,
+                connection_generation=connection_generation,
+                connection_token=connection_token,
+            )
+            dispatch = db.scalar(
+                sa.select(RunDispatchRecord)
+                .where(RunDispatchRecord.run_id == run_id)
+                .with_for_update()
+            )
+            if (
+                dispatch is None
+                or dispatch.pool_id != pool.id
+                or dispatch.selected_runner_id != runner_id
+            ):
+                raise SchedulingError(
+                    "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                )
+            run = self._run(db, run_id, lock=True)
+            self._apply_run_context(db, run)
+            capability = db.scalar(
+                sa.select(CapabilityTokenRecord).where(
+                    CapabilityTokenRecord.token_hash == _token_hash(capability_token)
+                )
+            )
+            if (
+                dispatch is None
+                or capability is None
+                or run.queue_class != INTERACTIVE_QUEUE_CLASS
+                or pool.queue_class != INTERACTIVE_QUEUE_CLASS
+                or run.product_revision != expected_product_revision
+                or pool.source_revision != expected_product_revision
+                or run.fence_token != fence_token
+                or runner.status not in {"online", "draining"}
+                or dispatch.pool_id != pool.id
+                or dispatch.selected_runner_id != runner_id
+                or capability.run_id != run_id
+                or capability.runner_id != runner_id
+                or capability.runner_connection_generation != connection_generation
+                or capability.fence_token != fence_token
+                or capability.dispatch_generation != dispatch.dispatch_generation
+                or (capability.tenant_id, capability.space_id, capability.project_id)
+                != (run.tenant_id, run.space_id, run.project_id)
+                or set(capability.allowed_actions)
+                != {"run.execute", "runtime.interactive.execute"}
+            ):
+                raise SchedulingError(
+                    "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                )
+            if run.status not in TERMINAL_RUN_STATUSES or dispatch.status != "released":
+                raise SchedulingError(
+                    "interactive_controller_recovery_pending", "Recovery is pending"
+                )
+            spec = production_run_execution_spec(run.input)
+            route = decode_interactive_run_route(run.input)
+            if (
+                spec.kind != INTERACTIVE_EXECUTION_KIND
+                or capability.resource_scope.get("execution_spec_hash") != spec.spec_hash
+                or capability.resource_scope.get("runtime_session_id") != route.session_id
+                or capability.resource_scope.get("session_id") != str(run.session_id)
+            ):
+                raise SchedulingError(
+                    "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                )
+            yield db, run, dispatch
+
+    def inspect_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        fence_token: int,
+        capability_token: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+    ) -> bool:
+        """Inspect security intent under the original released dispatch's cleanup authority."""
+        from saas.control_plane.model_revocations import executor_run_revocation
+
+        with self._interactive_recovery_binding(
+            run_id=run_id,
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            expected_product_revision=expected_product_revision,
+            product_image_digest=product_image_digest,
+        ) as (db, run, _):
+            return executor_run_revocation(db, run.id) is not None
+
+    def confirm_interactive_recovery(
+        self,
+        *,
+        run_id: UUID,
+        runner_id: UUID,
+        connection_generation: int,
+        connection_token: str,
+        fence_token: int,
+        capability_token: str,
+        proof_sha256: str,
+        certificate_fingerprint_sha256: str,
+        expected_product_revision: str,
+        product_image_digest: str,
+        cleanup_kind: str = "physical_stop",
+        now: datetime | None = None,
+    ) -> bool:
+        """Record historical physical cleanup, never execution or model authority."""
+        confirmed_at = now or _utcnow()
+        _validate_time(confirmed_at)
+        if (
+            not isinstance(cleanup_kind, str)
+            or cleanup_kind not in {"physical_stop", "never_started"}
+            or any(
+                not isinstance(value, str) or len(value) != 64 or set(value) - _HASH_ALPHABET
+                for value in (proof_sha256, certificate_fingerprint_sha256)
+            )
+        ):
+            raise SchedulingError(
+                "interactive_recovery_binding_invalid", "Recovery is unavailable"
+            )
+        with self._interactive_recovery_binding(
+            run_id=run_id,
+            runner_id=runner_id,
+            connection_generation=connection_generation,
+            connection_token=connection_token,
+            fence_token=fence_token,
+            capability_token=capability_token,
+            expected_product_revision=expected_product_revision,
+            product_image_digest=product_image_digest,
+        ) as (db, run, dispatch):
+            if dispatch.physical_recovery_fence is not None:
+                if dispatch.physical_recovery_fence != fence_token:
+                    raise SchedulingError(
+                        "interactive_recovery_binding_invalid", "Recovery is unavailable"
+                    )
+                return True
+            dispatch.physical_recovery_fence = fence_token
+            ExecutionControlPlane._append_event(
+                db,
+                run,
+                event_type="run.interactive_physical_recovered",
+                payload={
+                    "fence_token": fence_token,
+                    "runner_id": str(runner_id),
+                    "runner_connection_generation": connection_generation,
+                    "dispatch_generation": dispatch.dispatch_generation,
+                    "proof_sha256": proof_sha256,
+                    "cleanup_kind": cleanup_kind,
+                    "certificate_fingerprint_sha256": certificate_fingerprint_sha256,
+                    "product_revision": expected_product_revision,
+                    "image_digest": product_image_digest,
+                    "confirmed_at": confirmed_at.isoformat(),
+                },
+                trace_id=f"runner:{runner_id}",
+            )
+            return False
 
     def release_dispatch(
         self,
@@ -1275,7 +1568,9 @@ class SchedulingControlPlane:
             )
 
         if active_expired:
-            if run.status == "cancelling":
+            if run.queue_class == INTERACTIVE_QUEUE_CLASS:
+                target_status = "orphaned"
+            elif run.status == "cancelling":
                 target_status = "cancelled"
             elif run.fence_token >= max_fence_token:
                 target_status = "orphaned"
@@ -1527,6 +1822,26 @@ class SchedulingControlPlane:
                 .order_by(RunRecord.priority.desc(), RunRecord.created_at, RunRecord.id)
                 .limit(64)
             )
+            if pool.queue_class == INTERACTIVE_QUEUE_CLASS:
+                predecessor = aliased(RunRecord)
+                earlier = sa.or_(
+                    predecessor.created_at < RunRecord.created_at,
+                    sa.and_(
+                        predecessor.created_at == RunRecord.created_at,
+                        predecessor.id < RunRecord.id,
+                    ),
+                )
+                dispatch_query = dispatch_query.where(
+                    ~sa.exists(
+                        sa.select(1).where(
+                            predecessor.tenant_id == RunRecord.tenant_id,
+                            predecessor.space_id == RunRecord.space_id,
+                            predecessor.session_id == RunRecord.session_id,
+                            predecessor.status == "queued",
+                            earlier,
+                        )
+                    )
+                )
             if db.bind is not None and db.bind.dialect.name == "postgresql":
                 dispatch_query = dispatch_query.with_for_update(skip_locked=True)
             for dispatch in db.scalars(dispatch_query):
@@ -1535,6 +1850,11 @@ class SchedulingControlPlane:
                 run = self._run(db, dispatch.run_id, lock=True)
                 if run.status == "queued":
                     self._apply_run_context(db, run)
+                    if (
+                        run.queue_class == INTERACTIVE_QUEUE_CLASS
+                        and not self._interactive_session_available(db, run)
+                    ):
+                        continue
                     try:
                         self._require_dispatch_profile_binding(
                             db,
@@ -1553,6 +1873,53 @@ class SchedulingControlPlane:
                         continue
                     return share, dispatch, run
         return None
+
+    @staticmethod
+    def _interactive_session_available(db: Session, run: RunRecord) -> bool:
+        if run.session_id is None:
+            return False
+        if db.get_bind().dialect.name == "postgresql":
+            locked = db.scalar(
+                sa.text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {
+                    "key": (
+                        f"interactive-run-session:{run.tenant_id}:{run.space_id}:{run.session_id}"
+                    )
+                },
+            )
+            if not locked:
+                return False
+        older = sa.or_(
+            RunRecord.created_at < run.created_at,
+            sa.and_(RunRecord.created_at == run.created_at, RunRecord.id < run.id),
+        )
+        pending = db.scalar(
+            sa.select(RunRecord.id)
+            .where(
+                RunRecord.tenant_id == run.tenant_id,
+                RunRecord.space_id == run.space_id,
+                RunRecord.session_id == run.session_id,
+                RunRecord.id != run.id,
+                sa.or_(
+                    RunRecord.status.in_(_ACTIVE_RUN_STATUSES),
+                    sa.and_(
+                        RunRecord.status == "orphaned",
+                        ~sa.exists(
+                            sa.select(1)
+                            .select_from(RunDispatchRecord)
+                            .where(
+                                RunDispatchRecord.run_id == RunRecord.id,
+                                RunDispatchRecord.status == "released",
+                                RunDispatchRecord.physical_recovery_fence == RunRecord.fence_token,
+                            )
+                        ),
+                    ),
+                    sa.and_(RunRecord.status == "queued", older),
+                ),
+            )
+            .limit(1)
+        )
+        return pending is None
 
     @staticmethod
     def _dispatch_requirements_hash(

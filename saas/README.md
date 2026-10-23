@@ -82,6 +82,253 @@ P0 establishes executable controls that stay independent of feature claims:
    builds twice without publishing; it cannot be mistaken for signed production
    evidence.
 
+## Managed model selection preview
+
+`GET /v1/managed-model-catalog` remains an authenticated, tenant-scoped candidate
+catalog. With no query parameters it keeps every model unavailable; this does
+not change an existing session's frozen model. A new-session preview may supply
+`project_id`, `agent_id`, `harness`, `host_type`, and exactly one target:
+`host_id` for `external`, or `sandbox_provider` (`kubernetes` / `agent_sandbox`)
+for `managed`. Unknown, repeated, oversized or ambiguous parameters are rejected;
+tenant/space/actor scope always comes from the authenticated RuntimeContext.
+
+The production-owned conversation-store composition checks its explicit runtime
+opt-in, live controller readiness, current project `run.create` permission,
+accessible Agent spec, protocol compatibility and target readiness. Fixed Hosts
+must belong to the current runtime user, have a live owner-matching connection
+and report usable harness readiness. Managed native harnesses remain unavailable
+until target-specific binary/readiness evidence exists; the current managed
+preview supports the packaged OpenAI Agents harness only. Missing configuration
+or runtime conditions produce stable unavailable reasons, not a login suggestion.
+
+Current customer subscription/pricing is checked through the existing dedicated
+Billing login, never by granting the App login billing reads. Missing, expired,
+future, overlapping, wrong-plan or incomplete token pricing fails closed.
+Preview returns no credentials, internal deployment aliases, provider costs or
+customer price records and uses `Cache-Control: private, no-store`.
+
+This is an advisory selection preflight, not a reservation or capability. It
+does not provision a sandbox, create a session/Task/Run, reserve quota, call a
+supplier or create customer Usage. The existing project authorizer still records
+its normal immutable decision; this endpoint does not introduce a parallel audit
+ledger. Session creation/message admission and inference retain their independent
+authorization, frozen publication/price, quota and metering checks. Available
+preview metadata is not 17-Agent acceptance or production release evidence;
+production admission remains disabled until the release gates are satisfied.
+
+### Model publication disablement
+
+Staff with fresh `platform.model_provider.publish` authority may call
+`POST /v2/platform-admin/model-publications/{publication_id}/disable` with
+`{"expected_generation": n}` and `Idempotency-Key`. The target is the actual
+immutable publication UUID, not a caller-provided tenant or LiteLLM alias.
+The synchronous reply contains a `disablement_id`; retrying the same command
+under the same Staff identity/key returns its original receipt. A changed body,
+stale generation or already-disabled cutoff under a different key is rejected.
+
+In `/platform-admin#model-connections`, first inspect the tenant catalog, then
+use **普通停用** on the exact publication/model/protocol and confirm `DISABLE`.
+Changing the tenant invalidates that scope, including a late catalog response.
+The catalog and original publication receipt show the current cutoff as a
+separate projection; the immutable publication snapshot is not rewritten.
+Readonly Staff auditors can inspect the cutoff receipt but cannot disable a
+model. The console preserves its existing visual and permission conventions.
+
+Recover an uncertain reply with the existing Staff identity through
+`GET /v2/platform-admin/model-publication-disablements?idempotency_key=...`,
+which returns only that principal's original command, or inspect a known
+`GET /v2/platform-admin/model-publication-disablements/{disablement_id}` under
+normal Staff model-read authority. Recovery performs no write, inference or
+projection operation. The UI stores only opaque command/receipt references,
+never the request body, and never automatically repeats the POST. A malformed
+success response remains unconfirmed; a valid cutoff receipt remains confirmed
+even if the following catalog refresh fails. Audit intent being queued is not
+shown as proof that the event has reached the shared audit chain.
+
+The append-only cutoff covers this tenant/model/protocol through the current
+generation. It removes those versions from customer choices and rejects saved
+session authorization, model bearer reuse and renewal. A later verified
+publication may enable a new generation, never an older disabled one. Original
+publication snapshots, prices and receipts are not rewritten.
+
+After Run inference is explicitly enabled, the gateway rejects legacy session
+bearers before consulting legacy credentials or provider configuration. Existing
+legacy-only deployments retain their prior behavior until that opt-in. Consumer
+migration and removal of obsolete signing-key mounts are still rollout gates;
+this request guard is not proof that production credentials have been removed.
+
+Disablement and the existing budget single-send fence share the same transaction
+lock. A cutoff committed before that fence prevents the send and releases only
+the unstarted reservation. An already-accepted call may finish and settle its
+known usage against the original frozen price; an unknown outcome retains its
+hold. User interruption/cancellation remains available. This is ordinary
+disablement, not a claim that security revocation actively stops an in-flight
+stream or physical Agent; that lifecycle still requires separate acceptance.
+
+Accepted Run inference now observes its current Run status, fence, lease and
+capability while waiting for supplier headers or stream chunks. A durable user
+cancel or authority loss closes that transport; the default check interval is
+one second with a five-second authority-check deadline. An authority failure
+before response headers returns a redacted unavailable error. This does not
+replay inference, refresh a revoked capability, or guarantee that a supplier has
+stopped billing. Without authoritative final usage the full hold remains
+unknown, never a zero-cost settlement. Known final usage is settled once even
+if the downstream client disconnects. Ordinary publication cutoff does not
+interrupt accepted calls, and legacy-only inference keeps its prior behavior.
+Per-model active security revocation and physical Agent stop acknowledgement
+remain separate unfinished rollout gates.
+
+The Staff permission catalog declares all registered managed-model routes,
+including credential history, drafts and synchronous disablement receipts.
+Its version advances without changing roles, risk, fresh authentication,
+service-account restrictions or the existing permission keys.
+
+PostgreSQL requires the matching audit Outbox intent in the same transaction,
+rejects changed/deleted cutoff rows, and refuses schema downgrade while cutoffs
+are retained. Receipt time is read from PostgreSQL, independent of the API
+host's clock. Staff can read only their own session's non-secret freshness
+metadata for this guard, not bearer hashes; customer and Billing cutoff reads
+expose only tenant/model/protocol/generation, not Staff identities or keys.
+Rollback must stop managed admission before using an older gateway that does
+not implement cutoff checks; it must retain cutoff and settlement evidence.
+Migration, restore, physical security-revocation and production rollout remain
+independent gates, not consequences of a green component test.
+
+The generic Outbox process installs the model disablement audit publisher ahead
+of external sinks. It accepts only the original cutoff reference and calls the
+source-pinned `saas_audit_model_disablement_v1` through the existing non-bypass
+dispatcher login. The database verifies the immutable cutoff and its exact
+Outbox envelope, then appends the initiating Staff identity and tenant/model
+cutoff metadata to the existing platform audit chain. It does not read provider
+credentials, change a budget or create customer charges. The dispatcher still
+has no direct cutoff/audit-table access or general Staff database authority.
+
+Delivery commits before Outbox acknowledgement. Repeated, concurrent or
+out-of-order delivery uses the source event UUID to retain one audit fact;
+ambiguous commit/reply loss retries without synthesizing a second action.
+Storage failure leaves the event unacknowledged for existing bounded retry and
+quarantine handling. Audit receipt time is the original database cutoff time,
+not the worker clock. Downgrade refuses to drop this delivery authority while
+cutoffs or their audit facts are retained. This is an audit-delivery contract,
+not proof of production worker deployment or completed active revocation.
+
+### Model security revocation intent
+
+To escalate an existing ordinary cutoff, a fresh Staff operator may call
+`POST /v2/platform-admin/model-publication-disablements/{disablement_id}/revoke`
+with `expected_generation` and an opaque `Idempotency-Key`. It retains a distinct
+immutable `revocation_id` and its audit intent in one transaction. Concurrent
+Staff commands cannot create two intents for the same cutoff. Read the original
+receipt using `GET /v2/platform-admin/model-publication-revocations/{revocation_id}`
+or recover one's own command through the collection's `idempotency_key` query.
+The admission receipt's `execution_complete=false` is not a live completion
+projection or a fabricated physical-stop acknowledgement.
+
+The App gateway observes retained security intent during accepted I/O. The
+existing Scheduler Worker uses its Executor login to cancel only affected
+interactive Runs, through the same quota/event lifecycle as normal cancellation.
+Queued Runs terminate; leased Runs enter `cancelling`. The machine capability
+stays available for trusted stop/finalization reporting, not new inference.
+The cutoff never covers later publication generations or another tenant/model/
+protocol. The shared audit chain records the original Staff action; unknown
+supplier costs remain held. Staff gains no Run table authority, and Executor
+reads no Staff credentials. Public stop/progress projection, a Staff console
+control and production acceptance remain unfinished independent gates.
+
+An acknowledged stop of an identified physical Runner is retained through the
+existing mTLS historical-recovery command after its Run is terminal and dispatch
+capacity is released. The original machine, capability, connection generation,
+fence and certificate bindings remain required; recording cleanup cannot mint
+execution or model authority. It preserves the Run outcome and shared event
+chain. Delivery does not depend on pending usage files: a lost acknowledgement
+retries the same private proof, never the task. Receipt I/O is outside the public
+Stop lifecycle lock, with an unchanged-record check before local checkpointing.
+An unstopped successful idle Runner remains reusable and is not treated as
+physically stopped. Unstarted and unknown-launch cases do not acquire a synthetic
+Runner identifier merely to make this receipt complete. This is not a Staff live
+progress API or proof that every revoked idle/terminal race has been closed.
+
+Controllers also inspect completed, unstopped Runner facts through the existing
+mTLS machine control boundary. The read-only inspection requires the original
+released dispatch, machine capability, connection generation and execution
+binding; it cannot write a cleanup receipt or grant inference. A retained
+security intent stops an exact idle physical identity, preserving the successful
+Run and known usage. Ordinary cutoff leaves it reusable. GC rechecks active
+reuse under the lifecycle lock, rotates bounded candidates to avoid starvation,
+and confirms historical facts only after an exact stop acknowledgement. Lost
+inspection or stop replies remain pending, not a claimed completion.
+
+Intent admission and managed model terminal transitions share a tenant/model/
+protocol transaction lock under READ COMMITTED. A terminal result committed
+first remains terminal; an intent committed first retains `cancelling` before
+the Runner can publish success, failure or timeout. The control client recognizes
+only this validated nonterminal reply as requiring physical cleanup. It stops
+and prepares before a distinct `cancelled`/`orphaned` command; unknown transport
+results are never replayed. Ordinary cutoff alone still permits completion.
+
+Schema `lm2o00000001` extends the existing physical-recovery trigger to released
+terminal interactive Runs. It preserves executor-only writes, exact scope/fence
+binding, immutable receipts, and the original Run outcome. Its downgrade restores
+orphan-only admission without deleting retained receipts; Runner cluster admission
+requires the exact packaged schema head before execution resumes.
+
+Failure before physical preparation retains a machine/capability/fence-bound
+`never_started` fact in the existing owner-only recovery Journal, without
+fabricating a Runtime or physical Runner. Only the historical mTLS cleanup
+command can confirm it after terminal release; it cannot reauthorize a model.
+Unknown preparation remains pending. Lost acknowledgements retry the original
+proof, including after reopening the same private volume, never the user input.
+The shared Run event records `cleanup_kind` separately from a physical stop.
+
+Ordinary v1 private records remain readable. No-launch records and explicit
+no-launch markers use private format v2, which old Controllers must not consume.
+The cutover must drain all old consumers; rollback must restore the matching
+private-volume and database snapshots as part of the existing maintenance plan.
+
+Physical preparation retains its original task while provider worker threads are
+running. Cancelling the caller or timing out quiescence does not forget that
+task or admit a duplicate preparation for the session. The ten-second bounded
+wait returns unavailable without discarding a still-running task. A stopped
+preparation also refuses a late Runner launch; late listeners are released after the task
+actually settles. This is not a Sandbox termination acknowledgement. Unknown
+resource creation still requires durable provider bindings and recovery proof;
+neither a completed thread nor a cancelled coroutine clears that gate.
+
+Run terminal mutations serialize with in-flight Run heartbeat RPCs. Heartbeats
+continue through terminal preparation; the successful terminal RPC closes their
+gate before another can start. A heartbeat rejection is still an error, never
+ignored as an expected stale fence or replayed under another mutation.
+
+Managed Kubernetes and Agent Sandbox creation first checkpoints the actual
+reserved resource name, namespace, provider and official Host owner binding in
+that Run's existing private Journal. The SDK cannot create before this write is
+acknowledged; missing persistence, wrong Host ownership, stopped preparation or
+unverified cluster TLS makes the provider unavailable. Cluster and image fields
+are hashes of the verified client configuration and resolved image reference,
+not cluster UIDs or image-content attestations. They do not establish resource
+existence, deletion authority, or a physical stop acknowledgement.
+The official direct Agent Sandbox factory is supported with no warm pool;
+configured warm-pool allocation remains unavailable before claim creation.
+
+Records containing this immutable reference use private format v3. Ordinary v1
+and no-launch v2 encoding remains unchanged; old consumers reject v3. All old
+Controllers must be drained before cutover, and rollback must restore the
+matching private-volume and database snapshots rather than downgrade the files.
+Actual unknown-resource deletion and cross-Pod recovery remain release gates.
+
+After the original SDK creates a direct workload, the controller reads its
+actual UID and token Secret UID, verifies the managed labels, Host ID, token
+digest, image reference and Pod template, and checkpoints immutable hashes in
+the same Journal before the SDK continues. A missing write acknowledgement
+cannot admit a Runner. A returned creation result is retained even while Stop
+is pending. The token itself never enters this new metadata or diagnostic path.
+
+These observations use private format v4; v1/v2/v3 bytes remain unchanged, and
+older consumers reject v4. Read-only recovery inspection requires identical
+client configuration, object UIDs, token digest and template; missing objects
+are unavailable, not a termination acknowledgement. These facts do not authorize
+name-only deletion, prove that containers stopped, or close cross-Pod recovery.
+
 The active Wave 1 product slice on `codex/wave1-upstream-onboarding` extends the
 self-service authority into a fail-closed backend activation chain without
 treating code contracts as production Provider evidence:

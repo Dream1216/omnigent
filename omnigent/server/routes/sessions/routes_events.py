@@ -234,6 +234,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _child_session_summaries_from_conversations,
     _codex_side_chat_fork_lost,
     _dispatch_session_event_to_runner,
+    _dispatch_session_input_override,
     _enrich_terminal_status_with_subagent_output,
     _ensure_native_terminal_ready,
     _ensure_runner_relay_ready,
@@ -1228,7 +1229,9 @@ def register_events_routes(
                 "This side chat ended when its runner restarted and can't be continued.",
                 code=ErrorCode.CONFLICT,
             )
-        if body.type == _RETRY_SESSION_TYPE:
+        owns_input = getattr(conversation_store, "owns_session_input", None)
+        managed_input = bool(owns_input and owns_input(conv))
+        if body.type == _RETRY_SESSION_TYPE and not managed_input:
             startup = getattr(request.app.state, "startup_inputs", None)
             result = await _retry_session_single_flight(
                 request=cast("Request", request),
@@ -1254,7 +1257,8 @@ def register_events_routes(
 
         startup = getattr(request.app.state, "startup_inputs", None)
         if (
-            not isinstance(request, (StartupInputContext, _RunnerEventContext))
+            not managed_input
+            and not isinstance(request, (StartupInputContext, _RunnerEventContext))
             and startup is not None
             and (
                 (body.type == "message" and body.data.get("role") == "user")
@@ -1432,6 +1436,27 @@ def register_events_routes(
             # persist or relay to the harness (which rejects
             # ``function_call`` as an unknown inbound event type).
             return {"verdict": "allow"}
+
+        managed = await _dispatch_session_input_override(
+            session_id,
+            conv,
+            body,
+            conversation_store,
+            created_by=created_by,
+            input_policy_checked=True,
+        )
+        if managed is not None:
+            return managed
+        if body.type == _RETRY_SESSION_TYPE:
+            return await _retry_session_single_flight(
+                request=cast("Request", request),
+                session_id=session_id,
+                conversation=conv,
+                conversation_store=conversation_store,
+                runner_router=runner_router,
+                user_id=user_id,
+                permission_store=permission_store,
+            )
 
         async def _wake_bound_runner_for_control(
             wake_conv: Any,
@@ -1957,6 +1982,9 @@ def register_events_routes(
                     "external_session_interrupted data.response_id must be a string",
                     code=ErrorCode.INVALID_INPUT,
                 )
+            observer = getattr(conversation_store, "observe_session_runtime_status", None)
+            if observer is not None and _has_runner_created_by_authority(request, conv):
+                await observer(conv, {**body.data, "interrupted": True})
             _publish_interrupted(session_id, response_id=response_id)
             return {"queued": False}
         if body.type == _EXTERNAL_SESSION_SUPERSEDED_TYPE:
@@ -2082,6 +2110,9 @@ def register_events_routes(
             data = await _enrich_terminal_status_with_subagent_output(
                 body.data, status, session_id, conversation_store
             )
+            observer = getattr(conversation_store, "observe_session_runtime_status", None)
+            if observer is not None and _has_runner_created_by_authority(request, conv):
+                await observer(conv, data)
             # Surface the failure reason a native forwarder carries so a
             # top-level session sees it on its own status edge and persisted
             # last_task_error, not only the sub-agent parent-inbox path.

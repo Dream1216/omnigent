@@ -21,7 +21,7 @@ from saas.control_plane.onboarding import (
     SharedRegistrationRateLimiter,
     SharedRegistrationRateLimitJanitor,
 )
-from saas.production.postgresql_migration import _expected_head
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 
 _POLICIES = {
     ("registration.request", "email"): (5, 900, 86400, 1_000_000),
@@ -1223,7 +1223,7 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
         assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
-            _expected_head("saas")
+            CONTROL_PLANE_SCHEMA_REVISION
         )
         assert (
             connection.scalar(

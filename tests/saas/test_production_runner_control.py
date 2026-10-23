@@ -85,6 +85,33 @@ def test_control_config_rejects_product_source_revision_drift() -> None:
         )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target", ("succeeded", "failed", "timed_out", "running", "cancelled", "orphaned")
+)
+async def test_only_a_known_terminal_reply_can_require_durable_cancellation(monkeypatch, target):
+    client = object.__new__(MutualTlsRunnerControlClient)
+    monkeypatch.setattr(client, "_run_values", lambda _lease: {})
+
+    async def response(_action, _values):
+        return {
+            "version": 1,
+            "event_sequence": 3,
+            "run_id": str(RUN_ID),
+            "run_version": 4,
+            "status": "cancelling",
+        }
+
+    monkeypatch.setattr(client, "_request", response)
+    with pytest.raises(RunnerControlError) as denied:
+        await client.transition_run(SimpleNamespace(run_id=RUN_ID), target_status=target)
+    assert denied.value.code == (
+        "runner_control_cancellation_required"
+        if target in {"succeeded", "failed", "timed_out"}
+        else "runner_control_response_invalid"
+    )
+
+
 def test_runner_control_rejects_wrong_installed_build_before_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

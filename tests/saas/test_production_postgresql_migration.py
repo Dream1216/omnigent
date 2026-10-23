@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
 from saas.production import postgresql_migration as migration
 from saas.production.service_bindings import (
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
@@ -22,6 +25,27 @@ from saas.production.service_bindings import (
 from saas.scripts.run_postgresql_migration import _write_exclusive
 
 _REVISION = "a" * 40
+
+
+def test_runner_schema_binding_matches_migrations_and_cluster_bootstrap() -> None:
+    assert migration._expected_head("saas") == CONTROL_PLANE_SCHEMA_REVISION
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "saas/control_plane/postgresql_runner_agent_cluster.sql"
+    ).read_text()
+    guard = re.search(r"IF schema_head NOT IN \(([^)]+)\) THEN", source)
+    assert guard is not None
+    accepted = re.findall(r"'([^']+)'", guard.group(1))
+    assert accepted == [
+        "p0s000000015",
+        "lm2r00000001",
+        "lm2s00000001",
+        "lm2t00000001",
+        "p0s000000016",
+        "p0s000000017",
+        "p0s000000018",
+    ]
+    assert CONTROL_PLANE_SCHEMA_REVISION in accepted
 
 
 def _bindings() -> ProductionServiceRoleBindings:
@@ -74,6 +98,18 @@ def _platform_admin_bindings() -> ProductionServiceRoleBindings:
                 base_role=base_role,
             )
             for service, base_role in sorted(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES.items())
+        ),
+    )
+
+
+def _projection_bindings() -> ProductionServiceRoleBindings:
+    return ProductionServiceRoleBindings(
+        path=Path("/projection-bindings.json"),
+        sha256="e" * 64,
+        bindings=(
+            ProductionServiceRoleBinding(
+                "model_projection", "model_projection_login", "saas_model_projection"
+            ),
         ),
     )
 
@@ -231,6 +267,19 @@ def test_plan_composes_exact_platform_extension_role_graph(
         False,
         42,
     ) in expected
+    projected = replace(plan, model_projection_service_role_bindings=_projection_bindings())
+    migration._validate_plan(projected)
+    assert len(projected.service_role_graph.bindings) == expected_count + 1
+    assert projected.service_role_graph.login_for("model_projection") == "model_projection_login"
+    assert (
+        migration._source_security_catalog_baselines(projected.service_role_graph)
+        is (migration._BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["projection"])
+    )
+    with pytest.raises(migration.PostgreSqlMigrationError) as missing:
+        migration._validate_plan(
+            replace(base, model_projection_service_role_bindings=_projection_bindings())
+        )
+    assert missing.value.code == "service_role_bindings_invalid"
 
 
 def test_product_revision_is_bound_before_engine_creation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -815,8 +864,131 @@ def test_current_migration_heads_have_source_catalog_baselines(server_major: int
     core = _plan()
     model = replace(core, platform_model_service_role_bindings=_platform_bindings())
     admin = replace(model, platform_admin_service_role_bindings=_platform_admin_bindings())
-    for plan in (core, model, admin):
+    projection = replace(admin, model_projection_service_role_bindings=_projection_bindings())
+    for plan in (core, model, admin, projection):
         migration._require_source_catalog_baselines(server_major, bindings=plan.service_role_graph)
+
+
+def test_projection_profile_never_borrows_admin_catalog_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = replace(
+        _plan(),
+        platform_model_service_role_bindings=_platform_bindings(),
+        platform_admin_service_role_bindings=_platform_admin_bindings(),
+        model_projection_service_role_bindings=_projection_bindings(),
+    ).service_role_graph
+    monkeypatch.setitem(migration._BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS, "projection", {})
+    with pytest.raises(migration.PostgreSqlMigrationError) as missing:
+        migration._require_source_catalog_baselines(18, bindings=graph)
+    assert missing.value.code == "source_catalog_baseline_missing"
+
+
+def _dormant_projection_catalog() -> dict:
+    return {
+        "control_plane_security": {
+            "roles": [
+                [
+                    "saas_model_projection",
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    True,
+                    -1,
+                    "null",
+                ]
+            ],
+            "memberships": [
+                [
+                    "saas_model_projection",
+                    "authority:principal_operator",
+                    "authority:bootstrap",
+                    True,
+                    False,
+                    False,
+                ]
+            ],
+            "schema_acls": [["saas_model_projection", "pg_database_owner", "USAGE", False]],
+            "relation_acls": [],
+        }
+    }
+
+
+def test_old_source_anchor_projects_dormant_bootstrap_without_mutating_catalog() -> None:
+    source = _dormant_projection_catalog()
+    before = deepcopy(source)
+    normalized = migration._source_catalog_without_dormant_projection_role(
+        source, saas_head="lm1a00000001"
+    )
+    assert normalized == {
+        "control_plane_security": {
+            "roles": [],
+            "memberships": [],
+            "schema_acls": [],
+            "relation_acls": [],
+        }
+    }
+    assert source == before
+    assert (
+        migration._source_catalog_without_dormant_projection_role(source, saas_head="lm1b00000001")
+        == source
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "login",
+        "bypass",
+        "inherit",
+        "runtime_member",
+        "schema_create",
+        "table_access",
+        "policy_access",
+    ),
+)
+def test_old_source_anchor_rejects_any_live_projection_authority(change: str) -> None:
+    source = _dormant_projection_catalog()
+    security = source["control_plane_security"]
+    if change == "login":
+        security["roles"][0][1] = True
+    elif change == "bypass":
+        security["roles"][0][6] = True
+    elif change == "inherit":
+        security["memberships"][0][4] = True
+    elif change == "runtime_member":
+        security["memberships"].append(
+            [
+                "saas_model_projection",
+                "service_login:model_projection",
+                "authority:principal_operator",
+                False,
+                True,
+                False,
+            ]
+        )
+    elif change == "schema_create":
+        security["schema_acls"][0][2] = "CREATE"
+    elif change == "table_access":
+        security["relation_acls"].append(
+            [
+                "saas_model_projection_operations",
+                "saas_model_projection",
+                "authority:saas_owner",
+                "UPDATE",
+                False,
+            ]
+        )
+    else:
+        security["policies"] = [
+            ["unexpected_policy", "pg_has_role(current_user, 'saas_model_projection', 'member')"]
+        ]
+    with pytest.raises(migration.PostgreSqlMigrationError) as rejected:
+        migration._source_catalog_without_dormant_projection_role(source, saas_head="lm1a00000001")
+    assert rejected.value.code == "source_security_catalog_drifted"
 
 
 def test_platform_model_profile_requires_its_own_source_catalog_baseline(

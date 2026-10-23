@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import Engine, and_, or_, select, tuple_, update
+from sqlalchemy import Engine, and_, or_, select, true, tuple_, update
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -881,7 +881,7 @@ class HostStore:
             rows = session.execute(stmt).scalars().all()
             return [(row.workspace_id, _row_to_host(row)) for row in rows]
 
-    def get_host(self, host_id: str) -> Host | None:
+    def get_host(self, host_id: str, *, include_deleted: bool = False) -> Host | None:
         """
         Fetch a single host by ID.
 
@@ -894,7 +894,7 @@ class HostStore:
                 select(SqlHost).where(
                     SqlHost.workspace_id == current_workspace_id(),
                     SqlHost.host_id == host_id,
-                    SqlHost.deleted_at.is_(None),
+                    SqlHost.deleted_at.is_(None) if not include_deleted else true(),
                 )
             ).scalar_one_or_none()
             if row is None:
@@ -1109,12 +1109,15 @@ class HostStore:
         provider: str,
         sandbox_id: str,
         token_expires_at: int,
+        expected_retired_host: Host | None = None,
     ) -> Host | None:
         """Replace the sandbox generation backing an existing managed host.
 
         The row lock serializes replacement with :meth:`delete_host`. A missing
         result means full teardown already removed the durable host, so the
         caller must clean up the unregistered sandbox instead of recreating it.
+        An expected retired snapshot additionally rejects heartbeat or credential
+        drift and requires both resource names and the old token to be cleared.
         """
         now = now_epoch()
         token_hash = hash_host_launch_token(token)
@@ -1128,6 +1131,13 @@ class HostStore:
             if existing is None:
                 return None
             if existing.deleted_at is not None:
+                return None
+            if expected_retired_host is not None and (
+                _row_to_host(existing) != expected_retired_host
+                or existing.token_hash is not None
+                or existing.sandbox_id is not None
+                or existing.terminating_sandbox_id is not None
+            ):
                 return None
             require_active_account(session, user_id, generation=existing.account_generation)
             if existing.user_id != user_id:
@@ -1257,6 +1267,7 @@ class HostStore:
         transfer_from_host_id: str | None = None,
         *,
         require_account_owner: bool = False,
+        expected_external_inference_snapshot: dict | None = None,
     ) -> None:
         """Order final launch authorization with account deletion across replicas.
 
@@ -1264,6 +1275,8 @@ class HostStore:
         during resolution. Same-host restarts must not opt into this exception.
         Accounts deployments also require a live session owner able to mint
         runner credentials; other auth modes retain their own owner lifecycle.
+        A trusted controller may pin an external inference snapshot; the locked
+        stored value must still match, and public launch routes never supply it.
         """
 
         def write(session: Session) -> None:
@@ -1320,7 +1333,14 @@ class HostStore:
                 raise OmnigentError(
                     "session is no longer bound to this host", code=ErrorCode.UNAUTHORIZED
                 )
-            if meta.inference_snapshot is not None and host.sandbox_provider is None:
+            if (
+                meta.inference_snapshot is not None
+                and host.sandbox_provider is None
+                and (
+                    expected_external_inference_snapshot is None
+                    or json.loads(meta.inference_snapshot) != expected_external_inference_snapshot
+                )
+            ):
                 raise OmnigentError(
                     "This session has a saved sandbox inference profile. "
                     "Choose a managed sandbox host or start a new session to use this host.",
@@ -1364,6 +1384,8 @@ class HostStore:
         *,
         sandbox_id: str,
         expected_updated_at: int,
+        expected_token_hash: str | None = None,
+        expected_revoked_host: Host | None = None,
     ) -> bool:
         """Atomically detach one stale generation before provider termination.
 
@@ -1375,9 +1397,20 @@ class HostStore:
         :param host_id: Durable managed host identifier.
         :param sandbox_id: Provider id of the stale active generation.
         :param expected_updated_at: Heartbeat timestamp observed by the sweep.
+        :param expected_token_hash: Optional credential-generation fence for a trusted owner.
+        :param expected_revoked_host: Optional locked snapshot of an already revoked host.
         :returns: ``True`` when that exact stale generation was detached.
         """
-        with self._session("detach_stale_managed_sandbox") as session:
+        with self._lifecycle_session("detach_stale_managed_sandbox") as session:
+            if expected_revoked_host is not None:
+                row = session.get(SqlHost, (current_workspace_id(), host_id), with_for_update=True)
+                if (
+                    row is None
+                    or row.token_hash is not None
+                    or row.token_expires_at is not None
+                    or _row_to_host(row) != expected_revoked_host
+                ):
+                    return False
             result = cast(
                 CursorResult[tuple[object]],
                 session.execute(
@@ -1390,6 +1423,9 @@ class HostStore:
                         SqlHost.sandbox_provider.is_not(None),
                         SqlHost.deleted_at.is_(None),
                         SqlHost.terminating_sandbox_id.is_(None),
+                        SqlHost.token_hash == expected_token_hash
+                        if expected_token_hash is not None
+                        else true(),
                     )
                     .values(
                         token_hash=None,

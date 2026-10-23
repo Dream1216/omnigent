@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 from omnigent.llms._usage_observer import add_required_observer
 from saas.billing_metering_transport import MutualTlsBillingMeteringClient
+from saas.control_plane.model_gateway_metering import gateway_call_reservation_id
 
 MANAGED_METERING_ENVELOPE_ENV_VAR = "OMNIGENT_MANAGED_METERING_ENVELOPE"
 _ENVELOPE_VERSION = 1
@@ -58,6 +59,7 @@ _SPOOL_FIELDS = frozenset(
         "version",
     }
 )
+_GATEWAY_SPOOL_FIELDS = frozenset({"version", "event_id", "run_id", "runner_id", "reservation_id"})
 _METER_FIELDS = frozenset({"idempotency_key", "meter", "quantity", "unit"})
 _ALLOWED_METERS = {
     "llm.input_tokens": "input",
@@ -250,6 +252,16 @@ class StagedManagedRunnerLaunchAuthority:
 
 
 class _MeteringClient(Protocol):
+    def gateway_usage(
+        self,
+        *,
+        action: str,
+        runner_id: UUID,
+        capability_token: str,
+        run_id: UUID,
+        reservation_id: UUID,
+    ) -> dict[str, object]: ...
+
     def record_usage(
         self,
         *,
@@ -468,11 +480,17 @@ class ProviderUsageMeter:
         grant: ManagedMeteringGrant,
         client: _MeteringClient,
         retry_interval_seconds: float = 1.0,
+        gateway_managed: bool = False,
     ) -> None:
-        if retry_interval_seconds <= 0:
+        if retry_interval_seconds <= 0 or type(gateway_managed) is not bool:
             raise ValueError("retry interval must be positive")
         _require_secure_directory(grant.spool_directory, create=True)
         self._grant = grant
+        self._gateway_managed = gateway_managed
+        if gateway_managed and grant.model_budget_reservation_id is not None:
+            raise ManagedMeteringError(
+                "managed_metering_grant_invalid", "Gateway calls require per-call reservations"
+            )
         self._client = client
         self._retry_interval_seconds = retry_interval_seconds
         self._wake = threading.Event()
@@ -484,8 +502,55 @@ class ProviderUsageMeter:
             daemon=True,
         )
         self._worker.start()
-        self._remove_observer: Callable[[], None] = add_required_observer(self._observe)
+        self._remove_observer: Callable[[], None] = (
+            (lambda: None) if gateway_managed else add_required_observer(self._observe)
+        )
         self._wake.set()
+
+    @property
+    def gateway_managed(self) -> bool:
+        return self._gateway_managed
+
+    @property
+    def run_id(self) -> UUID:
+        return self._grant.run_id
+
+    def prepare_gateway_call(self) -> UUID:
+        """Check real machine/financial authority and fsync the original Run reference."""
+        if not self.gateway_managed:
+            raise ManagedMeteringError(
+                "managed_metering_mode_invalid", "Gateway delivery is unavailable"
+            )
+        event_id = uuid4()
+        reservation_id = gateway_call_reservation_id(self._grant.run_id, event_id)
+        self._client.gateway_usage(
+            action="check",
+            runner_id=self._grant.runner_id,
+            capability_token=self._grant.capability_token,
+            run_id=self._grant.run_id,
+            reservation_id=reservation_id,
+        )
+        self._persist(
+            {
+                "version": 2,
+                "event_id": str(event_id),
+                "run_id": str(self._grant.run_id),
+                "runner_id": str(self._grant.runner_id),
+                "reservation_id": str(reservation_id),
+            },
+            event_id,
+        )
+        self._wake.set()
+        return event_id
+
+    def discard_unadmitted_gateway_call(self, event_id: UUID) -> None:
+        """Only a definitive pre-inference HTTP rejection may discard a reference."""
+        with self._drain_lock:
+            path = self._grant.spool_directory / f"{event_id}.pending.json"
+            if path.exists():
+                _read_gateway_spool(path, self._grant)
+                path.unlink()
+                _fsync_directory(path.parent)
 
     def _observe(
         self,
@@ -577,6 +642,19 @@ class ProviderUsageMeter:
         with self._drain_lock:
             for path in sorted(self._grant.spool_directory.glob("*.pending.json")):
                 try:
+                    if self.gateway_managed:
+                        reservation_id = _read_gateway_spool(path, self._grant)
+                        self._client.gateway_usage(
+                            action="settle",
+                            runner_id=self._grant.runner_id,
+                            capability_token=self._grant.capability_token,
+                            run_id=self._grant.run_id,
+                            reservation_id=reservation_id,
+                        )
+                        path.unlink(missing_ok=True)
+                        _fsync_directory(path.parent)
+                        progressed = True
+                        continue
                     document = _read_spool(path, self._grant)
                     for meter in document["meters"]:
                         assert isinstance(meter, dict)
@@ -627,7 +705,7 @@ class ProviderUsageMeter:
         return drained
 
 
-def _read_spool(path: Path, grant: ManagedMeteringGrant) -> _ParsedSpool:
+def _load_spool(path: Path) -> dict[str, object]:
     try:
         before = path.lstat()
         if (
@@ -647,7 +725,41 @@ def _read_spool(path: Path, grant: ManagedMeteringGrant) -> _ParsedSpool:
             os.close(descriptor)
         if len(encoded) != opened.st_size:
             raise ValueError("spool size changed")
-        document = _strict_object(encoded)
+        return _strict_object(encoded)
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError) as exc:
+        raise ManagedMeteringError(
+            "managed_metering_spool_invalid", "Managed metering spool is invalid"
+        ) from exc
+
+
+def _read_gateway_spool(path: Path, grant: ManagedMeteringGrant) -> UUID:
+    try:
+        document = _load_spool(path)
+        if (
+            set(document) != _GATEWAY_SPOOL_FIELDS
+            or type(document["version"]) is not int
+            or document["version"] != 2
+        ):
+            raise ValueError
+        event_id = _canonical_uuid(document["event_id"])
+        reservation_id = _canonical_uuid(document["reservation_id"])
+        if (
+            document["run_id"] != str(grant.run_id)
+            or document["runner_id"] != str(grant.runner_id)
+            or path.name != f"{event_id}.pending.json"
+            or reservation_id != gateway_call_reservation_id(grant.run_id, event_id)
+        ):
+            raise ValueError
+        return reservation_id
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ManagedMeteringError(
+            "managed_metering_spool_invalid", "Gateway reference is invalid"
+        ) from exc
+
+
+def _read_spool(path: Path, grant: ManagedMeteringGrant) -> _ParsedSpool:
+    try:
+        document = _load_spool(path)
         if set(document) != _SPOOL_FIELDS or document["version"] != _SPOOL_VERSION:
             raise ValueError("invalid spool schema")
         if _canonical_uuid(document["run_id"]) != grant.run_id:

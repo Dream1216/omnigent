@@ -11,6 +11,12 @@ from pathlib import PurePosixPath
 from typing import cast
 from uuid import UUID
 
+from saas.control_plane.interactive_run_route import (
+    INTERACTIVE_EXECUTION_KIND,
+    InteractiveRunRouteError,
+    decode_interactive_run_route,
+)
+
 _AGENT_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _EXECUTION_KIND = "omnigent.agent.v1"
 PREVIEW_EXECUTION_KIND = "omnigent.preview.v1"
@@ -46,7 +52,7 @@ class PreviewRequestIdentity:
 
 @dataclass(frozen=True, slots=True)
 class ProductionRunExecutionSpec:
-    """Closed server-derived launch identity for Agent or static Preview Runs."""
+    """Closed server-derived launch identity for a production Run."""
 
     kind: str
     spec_hash: str
@@ -145,7 +151,19 @@ def static_web_preview_execution(
 def production_run_execution_spec(
     input_payload: dict[str, object],
 ) -> ProductionRunExecutionSpec:
-    """Accept exactly one of the two server-owned production execution schemas."""
+    """Decode an invocation or an interactive intent without inventing an argv."""
+
+    execution = input_payload.get("execution")
+    if isinstance(execution, dict) and execution.get("kind") == INTERACTIVE_EXECUTION_KIND:
+        try:
+            decode_interactive_run_route(input_payload)
+        except InteractiveRunRouteError as error:
+            raise ManagedRunExecutionSpecError("Interactive execution input is invalid") from error
+        return ProductionRunExecutionSpec(
+            kind=INTERACTIVE_EXECUTION_KIND,
+            spec_hash=sha256(_canonical_bytes(input_payload)).hexdigest(),
+            launch_argv=(),
+        )
 
     try:
         managed = managed_run_execution_spec(input_payload)

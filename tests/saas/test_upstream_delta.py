@@ -130,11 +130,58 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 156
+    assert budget["max_upstream_net_added_loc"] == 5300
+    assert budget["max_direct_upstream_files"] == 167
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    e2e = revision["governed_litellm_e2e_entry"]
+    assert e2e["revision"] == "litellm-governed-e2e-entry-budget-v34"
+    assert e2e["approved_at"] == "2026-10-22"
+    assert e2e["previous_max_direct_upstream_files"] == 166
+    assert e2e["approved_max_direct_upstream_files"] == 167
+    assert e2e["measured_before_integration"] == {
+        "direct_upstream_files": 166,
+        "upstream_net_added_loc": 5291,
+        "active_patches": 9,
+    }
+    assert e2e["scoped_paths"] == ["tests/e2e/test_governed_litellm_e2e.py"]
+    pagination = revision["pagination_test_followup"]
+    assert pagination["revision"] == "litellm-customer-pagination-tests-budget-v33"
+    assert pagination["approved_at"] == "2026-10-20"
+    assert pagination["previous_max_upstream_net_added_loc"] == 5000
+    assert pagination["approved_max_upstream_net_added_loc"] == 5300
+    assert pagination["measured_before_integration"] == 4990
+    assert pagination["scoped_paths"] == [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "tests/browser_ui/chat/test_tenant_model_candidates.py",
+        "feature-map/composer.md",
+        "feature-map/platform-managed-models.md",
+    ]
+    litellm = revision["litellm_application_followup"]
+    assert litellm["applies_to_upstream_revision"] == "825f8500d7cc8e997e5562fa55694cd146165f3c"
+    assert litellm["revision"] == "litellm-customer-model-picker-budget-v32"
+    assert litellm["approved_at"] == "2026-10-20"
+    assert litellm["previous_max_direct_upstream_files"] == 166
+    assert litellm["previous_max_upstream_net_added_loc"] == 4576
+    assert litellm["approved_max_upstream_net_added_loc"] == 5000
+    assert litellm["scoped_paths"] == [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "web/src/components/composer/ComposerConfigSections.tsx",
+        "web/src/shell/NewChatDialog.tsx",
+        "web/src/shell/NewChatDialog.test.tsx",
+    ]
+    litellm = litellm["previous_revision"]
+    assert litellm["revision"] == "litellm-interactive-admission-budget-v31"
+    assert litellm["approved_at"] == "2026-10-17"
+    assert litellm["previous_max_direct_upstream_files"] == 150
+    assert litellm["measured_direct_upstream_files"] == 166
+    assert litellm["previous_max_upstream_net_added_loc"] == 4576
+    assert len(litellm["scoped_paths"]) == 16
+    assert "omnigent/server/routes/sessions/routes_events.py" in litellm["scoped_paths"]
+    assert litellm["previous_revision_reference"] == "platform-model-token-renewal-budget-v30"
     followup = revision["followup"]
     assert followup["revision"] == "upstream-019-mcp-compat-version-test-budget-v35"
     assert followup["approved_at"] == "2026-10-21"
@@ -475,8 +522,12 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4576 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 30000, 0),
+            FileDelta(
+                "omnigent/stores/host_store.py",
+                budget["max_upstream_net_added_loc"] + extra_lines,
+                0,
+            ),
+            FileDelta("saas/control_plane/service.py", 40000, 0),
         ],
         manifest,
         active_patch_count=9,

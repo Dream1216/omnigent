@@ -8,7 +8,7 @@ import dataclasses
 import json
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -168,6 +168,7 @@ from omnigent.server.routes._sessions.helpers import (
     reconcile_orphaned_running_status,
 )
 from omnigent.server.routes._sessions.orchestration import (
+    _admit_initial_session_inputs,
     _best_effort_stop,
     _build_session_list_item,
     _build_session_response,
@@ -438,7 +439,12 @@ def register_core_routes(
             )
 
     async def _accept_initial_input(
-        request: Request, session_id: str, event: SessionEventInput | None, user_id: str | None
+        request: Request,
+        session_id: str,
+        event: SessionEventInput | None,
+        user_id: str | None,
+        *,
+        admit: Callable[[SessionEventInput], Awaitable[None]] | None = None,
     ) -> None:
         """Save a checked first input, deleting the new session if that fails."""
         if event is None:
@@ -476,8 +482,14 @@ def register_core_routes(
                         }
                     }
                 )
-            await startup.enqueue(session_id, event, user_id=user_id, headers=request.headers)
+            if admit is None:
+                await startup.enqueue(session_id, event, user_id=user_id, headers=request.headers)
+            else:
+                await admit(event)
         except Exception:
+            if admit is not None:
+                # Durable admission may have committed before acknowledgement failed.
+                raise
             # The create fails, so leave no session (or uploaded file) for a retry
             # to duplicate.
             if file_store is not None:
@@ -488,6 +500,38 @@ def register_core_routes(
                             await asyncio.to_thread(artifact_store.delete, blob_key)
             await conversation_store.delete_conversation(session_id)
             raise
+
+    async def _admit_managed_initial_input(
+        request: Request,
+        conv: Conversation,
+        body: SessionCreateRequest | ProjectSessionCreateRequest,
+        user_id: str | None,
+    ) -> None:
+        async def admit(event: SessionEventInput | None) -> None:
+            admitted_body = body
+            if event is not None:
+                from omnigent.server.startup_inputs import initial_input_id
+
+                event = event.model_copy(
+                    update={"data": {**event.data, "stable_id": initial_input_id(conv.id)}}
+                )
+                admitted_body = body.model_copy(update={"initial_items": [event]})
+            await _admit_initial_session_inputs(
+                request,
+                conv,
+                admitted_body,
+                conversation_store,
+                agent_store,
+                runner_router,
+                user_id=user_id,
+                file_store=file_store,
+                artifact_store=artifact_store,
+            )
+
+        if body.initial_input is None:
+            await admit(None)
+        else:
+            await _accept_initial_input(request, conv.id, body.initial_input, user_id, admit=admit)
 
     async def _schedule_managed_launch(
         request: Request,
@@ -989,6 +1033,16 @@ def register_core_routes(
                         if exc.code != ErrorCode.NOT_FOUND:
                             raise
                     else:
+                        owns_input = getattr(conversation_store, "owns_session_input", None)
+                        if owns_input is not None and owns_input(existing):
+                            await _require_access_and_level(
+                                user_id,
+                                create_token,
+                                LEVEL_EDIT,
+                                permission_store,
+                                conversation_store,
+                            )
+                            await _admit_managed_initial_input(request, existing, body, user_id)
                         return await _get_session_snapshot(
                             conversation_store,
                             create_token,
@@ -1008,6 +1062,20 @@ def register_core_routes(
                 "replay of this request",
                 code=ErrorCode.CONFLICT,
             ) from collision
+        owns_input = getattr(conversation_store, "owns_session_input", None)
+        if conv is not None and owns_input is not None and owns_input(conv):
+            if permission_store is not None and user_id is not None:
+                await asyncio.to_thread(permission_store.ensure_user, user_id)
+                grant = await asyncio.to_thread(
+                    permission_store.grant,
+                    user_id,
+                    resp.id,
+                    LEVEL_OWNER,
+                )
+                resp.permission_level = grant.level
+            await _admit_managed_initial_input(request, conv, body, user_id)
+            _announce_session_added(user_id, resp.id)
+            return resp
         # Notify the runner about the new session so it can resolve
         # the spec and cache sub_agent_name before the first turn.
         # Without this, the runner doesn't know this session exists
@@ -3574,6 +3642,11 @@ def register_core_routes(
             validate_saved_selection,
         )
 
+        owns_input = getattr(conversation_store, "owns_session_input", None)
+        if owns_input is not None and owns_input(source):
+            raise OmnigentError(
+                "interactive_fork_requires_managed_lifecycle", code=ErrorCode.INVALID_INPUT
+            )
         source_configured = configured_snapshot(source.inference_snapshot)
         if source.inference_snapshot is not None:
             from omnigent.server.auth import RESERVED_USER_LOCAL

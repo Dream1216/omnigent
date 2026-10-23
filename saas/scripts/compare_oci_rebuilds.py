@@ -41,6 +41,15 @@ _N1_LABELS = _EXECUTABLE_LABELS | frozenset(
 _LABEL_PROFILES = {
     "executable": _EXECUTABLE_LABELS,
     "n1": _N1_LABELS,
+    "litellm": _EXECUTABLE_LABELS
+    | frozenset(
+        {
+            "io.omnigent.litellm.upstream.digest",
+            "io.omnigent.litellm.openssl.version",
+            "io.omnigent.litellm.profile",
+            "io.omnigent.integration.revision",
+        }
+    ),
 }
 
 _SAFE_DIAGNOSTIC_POLICY = {

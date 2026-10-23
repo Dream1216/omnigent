@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 import sqlalchemy as sa
 import uvicorn
@@ -46,8 +49,34 @@ from saas.control_plane import (
     UserProjectionInput,
     create_platform_admin_app,
 )
+from saas.control_plane.db_models import ControlPlaneOutboxEvent
+from saas.control_plane.litellm_client import (
+    LiteLLMManagementClient,
+    LiteLLMManagementConfiguration,
+)
+from saas.control_plane.model_budget import ModelProviderBudgetAdmissionService
+from saas.control_plane.model_connections import ModelConnectionService
+from saas.control_plane.model_deployments import ModelDeploymentService
+from saas.control_plane.model_projection import ModelCredentialProjectionPublisher
+from saas.control_plane.model_publications import ModelPublicationService
+from saas.control_plane.model_test_funding import ModelTestFundingService
+from saas.control_plane.model_verifications import ModelVerificationService
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 from saas.onboarding_email import SmtpEmailVerificationConfig
+from saas.production.litellm_configuration_attestation import LiteLLMConfigurationAttestation
+from saas.production.litellm_replica_readiness import (
+    LiteLLMReplicaEndpoint,
+    LiteLLMReplicaReadinessAuthority,
+)
+from saas.production.model_protocol_probe import (
+    ModelProtocolProbe,
+    ModelProtocolProbeConfiguration,
+)
+from saas.production.model_publication import ModelPublicationPublisher
+from saas.production.model_verification import ModelVerificationPublisher
+from tests.saas.model_page_fixtures import seed_model_pages
+from tests.saas.test_model_protocol_probe import _body, _events
+from tests.saas.test_model_verifications import _pricing
 
 _AUDIENCE = "omnigent-platform-admin"
 _COOKIE = "__Host-omnigent_platform_session"
@@ -77,6 +106,10 @@ class PlatformAdminFixture:
     privacy_user_id: UUID
     privacy_request_user_id: UUID
     privacy_manifest_id: UUID
+    project_models: Callable[[], None]
+    model_projection_calls: list[str]
+    model_inference_status: list[int]
+    seed_model_pages: Callable[[], None]
 
 
 class _BrowserSecretCipher:
@@ -155,7 +188,9 @@ def _write_certificate(directory: Path) -> tuple[Path, Path]:
 
 
 @pytest.fixture
-def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
+def platform_admin_server(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[PlatformAdminFixture]:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
@@ -395,7 +430,159 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
         privacy_operations=privacy_operations,
         email_configuration=email_configuration,
         model_provider=model_provider,
+        model_connections=ModelConnectionService(
+            factory,
+            authorization=authorization,
+            secret_cipher=_BrowserSecretCipher(),
+        )
+        if getattr(request, "param", False)
+        else None,
+        model_deployments=ModelDeploymentService(engine, authorization=authorization)
+        if getattr(request, "param", False) in {"deployments", "verification", "publication"}
+        else None,
+        model_test_funding=ModelTestFundingService(engine, authorization=authorization)
+        if getattr(request, "param", False)
+        else None,
+        model_verifications=ModelVerificationService(
+            engine, authorization=authorization, pricing=_pricing("deepseek-v4-pro")
+        )
+        if getattr(request, "param", False) in {"verification", "publication"}
+        else None,
+        model_publications=ModelPublicationService(
+            engine, authorization=authorization, pricing=_pricing("deepseek-v4-pro")
+        )
+        if getattr(request, "param", False) == "publication"
+        else None,
     )
+    model_projection_calls: list[str] = []
+    projected_models: list[dict] = []
+    model_inference_status = [200]
+
+    def synthetic_management(request: httpx.Request) -> httpx.Response:
+        model_projection_calls.append(request.url.path)
+        if request.url.path == "/model/new":
+            projected_models.append(json.loads(request.content))
+        if request.url.path == "/model/info":
+            return httpx.Response(200, json={"data": projected_models})
+        if request.url.path == "/key/generate":
+            return httpx.Response(200, json={"key": "isolated-browser-inference-test-key"})
+        return httpx.Response(200, json={"status": "success"})
+
+    def synthetic_inference(request: httpx.Request) -> httpx.Response:
+        from types import SimpleNamespace
+
+        model_projection_calls.append(request.url.path)
+        assert request.headers["Authorization"] == "Bearer isolated-browser-inference-test-key"
+        body = json.loads(request.content)
+        assert body["max_tokens"] == 32
+        if model_inference_status[0] != 200:
+            return httpx.Response(
+                model_inference_status[0], json={"error": "private upstream response"}
+            )
+        model = SimpleNamespace(
+            wire_api="openai_chat_completions", public_model_id="deepseek-v4-pro"
+        )
+        return httpx.Response(
+            200, headers={"Content-Type": "text/event-stream"}, content=_body(_events(model))
+        )
+
+    def project_models() -> None:
+        publisher = ModelCredentialProjectionPublisher(
+            engine,
+            secret_cipher=_BrowserSecretCipher(),
+            management=LiteLLMManagementClient(
+                LiteLLMManagementConfiguration(
+                    base_url="https://litellm.test", management_key="isolated-browser-test-only"
+                ),
+                transport=httpx.MockTransport(synthetic_management),
+            ),
+        )
+        with factory() as db:
+            events = db.scalars(
+                sa.select(ControlPlaneOutboxEvent).where(
+                    ControlPlaneOutboxEvent.event_type.in_(
+                        (
+                            "platform.model_projection.requested",
+                            "platform.model_verification.requested",
+                            "platform.model_publication.requested",
+                        )
+                    )
+                )
+            ).all()
+            envelopes = [
+                {
+                    "event_id": event.id,
+                    **{
+                        name: getattr(event, name)
+                        for name in ("event_type", "aggregate_type", "aggregate_key", "payload")
+                    },
+                }
+                for event in events
+            ]
+
+        class StoredAttestor:
+            def attest(self, *, draft, credential_name, expected_api_key, **_kwargs):
+                assert expected_api_key == "browser-draft-secret-never-public"
+                assert credential_name
+                return LiteLLMConfigurationAttestation(
+                    draft.deployment_id,
+                    draft.credential_version_id,
+                    draft.configuration_sha256,
+                    "a" * 64,
+                    datetime.now(timezone.utc),
+                )
+
+        verifier = ModelVerificationPublisher(
+            engine,
+            management=LiteLLMManagementClient(
+                LiteLLMManagementConfiguration(
+                    base_url="https://litellm.test", management_key="isolated-browser-test-only"
+                ),
+                transport=httpx.MockTransport(synthetic_management),
+            ),
+            budget=ModelProviderBudgetAdmissionService(factory),
+            attestor=StoredAttestor()
+            if getattr(request, "param", False) == "publication"
+            else None,
+            secret_cipher=_BrowserSecretCipher()
+            if getattr(request, "param", False) == "publication"
+            else None,
+            probe=ModelProtocolProbe(
+                ModelProtocolProbeConfiguration(base_url="https://litellm.test"),
+                transport=httpx.MockTransport(synthetic_inference),
+            ),
+        )
+        publication = ModelPublicationPublisher(
+            engine,
+            secret_cipher=_BrowserSecretCipher(),
+            pricing=_pricing("deepseek-v4-pro"),
+            readiness=LiteLLMReplicaReadinessAuthority(
+                tuple(
+                    LiteLLMReplicaEndpoint(
+                        f"replica-{n}",
+                        LiteLLMManagementConfiguration(
+                            base_url=f"https://replica-{n}.litellm.test",
+                            management_key="isolated-browser-test-only",
+                        ),
+                    )
+                    for n in range(2)
+                ),
+                storage=StoredAttestor(),
+                client_factory=lambda config: LiteLLMManagementClient(
+                    config, transport=httpx.MockTransport(synthetic_management)
+                ),
+            ),
+        )
+        for envelope in envelopes:
+            target = (
+                publication
+                if envelope["event_type"] == "platform.model_publication.requested"
+                else verifier
+                if envelope["event_type"] == "platform.model_verification.requested"
+                else publisher
+            )
+            target.publish(**envelope)
+
     certificate_path, key_path = _write_certificate(tmp_path)
     server = uvicorn.Server(
         uvicorn.Config(
@@ -432,6 +619,10 @@ def platform_admin_server(tmp_path: Path) -> Iterator[PlatformAdminFixture]:
             privacy_user_id=privacy_user_id,
             privacy_request_user_id=privacy_request_user_id,
             privacy_manifest_id=privacy_manifest.manifest_id,
+            project_models=project_models,
+            model_projection_calls=model_projection_calls,
+            model_inference_status=model_inference_status,
+            seed_model_pages=lambda: seed_model_pages(factory, principals["operator"], tenant_id),
         )
     finally:
         server.should_exit = True
@@ -464,9 +655,11 @@ def _context(
     return context
 
 
-def _open_console(context: BrowserContext, fixture: PlatformAdminFixture) -> Page:
+def _open_console(
+    context: BrowserContext, fixture: PlatformAdminFixture, *, fragment: str = ""
+) -> Page:
     page = context.new_page()
-    response = page.goto(f"{fixture.origin}/platform-admin")
+    response = page.goto(f"{fixture.origin}/platform-admin{fragment}")
     assert response is not None and response.status == 200
     expect(page.locator("#console-shell")).to_have_attribute("aria-busy", "false")
     return page
@@ -852,3 +1045,622 @@ def test_real_chromium_privacy_governed_request_approval_and_content_blindness(
     platform_admin_server: PlatformAdminFixture,
 ) -> None:
     _run_in_browser_thread(platform_admin_server, _privacy_governed_action_matrix)
+
+
+def _model_connection_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    context = _context(browser, fixture, fixture.operator)
+    secret = "browser-connection-secret-never-public"
+    try:
+        page = _open_console(context, fixture)
+        expect(page.get_by_test_id("nav-model-provider")).to_be_hidden()
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-connection-list")).to_contain_text("尚无连接")
+        page.locator("#model-connection-name").fill("DeepSeek candidate")
+        page.locator("#model-connection-key").fill(secret)
+        page.locator("#model-connection-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-connection-key")).to_have_value("")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        first_operation = page.locator("#model-connection-operation-id").inner_text()
+        assert secret not in page.evaluate("JSON.stringify(sessionStorage)")
+        expect(page.locator("body")).not_to_contain_text(secret)
+        page.reload()
+        expect(page.locator("#model-connection-operation-id")).to_have_text(first_operation)
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        listing = page.request.get(fixture.origin + "/v2/platform-admin/model-connections").json()
+        assert len(listing["items"]) == 1
+        assert listing["items"][0]["runtime_enabled"] is False
+        page.locator("#model-connection-new-command").click()
+        page.get_by_role("button", name="选择轮换", exact=True).click()
+        page.locator("#model-connection-rotation-key").fill("rotated-" + secret)
+        page.locator("#model-connection-rotation-submit").click()
+        expect(page.locator("#model-connection-rotation-target")).to_contain_text("V2")
+        expect(page.locator("#model-connection-rotation-key")).to_have_value("")
+
+        page.locator("#model-connection-new-command").click()
+        page.locator("#model-connection-name").fill("Response-loss candidate")
+        page.locator("#model-connection-key").fill(secret)
+
+        def lose_receipt(route):
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt","message":"Receipt lost"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-connections", lose_receipt, times=1)
+        page.locator("#model-connection-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-connection-name")).to_have_value("Response-loss candidate")
+        expect(page.locator("#model-connection-key")).to_have_value("")
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        listing = page.request.get(fixture.origin + "/v2/platform-admin/model-connections").json()
+        assert len(listing["items"]) == 2
+        assert all(item["runtime_enabled"] is False for item in listing["items"])
+        assert secret not in json.dumps(listing)
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.screenshot(
+                path=str(directory / "model-connections-recovered-desktop.png"), full_page=True
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.screenshot(
+                path=str(directory / "model-connections-recovered-mobile.png"), full_page=True
+            )
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-connection-list")).to_contain_text("DeepSeek candidate")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        expect(page.locator("#model-connection-key")).to_be_disabled()
+        expect(page.get_by_role("button", name="选择轮换").first).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", [True], indirect=True)
+def test_real_chromium_model_connections_and_lost_receipt_recovery(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_connection_journey)
+
+
+def _model_pagination_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    fixture.seed_model_pages()
+    for mobile in (False, True):
+        context = _context(browser, fixture, fixture.operator)
+        try:
+            page = _open_console(context, fixture, fragment="#model-connections")
+            if mobile:
+                page.set_viewport_size({"width": 390, "height": 844})
+            mutations = []
+            page.on(
+                "request",
+                lambda request, mutations=mutations: (
+                    mutations.append(request.url)
+                    if request.method == "POST" and "/v2/platform-admin/model-" in request.url
+                    else None
+                ),
+            )
+            expect(page.locator("#model-connection-list article")).to_have_count(25)
+            if evidence := os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR"):
+                page.get_by_test_id("model-connections-more").scroll_into_view_if_needed()
+                page.screenshot(path=str(Path(evidence) / f"model-pagination-{mobile}-before.png"))
+            failures = []
+
+            def fail_first_continuation(route, _request, failures=failures):
+                if "cursor=" in route.request.url and not failures:
+                    failures.append(route.request.url)
+                    route.fulfill(
+                        status=503,
+                        content_type="application/json",
+                        body=json.dumps(
+                            {
+                                "error": {
+                                    "code": "synthetic_pagination_unavailable",
+                                    "message": "Retry read",
+                                }
+                            }
+                        ),
+                    )
+                else:
+                    route.continue_()
+
+            context.route("**/v2/platform-admin/model-connections?*", fail_first_continuation)
+            with page.expect_response(
+                lambda response: (
+                    response.status == 503
+                    and "/v2/platform-admin/model-connections?" in response.url
+                )
+            ):
+                page.get_by_test_id("model-connections-more").click()
+            assert len(failures) == 1
+            expect(page.locator("#toast-stack")).to_contain_text(
+                "synthetic_pagination_unavailable"
+            )
+            expect(page.locator("#model-connection-list article")).to_have_count(25)
+            expect(page.get_by_test_id("model-connections-more")).to_be_enabled()
+            page.get_by_test_id("model-connections-more").click()
+            expect(page.locator("#model-connection-list article")).to_have_count(31)
+            expect(page.get_by_test_id("model-connections-more")).to_be_hidden()
+            context.unroute("**/v2/platform-admin/model-connections?*", fail_first_continuation)
+            expect(page.locator("#model-deployment-list article")).to_have_count(25)
+            page.get_by_test_id("model-deployments-more").click()
+            expect(page.locator("#model-deployment-list article")).to_have_count(32)
+            expect(page.get_by_test_id("model-deployments-more")).to_be_hidden()
+            page.locator("#model-publication-tenant").fill(str(fixture.tenant_id))
+            page.locator("#model-publication-scope").get_by_role("button").click()
+            expect(page.locator("#model-publication-list article")).to_have_count(25)
+            page.get_by_test_id("model-publications-more").click()
+            expect(page.locator("#model-publication-list article")).to_have_count(31)
+            expect(page.get_by_test_id("model-publications-more")).to_be_hidden()
+            crosscheck = page.request.get(
+                f"{fixture.origin}/v2/platform-admin/model-connections?limit=25"
+            )
+            assert crosscheck.status == 200
+            assert len(crosscheck.json()["items"]) == 25 and crosscheck.json()["next_cursor"]
+            assert mutations == [] and fixture.model_projection_calls == []
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            if evidence := os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR"):
+                for label, selector in (
+                    ("connections", "#model-connection-count"),
+                    ("drafts", "#model-deployment-count"),
+                    ("catalog", "#model-publication-status"),
+                ):
+                    page.locator(selector).scroll_into_view_if_needed()
+                    page.screenshot(
+                        path=str(Path(evidence) / f"model-pagination-{mobile}-{label}.png")
+                    )
+            page.get_by_test_id("nav-overview").click()
+            page.get_by_test_id("nav-model-connections").click()
+            expect(page.locator("#model-connection-list article")).to_have_count(31)
+        finally:
+            context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        page.get_by_test_id("model-connections-more").click()
+        expect(page.locator("#model-connection-list article")).to_have_count(31)
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["publication"], indirect=True)
+def test_real_chromium_model_pagination_retry_readonly_and_mobile(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_pagination_journey)
+
+
+def _model_off_page_generation_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    fixture.seed_model_pages()
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.locator("#model-deployment-list article")).to_have_count(25)
+        expect(page.locator("#model-deployment-list")).not_to_contain_text("deepseek-off-page")
+        page.locator("#model-connection-list article").first.get_by_role(
+            "button", name="建立模型草稿"
+        ).click()
+        expect(page.locator("#model-deployment-credential")).not_to_have_value("")
+        page.locator("#model-deployment-model").fill("deepseek-off-page")
+        page.locator("#model-deployment-name").fill("Off-page next version")
+        with page.expect_request(
+            lambda request: (
+                request.method == "POST"
+                and request.url.endswith("/v2/platform-admin/model-deployments")
+            )
+        ) as sent:
+            page.locator("#model-deployment-submit").click()
+        assert sent.value.post_data_json["expected_generation"] == 13
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-deployment-list")).to_contain_text("Off-page next version")
+        assert fixture.model_projection_calls == []
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["publication"], indirect=True)
+def test_real_chromium_model_draft_reads_a_generation_outside_the_visible_page(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_off_page_generation_journey)
+
+
+def _model_deployment_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    context = _context(browser, fixture, fixture.operator)
+    secret = "browser-draft-secret-never-public"
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-deployment-panel")).to_be_visible()
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        page.locator("#model-connection-name").fill("DeepSeek draft channel")
+        page.locator("#model-connection-key").fill(secret)
+        page.locator("#model-connection-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        page.locator("#model-connection-new-command").click()
+        page.get_by_role("button", name="建立模型草稿", exact=True).click()
+        expect(page.locator("#model-deployment-credential")).to_contain_text("投影未确认")
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.get_by_role("button", name="建立模型草稿", exact=True).click()
+        expect(page.locator("#model-deployment-credential")).to_contain_text("投影已确认")
+        page.locator("#model-deployment-model").fill("deepseek-v4-pro")
+        page.locator("#model-deployment-name").fill("DeepSeek V4 Pro 隔离候选")
+        page.locator("#model-deployment-output").fill("32")
+
+        def lose_receipt(route):
+            assert route.request.method == "POST"
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt","message":"Receipt lost"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-deployments", lose_receipt, times=1)
+        page.locator("#model-deployment-submit").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-deployment-name")).to_have_value("DeepSeek V4 Pro 隔离候选")
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        receipt = page.locator("#model-connection-operation-id").inner_text()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+            pool.submit(fixture.project_models).result(timeout=10)
+        assert fixture.model_projection_calls == ["/credentials", "/model/new"]
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("APPLIED")
+        expect(page.locator("#model-deployment-list")).to_contain_text("not_tested")
+        expect(page.locator("#model-deployment-list")).to_contain_text("运行时未启用")
+        listing = page.request.get(fixture.origin + "/v2/platform-admin/model-deployments").json()
+        assert len(listing["items"]) == 1
+        assert listing["items"][0]["runtime_enabled"] is False
+        assert secret not in json.dumps(listing)
+        assert secret not in page.evaluate("JSON.stringify(sessionStorage)")
+        expect(page.locator("body")).not_to_contain_text(secret)
+        page.reload()
+        expect(page.locator("#model-connection-operation-id")).to_have_text(receipt)
+        expect(page.locator("#model-connection-operation-status")).to_have_text("APPLIED")
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(directory / "model-draft-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.screenshot(path=str(directory / "model-draft-mobile.png"), full_page=True)
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-deployment-list")).to_contain_text("DeepSeek V4 Pro 隔离候选")
+        expect(page.locator("#model-deployment-submit")).to_be_disabled()
+        expect(page.get_by_role("button", name="建立模型草稿", exact=True)).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["deployments"], indirect=True)
+def test_real_chromium_model_draft_projection_and_lost_receipt_recovery(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_deployment_journey)
+
+
+def _model_test_funding_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("NOT CONFIGURED")
+        assert (
+            page.request.get(fixture.origin + "/v2/platform-admin/model-test-funding").json()[
+                "version"
+            ]
+            == 0
+        )
+        page.locator("#model-test-funding-enabled").check()
+        page.locator("#model-test-funding-per-call").fill("0.000017")
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V1 / FUNDED")
+        receipt = page.request.get(fixture.origin + "/v2/platform-admin/model-test-funding").json()
+        assert receipt["policy"]["max_test_microusd"] == 17
+        page.locator("#model-test-funding-daily").fill("0.5")
+
+        def lose_receipt(route):
+            assert route.request.method == "PUT"
+            response = route.fetch()
+            assert response.status == 200
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-test-funding", lose_receipt, times=1)
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-test-funding-daily")).to_have_value("0.5")
+        expect(page.locator("#model-test-funding-save")).to_be_disabled()
+        page.locator("#model-test-funding-refresh").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V2 / FUNDED")
+        expect(page.locator("#model-test-funding-receipt")).to_contain_text(
+            "模型仍须单独测试和发布"
+        )
+        receipt = page.request.get(fixture.origin + "/v2/platform-admin/model-test-funding").json()
+        assert (
+            receipt["version"] == 2 and receipt["policy"]["daily_test_budget_microusd"] == 500000
+        )
+        assert fixture.model_projection_calls == []
+        page.reload()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V2 / FUNDED")
+        assert (
+            page.request.get(fixture.origin + "/v2/platform-admin/model-connections").json()[
+                "items"
+            ]
+            == []
+        )
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("#model-test-funding-panel").screenshot(
+                path=str(directory / "model-test-funding-desktop.png")
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(path=str(directory / "model-test-funding-mobile.png"), full_page=True)
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V2 / FUNDED")
+        expect(page.locator("#model-test-funding-save")).to_be_disabled()
+        expect(page.locator("#model-test-funding-enabled")).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["funding"], indirect=True)
+def test_real_chromium_platform_test_funding_and_lost_receipt_recovery(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_test_funding_journey)
+
+
+def _model_verification_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    _model_deployment_journey(browser, fixture)
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.get_by_test_id("model-verification-start")).to_be_disabled()
+        page.locator("#model-test-funding-enabled").check()
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V1 / FUNDED")
+        expect(page.get_by_test_id("model-verification-start")).to_be_enabled()
+        # Cancelling the cost confirmation must not admit or send any request.
+        page.get_by_test_id("model-verification-start").click()
+        expect(page.locator("#dialog-summary")).to_contain_text("真实供应商费用")
+        page.locator("#dialog-cancel").click()
+        assert fixture.model_projection_calls == ["/credentials", "/model/new"]
+
+        def lose_receipt(route):
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-deployments/*/test", lose_receipt, times=1)
+        page.get_by_test_id("model-verification-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.locator("#model-connection-submit")).to_be_disabled()
+        page.reload()
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-verification-status")).to_have_text("REQUESTED")
+        expect(page.locator("#model-verification-detail")).to_contain_text("未确认")
+        operation = page.locator("#model-connection-operation-id").inner_text()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+            pool.submit(fixture.project_models).result(timeout=10)
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 1
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-verification-status")).to_have_text("VERIFIED")
+        expect(page.locator("#model-connection-operation-detail")).to_contain_text("费用结算通过")
+        expect(page.locator("#model-verification-detail")).to_contain_text(
+            "10 输入 / 3 输出 / 13 总计"
+        )
+        receipt = page.request.get(
+            fixture.origin + f"/v2/platform-admin/model-operations/{operation}/verification"
+        ).json()
+        assert receipt["runtime_enabled"] is False
+        assert receipt["evidence"]["actual_microusd"] == 3
+        assert receipt["evidence"]["request_attempts"] == 1
+        expect(page.locator("#model-verification-panel")).to_contain_text(
+            "不代表完整 Agent 能力验收或发布"
+        )
+        page.reload()
+        expect(page.locator("#model-verification-status")).to_have_text("VERIFIED")
+        assert "browser-draft-secret-never-public" not in page.evaluate(
+            "JSON.stringify(sessionStorage)"
+        )
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("#model-verification-panel").screenshot(
+                path=str(directory / "model-verification-desktop.png")
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(path=str(directory / "model-verification-mobile.png"), full_page=True)
+
+        fixture.model_inference_status[0] = 401
+        page.locator("#model-connection-new-command").click()
+        page.get_by_test_id("model-verification-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-connection-operation-status")).to_have_text("REQUESTED")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-verification-status")).to_have_text("UNCERTAIN")
+        expect(page.locator("#model-verification-detail")).to_contain_text("未确认")
+        expect(page.locator("#model-verification-panel")).not_to_contain_text("codex login")
+        expect(page.locator("#model-verification-panel")).not_to_contain_text(
+            "private upstream response"
+        )
+        if evidence:
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(
+                path=str(directory / "model-verification-uncertain-mobile.png"), full_page=True
+            )
+        page.reload()
+        expect(page.locator("#model-verification-status")).to_have_text("UNCERTAIN")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 2
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture)
+        page.get_by_test_id("nav-model-connections").click()
+        expect(page.get_by_test_id("model-verification-start")).to_be_disabled()
+        page.get_by_test_id("model-verification-inspect").click()
+        expect(page.locator("#model-verification-status")).to_have_text("UNCERTAIN")
+        expect(page.locator("#model-connection-operation-status")).to_have_text("NO COMMAND")
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["verification"], indirect=True)
+def test_real_chromium_model_verification_recovery_cost_and_readonly_receipt(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_verification_journey)
+
+
+def _model_publication_journey(browser: Browser, fixture: PlatformAdminFixture) -> None:
+    _model_deployment_journey(browser, fixture)
+    context = _context(browser, fixture, fixture.operator)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+        page.locator("#model-test-funding-enabled").check()
+        page.locator("#model-test-funding-save").click()
+        expect(page.locator("#model-test-funding-status")).to_have_text("V1 / FUNDED")
+        page.get_by_test_id("model-verification-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-verification-status")).to_have_text("REQUESTED")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-verification-status")).to_have_text("VERIFIED")
+        page.locator("#model-connection-new-command").click()
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+        page.locator("#model-publication-tenant").fill(str(fixture.tenant_id))
+        page.get_by_role("button", name="核对租户候选目录", exact=False).click()
+        expect(page.locator("#model-publication-status")).to_have_text("SCOPE CHECKED")
+        expect(page.get_by_test_id("model-publication-start")).to_be_enabled()
+        page.get_by_test_id("model-publication-start").click()
+        expect(page.locator("#dialog-summary")).to_contain_text(str(fixture.tenant_id))
+        page.locator("#dialog-cancel").click()
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 1
+
+        def lose_receipt(route):
+            response = route.fetch()
+            assert response.status == 202
+            route.fulfill(
+                status=503,
+                content_type="application/json",
+                body='{"error":{"code":"test_lost_receipt"}}',
+            )
+
+        page.route("**/v2/platform-admin/model-deployments/*/publish", lose_receipt, times=1)
+        page.get_by_test_id("model-publication-start").click()
+        _submit_dialog(page, {})
+        expect(page.locator("#model-connection-operation-status")).to_have_text("CHECK RECEIPT")
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+        page.reload()
+        expect(page.locator("#model-publication-status")).to_have_text("REQUESTED")
+        operation = page.locator("#model-connection-operation-id").inner_text()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(fixture.project_models).result(timeout=10)
+            pool.submit(fixture.project_models).result(timeout=10)
+        page.locator("#model-connections-refresh").click()
+        expect(page.locator("#model-publication-status")).to_have_text("APPLIED")
+        expect(page.locator("#model-publication-detail")).to_contain_text("目录 V1 已记录")
+        expect(page.locator("#model-publication-list")).to_contain_text("DeepSeek · LiteLLM")
+        response = page.request.get(
+            fixture.origin + f"/v2/platform-admin/model-operations/{operation}/publication"
+        )
+        receipt = response.json()
+        assert receipt["publication"]["tenant_id"] == str(fixture.tenant_id)
+        assert receipt["runtime_enabled"] is False
+        assert fixture.model_projection_calls.count("/v1/chat/completions") == 1
+        assert "browser-draft-secret-never-public" not in page.evaluate(
+            "JSON.stringify(sessionStorage)"
+        )
+        page.reload()
+        expect(page.locator("#model-publication-status")).to_have_text("APPLIED")
+        evidence = os.environ.get("OMNIGENT_SAAS_BROWSER_EVIDENCE_DIR")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.locator("#model-publication-panel").evaluate(
+                "element => element.scrollIntoView({block: 'center'})"
+            )
+            page.locator("#model-publication-panel").screenshot(
+                path=str(directory / "model-publication-desktop.png")
+            )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if evidence:
+            page.screenshot(path=str(directory / "model-publication-mobile.png"), full_page=True)
+    finally:
+        context.close()
+    context = _context(browser, fixture, fixture.privacy_reader)
+    try:
+        page = _open_console(context, fixture, fragment="#model-connections")
+        page.locator("#model-publication-tenant").fill(str(fixture.tenant_id))
+        page.get_by_role("button", name="核对租户候选目录", exact=False).click()
+        expect(page.locator("#model-publication-list")).to_contain_text("目录 V1")
+        expect(page.get_by_test_id("model-publication-start")).to_be_disabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("platform_admin_server", ["publication"], indirect=True)
+def test_real_chromium_tenant_model_publication_lost_receipt_and_readonly_catalog(
+    platform_admin_server: PlatformAdminFixture,
+) -> None:
+    _run_in_browser_thread(platform_admin_server, _model_publication_journey)

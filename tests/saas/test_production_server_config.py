@@ -707,6 +707,54 @@ def test_runner_and_preview_factories_are_capability_bound(tmp_path: Path) -> No
         load_production_server_config(unexpected)
 
 
+def test_controller_mode_is_frozen_with_the_reviewed_factory_and_host_mode(tmp_path: Path) -> None:
+    environment = _environment(tmp_path)
+    assert not load_production_server_config(environment).interactive_controller_enabled
+    environment.update(
+        OMNIGENT_SAAS_CAPABILITIES="tenant,run,runner",
+        OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED="true",
+        OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND="true",
+        OMNIGENT_SAAS_RUNNER_ADAPTER_FACTORY=(
+            "saas.production.interactive_controller_adapter:build_production_interactive_controller"
+        ),
+    )
+    config = load_production_server_config(environment)
+    assert config.interactive_controller_enabled
+    environment["OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED"] = "false"
+    assert config.interactive_controller_enabled
+
+
+@pytest.mark.parametrize("flag", ("TRUE", "1", "", " true", "true\n"))
+def test_controller_mode_rejects_ambiguous_deployment_flags(tmp_path: Path, flag: str) -> None:
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED"] = flag
+    with pytest.raises(ProductionServerConfigError, match="controller flag"):
+        load_production_server_config(environment)
+
+
+@pytest.mark.parametrize("mutation", ("factory", "missing_host_mode", "false_host_mode"))
+def test_controller_mode_rejects_mixed_or_legacy_deployments(
+    tmp_path: Path, mutation: str
+) -> None:
+    environment = _environment(tmp_path)
+    environment.update(
+        OMNIGENT_SAAS_CAPABILITIES="tenant,run,runner",
+        OMNIGENT_SAAS_INTERACTIVE_CONTROLLER_ENABLED="true",
+        OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND="true",
+        OMNIGENT_SAAS_RUNNER_ADAPTER_FACTORY=(
+            "saas.production.interactive_controller_adapter:build_production_interactive_controller"
+        ),
+    )
+    if mutation == "factory":
+        environment["OMNIGENT_SAAS_RUNNER_ADAPTER_FACTORY"] = "deployment.runner:factory"
+    elif mutation == "missing_host_mode":
+        environment.pop("OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND")
+    else:
+        environment["OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND"] = "false"
+    with pytest.raises(ProductionServerConfigError, match="controller requires"):
+        load_production_server_config(environment)
+
+
 def test_migration_receipt_is_read_only_and_exactly_revision_bound(tmp_path: Path) -> None:
     writable = _environment(tmp_path / "writable")
     receipt = Path(writable["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"])

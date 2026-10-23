@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-POLICY_VERSION: Final = "2026-09-14.p3-model-provider"
+POLICY_VERSION: Final = "2026-10-21.p2-model-pagination"
 
 
 class PermissionScope(StrEnum):
@@ -376,7 +376,24 @@ _DEFINITIONS = (
         "platform.model_provider.read",
         PermissionScope.PLATFORM,
         PermissionRisk.MEDIUM,
-        api_surfaces=("GET /v2/platform-admin/model-provider",),
+        api_surfaces=(
+            "GET /v2/platform-admin/model-provider",
+            "GET /v2/platform-admin/model-connections",
+            "GET /v2/platform-admin/model-connections/{connection_id}/credential-versions",
+            "GET /v2/platform-admin/model-deployments",
+            "GET /v2/platform-admin/model-deployments/current-generation",
+            "GET /v2/platform-admin/model-operations",
+            "GET /v2/platform-admin/model-operations/{operation_id}",
+            "GET /v2/platform-admin/model-test-funding",
+            "GET /v2/platform-admin/model-operations/{operation_id}/verification",
+            "GET /v2/platform-admin/model-publications",
+            "GET /v2/platform-admin/model-publications/current-generation",
+            "GET /v2/platform-admin/model-operations/{operation_id}/publication",
+            "GET /v2/platform-admin/model-publication-disablements",
+            "GET /v2/platform-admin/model-publication-disablements/{disablement_id}",
+            "GET /v2/platform-admin/model-publication-revocations",
+            "GET /v2/platform-admin/model-publication-revocations/{revocation_id}",
+        ),
         ui_surface="model-provider",
         audit_event="platform.model_provider.read",
     ),
@@ -385,7 +402,13 @@ _DEFINITIONS = (
         PermissionScope.PLATFORM,
         PermissionRisk.CRITICAL,
         fresh_auth_required=True,
-        api_surfaces=("PUT /v2/platform-admin/model-provider",),
+        api_surfaces=(
+            "PUT /v2/platform-admin/model-provider",
+            "POST /v2/platform-admin/model-connections",
+            "POST /v2/platform-admin/model-connections/{connection_id}/credential-versions",
+            "POST /v2/platform-admin/model-deployments",
+            "PUT /v2/platform-admin/model-test-funding",
+        ),
         ui_surface="model-provider",
         audit_event="platform.model_provider.changed",
     ),
@@ -394,9 +417,25 @@ _DEFINITIONS = (
         PermissionScope.PLATFORM,
         PermissionRisk.HIGH,
         fresh_auth_required=True,
-        api_surfaces=("POST /v2/platform-admin/model-provider/test",),
+        api_surfaces=(
+            "POST /v2/platform-admin/model-provider/test",
+            "POST /v2/platform-admin/model-deployments/{deployment_id}/test",
+        ),
         ui_surface="model-provider",
         audit_event="platform.model_provider.tested",
+    ),
+    _permission(
+        "platform.model_provider.publish",
+        PermissionScope.PLATFORM,
+        PermissionRisk.CRITICAL,
+        fresh_auth_required=True,
+        api_surfaces=(
+            "POST /v2/platform-admin/model-deployments/{deployment_id}/publish",
+            "POST /v2/platform-admin/model-publications/{publication_id}/disable",
+            "POST /v2/platform-admin/model-publication-disablements/{disablement_id}/revoke",
+        ),
+        ui_surface="model-provider",
+        audit_event="platform.model_provider.published",
     ),
     _permission(
         "platform.runner.manage",
@@ -693,6 +732,7 @@ PLATFORM_ROLE_PERMISSIONS = MappingProxyType(
                 "platform.model_provider.read",
                 "platform.model_provider.manage",
                 "platform.model_provider.test",
+                "platform.model_provider.publish",
                 "platform.runner.manage",
                 "platform.billing.read",
                 "platform.support.read",

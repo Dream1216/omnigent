@@ -28,6 +28,7 @@ import {
   PickerSectionHeader,
 } from "@/components/composer/HarnessMenuRow";
 import { ComposerConfigSections } from "@/components/composer/ComposerConfigSections";
+import type { TenantModelCandidate } from "@/components/composer/TenantModelCandidatesSection";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import {
   compactModelTriggerLabel,
@@ -2635,6 +2636,10 @@ export function NewChatLandingScreen() {
   // An explicit pick rides along and is remembered (seeded back on a later visit
   // via the harness-seed effect below).
   const [pickedModel, _setPickedModel] = useState<string>(() => restoredDraft?.pickedModel ?? "");
+  const [managedModel, setManagedModel] = useState<{
+    scope: string;
+    model: TenantModelCandidate;
+  } | null>(null);
   const [pickedEffort, setPickedEffort] = useState<string>(() => restoredDraft?.pickedEffort ?? "");
   const [pickerEdits, setPickerEdits] = useState<{
     agentId: string | null;
@@ -2657,7 +2662,10 @@ export function NewChatLandingScreen() {
   }, []);
   const setCostControlMode = useCallback((mode: CostControlMode) => {
     _setCostControlMode(mode);
-    if (mode === "on") _setPickedModel("");
+    if (mode === "on") {
+      _setPickedModel("");
+      setManagedModel(null);
+    }
   }, []);
   // Controls the working-directory popover so picking a directory closes it.
   const [workspacePopoverOpen, setWorkspacePopoverOpen] = useState(false);
@@ -3239,6 +3247,19 @@ export function NewChatLandingScreen() {
     sandboxSelected &&
     sandboxModelCapabilities?.default_models === true &&
     sandboxModelCapabilities.inference_models !== true;
+  const managedModelsEnabled = info !== "loading" && info.login_url === "/saas/login";
+  const managedTarget = new URLSearchParams({
+    project_id: selectedProject !== "" ? (configProjectId ?? "") : "",
+    agent_id: effectiveAgentId ?? "",
+    harness: previewHarness ?? "",
+    host_type: sandboxSelected ? "managed" : "external",
+    ...(sandboxSelected
+      ? { sandbox_provider: previewSandboxProvider ?? "" }
+      : { host_id: selectedHostId ?? "" }),
+  }).toString();
+  const managedScope = JSON.stringify([getCurrentUserId(), managedTarget]);
+  const activeManagedModel = managedModel?.scope === managedScope ? managedModel.model : null;
+  useEffect(() => setManagedModel(null), [managedScope]);
   const sandboxPreviewEnabled =
     sandboxSelected &&
     previewSandboxProvider !== null &&
@@ -3388,6 +3409,7 @@ export function NewChatLandingScreen() {
     return rest;
   }, [brainHarnessLabelsAll, brainRoutable]);
   const isEntryConfigurable = (agent: AvailableAgent) =>
+    managedModelsEnabled ||
     (sandboxHasModelCatalog && agent.id === effectiveAgentId) ||
     agentHasModelSettings(agent) ||
     agentHasAdvancedSettings(agent, brainHarnessLabelsAll);
@@ -3400,7 +3422,7 @@ export function NewChatLandingScreen() {
     (pickedHarness === AUTO_HARNESS_ID &&
       selectedAgent?.harness != null &&
       selectedAgent.harness in brainHarnessLabelsAll);
-  const configSummary = useMemo((): { label: string; value: string }[] => {
+  const baseConfigSummary = useMemo((): { label: string; value: string }[] => {
     const sourceRows = (options: readonly NativeModelOption[]) => {
       if (routingOn) return [];
       if (sandboxHasModelCatalog && sandboxModels.data?.provider_label) {
@@ -3556,6 +3578,13 @@ export function NewChatLandingScreen() {
     pickedHarness,
     selectedNativeHarness,
   ]);
+  const configSummary = activeManagedModel
+    ? [
+        ...baseConfigSummary.filter((row) => row.label !== "Model" && row.label !== "Connection"),
+        { label: "Model", value: activeManagedModel.display_name },
+        { label: "Connection", value: "DeepSeek · via LiteLLM" },
+      ]
+    : baseConfigSummary;
   const harnessTriggerDetails = configSummary.filter(
     (row) =>
       row.label === "SDK" ||
@@ -3753,6 +3782,7 @@ export function NewChatLandingScreen() {
     writeHarnessOption(harness, options);
   };
   const selectPickerModel = (model: string) => {
+    setManagedModel(null);
     const selectionHarness =
       selectedNativeHarness ?? (sandboxHasModelCatalog ? previewHarness : null);
     if (!selectionHarness) return;
@@ -3836,6 +3866,7 @@ export function NewChatLandingScreen() {
     ? pickedModel
     : (pickerFusion?.default ?? "");
   const selectFusionModel = (modelUid: string) => {
+    setManagedModel(null);
     if (!selectedNativeHarness) return;
     userPickedModelRef.current = true;
     setPickedModel(modelUid);
@@ -3861,6 +3892,17 @@ export function NewChatLandingScreen() {
           </>
         )}
         <ComposerConfigSections
+          managedCandidates={managedModelsEnabled}
+          managedSelection={{
+            target: managedTarget,
+            selectedRevision: activeManagedModel?.configuration_revision,
+            onClear: () => setManagedModel(null),
+            onSelect: (model) => {
+              setPickerEdits(null);
+              setCostControlMode(null);
+              setManagedModel({ scope: managedScope, model });
+            },
+          }}
           sdk={
             selectedAgentHasAdvancedSettings && selectedAgent
               ? {
@@ -3951,8 +3993,8 @@ export function NewChatLandingScreen() {
                       ? [
                           {
                             key: "__default__",
-                            label: "Default",
-                            checked: !routingOn && pickedModel === "",
+                            label: managedModelsEnabled ? "Harness default" : "Default",
+                            checked: !activeManagedModel && !routingOn && pickedModel === "",
                             onSelect: () => selectPickerModel(MODEL_SELECT_DEFAULT),
                             testId: "new-chat-landing-agent-model-default",
                           },
@@ -3972,6 +4014,7 @@ export function NewChatLandingScreen() {
                         key: option.id,
                         label: visibleModelLabel(nativeModelLabel(option)),
                         checked:
+                          !activeManagedModel &&
                           !routingOn &&
                           (option.fusion !== undefined
                             ? isFusionModelUid(pickedModel) ||
@@ -5500,8 +5543,9 @@ export function NewChatLandingScreen() {
       // with the lit routing icon. Otherwise only send it when routing is
       // eligible for the effective harness, so a stale "on" can't ride along
       // invisibly with no control to clear it.
-      const costControlOverride =
-        pickedHarness === AUTO_HARNESS_ID || smartRoutingHarnessSelected
+      const costControlOverride = activeManagedModel
+        ? "off"
+        : pickedHarness === AUTO_HARNESS_ID || smartRoutingHarnessSelected
           ? "on"
           : smartRoutingEligible
             ? (costControlMode ?? undefined)
@@ -5535,7 +5579,8 @@ export function NewChatLandingScreen() {
           ? currentFusionCombo(pickerFusion, fusionModelUid).modelUid
           : pickedModel;
       const normalizedModelOverride =
-        !smartRoutingHarnessSelected &&
+        activeManagedModel?.model_id ??
+        (!smartRoutingHarnessSelected &&
         !routingOwnsModel &&
         // devin's Model+Effort live under its own `devinMode` capability (not
         // `modelPicker`), so — like codex-native — pin the pick by harness or
@@ -5547,7 +5592,7 @@ export function NewChatLandingScreen() {
           nativeAgent?.harness === "devin-native") &&
         submittedModel
           ? submittedModel
-          : null;
+          : null);
       const normalizedReasoningEffort =
         !smartRoutingHarnessSelected &&
         !routingOwnsModel &&
@@ -5747,7 +5792,9 @@ export function NewChatLandingScreen() {
                 ...(info !== "loading" && info.request_managed_sandbox_host_id
                   ? { host_id: randomUUID().replace(/-/g, "") }
                   : {}),
-                ...(sandboxPreviewEnabled && sandboxModels.data?.configuration_revision
+                ...(!activeManagedModel &&
+                sandboxPreviewEnabled &&
+                sandboxModels.data?.configuration_revision
                   ? {
                       inference_configuration_revision: sandboxModels.data.configuration_revision,
                     }
@@ -5803,6 +5850,9 @@ export function NewChatLandingScreen() {
           // the runner launches. An unselected ("") knob is omitted so the
           // harness keeps its own configured/default value.
           model_override: normalizedModelOverride ?? undefined,
+          ...(activeManagedModel
+            ? { inference_configuration_revision: activeManagedModel.configuration_revision }
+            : {}),
           reasoning_effort: normalizedReasoningEffort ?? undefined,
           cost_control_mode_override: costControlOverride,
           // Top-level Smart Routing sends the same "auto" sentinel the bundle

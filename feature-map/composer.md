@@ -28,6 +28,12 @@ and steers messages while the agent is busy.
   model, and keeps the selection. Ctrl+Shift+M opens it in both composers.
   States: catalog loading, delayed catalog,
   alias vs. full model ID, refused switch (the pill keeps the applied model).
+- `managed-model-candidates`: in the SaaS realm, both model menus show the
+  tenant's managed models with their channel, transport and availability reason.
+  Eligible models can be selected for a new session; existing sessions remain
+  read-only. Changing the project, Agent or execution target clears the selection.
+  The server independently validates authorization and the immutable revision.
+  Use Load more models for further catalog pages; a failed read retains loaded models and offers a read-only retry.
 - `effort-picker`: reasoning effort for harnesses that support it (Codex, Claude,
   Pi, Devin). States: available, unavailable placeholder, max/ultra levels, refused
   change (the pill keeps the applied level).
@@ -244,6 +250,10 @@ Other connection providers alone do not enable the managed MCP picker.
   `tests/e2e_ui/start_session/test_codex_catalog_availability.py::test_codex_prelaunch_label_reflects_catalog_availability`
   (desktop and mobile; populated catalogs without a default, empty catalogs, and probe failures),
   `tests/e2e_ui/start_session/test_composer_transition.py::test_selected_model_survives_delayed_create`
+- **`managed-model-candidates`, existing and new-session composer, desktop and mobile:**
+  `tests/browser_ui/chat/test_tenant_model_candidates.py::test_customer_model_availability_and_selection`
+  uses only the built SPA and explicit synthetic backend contracts; it does
+  not provision a Runner or prove runtime access.
 - **`effort-picker`, new-session composer:**
   `tests/e2e_ui/start_session/test_codex_effort_prelaunch.py::test_new_codex_session_gear_offers_reasoning_effort`
 - **`effort-picker`, SDK in-session composer:**
