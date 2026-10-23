@@ -48,11 +48,31 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 151,
+    "max_direct_upstream_files": 153,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "host_ping_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 151,
+      "max_direct_upstream_files": 152,
+      "scoped_paths": [
+        "tests/server/integration/test_session_host_launch.py"
+      ],
+      "measured_upstream_net_added_loc": 3528,
+      "reason": "Requester explicitly approved only the old018 rollback branch 151-to152 increase for the transport Ping/Pong test helper correction. All typed refusal/history assertions, unknown-frame rejection, product behavior, 4576 lines, nine patches, .85 isolation and release gates remain unchanged. New source needs its own mandatory CI."
+    },
+    "upstream_watchdog_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 152,
+      "max_direct_upstream_files": 153,
+      "scoped_paths": [
+        "tests/inner/conftest.py"
+      ],
+      "upstream_test_fix_revision": "0a9937ec379ea51cf1d51576484fa14d3722d9ef",
+      "reason": "Requester explicitly approved old018 152-to153 for the exact pinned-target upstream diagnostic watchdog fix. Keep 90s complete Python-thread stack dumps, all test bodies/guards, product behavior, 4576 net LOC, nine patches, .85 isolation and every release gate. Fresh final-source Linux mandatory CI still required."
+    },
     "ui8_recovery_test_budget_followup": {
       "approved_at": "2026-10-23",
       "previous_max_direct_upstream_files": 150,
