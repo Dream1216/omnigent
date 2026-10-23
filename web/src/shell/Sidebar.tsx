@@ -1518,7 +1518,7 @@ function ProjectFolder({
           />
         }
         headerContextMenu={
-          <ContextMenuContent className="min-w-40">
+          <ContextMenuContent className="min-w-40" onCloseAutoFocus={menuActions.onCloseAutoFocus}>
             <ProjectFolderMenuItems
               components={contextBundle}
               projectName={name}
@@ -4909,6 +4909,7 @@ interface ProjectFolderMenuActions {
   openDelete: () => void;
   onMenuOpen: () => void;
   onMenuClose: () => void;
+  onCloseAutoFocus: (event: Event) => void;
 }
 
 /** Owns the dialogs and mutations shared by both project-folder menus. */
@@ -4924,6 +4925,7 @@ function useProjectFolderMenu(
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(projectName);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const menuOpenedDialogRef = useRef(false);
   // The icon staged in the rename modal, committed only on Confirm:
   //   undefined = untouched (show the saved icon), string = a picked emoji,
   //   null = staged removal. Reset to `undefined` each time the modal opens.
@@ -4953,14 +4955,28 @@ function useProjectFolderMenu(
   const actions = useMemo<ProjectFolderMenuActions>(
     () => ({
       openRename: () => {
+        menuOpenedDialogRef.current = true;
         setRenameValue(projectName);
         setPendingIcon(undefined);
         setRenameOpen(true);
       },
-      openSettings: () => setSettingsOpen(true),
-      openDelete: () => setDeleteOpen(true),
-      onMenuOpen: () => setMenuOpen(true),
+      openSettings: () => {
+        menuOpenedDialogRef.current = true;
+        setSettingsOpen(true);
+      },
+      openDelete: () => {
+        menuOpenedDialogRef.current = true;
+        setDeleteOpen(true);
+      },
+      onMenuOpen: () => {
+        menuOpenedDialogRef.current = false;
+        setMenuOpen(true);
+      },
       onMenuClose: () => setMenuOpen(false),
+      onCloseAutoFocus: (event) => {
+        // The dialog owns focus; restoring the menu trigger reselects typed text.
+        if (menuOpenedDialogRef.current) event.preventDefault();
+      },
     }),
     [projectName],
   );
@@ -5244,7 +5260,11 @@ function ProjectFolderMenu({
           <MoreHorizontalIcon className="size-3.5" data-icon-size="14" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-40">
+      <DropdownMenuContent
+        align="end"
+        className="min-w-40"
+        onCloseAutoFocus={actions.onCloseAutoFocus}
+      >
         <ProjectFolderMenuItems
           components={dropdownBundle}
           hideNewSessionOnDesktop
