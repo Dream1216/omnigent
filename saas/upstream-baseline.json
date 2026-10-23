@@ -48,11 +48,55 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 150,
+    "max_direct_upstream_files": 154,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "upstream_composer_recovery_budget_followup": {
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 153,
+      "max_direct_upstream_files": 154,
+      "measured_upstream_net_added_loc": 3600,
+      "scoped_paths": [
+        "web/src/pages/ChatPage.tsx",
+        "web/src/pages/ChatPage.composer.test.tsx"
+      ],
+      "new_official_path": "web/src/pages/ChatPage.composer.test.tsx",
+      "upstream_revision": "3138c7dfeb24a12f2aaf6d7ffeffc9d491d69df1",
+      "reason": "Requester explicitly approved only the old018 rollback branch 153-to154 increase for the exact pinned-target upstream Composer draft-restoration fix and owning regression. The 0.19 cap remains 157 because that target already contains both. Preserve product assertions, 4576 net LOC, nine patches, .85 isolation and all release gates. The final source requires its own mandatory technical CI before merge."
+    },
+    "host_ping_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 151,
+      "max_direct_upstream_files": 152,
+      "scoped_paths": [
+        "tests/server/integration/test_session_host_launch.py"
+      ],
+      "measured_upstream_net_added_loc": 3528,
+      "reason": "Requester explicitly approved only the old018 rollback branch 151-to152 increase for the transport Ping/Pong test helper correction. All typed refusal/history assertions, unknown-frame rejection, product behavior, 4576 lines, nine patches, .85 isolation and release gates remain unchanged. New source needs its own mandatory CI."
+    },
+    "upstream_watchdog_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 152,
+      "max_direct_upstream_files": 153,
+      "scoped_paths": [
+        "tests/inner/conftest.py"
+      ],
+      "upstream_test_fix_revision": "0a9937ec379ea51cf1d51576484fa14d3722d9ef",
+      "reason": "Requester explicitly approved old018 152-to153 for the exact pinned-target upstream diagnostic watchdog fix. Keep 90s complete Python-thread stack dumps, all test bodies/guards, product behavior, 4576 net LOC, nine patches, .85 isolation and every release gate. Fresh final-source Linux mandatory CI still required."
+    },
+    "ui8_recovery_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 150,
+      "max_direct_upstream_files": 151,
+      "measured_upstream_net_added_loc": 3494,
+      "scoped_paths": [
+        "tests/e2e_ui/chat/test_claude_sdk_terminated_cli_recovery.py"
+      ],
+      "upstream_test_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+      "reason": "The requester explicitly approved only the old018 rollback-branch increase from 150 to 151 files for the exact upstream Claude SDK test process-ownership correction. Product code, workflow policy, 4576 net LOC, nine patches, .85 isolation and all release gates remain unchanged. New source requires its own mandatory technical CI before merge; local browser setup did not execute a test body."
+    },
     "followup": {
       "revision": "platform-model-token-renewal-budget-v30",
       "approved_at": "2026-10-15",

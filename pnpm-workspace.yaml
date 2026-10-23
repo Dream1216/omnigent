@@ -62,7 +62,11 @@ overrides:
   # Build-tool pins that match the legacy npm lockfile. Removing them allowed pnpm
   # to resolve newer Vite/Tailwind patches whose new bundler/chunking produced a
   # broken split of the Shiki bundle and lost the PDF worker asset.
-  vite: 8.1.0
+  vite: 8.1.6
+  '@vitest/coverage-v8': 4.1.12
+  vitest: 4.1.12
+  '@storybook/react-vite': 10.6.2
+  storybook: 10.6.2
   tailwindcss: 4.3.1
   '@tailwindcss/vite': 4.3.1
   '@tailwindcss/node': 4.3.1
@@ -76,12 +80,12 @@ overrides:
   qs: 6.16.0
   query-string: 9.5.0
   '@hono/node-server': 1.19.15
-  hono: 4.13.5
+  hono: 4.13.11
   linkify-it: 5.0.2
   shiki: "catalog:"
   react: "catalog:"
   react-dom: "catalog:"
-  dompurify: 3.4.14
+  dompurify: 3.4.17
   mermaid: 11.16.1
   tar: 7.5.21
   'node-gyp>undici': 6.28.1
@@ -132,7 +136,7 @@ overrides:
   '@tiptap/pm': 3.30.5
   '@tiptap/react': 3.30.5
   '@tiptap/starter-kit': 3.30.5
-  express-rate-limit>ip-address: 10.3.1
+  express-rate-limit>ip-address: 10.7.4
   sharp: 0.35.5
   '@modelcontextprotocol/sdk': 1.32.0
 

@@ -296,7 +296,7 @@ def runtime_dispatch_fixture() -> Iterator[RuntimeDispatchFixture]:
         capacity_slots=4,
         reserved_slots=0,
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
     )
@@ -403,7 +403,7 @@ def _claim(
         instance_key=instance_key,
         failure_domain="cn-east-1a",
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
         capabilities=capabilities,
@@ -626,7 +626,7 @@ def test_rejects_multiple_active_pools(
         capacity_slots=2,
         reserved_slots=0,
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
     )
@@ -692,7 +692,7 @@ def test_scheduler_recovers_reconnected_runner_without_old_raw_token(
         instance_key="recover-reconnected",
         failure_domain="cn-east-1a",
         protocol_version=2,
-        source_revision="upstream-revision",
+        source_revision="product-revision",
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
         capabilities=list(_dispatch_capabilities(fixture, run_id)),
@@ -886,3 +886,44 @@ def test_scheduler_exhausted_fence_atomically_orphans_and_finalizes_quota(
         assert runner is not None and runner.active_leases == 0
         assert reservation is not None and reservation.status == "released"
         assert capability is not None and capability.revocation_reason == "run_terminal"
+
+
+@pytest.mark.parametrize(
+    "drift", ["pool_product", "partition_upstream", "official_schema", "binding_generation"]
+)
+def test_queue_projection_rejects_distinct_release_route_drift(
+    runtime_dispatch_fixture: RuntimeDispatchFixture, drift: str
+) -> None:
+    fixture = runtime_dispatch_fixture
+    run_id = _admit(fixture, key=f"release-route-drift-{drift}")
+    outbox, _, _ = _delivery(fixture, run_id)
+    with fixture.factory.begin() as db:
+        if drift == "pool_product":
+            from saas.control_plane.scheduling_models import RunnerPoolRecord
+
+            db.get(RunnerPoolRecord, fixture.pool_id).source_revision = "upstream-revision"
+        elif drift == "partition_upstream":
+            db.get(
+                RuntimePartitionRecord, fixture.partition_id
+            ).source_revision = "product-revision"
+        elif drift == "official_schema":
+            db.get(
+                RuntimePlacementRecord, fixture.placement_id
+            ).official_schema_revision = "control-plane-P17"
+        else:
+            db.get(RuntimePartitionRecord, fixture.partition_id).placement_generation += 1
+    expected = (
+        "run_dispatch_runner_pool_ambiguous"
+        if drift == "pool_product"
+        else "run_dispatch_runtime_route_ambiguous"
+    )
+    with pytest.raises(OutboxPublishError) as rejected:
+        fixture.projection.project(**outbox)
+    assert rejected.value.code == expected
+    with fixture.factory() as db:
+        assert db.get(RunDispatchRecord, run_id) is None
+        assert db.get(RunRecord, run_id).status == "queued"
+        reservation = db.scalar(
+            sa.select(QuotaReservationRecord).where(QuotaReservationRecord.run_id == run_id)
+        )
+        assert reservation is not None and reservation.status == "reserved"

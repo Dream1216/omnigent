@@ -312,7 +312,7 @@ def test_real_postgresql_outbox_claim_route_projects_only_exact_run_queued_event
                 "reserved_slots, status, protocol_version, source_revision, schema_revision, "
                 "adapter_contract_version) VALUES "
                 "(:id, :placement, 'cn-east-1a', 'route-pool', 'interactive', 1, 0, "
-                "'active', 2, 'upstream', 'p4a000000001', '0.2.0')"
+                "'active', 2, 'product', 'p4a000000001', '0.2.0')"
             ),
             {"id": pool_id, "placement": placement_id},
         )
@@ -391,7 +391,7 @@ def test_real_postgresql_outbox_claim_route_projects_only_exact_run_queued_event
                 "reserved_slots, status, protocol_version, source_revision, schema_revision, "
                 "adapter_contract_version) VALUES "
                 "(:id, :placement, 'cn-east-1b', 'route-pool-other', 'interactive', 1, 0, "
-                "'active', 2, 'upstream', 'p4a000000001', '0.2.0')"
+                "'active', 2, 'product', 'p4a000000001', '0.2.0')"
             ),
             {"id": other_pool_id, "placement": other_placement_id},
         )
