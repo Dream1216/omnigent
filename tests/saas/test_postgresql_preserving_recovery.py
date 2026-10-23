@@ -491,7 +491,7 @@ def test_explicit_t_json_dispatches_only_to_t_then_mm(recovery_boundary, monkeyp
     )
     migrations = []
     monkeypatch.setattr(control, "_t_source_gold", lambda: None)
-    monkeypatch.setattr(control, "_t_old_catalog", lambda: None)
+    monkeypatch.setattr(control, "_t_old_catalog", lambda *_args: None)
     monkeypatch.setattr(control, "_t_facts", lambda *_args, **_kwargs: facts)
     monkeypatch.setattr(control, "_capture", lambda *_args: {"tables": {}})
     monkeypatch.setattr(adapter, "move_receipts", lambda *_args, **_kwargs: {})
@@ -527,3 +527,118 @@ def test_t_gold_mutation_is_refused_before_callbacks(recovery_boundary):
     with pytest.raises(adapter.Refused, match="explicit_t_source_gold_binding_changed"):
         control.inverse(json.loads(adapter.canonical(state)))
     assert recovery_boundary.events == []
+
+
+@pytest.fixture
+def original_t_catalog_with_retained_roles():
+    roles = [
+        [role, False, False, False, False, False, False, True, -1, "null"]
+        for role in ("saas_audit_delivery", "saas_revocation_consumer", "saas_usage_consumer")
+    ]
+    return {
+        "saas_head": "lm2t00000001",
+        "official_head": "mm1a2b3c4d5e",
+        "control_plane_security": {"roles": roles, "memberships": [], "relation_acls": []},
+    }
+
+
+def test_original_t_projection_keeps_every_original_catalog_field(
+    original_t_catalog_with_retained_roles,
+):
+    catalog = original_t_catalog_with_retained_roles
+    before = json.loads(adapter.canonical(catalog))
+    projected = recovery._original_t_security_projection(catalog, [])
+    expected = {
+        **before,
+        "control_plane_security": {**before["control_plane_security"], "roles": []},
+    }
+    assert projected == expected
+    assert catalog == before
+
+
+@pytest.mark.parametrize("column,value", [(1, True), (6, True), (7, False), (8, 2), (9, "[]")])
+def test_original_t_projection_refuses_retained_role_flag_drift(
+    original_t_catalog_with_retained_roles,
+    column,
+    value,
+):
+    catalog = original_t_catalog_with_retained_roles
+    catalog["control_plane_security"]["roles"][0][column] = value
+    with pytest.raises(adapter.Refused, match="retained_delivery_role_flags_changed"):
+        recovery._original_t_security_projection(catalog, [])
+
+
+def test_original_t_projection_refuses_global_membership_outside_catalog(
+    original_t_catalog_with_retained_roles,
+):
+    with pytest.raises(adapter.Refused, match="retained_delivery_role_membership"):
+        recovery._original_t_security_projection(
+            original_t_catalog_with_retained_roles,
+            [["saas_usage_consumer", "another_database_login", "postgres", False, True, False]],
+        )
+
+
+def test_original_t_projection_refuses_extra_old_business_object_grant(
+    original_t_catalog_with_retained_roles,
+):
+    catalog = original_t_catalog_with_retained_roles
+    catalog["control_plane_security"]["relation_acls"].append(
+        ["saas_runs", "saas_usage_consumer", "authority:saas_owner", "SELECT", False]
+    )
+    with pytest.raises(adapter.Refused, match="has_business_authority"):
+        recovery._original_t_security_projection(catalog, [])
+
+
+@pytest.mark.parametrize(
+    "change", [None, "another_database", "old_relation", "column_grant", "role_replaced"]
+)
+def test_retained_role_shared_dependencies_are_only_original_archive_objects(change):
+    roles = ("saas_usage_consumer", "saas_audit_delivery", "saas_revocation_consumer")
+    tables = {
+        name: {
+            "oid": index + 100,
+            "metadata": {
+                "policies": [
+                    {
+                        "oid": index + 200 + action_index * 10,
+                        "polname": f"rls_{name.removeprefix('saas_')}_delivery_consumer_{action}",
+                        "polroles": "{" + str(index + 42) + "}",
+                    }
+                    for action_index, action in enumerate(("read", "insert"))
+                ]
+            },
+        }
+        for index, name in enumerate(adapter.TABLES)
+    }
+    row = ["saas_usage_consumer", 42, 123, True, False, 100, 0, "a"]
+    if change == "another_database":
+        row[2] = 124
+    elif change == "old_relation":
+        row[5] = 999
+    elif change == "column_grant":
+        row[6] = 1
+
+    class Connection:
+        info = SimpleNamespace(transaction_status=TransactionStatus.IDLE)
+
+        @contextmanager
+        def transaction(self):
+            yield
+
+        def execute(self, statement, _parameters=None):
+            if statement.startswith("SET "):
+                return None
+            if statement.startswith("SELECT rolname,oid"):
+                identities = [(role, index + 42) for index, role in enumerate(roles)]
+                if change == "role_replaced":
+                    identities[0] = (roles[0], 99)
+                return SimpleNamespace(fetchall=lambda: identities)
+            return SimpleNamespace(fetchall=lambda: [tuple(row)])
+
+    if change:
+        with pytest.raises(adapter.Refused, match=r"has_nonreceipt_dependency|role_oid_changed"):
+            native.require_retained_delivery_role_dependencies(Connection(), tables, 123)
+    else:
+        assert native.require_retained_delivery_role_dependencies(Connection(), tables, 123) == [
+            tuple(row)
+        ]

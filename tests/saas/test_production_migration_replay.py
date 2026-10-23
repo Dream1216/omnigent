@@ -798,3 +798,27 @@ def _verify_runner_deployment_and_startup(
     print(
         "RUNNER_REVOKED_MANAGEMENT_STARTUP=pass; original_receipt=unchanged; unsafe_edges=rejected"
     )
+
+
+@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
+def test_real_fenced_t_runtime_rebinding_commit_and_complete_facts(production_replay):
+    """Run the native maintenance scenario in the existing two-major replay lane."""
+    from tests.saas.test_runtime_maintenance_postgresql import (
+        assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome,
+    )
+
+    assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome(
+        production_replay
+    )
+
+
+@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
+def test_real_fenced_t_inverse_and_same_oid_reattach(production_replay, tmp_path):
+    """Derive clean original T gold; fixture callbacks do not qualify old images."""
+    from tests.saas.test_runtime_maintenance_postgresql import (
+        assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold,
+    )
+
+    assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
+        production_replay, tmp_path
+    )

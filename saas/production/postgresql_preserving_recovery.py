@@ -273,6 +273,63 @@ def _source_projection(plan, engines):
         }
 
 
+def _original_t_security_projection(catalog, role_edges):
+    """Match the original T capability enumeration after proving retired roles inert.
+
+    The retained receipt ACLs still reference these three P17 roles. Their full
+    archive metadata and shared dependencies are checked before this projection;
+    this accepts no membership or authority in the original T business catalog.
+    """
+    adapter.need(
+        catalog.get("saas_head") == T_HEAD and catalog.get("official_head") == "mm1a2b3c4d5e",
+        "explicit_t_original_source_heads_required",
+    )
+    retired = {"saas_usage_consumer", "saas_audit_delivery", "saas_revocation_consumer"}
+    security = catalog["control_plane_security"]
+    rows = security["roles"]
+    selected = [row for row in rows if row[0] in retired]
+    expected = [
+        [role, False, False, False, False, False, False, True, -1, "null"]
+        for role in sorted(retired)
+    ]
+    adapter.need(
+        adapter.canonical(sorted(selected)) == adapter.canonical(expected),
+        "explicit_t_retained_delivery_role_flags_changed",
+    )
+    adapter.need(
+        not any(set(row[:3]) & retired for row in role_edges),
+        "explicit_t_retained_delivery_role_membership",
+    )
+    projected = {
+        **catalog,
+        "control_plane_security": {
+            **security,
+            "roles": [row for row in rows if row[0] not in retired],
+        },
+    }
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(?:saas_usage_consumer|saas_audit_delivery|"
+        r"saas_revocation_consumer)(?![A-Za-z0-9_])"
+    )
+
+    def references_retired_role(value):
+        if isinstance(value, str):
+            return pattern.search(value) is not None
+        if isinstance(value, dict):
+            return any(
+                references_retired_role(k) or references_retired_role(v) for k, v in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(references_retired_role(item) for item in value)
+        return False
+
+    adapter.need(
+        not references_retired_role(projected),
+        "explicit_t_retained_delivery_role_has_business_authority",
+    )
+    return projected
+
+
 class PreservingPostgreSqlRecovery:
     """Small phase API over the already qualified native SQL/move primitives.
 
@@ -396,13 +453,32 @@ class PreservingPostgreSqlRecovery:
             receipt_schema=receipt_schema,
         )
 
-    def _t_old_catalog(self) -> None:
+    def _t_old_catalog(self, state) -> None:
+        archive = adapter.archive_name(self.operation.operation_id)
+        adapter.need(state["archive"] == archive, "explicit_t_archive_scope_changed")
+        adapter.require_archive_acl(
+            self.database_owner,
+            archive,
+            self.plan.database_owner.login,
+            self.plan.saas_owner.login,
+        )
+        retained = self._capture(self.owner, archive)
+        adapter.need(
+            retained["tables"] == state["archived"]["tables"]
+            and retained["archive_catalog"] == state["archive_inventory"],
+            "explicit_t_retained_archive_metadata_or_facts_changed",
+        )
+        native.require_retained_delivery_role_dependencies(
+            self.maintenance, retained["tables"], self.operation.database_identity["database_oid"]
+        )
         old_plan = replace(self.plan, business_delivery_service_role_bindings=None)
         observed = _source_projection(old_plan, self.engines)
+        edges = native.role_edges(self.maintenance)
+        source_catalog = _original_t_security_projection(observed["catalog"], edges)
         adapter.need(
             observed["inventory_sha256"] == self.gold["old_inventory_sha256"]
-            and observed["security_sha256"] == self.gold["old_security_sha256"]
-            and native.role_edges(self.maintenance) == self.gold["old_role_edges"]
+            and adapter.sha(adapter.canonical(source_catalog)) == self.gold["old_security_sha256"]
+            and edges == self.gold["old_role_edges"]
             and native.object_access(self.database_owner) == self.gold["old_access"],
             "explicit_t_old_catalog_mismatch",
         )
@@ -563,7 +639,7 @@ class PreservingPostgreSqlRecovery:
             "old_saas_head_missing",
         )
         if _is_explicit_t(self.operation):
-            self._t_old_catalog()
+            self._t_old_catalog(state)
             adapter.need(
                 self._t_facts(
                     state["t_before"]["tables"],
@@ -592,7 +668,7 @@ class PreservingPostgreSqlRecovery:
         if _is_explicit_t(self.operation):
             self._t_source_gold()
             self._begin("prepare_explicit_t_reentry_backup_and_drain")
-            self._t_old_catalog()
+            self._t_old_catalog(state)
             current = self._t_facts(
                 state["t_before"]["tables"], head="lm2t00000001", receipt_schema=state["archive"]
             )

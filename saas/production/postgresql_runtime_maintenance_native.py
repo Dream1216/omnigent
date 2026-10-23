@@ -338,3 +338,169 @@ def capture_t_preserved_facts(
             }
     except psycopg.Error:
         raise db.Refused("t_preservation_full_reader_unavailable") from None
+
+
+def runtime_rows_snapshot(maintenance, *, expected_identity, owner, maximum):
+    """Complete fixed Runtime relations, including other placements, under RLS."""
+    db.require_idle(maintenance)
+    db.need(
+        db.database_identity(owner, maintenance) == expected_identity, "runtime_identity_changed"
+    )
+    db.need(type(maximum) is int and 0 < maximum <= 100000, "runtime_row_bound_required")
+    tables = {
+        "placements": ("saas_runtime_placements", "id"),
+        "partitions": ("saas_runtime_partitions", "id"),
+        "bindings": ("saas_runtime_resource_bindings", "id"),
+        "aliases": ("saas_runtime_identity_aliases", "runtime_partition_id,user_id"),
+    }
+    result = {}
+    with maintenance.transaction():
+        maintenance.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        maintenance.execute("SET LOCAL row_security=on")
+        maintenance.execute("SET LOCAL statement_timeout='60s'")
+        maintenance.execute("SET LOCAL search_path=pg_catalog,pg_temp")
+        for name, (table, ordering) in tables.items():
+            visible = maintenance.execute(
+                "SELECT has_table_privilege(current_user,%s,'SELECT'),"
+                "pg_catalog.row_security_active(%s::regclass)",
+                ("public." + table, "public." + table),
+            ).fetchone()
+            db.need(visible == (True, False), "runtime_full_reader_required")
+            rows = maintenance.execute(
+                sql.SQL("SELECT to_jsonb(r) FROM public.{} r ORDER BY {} LIMIT %s").format(
+                    sql.Identifier(table),
+                    sql.SQL(",").join(map(sql.Identifier, ordering.split(","))),
+                ),
+                (maximum + 1,),
+            ).fetchall()
+            db.need(len(rows) <= maximum, "runtime_complete_rows_exceed_bound")
+            result[name] = [row[0] for row in rows]
+    return result
+
+
+def assert_runtime_transition_facts(
+    before,
+    after,
+    *,
+    expected_rows,
+    actual_rows,
+    maintenance,
+    expected_request_hash,
+    expected_payload,
+    idempotency_key,
+    maximum,
+):
+    """Only exact Runtime row projection and one proven source event may differ.
+
+    Excluding the source-owned event here verifies the WHOLE original Outbox,
+    not a sample/prefix. No rows, terminal fields, timestamps or hashes are edited.
+    The stable event key/hash/payload must come from the native Runtime operation
+    whose original read-only reconcile has already proved its committed scope.
+    """
+    db.need(actual_rows == expected_rows, "runtime_global_projection_changed")
+    db.need(
+        before["database_identity"] == after["database_identity"]
+        and before["builtin_pg_notify"] == after["builtin_pg_notify"]
+        and set(before["tables"]) == set(after["tables"]),
+        "t_runtime_identity_builtin_or_inventory_changed",
+    )
+    runtime_tables = {
+        "saas_runtime_placements",
+        "saas_runtime_partitions",
+        "saas_runtime_resource_bindings",
+        "saas_runtime_identity_aliases",
+    }
+    outbox = "saas_control_plane_outbox"
+    for table, original in before["tables"].items():
+        current = after["tables"][table]
+        if table not in runtime_tables | {outbox}:
+            db.need(current == original, "t_nonruntime_fact_changed")
+        else:
+
+            def shape(row):
+                return {
+                    key: value
+                    for key, value in row.items()
+                    if key not in {"copy_sha256", "copy_bytes", "row_count"}
+                }
+
+            db.need(shape(original) == shape(current), "t_runtime_relation_shape_or_oid_changed")
+            if table in runtime_tables:
+                db.need(
+                    current["row_count"] == original["row_count"], "t_runtime_row_count_changed"
+                )
+    original = before["tables"][outbox]
+    db.need(
+        after["tables"][outbox]["row_count"] == original["row_count"] + 1,
+        "t_runtime_exactly_one_source_event_required",
+    )
+    db.require_idle(maintenance)
+    with maintenance.transaction():
+        maintenance.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        maintenance.execute("SET LOCAL row_security=on")
+        maintenance.execute("SET LOCAL statement_timeout='60s'")
+        maintenance.execute("SET LOCAL search_path=pg_catalog,pg_temp")
+        db.need(
+            maintenance.execute(
+                "SELECT pg_catalog.row_security_active("
+                "'public.saas_control_plane_outbox'::regclass)"
+            ).fetchone()[0]
+            is False,
+            "runtime_outbox_full_reader_required",
+        )
+        events = maintenance.execute(
+            "SELECT id,request_hash,payload,to_jsonb(e) FROM public.saas_control_plane_outbox e "
+            "WHERE idempotency_key=%s AND aggregate_type='runtime_placement' "
+            "AND event_type='runtime.placement.upgraded'",
+            (idempotency_key,),
+        ).fetchall()
+        db.need(len(events) == 1, "runtime_source_event_missing_or_conflicting")
+        event_id, request_hash, payload, document = events[0]
+        db.need(
+            request_hash == expected_request_hash and payload == expected_payload,
+            "runtime_source_event_hash_or_payload_changed",
+        )
+        db.need(
+            document["aggregate_key"] == expected_payload["placement_id"]
+            and document["tenant_id"] is None,
+            "runtime_source_event_scope_changed",
+        )
+        db.need(
+            document["attempt_count"] == 0
+            and all(
+                document[name] is None
+                for name in (
+                    "available_at",
+                    "claimed_at",
+                    "claim_token",
+                    "last_error",
+                    "last_error_code",
+                    "last_error_digest",
+                    "published_at",
+                    "quarantined_at",
+                )
+            ),
+            "legacy_outbox_worker_not_fenced",
+        )
+        query = sql.SQL(
+            "COPY (SELECT {} FROM public.saas_control_plane_outbox "
+            "WHERE id<>%s ORDER BY {}) TO STDOUT (FORMAT binary)"
+        ).format(
+            sql.SQL(",").join(map(sql.Identifier, original["columns"])),
+            sql.SQL(",").join(map(sql.Identifier, original["primary_key"])),
+        )
+        digest, length = hashlib.sha256(), 0
+        with maintenance.cursor() as cursor, cursor.copy(query, (event_id,)) as blocks:
+            for block in blocks:
+                length += len(block)
+                db.need(length <= maximum, "runtime_outbox_copy_exceeds_bound")
+                digest.update(block)
+        db.need(
+            length == original["copy_bytes"] and digest.hexdigest() == original["copy_sha256"],
+            "t_existing_outbox_fact_changed",
+        )
+    return {
+        "idempotency_key": idempotency_key,
+        "event": document,
+        "event_sha256": db.sha(db.canonical(document)),
+    }

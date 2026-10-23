@@ -13,7 +13,7 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 
-from saas.production.postgresql_preserving_adapter import need
+from saas.production.postgresql_preserving_adapter import TABLES, need, require_idle
 
 MANIFEST_SHA = "bf2734f3a319b56ff41506c098d601a45741a6e59b9f2381bd4f715229d89500"
 
@@ -154,11 +154,83 @@ def role_edges(connection):
     ]
 
 
+def require_retained_delivery_role_dependencies(connection, receipt_tables, database_oid):
+    """These retired capabilities may depend only on the original receipt objects."""
+    roles = ("saas_usage_consumer", "saas_audit_delivery", "saas_revocation_consumer")
+    need(set(receipt_tables) == set(TABLES), "explicit_t_receipt_dependency_scope_required")
+    relation_oids = {table["oid"] for table in receipt_tables.values()}
+    policy_oids = {
+        policy["oid"]
+        for table in receipt_tables.values()
+        for policy in table["metadata"]["policies"]
+    }
+    require_idle(connection)
+    with connection.transaction():
+        connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        role_ids = dict(
+            connection.execute(
+                "SELECT rolname,oid::bigint FROM pg_catalog.pg_roles "
+                "WHERE rolname=ANY(%s) ORDER BY rolname",
+                (list(roles),),
+            ).fetchall()
+        )
+        need(set(role_ids) == set(roles), "explicit_t_retained_delivery_role_identity_missing")
+        for role, table in zip(roles, TABLES, strict=True):
+            policies = {
+                row["polname"]: row["polroles"]
+                for row in receipt_tables[table]["metadata"]["policies"]
+            }
+            need(
+                all(
+                    policies.get(f"rls_{table.removeprefix('saas_')}_delivery_consumer_{action}")
+                    == "{" + str(role_ids[role]) + "}"
+                    for action in ("read", "insert")
+                ),
+                "explicit_t_retained_delivery_role_oid_changed",
+            )
+        dependencies = connection.execute(
+            "SELECT r.rolname,r.oid::bigint,d.dbid::bigint,"
+            "d.classid='pg_catalog.pg_class'::regclass,"
+            "d.classid='pg_catalog.pg_policy'::regclass,"
+            "d.objid::bigint,d.objsubid,d.deptype::text "
+            "FROM pg_catalog.pg_shdepend d JOIN pg_catalog.pg_roles r ON r.oid=d.refobjid "
+            "WHERE d.refclassid='pg_catalog.pg_authid'::regclass AND r.rolname=ANY(%s) "
+            "ORDER BY 1,3,4,5,6,7,8",
+            (list(roles),),
+        ).fetchall()
+    need(
+        all(
+            role_oid == role_ids[role]
+            and db_oid == database_oid
+            and sub_id == 0
+            and (
+                (relation and not policy and object_oid in relation_oids and kind == "a")
+                or (policy and not relation and object_oid in policy_oids and kind == "r")
+            )
+            for (
+                role,
+                role_oid,
+                db_oid,
+                relation,
+                policy,
+                object_oid,
+                sub_id,
+                kind,
+            ) in dependencies
+        ),
+        "explicit_t_delivery_role_has_nonreceipt_dependency",
+    )
+    return dependencies
+
+
 def reverse_additive_role_edges(connection, source_old, source_new):
     old = {tuple(x) for x in source_old}
     new = {tuple(x) for x in source_new}
     need(old <= new, "preserving_reverse_additive_role_edges_158")
-    added = sorted(new - old)
+    bootstrap = connection.execute("SELECT rolname FROM pg_roles WHERE oid=10").fetchone()[0]
+    # Reverse the existing restore order: dependent service grants first,
+    # then the bootstrap's ADMIN grants. Never revoke through CASCADE.
+    added = sorted(new - old, key=lambda row: (row[2] == bootstrap, row))
     allowed = {
         "saas_usage_consumer",
         "saas_audit_delivery",

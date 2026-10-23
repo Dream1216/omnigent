@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import asdict, replace
 from threading import Barrier, RLock
 from types import SimpleNamespace
 from uuid import uuid4
@@ -504,3 +504,485 @@ def test_authority_expiry_after_sql_rolls_back_before_commit(runtime_boundary, b
     assert "INSERT" in runtime_boundary.store.events
     assert runtime_boundary.store.current == runtime_boundary.before
     assert runtime_boundary.store.receipts == []
+
+
+def _fenced_t_operation(fixture, **changes):
+
+    from saas.production.postgresql_preserving_recovery import (
+        T_PROTOCOL,
+        ExplicitTRecoveryOperation,
+    )
+
+    parent = ExplicitTRecoveryOperation(
+        **asdict(fixture.operation.recovery),
+        contract_version=T_PROTOCOL,
+        rollback_saas_target="lm2t00000001",
+        rollback_host_digest="sha256:" + "5" * 64,
+        rollback_upstream_revision="825f8500d7cc8e997e5562fa55694cd146165f3c",
+        rollback_adapter_contract_version="0.2.0",
+    )
+    values = {
+        **asdict(fixture.operation),
+        "recovery": parent,
+        "runtime_version": "0.18.0.dev20261006",
+        "upstream_revision": parent.rollback_upstream_revision,
+        "official_schema_revision": "mm1a2b3c4d5e",
+        "direction": "to_t",
+        "source_official_schema_revision": "nf12ab34cd56",
+        **changes,
+    }
+    return runtime.FencedTRuntimeOperation(**values)
+
+
+def test_fenced_t_only_projects_before_inverse_and_preserves_same_project_ids(runtime_boundary):
+    from saas.control_plane.bindings import RuntimeBindingService
+    from saas.control_plane.resolver import RuntimeCompatibilityPolicy
+
+    fixture = runtime_boundary
+    for partition in fixture.store.current["partitions"]:
+        partition.update(runtime_type="omnigent", physical_partition_key="42")
+    fixture.store.current["placements"][0]["runtime_type"] = "omnigent"
+    fixture.store.current = runtime.upgraded_scope(fixture.store.current, fixture.operation)
+    before = copy.deepcopy(fixture.store.current)
+    old = _fenced_t_operation(fixture)
+    # Ordinary operations still require their actual source head to equal target.
+    with pytest.raises(db.Refused, match="installed_source_and_runtime_heads_required"):
+        fixture.make(
+            selected=replace(fixture.operation, official_schema_revision="mm1a2b3c4d5e")
+        ).prepare()
+    control = fixture.make(selected=old)
+    state = control.prepare()
+    control.apply(state)
+    service = object.__new__(RuntimeBindingService)
+    service._compatibility_policy = RuntimeCompatibilityPolicy(
+        runtime_type="omnigent",
+        allowed_runtime_versions=frozenset({old.runtime_version}),
+        allowed_source_revisions=frozenset({old.upstream_revision}),
+        allowed_schema_revisions=frozenset({old.official_schema_revision}),
+        adapter_contract_version="0.2.0",
+    )
+    for partition in fixture.store.current["partitions"]:
+        assert (
+            service.validate_target_records(
+                SimpleNamespace(**partition),
+                SimpleNamespace(**fixture.store.current["placements"][0]),
+            )
+            == 42
+        )
+    assert fixture.store.current["aliases"] == before["aliases"]
+    assert [row["project_id"] for row in fixture.store.current["bindings"]] == [
+        row["project_id"] for row in before["bindings"]
+    ]
+    assert [row["runtime_resource_id"] for row in fixture.store.current["bindings"]] == [
+        row["runtime_resource_id"] for row in before["bindings"]
+    ]
+    for original, changed in zip(
+        before["partitions"], fixture.store.current["partitions"], strict=True
+    ):
+        assert changed["placement_generation"] == original["placement_generation"] + 1
+    restored = fixture.make(
+        selected=replace(
+            old,
+            recovery=replace(old.recovery, operation_id=str(uuid4())),
+            direction="to_candidate",
+            runtime_version=fixture.operation.runtime_version,
+            upstream_revision=fixture.operation.upstream_revision,
+            official_schema_revision="nf12ab34cd56",
+        )
+    )
+    restored.apply(restored.prepare())
+    for original, changed in zip(
+        before["partitions"], fixture.store.current["partitions"], strict=True
+    ):
+        assert changed["placement_generation"] == original["placement_generation"] + 2
+    assert fixture.store.current["aliases"] == before["aliases"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"direction": "unknown"},
+        {"source_official_schema_revision": "mm1a2b3c4d5e"},
+        {"official_schema_revision": "nf12ab34cd56"},
+        {"runtime_version": "0.19"},
+        {"upstream_revision": "0" * 40},
+        {"adapter_contract_version": "0.1.0"},
+    ],
+)
+def test_fenced_t_contract_drift_refuses_before_sql(runtime_boundary, change):
+    with pytest.raises(db.Refused):
+        runtime_boundary.make(selected=_fenced_t_operation(runtime_boundary, **change))
+    assert runtime_boundary.store.events == []
+
+
+def test_p15_recovery_cannot_select_fenced_t_transition(runtime_boundary):
+    selected = replace(
+        _fenced_t_operation(runtime_boundary), recovery=runtime_boundary.operation.recovery
+    )
+    with pytest.raises(db.Refused, match="typed_t_recovery_required"):
+        runtime_boundary.make(selected=selected)
+    assert runtime_boundary.store.events == []
+
+
+def test_fenced_t_unknown_commit_is_only_read_back(runtime_boundary):
+    fixture = runtime_boundary
+    control = fixture.make(selected=_fenced_t_operation(fixture))
+    state = control.prepare()
+    fixture.store.failure = "commit_ack"
+    with pytest.raises(ConnectionError, match="acknowledgement lost"):
+        control.apply(state)
+    mutations = fixture.store.events.count("UPDATE") + fixture.store.events.count("INSERT")
+    result = control.reconcile(state)
+    assert result["phase"] == "runtime_metadata_committed"
+    assert control.reconcile(state) == result
+    assert fixture.store.events.count("UPDATE") + fixture.store.events.count("INSERT") == mutations
+    assert len(fixture.store.receipts) == 1
+
+
+@pytest.fixture
+def t_composition_boundary(recovery_boundary, runtime_boundary, monkeypatch):
+    from omnigent.version import VERSION
+    from saas.production import postgresql_preserving_recovery as preserving
+
+    operation, gold = recovery_tests._explicit_t_fixture(
+        recovery_boundary,
+        rollback_product_revision="3264a645a0fce33ea2c6477ea92044f8491051bf",
+        rollback_server_digest="sha256:adb1d0987d74b59d2d7121a61c5bc7112bd49fe5a2921b7373b827946d29d041",
+        rollback_host_digest="sha256:1c969bb11a41edcf3ec8f16090a6ebd7956ef80de060697f76ce4ea02a140b69",
+        rollback_upstream_revision="825f8500d7cc8e997e5562fa55694cd146165f3c",
+    )
+    control, _ = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    template = replace(
+        runtime_boundary.operation,
+        recovery=operation,
+        runtime_version=VERSION,
+        upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
+    )
+    events, checkpoints = [], []
+    control.checkpoint = lambda phase, state: checkpoints.append((phase, copy.deepcopy(state)))
+    facts = {"fixture": "no database or signed-image claim"}
+    rows = {
+        "placements": [
+            {"id": template.placement_id, "runtime_type": "omnigent", "status": "active"}
+        ]
+    }
+
+    def prepared():
+        events.append("preserving.prepare")
+        return {"phase": "prepared", "operation": asdict(operation), "t_before": facts}
+
+    monkeypatch.setattr(control, "prepare", prepared)
+    monkeypatch.setattr(
+        control,
+        "inverse",
+        lambda state: (
+            events.append("preserving.inverse")
+            or {**state, "phase": "inverse_complete_old_signed_image_verification_required"}
+        ),
+    )
+    monkeypatch.setattr(
+        control, "reattach", lambda state: events.append("preserving.reattach") or state
+    )
+    wrapped = runtime.FencedTRuntimeRecovery(
+        preserving=control,
+        runtime_operations=[template],
+        verify_transition=lambda *_: None,
+        verify_pair=lambda *_: events.append("actual_pair_fixture_only"),
+        max_rows=10,
+    )
+    monkeypatch.setattr(wrapped, "_rows", lambda: copy.deepcopy(rows))
+    monkeypatch.setattr(wrapped, "_facts", lambda: copy.deepcopy(facts))
+    monkeypatch.setattr(
+        wrapped,
+        "_apply_runtime",
+        lambda state, direction: events.append(direction) or copy.deepcopy(state),
+    )
+    monkeypatch.setattr(wrapped, "_verify_events_unchanged", lambda _: None)
+    return SimpleNamespace(
+        control=control,
+        wrapped=wrapped,
+        events=events,
+        checkpoints=checkpoints,
+        operation=operation,
+        template=template,
+        preserving_module=preserving,
+    )
+
+
+def test_t_composition_orders_source_gold_before_old_projection_and_same_oid_restore_before_new(
+    t_composition_boundary,
+):
+    fixture = t_composition_boundary
+    prepared = fixture.wrapped.prepare()
+    inverse = fixture.wrapped.inverse(prepared)
+    ready = fixture.wrapped.verify_original_pair(inverse)
+    fixture.wrapped.reattach(ready)
+    assert fixture.events == [
+        "preserving.prepare",
+        "to_t",
+        "preserving.prepare",
+        "preserving.inverse",
+        "actual_pair_fixture_only",
+        "actual_pair_fixture_only",
+        "preserving.reattach",
+        "to_candidate",
+    ]
+    assert fixture.checkpoints[-1][1]["operation"] == asdict(fixture.operation)
+    assert fixture.control.operation == fixture.operation
+
+
+def test_t_composition_bad_initial_source_gold_blocks_all_metadata(
+    t_composition_boundary, monkeypatch
+):
+    fixture = t_composition_boundary
+
+    def refused():
+        raise db.Refused("independent_clean_source_gold_mismatch")
+
+    monkeypatch.setattr(fixture.control, "prepare", refused)
+    with pytest.raises(db.Refused, match="source_gold_mismatch"):
+        fixture.wrapped.prepare()
+    assert fixture.events == []
+    assert fixture.checkpoints == []
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_t_composition_pair_flag_cannot_authorize_reattach(t_composition_boundary, flag):
+    fixture = t_composition_boundary
+    state = fixture.wrapped.inverse(fixture.wrapped.prepare())
+    fixture.wrapped.verify_pair = lambda *_: flag
+    with pytest.raises(db.Refused, match="actual_original_pair_and_same_projects_required"):
+        fixture.wrapped.verify_original_pair(state)
+    assert "preserving.reattach" not in fixture.events
+
+
+def test_t_composition_unknown_metadata_commit_never_starts_inverse(
+    t_composition_boundary, monkeypatch
+):
+    fixture = t_composition_boundary
+    state = fixture.wrapped.prepare()
+
+    def unknown(*_):
+        raise ConnectionError("commit outcome unknown")
+
+    monkeypatch.setattr(fixture.wrapped, "_apply_runtime", unknown)
+    with pytest.raises(ConnectionError, match="outcome unknown"):
+        fixture.wrapped.inverse(state)
+    assert fixture.events == ["preserving.prepare"]
+
+
+@pytest.mark.parametrize("phase", ["prepare", "reattach"])
+def test_t_composition_rejects_new_global_placement_before_any_next_mutation(
+    t_composition_boundary, monkeypatch, phase
+):
+    fixture = t_composition_boundary
+    state = fixture.wrapped.prepare()
+    if phase == "reattach":
+        state = fixture.wrapped.verify_original_pair(fixture.wrapped.inverse(state))
+    observed = fixture.wrapped._rows()
+    observed["placements"].append(
+        {"id": str(uuid4()), "runtime_type": "omnigent", "status": "active"}
+    )
+    monkeypatch.setattr(fixture.wrapped, "_rows", lambda: copy.deepcopy(observed))
+    before = fixture.events.copy()
+    with pytest.raises(db.Refused, match="complete_runtime_placement_set_required"):
+        fixture.wrapped.prepare() if phase == "prepare" else fixture.wrapped.reattach(state)
+    assert "preserving.reattach" not in fixture.events[len(before) :]
+    assert "to_t" not in fixture.events[len(before) :]
+
+
+@pytest.mark.parametrize("drift", ["phase", "operation", "scope", "facts"])
+def test_t_composition_rejects_stale_phase_scope_or_full_facts_before_metadata(
+    t_composition_boundary, drift
+):
+    fixture = t_composition_boundary
+    state = fixture.wrapped.prepare()
+    before = fixture.events.copy()
+    if drift == "phase":
+        state["phase"] = "inverse_complete"
+    elif drift == "operation":
+        state["operation"]["operation_id"] = str(uuid4())
+    elif drift == "scope":
+        state["runtime_templates"] = []
+    else:
+        state["before_runtime_facts"] = {"different": "full facts"}
+    with pytest.raises(db.Refused):
+        fixture.wrapped.inverse(state)
+    assert fixture.events == before
+
+
+def test_t_unknown_commit_without_durable_full_baseline_refuses_readonly_reconciliation(
+    t_composition_boundary,
+):
+    fixture = t_composition_boundary
+    state = fixture.wrapped.prepare()
+    state["runtime_child"] = {"index": 0, "direction": "to_t", "state": {}}
+    before = fixture.events.copy()
+    with pytest.raises(db.Refused, match="runtime_unknown_commit_full_baseline_required"):
+        fixture.wrapped.reconcile_runtime_unknown_commit(state)
+    assert fixture.events == before
+
+
+def test_t_unknown_commit_rechecks_actual_proof_full_delta_without_checkpoint_or_continuation(
+    t_composition_boundary, monkeypatch
+):
+    fixture = t_composition_boundary
+    wrapped = fixture.wrapped
+    state = wrapped.prepare()
+    operation = wrapped._operation(fixture.template, "to_t")
+    calls = []
+    child_state = {
+        "operation": asdict(operation),
+        "before": {"fixture": "whole scope"},
+        "before_sha256": "0" * 64,
+    }
+    state["runtime_child"] = {
+        "index": 0,
+        "direction": "to_t",
+        "state": child_state,
+        "before_facts": {"fixture": "whole COPY"},
+        "before_rows": {},
+        "expected_rows": {"fixture": "exact projection"},
+    }
+    control = SimpleNamespace(
+        operation=operation,
+        verify_runtime=lambda actual, before: calls.append(("actual_proof", actual, before)),
+        reconcile=lambda actual: (
+            calls.append(("readonly_reconcile", actual)) or {"production_admitted": False}
+        ),
+        _payload=lambda _: {"fixture": "native source"},
+    )
+    monkeypatch.setattr(wrapped, "_control", lambda *_: control)
+    monkeypatch.setattr(
+        wrapped.native,
+        "assert_runtime_transition_facts",
+        lambda before, after, **kwargs: (
+            calls.append(("whole_delta", before, after, kwargs)) or {"fixture": "observed delta"}
+        ),
+    )
+    before_events, checkpoints = fixture.events.copy(), fixture.checkpoints.copy()
+    result = wrapped.reconcile_runtime_unknown_commit(state)
+    assert [entry[0] for entry in calls] == ["actual_proof", "readonly_reconcile", "whole_delta"]
+    assert calls[-1][1] == state["runtime_child"]["before_facts"]
+    assert calls[-1][3]["expected_rows"] == state["runtime_child"]["expected_rows"]
+    assert result == {
+        "production_admitted": False,
+        "complete_facts_delta": {"fixture": "observed delta"},
+        "automatic_continuation": False,
+    }
+    assert fixture.events == before_events and fixture.checkpoints == checkpoints
+
+
+def test_t_composition_accepts_only_independently_pinned_repaired_target_contract(
+    recovery_boundary, runtime_boundary
+):
+    from omnigent.version import VERSION
+
+    operation, gold = recovery_tests._explicit_t_fixture(
+        recovery_boundary,
+        rollback_product_revision="c" * 40,
+        rollback_server_digest="sha256:" + "d" * 64,
+        rollback_host_digest="sha256:" + "e" * 64,
+        rollback_upstream_revision="825f8500d7cc8e997e5562fa55694cd146165f3c",
+    )
+    control, _ = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    template = replace(
+        runtime_boundary.operation,
+        recovery=operation,
+        runtime_version=VERSION,
+        upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
+    )
+    calls = []
+
+    def actual_proof(parent, child, scope):
+        calls.append((parent.target_contract(), child.recovery.target_contract(), scope))
+        raise db.Refused("fixture_only_approved_actual_pair_proof_missing")
+
+    wrapped = runtime.FencedTRuntimeRecovery(
+        preserving=control,
+        runtime_operations=[template],
+        verify_transition=actual_proof,
+        verify_pair=lambda *_: None,
+        max_rows=10,
+    )
+    child = wrapped._operation(template, "to_t")
+    assert child.recovery.target_contract() == operation.target_contract()
+    assert child.runtime_version == "0.18.0.dev20261006"
+    assert child.upstream_revision == "825f8500d7cc8e997e5562fa55694cd146165f3c"
+    assert calls == []  # Constructor/source Gold is not runtime approval.
+    with pytest.raises(db.Refused, match="approved_actual_pair_proof_missing"):
+        wrapped._control(0, "to_t", {}).verify_runtime(child, {"fixture": "scope"})
+    assert calls == [
+        (operation.target_contract(), operation.target_contract(), {"fixture": "scope"})
+    ]
+    control.gold["rollback_target"]["server_digest"] = "sha256:" + "f" * 64
+    with pytest.raises(db.Refused, match="source_gold_binding_changed"):
+        runtime.FencedTRuntimeRecovery(
+            preserving=control,
+            runtime_operations=[template],
+            verify_transition=actual_proof,
+            verify_pair=lambda *_: None,
+            max_rows=10,
+        )
+
+
+def test_t_composition_wrong_upstream_is_not_an_original_t_target(
+    recovery_boundary, runtime_boundary
+):
+    from omnigent.version import VERSION
+
+    operation, gold = recovery_tests._explicit_t_fixture(
+        recovery_boundary, rollback_upstream_revision="a" * 40
+    )
+    control, _ = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+    template = replace(
+        runtime_boundary.operation,
+        recovery=operation,
+        runtime_version=VERSION,
+        upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
+    )
+    with pytest.raises(db.Refused, match="original_t_runtime_contract_required"):
+        runtime.FencedTRuntimeRecovery(
+            preserving=control,
+            runtime_operations=[template],
+            verify_transition=lambda *_: None,
+            verify_pair=lambda *_: None,
+            max_rows=10,
+        )
+
+
+def test_original_role_inverse_revokes_dependent_grant_before_bootstrap_admin(monkeypatch):
+    from saas.production import postgresql_preserving_native as native
+
+    role = "saas_revocation_consumer"
+    root = (role, "replay_principal", "postgres", True, False, False)
+    leaf = (role, "replay_revocation_consumer", "replay_principal", False, True, True)
+    old, new = [], [list(row) for row in sorted([root, leaf])]
+    current, statements = copy.deepcopy(new), []
+
+    class Connection:
+        @contextmanager
+        def transaction(self):
+            before = copy.deepcopy(current)
+            try:
+                yield
+            except BaseException:
+                current[:] = before
+                raise
+
+        def execute(self, statement):
+            if isinstance(statement, str):
+                assert statement == "SELECT rolname FROM pg_roles WHERE oid=10"
+                return SimpleNamespace(fetchone=lambda: ("postgres",))
+            text = statement.as_string(None)
+            statements.append(text)
+            expected = leaf if leaf in map(tuple, current) else root
+            assert text == f'REVOKE "{role}" FROM "{expected[1]}" GRANTED BY "{expected[2]}"'
+            current.remove(list(expected))
+            return None
+
+    monkeypatch.setattr(native, "role_edges", lambda _: copy.deepcopy(current))
+    result = native.reverse_additive_role_edges(Connection(), old, new)
+    assert result == [leaf, root]
+    assert current == []
+    assert len(statements) == 2 and all("CASCADE" not in text for text in statements)

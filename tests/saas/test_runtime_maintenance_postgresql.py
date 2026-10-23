@@ -6,19 +6,30 @@ are explicit database-test doubles, never installed as production authority.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import importlib.util
+import io
+import json
 import os
+import subprocess
+import sys
+import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from threading import Barrier
+from types import SimpleNamespace
 from uuid import uuid4
 
 import psycopg
 import pytest
 import sqlalchemy as sa
+from alembic import command
 from psycopg import sql
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.db_models import (
     RuntimeIdentityAliasRecord,
@@ -755,3 +766,874 @@ def test_retained_facts_without_any_run_refuse_before_all_inverse_mutation(
         owner.close()
         maintenance.close()
         engine.dispose()
+
+
+def _derive_clean_original_t(plan, temporary_root):
+    """Clean T source resources plus the byte-identical original 3264 verifier.
+
+    3264 packages P15 and explicitly accepts verify-only T. Fixed main254 owns
+    T's actual DDL/bootstrap. Both original modules have the same pinned bytes;
+    no expected head, map or verifier is patched to derive target role/ACL gold.
+    """
+    from saas.production.postgresql_preserving_recovery import _source_projection
+
+    repository = Path(__file__).resolve().parents[2]
+    revisions = (
+        "3264a645a0fce33ea2c6477ea92044f8491051bf",
+        "254151b742667a95f0ec8a94e312f03924f56c80",
+    )
+    configured = os.environ.get("OMNIGENT_SAAS_TEST_ORIGINAL_T_GIT_DIR")
+    if configured:
+        public_git = Path(configured)
+        assert public_git.is_absolute() and public_git.is_dir() and not public_git.is_symlink()
+        location = ["--git-dir=" + str(public_git)]
+        assert (
+            subprocess.run(
+                ["git", *location, "rev-parse", "--is-bare-repository"],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            ).stdout
+            == b"true\n"
+        )
+    else:
+        location = ["-C", str(repository)]
+    if any(
+        subprocess.run(
+            ["git", *location, "cat-file", "-e", value + "^{commit}"],
+            check=False,
+            capture_output=True,
+            timeout=10,
+        ).returncode
+        for value in revisions
+    ):
+        assert not configured, "pre-staged fixed public Git objects are incomplete"
+        private_git = temporary_root / "original-t-objects.git"
+        subprocess.run(
+            ["git", "init", "--bare", str(private_git)],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        location = ["--git-dir=" + str(private_git)]
+        # One bounded public fetch, exact objects only; no origin/branch/HEAD.
+        subprocess.run(
+            [
+                "git",
+                *location,
+                "fetch",
+                "--no-tags",
+                "--depth=1",
+                "https://github.com/Dream1216/omnigent.git",
+                *revisions,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=90,
+        )
+
+    def git(*arguments):
+        return subprocess.run(
+            ["git", *location, *arguments], check=True, capture_output=True, timeout=30
+        ).stdout
+
+    def load_original(revision, directory, *, migration_tree, bootstrap_hashes):
+        assert git("rev-parse", revision + "^{commit}").decode().strip() == revision
+        for name, expected in {
+            "saas/control_plane/migrations": migration_tree,
+            "omnigent/db/migrations": "b58e06dcda862826dfbf49d4197ad520d87189ac",
+            "saas/runtime_rls": "3f948aa91c426d23856828e47782a5f244e24559",
+        }.items():
+            assert git("rev-parse", revision + ":" + name).decode().strip() == expected
+        directory.mkdir()
+        raw = git(
+            "archive",
+            "--format=tar",
+            revision,
+            "saas/production/postgresql_migration.py",
+            "saas/control_plane",
+            "saas/runtime_rls",
+            "omnigent/db",
+        )
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            for member in archive:
+                if member.isdir():
+                    continue
+                assert (
+                    member.isfile()
+                    and not Path(member.name).is_absolute()
+                    and ".." not in Path(member.name).parts
+                )
+                destination = directory / member.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(archive.extractfile(member).read())
+        pins = {
+            "saas/production/postgresql_migration.py": (
+                "e9c5e9210da07c1825d62cc8f198e5471e0e41001a87a7b318206ac28ce91127"
+            ),
+            **{"saas/control_plane/" + key: value for key, value in bootstrap_hashes.items()},
+        }
+        for name, expected in pins.items():
+            assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == expected
+        # These shared imports are byte-identical to both original sources.
+        for filename in (directory / "saas/runtime_rls").rglob("*"):
+            if filename.is_file():
+                assert (
+                    filename.read_bytes()
+                    == (repository / filename.relative_to(directory)).read_bytes()
+                )
+        name = "saas.production._native_original_t_" + uuid4().hex
+        specification = importlib.util.spec_from_file_location(
+            name, directory / "saas/production/postgresql_migration.py"
+        )
+        module = importlib.util.module_from_spec(specification)
+        sys.modules[name] = module
+        specification.loader.exec_module(module)
+        module.files = lambda package: directory.joinpath(*package.split("."))
+        return module
+
+    old = load_original(
+        revisions[0],
+        temporary_root / "original-3264-p15-source",
+        migration_tree="47855752f994cd8d5d7529fa9fd0c61333ea6a88",
+        bootstrap_hashes={
+            "postgresql_roles.sql": (
+                "bdcdd886c2705e13cb52611bdb94077d1142863183286fd2ec911ccf02748f5b"
+            ),
+            "postgresql_principals.sql": (
+                "b313f0bc489b757ebdbec4c6f3284eb348a9c74a84f29c08544618eb227bfcd7"
+            ),
+            "postgresql_database.sql": (
+                "2fa946b02430c485202d47be106ad060591ff24e962e34bb30e5c9f0aa65b585"
+            ),
+        },
+    )
+    source = load_original(
+        revisions[1],
+        temporary_root / "original-main254-t-source",
+        migration_tree="2a8ff3a59a4241ea9dfd943639cc05261293fc41",
+        bootstrap_hashes={
+            "postgresql_roles.sql": (
+                "583e46f78c21d9a6cd77e6f1805b23b898004a8ccfff746222352921a482773a"
+            ),
+            "postgresql_principals.sql": (
+                "b231e2177878f0f00d5252370cf66f4436f47b31e1949847db5195c291848c0a"
+            ),
+            "postgresql_database.sql": (
+                "72d8e0a8d56a92fccb8c37ee590efefdec444fe2fee5c4b99ddf3206779a2312"
+            ),
+        },
+    )
+    assert old._expected_head("saas") == "p0s000000015"
+    assert source._expected_head("saas") == "lm2t00000001"
+    assert old._expected_head("official") == source._expected_head("official") == "mm1a2b3c4d5e"
+    old_plan = replace(
+        plan, business_delivery_service_role_bindings=None, verification_saas_head="lm2t00000001"
+    )
+    engines = source._create_engines(old_plan)
+    admin_url = sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"]).set(
+        database=plan.saas_owner.url.database, query=plan.saas_owner.url.query
+    )
+    reader = native.connect_url(admin_url)
+    database_owner = native.connect_url(plan.database_owner.url)
+    owner = native.connect_url(plan.saas_owner.url)
+    try:
+        source._apply_principals(
+            engines["principal_operator"],
+            bindings=old_plan.service_role_graph,
+            principal_operator=plan.principal_operator.login,
+        )
+        source._apply_database_authority(
+            engines["database_owner"],
+            principal_operator=plan.principal_operator.login,
+            official_owner=plan.official_owner.login,
+            saas_owner=plan.saas_owner.login,
+            bindings=old_plan.service_role_graph,
+        )
+        for kind in ("official", "saas"):
+            with engines[kind + "_owner"].connect() as connection:
+                config = source._migration_config(kind)
+                config.attributes["connection"] = connection
+                command.upgrade(config, "head")
+        source._apply_runtime_authority(engines["official_owner"])
+        source._apply_control_plane_authority(engines["saas_owner"])
+        source._finalize_database_authority(
+            engines["database_owner"],
+            principal_operator=plan.principal_operator.login,
+            official_owner=plan.official_owner.login,
+            saas_owner=plan.saas_owner.login,
+            bindings=old_plan.service_role_graph,
+        )
+        verified = old._verify_state(old_plan, engines)  # Original 3264 explicit-T runtime path.
+        assert (verified.official_head, verified.saas_head) == ("mm1a2b3c4d5e", "lm2t00000001")
+        projection = _source_projection(old_plan, engines)
+        major = db.database_identity(owner, reader)["server_major"]
+        key = (major, "mm1a2b3c4d5e", "lm2t00000001")
+        assert projection["inventory_sha256"] == old._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
+        assert (
+            projection["security_sha256"]
+            == old._source_security_catalog_baselines(old_plan.service_role_graph)[key]
+        )
+        # Clean T intentionally has no P17 receipt relations. Read only the
+        # original builtin/ACL using the same catalog projection as preservation;
+        # never weaken the P18 full-inventory guard to collect target Gold.
+        db.require_idle(reader)
+        with reader.transaction():
+            reader.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            reader.execute("SET LOCAL row_security=on")
+            reader.execute("SET LOCAL search_path=pg_catalog,pg_temp")
+            builtin = db.one(
+                reader,
+                "SELECT p.oid::bigint,pg_get_userbyid(p.proowner) AS owner,"
+                "p.proacl::text AS raw_acl FROM pg_catalog.pg_proc p "
+                "WHERE p.oid=to_regprocedure('pg_catalog.pg_notify(text,text)')",
+            )
+            builtin["entries"] = db.rows(
+                reader,
+                "SELECT pg_get_userbyid(a.grantor) AS grantor,"
+                "CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END "
+                "AS grantee,a.privilege_type,a.is_grantable FROM pg_catalog.pg_proc p "
+                "CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a "
+                "WHERE p.oid=to_regprocedure('pg_catalog.pg_notify(text,text)') "
+                "ORDER BY 1,2,3,4",
+            )
+        return {
+            "old_inventory_sha256": projection["inventory_sha256"],
+            "old_security_sha256": projection["security_sha256"],
+            "old_role_edges": native.role_edges(reader),
+            "old_access": native.object_access(database_owner),
+            "old_builtin_pg_notify": {
+                key: value for key, value in builtin.items() if key not in {"oid", "raw_acl"}
+            }
+            | {"acl_is_null": builtin["raw_acl"] is None},
+        }
+    finally:
+        for connection in (reader, database_owner, owner):
+            connection.close()
+        source._dispose_engines(engines)
+        for module in (old, source):
+            sys.modules.pop(module.__name__, None)
+
+
+def _seed_t_delivery_receipts(engine, plan, scopes):
+    """Real consumer commits for preservation; local crypto/store are test-only."""
+    from saas.control_plane.billing import BillingControlPlane
+    from saas.control_plane.db_models import ControlPlaneOutboxEvent, GlobalUser, TenantMembership
+    from saas.control_plane.outbox_delivery import (
+        PlatformAuditJournalConsumer,
+        UsageReconciliationConsumer,
+    )
+    from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
+    from saas.control_plane.revocation import AuthorizationInvalidations, ReplicaRevocationConsumer
+    from tests.saas.test_audit_journal_delivery import _Cipher, _Signer
+    from tests.saas.test_billing_control_plane import NOW, _bootstrap
+    from tests.saas.test_outbox_delivery_postgresql import _outbox
+    from tests.saas.test_slo_observability import _Store
+
+    admin = sessionmaker(engine, expire_on_commit=False)
+    billing = BillingControlPlane(admin)
+    audit_consumer = PlatformAuditJournalConsumer(
+        admin, _Store(), _Cipher(), _Signer(), product_revision=plan.product_revision
+    )
+    usage_consumer = UsageReconciliationConsumer(admin, product_revision=plan.product_revision)
+    revocation = ReplicaRevocationConsumer(
+        admin,
+        AuthorizationInvalidations(),
+        product_revision=plan.product_revision,
+        replica_uid=uuid4(),
+    )
+    for actor, tenant, _space, _project in scopes:
+        with admin.begin() as session:
+            session.add(
+                TenantMembership(
+                    tenant_id=tenant, user_id=actor, role="owner", status="active", version=1
+                )
+            )
+        pricing, _ = _bootstrap(billing, tenant, actor)
+        usage = billing.record_usage(
+            actor_id=actor,
+            tenant_id=tenant,
+            pricing_snapshot_id=pricing,
+            meter="llm.input_tokens",
+            quantity="1000",
+            unit="tokens",
+            provider="openai",
+            provider_request_id="t-preserving-" + tenant.hex,
+            idempotency_key="t-preserving-usage",
+            occurred_at=NOW + timedelta(minutes=1),
+        )
+        with admin.begin() as session:
+            service = PlatformGovernedAccessService(admin)
+            audit = service._append_audit(
+                session,
+                tenant_id=tenant,
+                actor_type="customer",
+                actor_id=actor,
+                event_type="native.t-preserving.acceptance",
+                target_type="tenant",
+                target_id=tenant,
+                operation_id=None,
+                payload={"fixture": "t-preserving-only"},
+                occurred_at=datetime.now(UTC),
+            )
+            session.flush()
+            audit_id = audit.id
+            session.get(GlobalUser, actor).security_version = 2
+        with admin() as session:
+            usage_event = _outbox(
+                session.scalar(
+                    sa.select(ControlPlaneOutboxEvent).where(
+                        ControlPlaneOutboxEvent.event_type == "billing.usage.recorded",
+                        ControlPlaneOutboxEvent.aggregate_key == str(usage.id),
+                    )
+                )
+            )
+            audit_event = _outbox(
+                session.scalar(
+                    sa.select(ControlPlaneOutboxEvent).where(
+                        ControlPlaneOutboxEvent.event_type == "platform.audit.persisted",
+                        ControlPlaneOutboxEvent.aggregate_key == str(audit_id),
+                    )
+                )
+            )
+            revoke_id = session.scalar(
+                sa.select(ControlPlaneOutboxEvent.id).where(
+                    ControlPlaneOutboxEvent.aggregate_type == "authorization_user",
+                    ControlPlaneOutboxEvent.aggregate_key == str(actor),
+                )
+            )
+        usage_consumer.publish(**usage_event)
+        audit_consumer.publish(**audit_event)
+        assert revocation.consume(revoke_id, recovery=True)
+
+
+@contextmanager
+def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
+    """Actual SQL/RLS/COMMIT phase, not original-image or provider qualification."""
+    from omnigent.version import VERSION
+    from saas.control_plane.bindings import RuntimeBindingService
+    from saas.control_plane.resolver import RuntimeCompatibilityPolicy
+    from saas.production.postgresql_preserving_recovery import (
+        T_PROTOCOL,
+        ExplicitTRecoveryOperation,
+        _source_projection,
+    )
+
+    plan = production_replay
+    old_gold = _derive_clean_original_t(plan, derive_t_gold_at) if derive_t_gold_at else None
+    receipt = migration.run_production_postgresql_migration(plan)
+    admin_url = sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"]).set(
+        database=plan.saas_owner.url.database,
+        query=plan.saas_owner.url.query,
+    )
+    engine = sa.create_engine(admin_url)
+    owner = native.connect_url(plan.saas_owner.url)
+    reader = native.connect_url(admin_url)
+    engines = migration._create_engines(plan)
+    placement_id = uuid4()
+    try:
+        with engine.begin() as connection:
+            scopes = []
+            for suffix in ("t_a", "t_b"):
+                actor, tenant, space, project, task, run, egress, profile = (
+                    uuid4() for _ in range(8)
+                )
+                _seed_scope(
+                    connection,
+                    actor_id=actor,
+                    tenant_id=tenant,
+                    space_id=space,
+                    project_id=project,
+                    task_id=task,
+                    run_id=run,
+                    egress_policy_id=egress,
+                    execution_profile_id=profile,
+                    execution_profile_hash="a" * 64,
+                    suffix=suffix,
+                )
+                connection.execute(
+                    sa.text(
+                        "UPDATE saas_runs SET status='succeeded',terminal_at=now() WHERE id=:id"
+                    ),
+                    {"id": run},
+                )
+                scopes.append((actor, tenant, space, project))
+        with Session(engine) as session, session.begin():
+            session.add(
+                RuntimePlacementRecord(
+                    id=placement_id,
+                    runtime_type="omnigent",
+                    data_region="fixture",
+                    failure_domain="fixture",
+                    database_cluster_ref="same-db",
+                    object_store_ref="same-objects",
+                    kms_key_ref="same-kms",
+                    official_schema_revision="nf12ab34cd56",
+                    capacity_class="team",
+                    status="active",
+                )
+            )
+            session.flush()
+            for index, (actor, tenant, space, project) in enumerate(scopes, 1):
+                partition = RuntimePartitionRecord(
+                    id=uuid4(),
+                    tenant_id=tenant,
+                    space_id=space,
+                    placement_id=placement_id,
+                    runtime_type="omnigent",
+                    runtime_version=VERSION,
+                    physical_partition_key=str(index),
+                    placement_generation=11,
+                    source_revision="3db749d784ff044304473939acaae3a65c0fec61",
+                    adapter_contract_version="0.2.0",
+                    status="active",
+                )
+                session.add(partition)
+                session.flush()
+                session.add(
+                    RuntimeIdentityAliasRecord(
+                        runtime_partition_id=partition.id,
+                        user_id=actor,
+                        runtime_user_key=str(uuid4()),
+                        status="active",
+                    )
+                )
+                session.add(
+                    RuntimeResourceBindingRecord(
+                        id=uuid4(),
+                        runtime_partition_id=partition.id,
+                        tenant_id=tenant,
+                        space_id=space,
+                        project_id=project,
+                        resource_type="project",
+                        runtime_resource_id=str(uuid4()),
+                        saas_resource_id=project,
+                        partition_generation=11,
+                        binding_generation=19,
+                        status="active",
+                    )
+                )
+        identity = db.database_identity(owner, reader)
+        complete_gold = None
+        if old_gold is not None:
+            verified = migration._verify_state(plan, engines)
+            assert (verified.official_head, verified.saas_head) == ("nf12ab34cd56", "p0s000000018")
+            projection = _source_projection(plan, engines)
+            key = (identity["server_major"], verified.official_head, verified.saas_head)
+            assert projection["inventory_sha256"] == migration._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
+            assert (
+                projection["security_sha256"]
+                == migration._source_security_catalog_baselines(plan.service_role_graph)[key]
+            )
+            database_owner = native.connect_url(plan.database_owner.url)
+            try:
+                complete_gold = {
+                    **old_gold,
+                    "candidate_inventory_sha256": projection["inventory_sha256"],
+                    "candidate_security_sha256": projection["security_sha256"],
+                    "candidate_role_edges": native.role_edges(reader),
+                    "candidate_access": native.object_access(database_owner),
+                }
+            finally:
+                database_owner.close()
+        _seed_t_delivery_receipts(engine, plan, scopes)
+        gold = {
+            "inventory": migration._PUBLIC_SCHEMA_INVENTORY_SHA256[
+                (identity["server_major"], receipt.official_head, receipt.saas_head)
+            ],
+            "security": migration._source_security_catalog_baselines(plan.service_role_graph)[
+                (identity["server_major"], receipt.official_head, receipt.saas_head)
+            ],
+        }
+        operation = ExplicitTRecoveryOperation(
+            str(uuid4()),
+            plan.product_revision,
+            "sha256:" + "b" * 64,
+            "3264a645a0fce33ea2c6477ea92044f8491051bf",
+            "sha256:adb1d0987d74b59d2d7121a61c5bc7112bd49fe5a2921b7373b827946d29d041",
+            identity,
+            "fixture://native-metadata-only-not-real-backup",
+            "fixture-version",
+            "e" * 64,
+            "f" * 64,
+            "fixture-kms",
+            1,
+            "1" * 64,
+            "2" * 64,
+            db.sha(db.canonical(gold)),
+            contract_version=T_PROTOCOL,
+            rollback_saas_target="lm2t00000001",
+            rollback_host_digest="sha256:1c969bb11a41edcf3ec8f16090a6ebd7956ef80de060697f76ce4ea02a140b69",
+            rollback_upstream_revision="825f8500d7cc8e997e5562fa55694cd146165f3c",
+            rollback_adapter_contract_version="0.2.0",
+        )
+        selected = runtime.FencedTRuntimeOperation(
+            recovery=operation,
+            realm="isolation",
+            namespace="fixture",
+            namespace_uid=str(uuid4()),
+            cluster_uid=str(uuid4()),
+            placement_id=str(placement_id),
+            runtime_version="0.18.0.dev20261006",
+            upstream_revision=operation.rollback_upstream_revision,
+            official_schema_revision="mm1a2b3c4d5e",
+            adapter_contract_version="0.2.0",
+            runtime_observation_ref="fixture://provider-not-qualified",
+            runtime_observation_sha256="4" * 64,
+            direction="to_t",
+            source_official_schema_revision="nf12ab34cd56",
+        )
+        control = runtime.RuntimePlacementMaintenance(
+            plan=plan,
+            engines=engines,
+            owner=owner,
+            maintenance=reader,
+            operation=selected,
+            source_gold=gold,
+            verify_runtime=lambda *_: None,
+            before_mutation=lambda *_: None,
+            checkpoint=lambda *_: None,
+            max_rows=20,
+        )
+        projection = _source_projection(plan, engines)
+        tables = tuple(
+            sorted(
+                row[1][2:]
+                for row in projection["inventory"]
+                if row[0] == "relation"
+                and row[1].startswith("r:")
+                and row[1][2:] not in {"alembic_version", "saas_alembic_version"}
+            )
+        )
+
+        def facts():
+            return runtime_native.capture_t_preserved_facts(
+                owner,
+                maintenance=reader,
+                expected_identity=identity,
+                expected_tables=tables,
+                max_copy_bytes=16 * 1024 * 1024,
+                expected_head="p0s000000018",
+            )
+
+        yield SimpleNamespace(
+            plan=plan,
+            engine=engine,
+            owner=owner,
+            reader=reader,
+            engines=engines,
+            placement_id=placement_id,
+            scopes=scopes,
+            identity=identity,
+            gold=gold,
+            operation=operation,
+            selected=selected,
+            control=control,
+            facts=facts,
+            complete_gold=complete_gold,
+            RuntimeBindingService=RuntimeBindingService,
+            RuntimeCompatibilityPolicy=RuntimeCompatibilityPolicy,
+        )
+    finally:
+        owner.close()
+        reader.close()
+        engine.dispose()
+        for database_engine in engines.values():
+            database_engine.dispose()
+
+
+def assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome(
+    production_replay,
+):
+    """Actual SQL/RLS/COMMIT phase, not original-image or provider qualification."""
+    with _native_t_rebinding_fixture(production_replay) as context:
+        control = context.control
+        facts = context.facts
+        reader = context.reader
+        identity = context.identity
+        owner = context.owner
+        engine = context.engine
+        placement_id = context.placement_id
+        operation = context.operation
+        selected = context.selected
+        RuntimeBindingService = context.RuntimeBindingService
+        RuntimeCompatibilityPolicy = context.RuntimeCompatibilityPolicy
+        before = facts()
+        before_rows = runtime_native.runtime_rows_snapshot(
+            reader, expected_identity=identity, owner=owner, maximum=20
+        )
+        state = control.prepare()
+        # Only the distinct fenced T operation may stage mm before nf inverse.
+        ordinary = runtime.RuntimeMaintenanceOperation(
+            **{
+                key: value
+                for key, value in asdict(selected).items()
+                if key not in {"direction", "source_official_schema_revision", "recovery"}
+            },
+            recovery=selected.recovery,
+        )
+        ordinary_control = runtime.RuntimePlacementMaintenance(
+            plan=context.plan,
+            engines=context.engines,
+            owner=owner,
+            maintenance=reader,
+            operation=ordinary,
+            source_gold=context.gold,
+            verify_runtime=lambda *_: None,
+            before_mutation=lambda *_: None,
+            checkpoint=lambda *_: None,
+            max_rows=20,
+        )
+        with pytest.raises(db.Refused, match="installed_source_and_runtime_heads_required"):
+            ordinary_control.prepare()
+
+        class LostAck:
+            def __init__(self, connection):
+                self.connection, self.armed = connection, True
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+            @contextmanager
+            def transaction(self):
+                with self.connection.transaction():
+                    yield
+                if self.armed:
+                    self.armed = False
+                    raise ConnectionError("native T transition commit acknowledgement lost")
+
+        control.owner = LostAck(owner)
+        with pytest.raises(ConnectionError, match="acknowledgement lost"):
+            control.apply(state)
+        outcome = control.reconcile(state)
+        assert control.reconcile(state) == outcome
+        assert outcome["phase"] == "runtime_metadata_committed"
+        after = facts()
+        actual = runtime_native.runtime_rows_snapshot(
+            reader, expected_identity=identity, owner=owner, maximum=20
+        )
+        delta = runtime_native.assert_runtime_transition_facts(
+            before,
+            after,
+            expected_rows=runtime.upgraded_scope(before_rows, selected),
+            actual_rows=actual,
+            maintenance=reader,
+            expected_request_hash=db.sha(
+                db.canonical(
+                    {"operation": state["operation"], "before_sha256": state["before_sha256"]}
+                )
+            ),
+            expected_payload=control._payload(state),
+            idempotency_key="runtime-maintenance:" + operation.operation_id,
+            maximum=16 * 1024 * 1024,
+        )
+        assert delta["event"]["published_at"] is None
+        assert {row["project_id"] for row in before_rows["bindings"]} == {
+            row["project_id"] for row in actual["bindings"]
+        }
+        service = object.__new__(RuntimeBindingService)
+        service._compatibility_policy = RuntimeCompatibilityPolicy(
+            runtime_type="omnigent",
+            allowed_runtime_versions=frozenset({selected.runtime_version}),
+            allowed_source_revisions=frozenset({selected.upstream_revision}),
+            allowed_schema_revisions=frozenset({selected.official_schema_revision}),
+            adapter_contract_version="0.2.0",
+        )
+        with Session(engine) as session:
+            placement = session.get(RuntimePlacementRecord, placement_id)
+            for partition in session.scalars(
+                sa.select(RuntimePartitionRecord).where(
+                    RuntimePartitionRecord.placement_id == placement_id
+                )
+            ):
+                assert service.validate_target_records(partition, placement) in (1, 2)
+        drift = copy.deepcopy(after)
+        drift["tables"]["saas_runs"]["copy_sha256"] = "0" * 64
+        with pytest.raises(db.Refused, match="nonruntime_fact_changed"):
+            runtime_native.assert_runtime_transition_facts(
+                before,
+                drift,
+                expected_rows=actual,
+                actual_rows=actual,
+                maintenance=reader,
+                expected_request_hash="0" * 64,
+                expected_payload={},
+                idempotency_key="unused",
+                maximum=1,
+            )
+
+
+def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
+    production_replay, tmp_path
+):
+    """Full real SQL, not real images/provider/backup/65-second readiness."""
+    from saas.production.postgresql_preserving_recovery import PreservingPostgreSqlRecovery
+
+    with _native_t_rebinding_fixture(production_replay, derive_t_gold_at=tmp_path) as context:
+        gold = {**context.complete_gold, "rollback_target": context.operation.target_contract()}
+        (tmp_path / "independent-source-gold.fixture.json").write_text(
+            json.dumps(gold, sort_keys=True, indent=2) + "\n"
+        )
+        operation = replace(context.operation, source_gold_sha256=db.sha(db.canonical(gold)))
+        database_owner = native.connect_url(context.plan.database_owner.url)
+        checkpoints, callbacks = [], []
+
+        def fixture_fence(actual, phase):
+            assert actual == operation
+            callbacks.append(phase)  # Fixture only: no real backup/fence claim.
+
+        preserving = PreservingPostgreSqlRecovery(
+            plan=context.plan,
+            engines=context.engines,
+            owner=context.owner,
+            database_owner=database_owner,
+            maintenance=context.reader,
+            operation=operation,
+            source_gold=gold,
+            before_mutation=fixture_fence,
+            checkpoint=lambda phase, state: checkpoints.append((phase, copy.deepcopy(state))),
+            max_copy_bytes=16 * 1024 * 1024,
+        )
+        target = runtime.RuntimeMaintenanceOperation(
+            **{
+                key: value
+                for key, value in asdict(context.selected).items()
+                if key not in {"direction", "source_official_schema_revision", "recovery"}
+            },
+            recovery=operation,  # Replace the staged old tuple with actual candidate template.
+        )
+        from omnigent.version import VERSION
+
+        target = replace(
+            target,
+            runtime_version=VERSION,
+            upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
+            official_schema_revision="nf12ab34cd56",
+        )
+
+        def fixture_transition(parent, child, before):
+            assert parent == operation and before["placements"][0]["id"] == target.placement_id
+            assert native.head(context.owner) == "p0s000000018"
+            with context.engines["official_owner"].connect() as official:
+                assert (
+                    official.exec_driver_sql(
+                        "SELECT version_num FROM public.alembic_version"
+                    ).scalar_one()
+                    == "nf12ab34cd56"
+                )
+
+        def fixture_pair(parent, state):
+            assert parent == operation
+            assert state["phase"] in {
+                "t_inverse_original_pair_verification_required",
+                "t_original_pair_same_projects_verified",
+            }
+            assert native.head(context.owner) == "lm2t00000001"
+            with context.engines["official_owner"].connect() as official:
+                assert (
+                    official.exec_driver_sql(
+                        "SELECT version_num FROM public.alembic_version"
+                    ).scalar_one()
+                    == "mm1a2b3c4d5e"
+                )
+            # Actual old-image startup is a separate required operator callback.
+            actual = runtime_native.runtime_rows_snapshot(
+                context.reader, expected_identity=context.identity, owner=context.owner, maximum=20
+            )
+            assert {row["project_id"] for row in actual["bindings"]} == {
+                row["project_id"] for row in state["before_runtime_rows"]["bindings"]
+            }
+
+        coordinator = runtime.FencedTRuntimeRecovery(
+            preserving=preserving,
+            runtime_operations=[target],
+            verify_transition=fixture_transition,
+            verify_pair=fixture_pair,
+            max_rows=20,
+        )
+        try:
+            state = coordinator.prepare()
+            original = state["before_runtime_facts"]
+            for table in db.TABLES:
+                assert original["tables"][table]["row_count"] == 2
+            old = coordinator.inverse(state)
+            assert {fact["schema"] for fact in old["preserving"]["before"]["tables"].values()} == {
+                "public"
+            }
+            assert old["preserving"]["archived"]["tables"] == {
+                table: {**fact, "schema": db.archive_name(operation.operation_id)}
+                for table, fact in old["preserving"]["before"]["tables"].items()
+            }
+            # Source verifier acceptance is distinct from original paired-image startup.
+            old_directory = tmp_path / "original-3264-p15-source"
+            old_module_path = old_directory / "saas/production/postgresql_migration.py"
+            assert hashlib.sha256(old_module_path.read_bytes()).hexdigest() == (
+                "e9c5e9210da07c1825d62cc8f198e5471e0e41001a87a7b318206ac28ce91127"
+            )
+            module_name = "saas.production._native_original_t_verify_" + uuid4().hex
+            specification = importlib.util.spec_from_file_location(module_name, old_module_path)
+            original_verifier = importlib.util.module_from_spec(specification)
+            sys.modules[module_name] = original_verifier
+            try:
+                specification.loader.exec_module(original_verifier)
+                original_verifier.files = lambda package: old_directory.joinpath(
+                    *package.split(".")
+                )
+                old_plan = replace(
+                    context.plan,
+                    business_delivery_service_role_bindings=None,
+                    verification_saas_head="lm2t00000001",
+                )
+                assert (
+                    original_verifier._verify_state(old_plan, context.engines).saas_head
+                    == "lm2t00000001"
+                )
+            finally:
+                sys.modules.pop(module_name, None)
+            quoted_owner = context.engine.dialect.identifier_preparer.quote(
+                context.plan.saas_owner.login
+            )
+            for changed_sql, restore_sql in (
+                ("ALTER ROLE saas_usage_consumer LOGIN", "ALTER ROLE saas_usage_consumer NOLOGIN"),
+                (
+                    f"GRANT saas_usage_consumer TO {quoted_owner} WITH ADMIN FALSE",
+                    f"REVOKE saas_usage_consumer FROM {quoted_owner} GRANTED BY CURRENT_USER",
+                ),
+                (
+                    "GRANT SELECT ON public.saas_runs TO saas_usage_consumer",
+                    "REVOKE SELECT ON public.saas_runs FROM saas_usage_consumer",
+                ),
+            ):
+                with context.engine.begin() as connection:
+                    connection.exec_driver_sql(changed_sql)
+                try:
+                    with pytest.raises(db.Refused):
+                        preserving._t_old_catalog(old["preserving"])
+                finally:
+                    with context.engine.begin() as connection:
+                        connection.exec_driver_sql(restore_sql)
+                preserving._t_old_catalog(old["preserving"])
+            verified = coordinator.verify_original_pair(old)
+            restored = coordinator.reattach(verified)
+            final = coordinator._facts()
+            assert {key: final["tables"][key] for key in db.TABLES} == {
+                key: original["tables"][key] for key in db.TABLES
+            }
+            rows = coordinator._rows()
+            assert rows["aliases"] == state["before_runtime_rows"]["aliases"]
+            for name, generation in (
+                ("partitions", "placement_generation"),
+                ("bindings", "binding_generation"),
+            ):
+                for before, after in zip(
+                    state["before_runtime_rows"][name], rows[name], strict=True
+                ):
+                    assert after[generation] == before[generation] + 2
+            assert len(restored["completed_transitions"]) == 2
+            assert final["tables"]["saas_runs"] == original["tables"]["saas_runs"]
+            assert (
+                migration._verify_state(context.plan, context.engines).saas_head == "p0s000000018"
+            )
+            assert callbacks and checkpoints
+        finally:
+            database_owner.close()

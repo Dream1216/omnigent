@@ -134,3 +134,75 @@ IDs and hashes; old process ACKs are never replayed as a new process success.
 The real 65-second epoch barrier, original signed pair startup/business tests,
 RPO≤300 seconds, full ≤900-second drill and independent target approval remain
 required. Unit phase routing or COPY hashes alone do not establish them.
+
+
+### Fenced T runtime binding composition
+
+`FencedTRuntimeRecovery` is a maintenance composition around the existing explicit
+T recovery. It adds no HTTP endpoint, role grant or default proof adapter. The
+original P15 operation/checkpoint protocol, source guard, migration SQL and gold
+remain unchanged. A supplied operation must pin the existing original 3264
+Server/Host pair; the target still requires separate release approval and fresh
+image/security verification.
+
+A database-only inverse preserves new runtime metadata, so it cannot by itself
+make the original 0.18 App accept the same projects. Under a real write fence,
+the composition first verifies the full current source and independent T gold.
+While P18's owner policies still exist, the existing owner maintenance primitive
+projects only the fixed placement schema, partition version/upstream/adapter and
+monotonic partition/binding generations to the original 0.18/825/mm tuple. Every
+active Omnigent placement must appear exactly once. Identity, tenant/space/project,
+aliases, workspace/resource IDs and every other column remain unchanged. A
+complete-table COPY comparison permits only those exact projections and the one
+native source Outbox event per placement; no original Outbox fact is omitted.
+
+The original preserving coordinator then prepares again, capturing the staged
+metadata and its actual committed event, before the fixed 18→17→16→T/nf→mm
+inverse. This is staged metadata under a fence, not proof an old provider is ready
+against the still-current database. `verify_transition` must read the actual
+installed candidate, namespace/cluster/database identity, provider workspace
+inventory and retained original pair, without waiting for another connection to
+see this transaction's uncommitted metadata. The existing live backup/fence
+callback is called again immediately before commit. It must cover the bounded
+commit and retain the fence on every failure.
+
+After inverse, `verify_pair` must boot the actual original immutable Server AND
+Host, verify their original receipts and run the original strict same-project
+history/auth/Session/billing/audit checks. A JSON digest, boolean flag, current
+binding validator or database fixture cannot replace that adapter. Old Runner
+pools are a separate unresolved compatibility prerequisite: the original managed
+projector selects upstream825/mm, while the same original fleet/readiness binds
+its one admitted pool to Product3264. Those literal SHAs differ. The actual
+transition adapter must refuse an unsatisfied approved execution scope before
+staged metadata writes; a direct Host-only probe cannot silently substitute for
+required managed Run recovery. The composition does not rewrite pool or Run
+history or relabel upstream as Product. The old generic unscoped Outbox worker must remain
+fenced from new runtime-maintenance events; an attempted claim, retry, terminal
+change or missing event is refused rather than fabricated as published.
+
+Reentry requires the original pair to be fenced and verified again. Existing
+preserving reattachment first restores the same P17 receipt objects and the real
+P18 policies, preserving all original and legitimate rollback-period facts. The
+same owner primitive then projects the fresh complete scope back to the candidate
+with a second generation increment. New global placements require separate
+review and are refused; new projects in an existing placement remain in its fresh
+complete scope. Actual new 65-second LISTEN epochs, delivery catch-up and business
+checks remain required before removing the fence. A final state explicitly says
+those checks are still outstanding and never grants production admission.
+
+Checkpoints use the existing private durable recovery writer. Failure or unknown
+COMMIT stops the composition. `reconcile_runtime_unknown_commit` is read-only and
+checks the stable native source receipt and exact scope; it does not retry SQL,
+run the inverse or resume reattachment. Retain the actual backup, file spool,
+provider fence, source gold and private checkpoints for controlled reconciliation.
+The full ≤900-second/RPO≤300-second drill must time the real signed stack and
+actual adapters. Database fixture callbacks in the native test are explicitly
+not operational backup/provider/image qualifications.
+
+The fenced T composition binds Product, Server and Host through the unchanged
+20-key `ExplicitTRecoveryOperation` and its independently derived target Gold.
+Its target remains original upstream 825/mm/T, adapter 0.2 and runtime 0.18.
+Changing the exact immutable pair requires the actual transition/pair adapters
+to verify that separately approved signed target; valid-shaped pins and source
+Gold never constitute approval. The known 3264 managed-pool conflict remains a
+negative regression target, not a default recovery target.
