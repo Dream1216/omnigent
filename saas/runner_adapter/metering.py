@@ -594,7 +594,9 @@ class ProviderUsageMeter:
                             attributes=document["attributes"],
                             model_budget_reservation_id=document["model_budget_reservation_id"],
                         )
-                except ManagedMeteringError:
+                except ManagedMeteringError as error:
+                    if error.code == "managed_metering_spool_unsupported_version":
+                        continue
                     rejected = path.with_suffix(".rejected.json")
                     os.replace(path, rejected)
                     _fsync_directory(path.parent)
@@ -648,6 +650,11 @@ def _read_spool(path: Path, grant: ManagedMeteringGrant) -> _ParsedSpool:
         if len(encoded) != opened.st_size:
             raise ValueError("spool size changed")
         document = _strict_object(encoded)
+        if type(document.get("version")) is int and document["version"] > _SPOOL_VERSION:
+            raise ManagedMeteringError(
+                "managed_metering_spool_unsupported_version",
+                "managed metering spool requires a newer runtime",
+            )
         if set(document) != _SPOOL_FIELDS or document["version"] != _SPOOL_VERSION:
             raise ValueError("invalid spool schema")
         if _canonical_uuid(document["run_id"]) != grant.run_id:

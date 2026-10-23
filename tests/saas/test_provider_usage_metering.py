@@ -286,6 +286,40 @@ def test_spool_rejects_symlink_and_non_allowlisted_metering_document(tmp_path: P
     assert len(list(grant.spool_directory.glob("*.rejected.json"))) == 2
 
 
+@pytest.mark.parametrize("version", [2, 3])
+def test_newer_spool_survives_old_meter_restarts_without_false_drain(
+    tmp_path: Path, version: int
+) -> None:
+    grant = _grant(tmp_path)
+    grant.spool_directory.mkdir(mode=0o700)
+    event_id = uuid4()
+    pending = grant.spool_directory / f"{event_id}.pending.json"
+    encoded = json.dumps(
+        {
+            "version": version,
+            "event_id": str(event_id),
+            "run_id": str(grant.run_id),
+            "runner_id": str(grant.runner_id),
+            "reservation_id": str(uuid4()),
+        }
+    ).encode()
+    pending.write_bytes(encoded)
+    pending.chmod(0o600)
+
+    for _ in range(2):
+        client = _FakeClient()
+        meter = ProviderUsageMeter(grant=grant, client=client, retry_interval_seconds=60)
+        try:
+            assert not meter.flush(0.01)
+        finally:
+            assert not meter.close(0.01)
+        assert client.closed
+        assert client.calls == []
+        assert pending.read_bytes() == encoded
+        assert pending.stat().st_mode & 0o777 == 0o600
+        assert list(grant.spool_directory.glob("*.rejected.json")) == []
+
+
 def test_one_time_envelope_is_private_bound_and_unlinked(tmp_path: Path) -> None:
     grant = _grant(tmp_path)
     directory = (tmp_path / "envelopes").absolute()
