@@ -253,6 +253,88 @@ def _model_failure_response(
     )
 
 
+def _normalize_responses_tool_history(value: object) -> object:
+    """Close parallel tool groups before assistant progress in replayed history."""
+    if not isinstance(value, list):
+        return value
+    items = cast(list[object], value)
+    call_types = {
+        "function_call": "function_call_output",
+        "custom_tool_call": "custom_tool_call_output",
+    }
+    calls: dict[str, tuple[int, str]] = {}
+    outputs: dict[str, tuple[int, str]] = {}
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if not isinstance(kind, str) or kind not in {*call_types, *call_types.values()}:
+            continue
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            return value
+        target = calls if kind in call_types else outputs
+        if call_id in target:
+            return value
+        target[call_id] = (index, kind)
+    if calls.keys() != outputs.keys() or any(
+        outputs[call_id][0] <= index or outputs[call_id][1] != call_types[kind]
+        for call_id, (index, kind) in calls.items()
+    ):
+        return value
+
+    # Never move a result across a user/control message or unknown item type.
+    next_barrier = [len(items)] * len(items)
+    barrier = len(items)
+    for index in range(len(items) - 1, -1, -1):
+        next_barrier[index] = barrier
+        item = items[index]
+        kind = item.get("type") if isinstance(item, dict) else None
+        if (
+            not isinstance(item, dict)
+            or not isinstance(kind, str)
+            or not (
+                kind in {*call_types, *call_types.values()}
+                or (kind == "message" and item.get("role") == "assistant")
+            )
+        ):
+            barrier = index
+
+    pending: set[str] = set()
+    moved: set[int] = set()
+    normalized: list[object] = []
+    for index, item in enumerate(items):
+        if index in moved:
+            continue
+        if isinstance(item, dict):
+            kind = item.get("type")
+            call_id = item.get("call_id")
+            if not isinstance(kind, str):
+                if pending:
+                    return value
+                normalized.append(item)
+                continue
+            if kind in call_types:
+                pending.add(cast(str, call_id))
+            elif kind in call_types.values():
+                if call_id not in pending:
+                    return value
+                pending.remove(cast(str, call_id))
+            elif kind == "message" and item.get("role") == "assistant" and pending:
+                indices = sorted(outputs[identifier][0] for identifier in pending)
+                if any(not index < position < next_barrier[index] for position in indices):
+                    return value
+                normalized.extend(items[position] for position in indices)
+                moved.update(indices)
+                pending.clear()
+            elif pending:
+                return value
+        elif pending:
+            return value
+        normalized.append(item)
+    return normalized if moved and not pending else value
+
+
 @dataclass(frozen=True, slots=True)
 class PlatformModelPrice:
     model_sha256: str
@@ -509,6 +591,12 @@ class PlatformModelGateway:
             outbound["stream_options"] = {"include_usage": True}
         else:
             outbound.pop("stream_options", None)
+            normalized_input = _normalize_responses_tool_history(outbound.get("input"))
+            if normalized_input is not outbound.get("input"):
+                outbound["input"] = normalized_input
+                _LOGGER.info(
+                    "Normalized replayed model tool history request_id=%s", request_id.hex
+                )
         client = self._client_factory()
         try:
             upstream = await client.send(

@@ -25,6 +25,7 @@ from saas.production.platform_model_gateway import (
     PlatformModelGateway,
     PlatformModelPrice,
     PlatformModelPricingPolicy,
+    _normalize_responses_tool_history,
     build_platform_model_gateway,
     create_platform_model_gateway_app,
     load_platform_model_pricing,
@@ -268,6 +269,95 @@ def test_responses_accepts_nullable_output_limit() -> None:
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("call_kind", "output_kind"),
+    [("function_call", "function_call_output"), ("custom_tool_call", "custom_tool_call_output")],
+)
+def test_replayed_parallel_results_precede_progress_without_replaying_tools(
+    call_kind, output_kind, caplog
+):
+    history = [
+        {"type": "message", "role": "user", "content": "Keep the existing task."},
+        {"type": call_kind, "call_id": "slow", "name": "read_file", "arguments": "{}"},
+        {"type": call_kind, "call_id": "fast", "name": "read_file", "arguments": "{}"},
+        {"type": output_kind, "call_id": "fast", "output": "already completed fast result"},
+        {"type": "message", "role": "assistant", "content": "Progress before slow result."},
+        {"type": call_kind, "call_id": "later", "name": "read_file", "arguments": "{}"},
+        {"type": output_kind, "call_id": "later", "output": "already completed later result"},
+        {"type": output_kind, "call_id": "slow", "output": "already completed slow result"},
+        {"type": "message", "role": "user", "content": "Continue without repeating tools."},
+    ]
+    original = json.loads(json.dumps(history))
+    observed = []
+
+    async def upstream(request):
+        sent = json.loads(request.content)
+        observed.append(sent["input"])
+        assert sent["input"] == [original[i] for i in (0, 1, 2, 3, 7, 4, 5, 6, 8)]
+        return httpx.Response(
+            200,
+            content=b'data: {"type":"response.completed","response":{"usage":'
+            b'{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}\n\n',
+        )
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": history, "stream": True},
+    )
+    assert response.status_code == 200
+    assert len(observed) == 1 and len(budgets.settled) == 1 and not budgets.released
+    assert history == original
+    assert "already completed" not in caplog.text
+    assert _normalize_responses_tool_history(observed[0]) is observed[0]
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["missing", "duplicate", "orphan", "user-boundary", "unknown-boundary", "kind-mismatch"],
+)
+def test_history_normalization_does_not_invent_results_or_cross_control_boundaries(case):
+    call = {"type": "function_call", "call_id": "one", "name": "read_file", "arguments": "{}"}
+    progress = {"type": "message", "role": "assistant", "content": "Still working."}
+    output = {"type": "function_call_output", "call_id": "one", "output": "existing result"}
+    histories = {
+        "missing": [call, progress],
+        "duplicate": [call, call, progress, output],
+        "orphan": [output, call, progress],
+        "user-boundary": [
+            call,
+            progress,
+            {"type": "message", "role": "user", "content": "Stop."},
+            output,
+        ],
+        "unknown-boundary": [call, progress, {"type": "item_reference", "id": "opaque"}, output],
+        "kind-mismatch": [call, progress, {**output, "type": "custom_tool_call_output"}],
+    }
+    history = histories[case]
+    original = json.loads(json.dumps(history))
+    assert _normalize_responses_tool_history(history) is history
+    assert history == original
+
+
+def test_history_normalization_preserves_valid_and_non_list_inputs():
+    for value in (
+        None,
+        "plain input",
+        [],
+        [{"type": "message", "role": "user", "content": "hello"}],
+    ):
+        assert _normalize_responses_tool_history(value) is value
+
+
+@pytest.mark.parametrize(
+    "item", [{"type": []}, {"type": {}}, None, "opaque", {"type": "function_call", "call_id": []}]
+)
+def test_malformed_history_items_do_not_crash_gateway_normalization(item):
+    history = [item]
+    assert _normalize_responses_tool_history(history) is history
 
 
 def test_provider_rejection_releases_budget_without_leaking_body() -> None:
