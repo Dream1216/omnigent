@@ -48,11 +48,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 150,
+    "max_direct_upstream_files": 151,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "ui8_recovery_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 150,
+      "max_direct_upstream_files": 151,
+      "measured_upstream_net_added_loc": 3494,
+      "scoped_paths": [
+        "tests/e2e_ui/chat/test_claude_sdk_terminated_cli_recovery.py"
+      ],
+      "upstream_test_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+      "reason": "The requester explicitly approved only the old018 rollback-branch increase from 150 to 151 files for the exact upstream Claude SDK test process-ownership correction. Product code, workflow policy, 4576 net LOC, nine patches, .85 isolation and all release gates remain unchanged. New source requires its own mandatory technical CI before merge; local browser setup did not execute a test body."
+    },
     "followup": {
       "revision": "platform-model-token-renewal-budget-v30",
       "approved_at": "2026-10-15",
