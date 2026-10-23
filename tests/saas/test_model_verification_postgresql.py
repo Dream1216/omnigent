@@ -417,6 +417,11 @@ def test_real_postgresql_model_test_requires_staff_projection_and_billing_identi
             "lm1e00000001",
             expected_pattern=r"^cannot remove retained model verification evidence$",
             guard_revision="lm1f00000001",
+            blocking_guard_pattern=(
+                r"^cannot remove model publication schema with retained evidence$"
+                if schema_revision == "lm2q00000001"
+                else None
+            ),
         )
         with owner.connect() as connection:
             assert (

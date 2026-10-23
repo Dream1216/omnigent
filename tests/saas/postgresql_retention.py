@@ -290,6 +290,7 @@ def assert_retained_downgrade_refused(
     *,
     expected_pattern: str,
     guard_revision: str | None = None,
+    blocking_guard_pattern: str | None = None,
 ) -> None:
     """Keep release refusal and explicit feature guards separate and non-destructive."""
     with engine.begin() as connection:
@@ -307,13 +308,15 @@ def assert_retained_downgrade_refused(
         config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
         config.attributes["connection"] = connection
         head = connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
-        if head == "p0s000000018" and guard_revision is not None:
+        release_guard_pattern = (
+            r"^P18 downgrade requires reviewed runtime-maintenance inverse; "
+            r"never remove policy contracts implicitly$"
+            if head == "p0s000000018"
+            else blocking_guard_pattern
+        )
+        if release_guard_pattern is not None and guard_revision is not None:
             with (
-                pytest.raises(
-                    RuntimeError,
-                    match=r"^P18 downgrade requires reviewed runtime-maintenance inverse; "
-                    r"never remove policy contracts implicitly$",
-                ),
+                pytest.raises(RuntimeError, match=release_guard_pattern),
                 connection.begin_nested(),
             ):
                 command.downgrade(config, target)

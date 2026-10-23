@@ -27,6 +27,7 @@ from saas.control_plane.platform_security import (
     PlatformSecurityError,
 )
 from saas.control_plane.schema_revision import CONTROL_PLANE_SCHEMA_REVISION
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_model_connections import _KEY, _Cipher, _fixture
 from tests.saas.test_model_deployments import _command
 
@@ -150,10 +151,12 @@ def test_real_postgresql_draft_admission_and_projection_use_separate_restricted_
         view = deployments.list(actor)[0]
         assert view.projection_status == "applied"
         assert view.verification_status == "not_tested" and view.runtime_enabled is False
-        with pytest.raises(RuntimeError, match="retained drafts"):
-            with engine.begin() as connection:
-                config.attributes["connection"] = connection
-                command.downgrade(config, "lm1b00000001")
+        assert_retained_downgrade_refused(
+            engine,
+            "lm1b00000001",
+            expected_pattern=r"^cannot remove model deployment schema with retained drafts$",
+            guard_revision="lm1c00000001",
+        )
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))

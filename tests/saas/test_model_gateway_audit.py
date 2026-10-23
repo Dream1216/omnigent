@@ -22,6 +22,7 @@ from saas.control_plane.outbox import OutboxPublishError
 
 def _fixture():
     engine, fallback = MagicMock(), MagicMock()
+    fallback.claim_routes = None
     engine.dialect.name = "postgresql"
     engine.begin.return_value.__enter__.return_value.scalar.return_value = True
     reservation = str(uuid4())

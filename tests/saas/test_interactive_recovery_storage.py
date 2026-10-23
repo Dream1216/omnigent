@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -19,7 +20,9 @@ def test_new_private_journal_removes_only_inherited_setgid(tmp_path, monkeypatch
         mkdir(path, *args, **kwargs)
         if path == root:
             # Linux fsGroup volumes pass this bit to newly created directories.
+            os.chown(path, -1, os.getegid())
             path.chmod(0o2700)
+            assert stat.S_IMODE(path.stat().st_mode) == 0o2700
 
     monkeypatch.setattr(Path, "mkdir", inherited)
     journal = InteractiveRecoveryJournal(root)
@@ -34,7 +37,9 @@ def test_new_private_journal_removes_only_inherited_setgid(tmp_path, monkeypatch
 def test_existing_unsafe_journal_is_never_repaired_silently(tmp_path, mode):
     root = tmp_path / "existing"
     root.mkdir()
+    os.chown(root, -1, os.getegid())
     root.chmod(mode)
+    assert stat.S_IMODE(root.stat().st_mode) == mode
     with pytest.raises(InteractiveRecoveryError):
         InteractiveRecoveryJournal(root)
     assert stat.S_IMODE(root.stat().st_mode) == mode
@@ -57,7 +62,9 @@ def test_existing_private_journal_remains_locked_and_reopenable(tmp_path):
 def test_symlinked_journal_does_not_change_target_permissions(tmp_path):
     target = tmp_path / "target"
     target.mkdir()
+    os.chown(target, -1, os.getegid())
     target.chmod(0o2700)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o2700
     link = tmp_path / "link"
     link.symlink_to(target, target_is_directory=True)
     with pytest.raises(InteractiveRecoveryError):

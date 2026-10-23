@@ -50,6 +50,9 @@ from tests.saas.test_production_runner_control import (
 from tests.saas.test_production_runner_database_fleet_postgresql import (
     test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison as _signed_fleet,
 )
+from tests.saas.test_production_runner_executor import (
+    _close_heartbeat_workers as _close_heartbeat_workers,
+)
 
 
 @contextmanager
