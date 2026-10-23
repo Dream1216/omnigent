@@ -77,6 +77,9 @@ from saas.production.runner_executor import (
     runner_agent_database_authority_contract_sha256,
 )
 from saas.runner_adapter import RunnerIsolationAdapter, RunnerWorktreeAdapter
+from tests.saas.test_production_runner_executor import (
+    _close_heartbeat_workers as _close_heartbeat_workers,
+)
 from tests.saas.test_production_runner_postgresql import (
     _converge_external_runner_database_boundary,
     _public_database_privileges,

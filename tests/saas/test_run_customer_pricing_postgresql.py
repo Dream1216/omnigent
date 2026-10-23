@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from saas.control_plane.execution import ExecutionControlPlane
 from saas.control_plane.execution_models import ExecutionSessionRecord, RunRecord
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from tests.saas.postgresql_retention import assert_retained_downgrade_refused
 from tests.saas.test_execution_control_plane import _execution_fixture
 from tests.saas.test_model_gateway_audit_postgresql import _assign_control_plane_owner
 from tests.saas.test_run_customer_pricing import _admit, _plan
@@ -150,8 +151,9 @@ def test_real_postgresql_retained_customer_price_blocks_schema_downgrade(priced_
     f = priced_execution
     _plan(f.factory, f.scope)
     f.service.create_session(f.context, project_id=f.scope.project_id)
-    with pytest.raises(RuntimeError, match=r"^retained execution schema cannot be downgraded$"):
-        with f.engine.begin() as connection:
-            config = Config(Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini")
-            config.attributes["connection"] = connection
-            command.downgrade(config, "lm2c00000001")
+    assert_retained_downgrade_refused(
+        f.engine,
+        "lm2c00000001",
+        expected_pattern=r"^retained execution schema cannot be downgraded$",
+        guard_revision="lm2s00000001",
+    )

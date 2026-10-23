@@ -42,6 +42,9 @@ from saas.production.runner_executor import (
     _verify_runner_agent_database_authority,
 )
 from saas.runner_adapter import RunnerIsolationAdapter, RunnerWorktreeAdapter
+from tests.saas.test_production_runner_executor import (
+    _close_heartbeat_workers as _close_heartbeat_workers,
+)
 from tests.saas.test_scheduling_postgresql import _migrate, _seed_scope
 
 _PRODUCT_REVISION = "a" * 40

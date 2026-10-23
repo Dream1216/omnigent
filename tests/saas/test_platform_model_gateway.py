@@ -25,6 +25,7 @@ from saas.production.platform_model_gateway import (
     PlatformModelGateway,
     PlatformModelPrice,
     PlatformModelPricingPolicy,
+    _normalize_responses_tool_history,
     _UsageParser,
     build_platform_model_gateway,
     create_platform_model_gateway_app,
@@ -196,6 +197,98 @@ def _client(
         budgets,
         authority.issue(session_id=SESSION_ID, now=int(datetime.now(timezone.utc).timestamp())),
     )
+
+
+def _parallel_tool_history(*, explicit_message_type: bool = True):
+    progress = {"role": "assistant", "content": "Progress before slow result."}
+    if explicit_message_type:
+        progress["type"] = "message"
+    return [
+        {"type": "message", "role": "user", "content": "Keep the existing task."},
+        {"type": "function_call", "call_id": "slow", "name": "read_file", "arguments": "{}"},
+        {"type": "function_call", "call_id": "fast", "name": "read_file", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "fast", "output": "completed fast result"},
+        progress,
+        {"type": "function_call", "call_id": "later", "name": "read_file", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "later", "output": "completed later result"},
+        {"type": "function_call_output", "call_id": "slow", "output": "completed slow result"},
+        {"type": "message", "role": "user", "content": "Continue without repeating tools."},
+    ]
+
+
+@pytest.mark.parametrize("explicit_message_type", (False, True))
+def test_replayed_parallel_results_precede_progress_without_repeating_tools(
+    explicit_message_type,
+):
+    history = _parallel_tool_history(explicit_message_type=explicit_message_type)
+    original = json.loads(json.dumps(history))
+    observed = []
+
+    async def upstream(request):
+        sent = json.loads(request.content)["input"]
+        observed.append(sent)
+        assert sent == [original[index] for index in (0, 1, 2, 3, 7, 4, 5, 6, 8)]
+        return httpx.Response(
+            200,
+            content=b'data: {"type":"response.completed","response":{"usage":'
+            b'{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}\n\n',
+        )
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": history, "stream": True},
+    )
+    assert response.status_code == 200
+    assert len(observed) == len(budgets.settled) == 1
+    assert not budgets.released and not budgets.uncertain
+    assert history == original
+    assert _normalize_responses_tool_history(observed[0]) is observed[0]
+
+
+@pytest.mark.parametrize("case", ("missing", "duplicate", "orphan", "user", "unknown", "kind"))
+def test_history_ordering_preserves_incomplete_or_cross_boundary_inputs(case):
+    call = {"type": "function_call", "call_id": "one", "name": "read_file", "arguments": "{}"}
+    progress = {"type": "message", "role": "assistant", "content": "Still working."}
+    output = {"type": "function_call_output", "call_id": "one", "output": "existing result"}
+    histories = {
+        "missing": [call, progress],
+        "duplicate": [call, call, progress, output],
+        "orphan": [output, call, progress],
+        "user": [call, progress, {"type": "message", "role": "user", "content": "Stop."}, output],
+        "unknown": [call, progress, {"type": "item_reference", "id": "opaque"}, output],
+        "kind": [call, progress, {**output, "type": "custom_tool_call_output"}],
+    }
+    history = histories[case]
+    original = json.loads(json.dumps(history))
+    assert _normalize_responses_tool_history(history) is history
+    assert history == original
+
+
+@pytest.mark.parametrize(
+    "value", [None, "plain input", [], {"input": "opaque"}, [{"type": []}], [None]]
+)
+def test_history_ordering_preserves_non_history_and_malformed_inputs(value):
+    assert _normalize_responses_tool_history(value) is value
+
+
+def test_custom_tool_history_stays_unavailable_before_budget_or_egress():
+    async def forbidden(_request):
+        raise AssertionError("unsupported custom tools must never leave the gateway")
+
+    client, budgets, token = _client(httpx.MockTransport(forbidden))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model": "deepseek-flash",
+            "stream": True,
+            "input": [{"type": "custom_tool_call", "call_id": "one", "input": "opaque"}],
+        },
+    )
+    assert response.status_code == 400
+    assert not budgets.reserved
 
 
 @pytest.mark.parametrize(

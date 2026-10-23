@@ -40,6 +40,7 @@ from tests.saas.test_interactive_runtime import _running_lease, _runtime_authori
 from tests.saas.test_model_run_credentials import _service
 from tests.saas.test_model_run_evidence import _enable_budget
 from tests.saas.test_model_run_gateway import _document
+from tests.saas.test_platform_model_gateway import _parallel_tool_history
 
 pytestmark = pytest.mark.parametrize("interactive_http", [False, True], indirect=True)
 
@@ -162,6 +163,9 @@ async def test_real_run_http_inference_and_existing_customer_meter_share_one_cal
     }
     assert meter.gateway_usage(action="check", **identity)["status"] == "ready"
     body = _document(p.grant.configuration["public_model_id"], responses=p.responses, limit=32)
+    history = _parallel_tool_history()
+    if p.responses:
+        body["input"] = history
     path = "/v1/responses" if p.responses else "/v1/chat/completions"
     headers = {"Authorization": "Bearer " + p.issued.value, "X-Omnigent-Gateway-Call": str(call)}
     with TestClient(create_platform_model_gateway_app(p.gateway)) as client:
@@ -172,6 +176,8 @@ async def test_real_run_http_inference_and_existing_customer_meter_share_one_cal
     assert len(p.calls) == 1
     sent = json.loads(p.calls[0].content)
     assert sent["model"] == p.grant.configuration["deployment_alias"]
+    if p.responses:
+        assert sent["input"] == [history[index] for index in (0, 1, 2, 3, 7, 4, 5, 6, 8)]
     assert p.calls[0].headers["Authorization"] == "Bearer isolated-inference-only-not-a-real-key"
     assert p.issued.value not in str(p.calls[0].headers)
     assert (sent["max_output_tokens"] if p.responses else sent["max_tokens"]) == 32
