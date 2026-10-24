@@ -1704,6 +1704,7 @@ async def forward_kimi_wire_to_session(
                     usage_sync.note_new_wire()
                     _persist()
             all_posted = True
+            terminal_pending = False
             pane_is_alive = pane_alive() if pane_alive is not None else None
             dead_tail_pending = False
             if wire_path is not None and wire_path.exists():
@@ -1991,6 +1992,7 @@ async def forward_kimi_wire_to_session(
                                 continue
                         _logger.warning("kimi forwarder: POST failed (will retry): %s", exc)
                         all_posted = False
+                        terminal_pending = item.kind in ("turn_end", "turn_failed")
                         break
                     else:
                         note_native_post_success()
@@ -2009,13 +2011,21 @@ async def forward_kimi_wire_to_session(
             # that has since vanished (the totals are already persisted, so a
             # missing log must not orphan an undelivered post forever).
             await usage_sync.sync(client)
-            if turn_open and pane_is_alive is False and not dead_tail_pending:
+            # A received terminal edge owns closure until delivered or poison-dropped.
+            # Watchdogs must not replace it while its POST is still pending.
+            if (
+                turn_open
+                and not terminal_pending
+                and pane_is_alive is False
+                and not dead_tail_pending
+            ):
                 # The pane died mid-turn: no further wire rows are coming, so
                 # post the failed edge instead of stranding the session. Give
                 # a final unterminated row its stable-size acceptance poll first.
                 await _close_turn("failed", "pane-death")
             elif (
                 turn_open
+                and not terminal_pending
                 and tools_in_flight == 0
                 and time.monotonic() - last_wire_activity > quiescence_s
             ):
@@ -2026,6 +2036,7 @@ async def forward_kimi_wire_to_session(
                 await _close_turn("idle", "quiescence")
             elif (
                 turn_open
+                and not terminal_pending
                 and tools_in_flight > 0
                 and time.monotonic() - last_wire_activity > tool_quiescence_s
             ):
