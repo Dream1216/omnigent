@@ -11,13 +11,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import stat
+import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from threading import Lock
 from typing import Protocol, cast
 from uuid import UUID, uuid4
 
@@ -62,6 +67,273 @@ _MAX_SSE_LINE_BYTES = 256 * 1024
 _TENANT_ID_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
 _TOKEN_KEY_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE"
 _PRICING_FILE_ENV = "OMNIGENT_SAAS_PLATFORM_MODEL_PRICING_FILE"
+_LOGGER = logging.getLogger(__name__)
+_MAX_PROVIDER_ERROR_BYTES = 16 * 1024
+_PROVIDER_ERROR_CODES = frozenset(
+    {
+        "invalid_request_error",
+        "invalid_api_key",
+        "authentication_error",
+        "permission_denied",
+        "insufficient_balance",
+        "insufficient_quota",
+        "context_length_exceeded",
+        "model_not_found",
+        "rate_limit_exceeded",
+        "server_error",
+        "service_unavailable",
+    }
+)
+_RetryKey = tuple[UUID, UUID, int]
+
+
+class _ProviderFailures:
+    """Bound consecutive pre-response failures without replaying inference."""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._states: OrderedDict[_RetryKey, tuple[int, float, float]] = OrderedDict()
+        self._lock = Lock()
+
+    def cooldown(self, key: _RetryKey) -> int:
+        with self._lock:
+            now = self._clock()
+            state = self._states.get(key)
+            if state is None:
+                return 0
+            _count, expires, blocked_until = state
+            if max(expires, blocked_until) <= now:
+                del self._states[key]
+                return 0
+            self._states.move_to_end(key)
+            return max(0, math.ceil(blocked_until - now))
+
+    def failed(self, key: _RetryKey, *, retry_after: int = 0) -> None:
+        with self._lock:
+            now = self._clock()
+            count, expires, blocked_until = self._states.get(key, (0, now + 60, 0))
+            if max(expires, blocked_until) <= now:
+                count, expires, blocked_until = 0, now + 60, 0
+            count += 1
+            delay = max(retry_after, 60 if count >= 2 else 0)
+            if delay:
+                blocked_until = max(blocked_until, now + delay)
+            self._states[key] = (count, expires, blocked_until)
+            self._states.move_to_end(key)
+            while len(self._states) > 4096:
+                self._states.popitem(last=False)
+
+    def succeeded(self, key: _RetryKey) -> None:
+        with self._lock:
+            self._states.pop(key, None)
+
+
+async def _provider_diagnostic(response: httpx.Response) -> tuple[str, str, str]:
+    # Never retain free-form provider messages, prompts, headers or credentials.
+    body = bytearray()
+    try:
+        async with asyncio.timeout(2):
+            async for chunk in response.aiter_bytes():
+                if len(body) + len(chunk) > _MAX_PROVIDER_ERROR_BYTES:
+                    return "error_body_oversized", "omitted", "omitted"
+                body.extend(chunk)
+    except (httpx.HTTPError, TimeoutError):
+        return "error_body_unavailable", "omitted", "omitted"
+    code = "unknown"
+    try:
+        document = json.loads(body)
+        error = document.get("error") if isinstance(document, dict) else None
+        value = error.get("code") or error.get("type") if isinstance(error, dict) else None
+        if isinstance(value, str) and value in _PROVIDER_ERROR_CODES:
+            code = value
+    except (ValueError, UnicodeError, RecursionError):
+        pass
+    provider_id = response.headers.get("x-request-id", response.headers.get("request-id", ""))
+    return (
+        code,
+        hashlib.sha256(body).hexdigest(),
+        hashlib.sha256(provider_id.encode()).hexdigest() if provider_id else "absent",
+    )
+
+
+def _provider_failure(status: int, code: str) -> tuple[int, str, str, bool]:
+    if status in {401, 403}:
+        return (
+            424,
+            "platform_model_provider_authentication_failed",
+            "The model provider credentials were rejected; contact a platform administrator.",
+            False,
+        )
+    if status == 402 or code in {"insufficient_balance", "insufficient_quota"}:
+        return (
+            424,
+            "platform_model_provider_budget_exhausted",
+            "The model provider account budget is exhausted; contact a platform administrator.",
+            False,
+        )
+    if code == "context_length_exceeded":
+        return (
+            400,
+            "platform_model_context_length_exceeded",
+            "The conversation exceeds the model context window; "
+            "shorten the context before retrying.",
+            False,
+        )
+    if status in {404, 405, 415} or code == "model_not_found":
+        return (
+            422,
+            "platform_model_provider_protocol_unavailable",
+            "The model provider endpoint or model is unavailable; "
+            "contact a platform administrator.",
+            False,
+        )
+    if status == 429:
+        return (
+            429,
+            "platform_model_provider_rate_limited",
+            "The model provider rate limit was reached; wait before retrying.",
+            True,
+        )
+    if status == 408:
+        return (504, "platform_model_provider_timeout", "The model provider timed out.", True)
+    if 500 <= status <= 599:
+        return (
+            status if status in {502, 503, 504} else 502,
+            "platform_model_provider_unavailable",
+            "The model provider is temporarily unavailable.",
+            True,
+        )
+    if 400 <= status <= 499:
+        return (
+            status if status in {400, 422} else 422,
+            "platform_model_provider_request_invalid",
+            "The model provider rejected the request parameters; unchanged retries will not help.",
+            False,
+        )
+    return (
+        424,
+        "platform_model_provider_protocol_unavailable",
+        "The model provider returned an unexpected response; contact a platform administrator.",
+        False,
+    )
+
+
+def _retry_after(response: httpx.Response, *, now: datetime) -> int:
+    value = response.headers.get("retry-after", "").strip()
+    if value.isascii() and value.isdigit() and len(value) <= 5:
+        return max(1, min(int(value), 3600))
+    try:
+        at = parsedate_to_datetime(value)
+        if at.tzinfo is not None and at.utcoffset() is not None:
+            return max(1, min(math.ceil((at - now).total_seconds()), 3600))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return 60
+
+
+def _model_failure_response(
+    failure: tuple[int, str, str, bool], request_id: UUID, *, retry_after: int = 0
+) -> JSONResponse:
+    status, code, message, retryable = failure
+    headers = {"Cache-Control": "no-store", "X-Request-ID": request_id.hex}
+    if retry_after:
+        headers["Retry-After"] = str(retry_after)
+        message += f" Retry after {retry_after} seconds."
+    return JSONResponse(
+        status_code=status,
+        content={
+            "error": {
+                "code": code,
+                "message": f"{message} Request ID: {request_id.hex}",
+                "request_id": request_id.hex,
+                "retryable": retryable,
+                "retry_after_seconds": retry_after,
+            }
+        },
+        headers=headers,
+    )
+
+
+def _normalize_responses_tool_history(value: object) -> object:
+    """Close parallel tool groups before assistant progress in replayed history."""
+    if not isinstance(value, list):
+        return value
+    items = cast(list[object], value)
+    call_types = {
+        "function_call": "function_call_output",
+        "custom_tool_call": "custom_tool_call_output",
+    }
+    calls: dict[str, tuple[int, str]] = {}
+    outputs: dict[str, tuple[int, str]] = {}
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if not isinstance(kind, str) or kind not in {*call_types, *call_types.values()}:
+            continue
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            return value
+        target = calls if kind in call_types else outputs
+        if call_id in target:
+            return value
+        target[call_id] = (index, kind)
+    if calls.keys() != outputs.keys() or any(
+        outputs[call_id][0] <= index or outputs[call_id][1] != call_types[kind]
+        for call_id, (index, kind) in calls.items()
+    ):
+        return value
+
+    # Never move a result across a user/control message or unknown item type.
+    next_barrier = [len(items)] * len(items)
+    barrier = len(items)
+    for index in range(len(items) - 1, -1, -1):
+        next_barrier[index] = barrier
+        item = items[index]
+        kind = item.get("type") if isinstance(item, dict) else None
+        if (
+            not isinstance(item, dict)
+            or not isinstance(kind, str)
+            or not (
+                kind in {*call_types, *call_types.values()}
+                or (kind == "message" and item.get("role") == "assistant")
+            )
+        ):
+            barrier = index
+
+    pending: set[str] = set()
+    moved: set[int] = set()
+    normalized: list[object] = []
+    for index, item in enumerate(items):
+        if index in moved:
+            continue
+        if isinstance(item, dict):
+            kind = item.get("type")
+            call_id = item.get("call_id")
+            if not isinstance(kind, str):
+                if pending:
+                    return value
+                normalized.append(item)
+                continue
+            if kind in call_types:
+                pending.add(cast(str, call_id))
+            elif kind in call_types.values():
+                if call_id not in pending:
+                    return value
+                pending.remove(cast(str, call_id))
+            elif kind == "message" and item.get("role") == "assistant" and pending:
+                indices = sorted(outputs[identifier][0] for identifier in pending)
+                if any(not index < position < next_barrier[index] for position in indices):
+                    return value
+                normalized.extend(items[position] for position in indices)
+                moved.update(indices)
+                pending.clear()
+            elif pending:
+                return value
+        elif pending:
+            return value
+        normalized.append(item)
+    return normalized if moved and not pending else value
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +486,7 @@ class PlatformModelGateway:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         readiness_check: Callable[[], None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        retry_clock: Callable[[], float] | None = None,
     ) -> None:
         if reservation_ttl <= timedelta(0) or reservation_ttl > timedelta(hours=24):
             raise ValueError("Platform model reservation TTL is invalid")
@@ -227,6 +500,7 @@ class PlatformModelGateway:
         )
         self._readiness_check = readiness_check
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._provider_failures = _ProviderFailures(retry_clock or time.monotonic)
 
     def require_ready(self) -> None:
         if self._readiness_check is not None:
@@ -261,13 +535,32 @@ class PlatformModelGateway:
         if price is None:
             return _error(503, "platform_model_pricing_unavailable")
 
+        request_id = uuid4()
+        retry_key = (claims.tenant_id, claims.session_id, configuration.configuration_version)
+        cooldown = self._provider_failures.cooldown(retry_key)
+        if cooldown:
+            _LOGGER.warning(
+                "Platform model call blocked request_id=%s provider_status=not_contacted "
+                "provider_code=retry_cooldown retry_after=%s",
+                request_id.hex,
+                cooldown,
+            )
+            return _model_failure_response(
+                (
+                    424,
+                    "platform_model_retry_cooldown",
+                    "Repeated model calls have failed; wait before manually retrying this turn.",
+                    False,
+                ),
+                request_id,
+                retry_after=cooldown,
+            )
         requested_tokens = _requested_tokens(
             raw,
             document,
             responses=upstream_path == "responses",
         )
         requested_microusd = _microusd(requested_tokens, price.reservation_rate)
-        request_id = uuid4()
         requested_at = self._clock()
         if requested_at.tzinfo is None or requested_at.utcoffset() is None:
             return _error(503, "platform_model_pricing_unavailable")
@@ -299,6 +592,12 @@ class PlatformModelGateway:
             outbound["stream_options"] = {"include_usage": True}
         else:
             outbound.pop("stream_options", None)
+            normalized_input = _normalize_responses_tool_history(outbound.get("input"))
+            if normalized_input is not outbound.get("input"):
+                outbound["input"] = normalized_input
+                _LOGGER.info(
+                    "Normalized replayed model tool history request_id=%s", request_id.hex
+                )
         client = self._client_factory()
         try:
             upstream = await client.send(
@@ -309,20 +608,63 @@ class PlatformModelGateway:
                         "Authorization": f"Bearer {configuration.api_key}",
                         "Content-Type": "application/json",
                         "Accept": "text/event-stream",
+                        "X-Request-ID": request_id.hex,
                     },
                     json=outbound,
                 ),
                 stream=True,
             )
-        except httpx.HTTPError:
-            await client.aclose()
+        except httpx.HTTPError as error:
             await self._release(reservation)
-            return _error(502, "platform_model_provider_unreachable")
+            await client.aclose()
+            self._provider_failures.failed(retry_key)
+            timeout = isinstance(error, httpx.TimeoutException)
+            _LOGGER.warning(
+                "Platform model call failed request_id=%s "
+                "provider_status=unavailable exception=%s",
+                request_id.hex,
+                "timeout" if timeout else "transport_error",
+            )
+            return _model_failure_response(
+                (
+                    504 if timeout else 502,
+                    "platform_model_provider_timeout"
+                    if timeout
+                    else "platform_model_provider_unreachable",
+                    "The model provider timed out."
+                    if timeout
+                    else "The model provider connection failed.",
+                    True,
+                ),
+                request_id,
+            )
         if upstream.status_code != 200:
-            await upstream.aclose()
-            await client.aclose()
-            await self._release(reservation)
-            return _error(502, "platform_model_provider_rejected")
+            try:
+                code, body_hash, provider_id_hash = await _provider_diagnostic(upstream)
+                failure = _provider_failure(upstream.status_code, code)
+                retry_after = (
+                    _retry_after(upstream, now=self._clock())
+                    if upstream.status_code == 429 and failure[3]
+                    else 0
+                )
+                if failure[3]:
+                    self._provider_failures.failed(retry_key, retry_after=retry_after)
+                _LOGGER.warning(
+                    "Platform model call failed request_id=%s provider_status=%s provider_code=%s "
+                    "error_body_sha256=%s provider_request_id_sha256=%s",
+                    request_id.hex,
+                    upstream.status_code,
+                    code,
+                    body_hash,
+                    provider_id_hash,
+                )
+                return _model_failure_response(failure, request_id, retry_after=retry_after)
+            finally:
+                await self._release(reservation)
+                try:
+                    await upstream.aclose()
+                finally:
+                    await client.aclose()
 
         return StreamingResponse(
             self._stream_and_settle(
@@ -331,6 +673,8 @@ class PlatformModelGateway:
                 reservation=reservation,
                 price=price,
                 requested_at=requested_at,
+                retry_key=retry_key,
+                request_id=request_id,
             ),
             status_code=200,
             media_type="text/event-stream",
@@ -338,6 +682,7 @@ class PlatformModelGateway:
                 "Cache-Control": "no-store",
                 "X-Accel-Buffering": "no",
                 "X-Platform-Model-Pricing-Revision": self._pricing.revision,
+                "X-Request-ID": request_id.hex,
             },
         )
 
@@ -355,6 +700,8 @@ class PlatformModelGateway:
         reservation: ModelProviderBudgetReservationView,
         price: PlatformModelPrice,
         requested_at: datetime,
+        retry_key: _RetryKey,
+        request_id: UUID,
     ) -> AsyncIterator[bytes]:
         parser = _UsageParser()
         output_observed = False
@@ -367,6 +714,16 @@ class PlatformModelGateway:
                     yield chunk
             parser.finish()
             completed = True
+            self._provider_failures.succeeded(retry_key)
+        except httpx.HTTPError:
+            self._provider_failures.failed(retry_key)
+            _LOGGER.warning(
+                "Platform model stream failed request_id=%s provider_status=200 "
+                "exception=stream_transport_error output_observed=%s",
+                request_id.hex,
+                output_observed,
+            )
+            raise
         finally:
             # A peer disconnect must not cancel transport cleanup or accounting.
             with anyio.CancelScope(shield=True):

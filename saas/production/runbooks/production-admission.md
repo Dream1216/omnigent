@@ -183,7 +183,7 @@ authorizes `Dream1216` (GitHub user ID `39821512`) to perform the human reviews.
 This is a **degraded, sole-owner-risk-waiver**: separation of duties is absent.
 `review-exception-policy.json` records the accepted governance risk, exact upstream
 `3db749d784ff044304473939acaae3a65c0fec61`, adapter `0.2.0`, schema
-`p0s000000017`, and expiry before `2026-12-20T00:00:00Z`. It waives no technical
+`p0s000000018`, and expiry before `2026-12-20T00:00:00Z`. It waives no technical
 gate, customer acceptance, signature, recovery, negative test, or metric. In
 particular, the exact candidate still needs the full 30-day production SLO window;
 a 3600-second canary does not satisfy final full production admission.

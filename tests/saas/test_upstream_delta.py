@@ -131,10 +131,21 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 156
+    assert budget["max_direct_upstream_files"] == 159
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    composer_followup = revision["upstream_composer_recovery_budget_followup"]
+    assert composer_followup["approved_at"] == "2026-10-24"
+    assert composer_followup["previous_max_direct_upstream_files"] == 153
+    assert composer_followup["max_direct_upstream_files"] == 154
+    assert composer_followup["measured_upstream_net_added_loc"] == 3600
+    assert composer_followup["scoped_paths"] == [
+        "web/src/pages/ChatPage.tsx",
+        "web/src/pages/ChatPage.composer.test.tsx",
+    ]
+    assert composer_followup["new_official_path"] == "web/src/pages/ChatPage.composer.test.tsx"
+    assert composer_followup["upstream_revision"] == "3138c7dfeb24a12f2aaf6d7ffeffc9d491d69df1"
     followup = revision["followup"]
     assert followup["revision"] == "upstream-019-mcp-compat-version-test-budget-v35"
     assert followup["approved_at"] == "2026-10-21"
