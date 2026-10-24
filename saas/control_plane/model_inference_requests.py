@@ -222,11 +222,12 @@ def _text_inputs(document: dict, *, responses: bool) -> None:
             }:
                 raise _invalid()
             _text_content(row.get("content"))
-        elif kind == "function_call":
-            row = _object(item, fields={"type", "id", "status", "name", "arguments", "call_id"})
-            if not all(isinstance(row.get(key), str) for key in ("name", "arguments", "call_id")):
+        elif kind in {"function_call", "custom_tool_call"}:
+            input_field = "arguments" if kind == "function_call" else "input"
+            row = _object(item, fields={"type", "id", "status", "name", input_field, "call_id"})
+            if not all(isinstance(row.get(key), str) for key in ("name", input_field, "call_id")):
                 raise _invalid()
-        elif kind == "function_call_output":
+        elif kind in {"function_call_output", "custom_tool_call_output"}:
             row = _object(item, fields={"type", "id", "status", "call_id", "output"})
             if not isinstance(row.get("call_id"), str):
                 raise _invalid()

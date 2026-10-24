@@ -20,42 +20,213 @@
     "omnigent/runner/native/",
     "omnigent/runtime/workflow.py"
   ],
-  "official_schema_heads": ["nf12ab34cd56"],
+  "official_schema_heads": [
+    "nf12ab34cd56"
+  ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
   "runtime_rls_tables": {
-    "account_tokens": ["workspace_id", "id"],
-    "agents": ["workspace_id", "id"],
-    "comments": ["workspace_id", "conversation_id", "id"],
+    "account_tokens": [
+      "workspace_id",
+      "id"
+    ],
+    "agents": [
+      "workspace_id",
+      "id"
+    ],
+    "comments": [
+      "workspace_id",
+      "conversation_id",
+      "id"
+    ],
     "conversation_items": [
       "workspace_id",
       "conversation_id",
       "id",
       "created_at"
     ],
-    "conversation_labels": ["workspace_id", "conversation_id", "key"],
-    "conversations": ["workspace_id", "id"],
-    "connections": ["workspace_id", "user_id", "provider", "account_id"],
-    "device_grants": ["workspace_id", "id"],
-    "files": ["workspace_id", "id"],
-    "hosts": ["workspace_id", "host_id"],
-    "omnigent_conversation_metadata": ["workspace_id", "id"],
-    "policies": ["workspace_id", "id"],
-    "preferences": ["workspace_id", "user_id", "key"],
-    "projects": ["workspace_id", "id"],
-    "scheduled_task_runs": ["workspace_id", "id"],
-    "scheduled_tasks": ["workspace_id", "id"],
-    "session_permissions": ["workspace_id", "user_id", "conversation_id"],
-    "user_daily_cost": ["workspace_id", "user_id", "day_utc"],
-    "users": ["workspace_id", "id"]
+    "conversation_labels": [
+      "workspace_id",
+      "conversation_id",
+      "key"
+    ],
+    "conversations": [
+      "workspace_id",
+      "id"
+    ],
+    "connections": [
+      "workspace_id",
+      "user_id",
+      "provider",
+      "account_id"
+    ],
+    "device_grants": [
+      "workspace_id",
+      "id"
+    ],
+    "files": [
+      "workspace_id",
+      "id"
+    ],
+    "hosts": [
+      "workspace_id",
+      "host_id"
+    ],
+    "omnigent_conversation_metadata": [
+      "workspace_id",
+      "id"
+    ],
+    "policies": [
+      "workspace_id",
+      "id"
+    ],
+    "preferences": [
+      "workspace_id",
+      "user_id",
+      "key"
+    ],
+    "projects": [
+      "workspace_id",
+      "id"
+    ],
+    "scheduled_task_runs": [
+      "workspace_id",
+      "id"
+    ],
+    "scheduled_tasks": [
+      "workspace_id",
+      "id"
+    ],
+    "session_permissions": [
+      "workspace_id",
+      "user_id",
+      "conversation_id"
+    ],
+    "user_daily_cost": [
+      "workspace_id",
+      "user_id",
+      "day_utc"
+    ],
+    "users": [
+      "workspace_id",
+      "id"
+    ]
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 167,
-    "max_upstream_net_added_loc": 5300,
+    "max_direct_upstream_files": 172,
+    "max_upstream_net_added_loc": 5414,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "litellm_exact_security_followup": {
+      "revision": "litellm-reviewed-exact-security-budget-v36",
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 170,
+      "previous_max_upstream_net_added_loc": 5400,
+      "approved_max_direct_upstream_files": 172,
+      "approved_max_upstream_net_added_loc": 5414,
+      "review_patch_sha256": "7bd05d2f3b5a1ab579935741db538ec3fe664b132cf049fc2c0158f4d83179d9",
+      "review_addendum_sha256": "8c52c242dcbc5c7e828fe6e15345c27510c1bcd37d26684143afb273cc5378be",
+      "direct_human_approval_sha256": "b69e97b3ca53a68ae4941b3d83354de2a5dcf5389fe50e4b2239525a74e314d7",
+      "scoped_paths": [
+        ".github/actions/setup-harness-cli/locks/pi/package-lock.json",
+        ".github/actions/setup-harness-cli/locks/pi/package.json",
+        ".github/scripts/ci/python-matrix.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "saas/scripts/check_image_supply_chain.py",
+        "saas/supply_chain/npm-122-security-lock.json",
+        "tests/saas/test_image_supply_chain.py",
+        "uv.lock",
+        "uv.toml",
+        "web/electron/package.json"
+      ],
+      "reason": "The requester directly approved R-only 172 files/5414 net LOC and replacement of previously preserved dependency bytes only by the hash-pinned eleven-path security/Slack patch after exact independent R preview. Preserve nine patches, .85 isolation, forbidden paths, reverse-dependency checks and every original qualification gate. Final R trusted policy hashes and the three-image contract are not approved by this record. M and Root budgets are independent; no previous source, CI, OCI, signature or production evidence is rebound."
+    },
+    "litellm_main_alignment_followup": {
+      "revision": "litellm-reviewed-main-kimi-alignment-budget-v35",
+      "approved_at": "2026-10-24",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 167,
+      "previous_max_upstream_net_added_loc": 5300,
+      "approved_max_direct_upstream_files": 170,
+      "approved_max_upstream_net_added_loc": 5400,
+      "reference_R_revision": "71c3a0de832a850178feafdcbb9b935928666c3c",
+      "integrated_main_revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
+      "conditional_preview": {
+        "direct_upstream_files": 170,
+        "upstream_net_added_loc": 5339,
+        "active_patches": 9
+      },
+      "preserved_dependency_paths": [
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "uv.toml"
+      ],
+      "scoped_paths": [
+        "examples/extensions/hello-page/web/package.json",
+        "tests/server/integration/test_session_host_launch.py",
+        "omnigent/harnesses/kimi_native/forwarder.py",
+        "tests/test_kimi_native_forwarder.py"
+      ],
+      "reason": "The requester explicitly approved only the R branch 167/5300 to 170/5400 increase for the identified main and Kimi real fixes while preserving existing dependency bytes. Resolve actual conflicts and remeasure; the read-only preview is not a build or passing gate. Retain nine patches, .85 isolation, forbidden paths, reverse-dependency checks and every technical, independent signing, image and production gate. This does not approve the separate M150-to156 request or widen another release branch."
+    },
+    "kimi_terminal_pending_budget_followup": {
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 154,
+      "max_direct_upstream_files": 156,
+      "measured_upstream_net_added_loc": 3664,
+      "scoped_paths": [
+        "omnigent/harnesses/kimi_native/forwarder.py",
+        "tests/test_kimi_native_forwarder.py"
+      ],
+      "reason": "Requester explicitly approved rollback 154-to156 and 0.19 157-to159 for the minimal known-terminal POST/watchdog ordering correction and its owning regressions. Preserve all existing behavior assertions, 4576 net LOC, nine patches, .85 isolation and every release gate. New source requires its own mandatory CI, qualified paired images, P4 and P5; previous failed CI and cancelled build remain retained."
+    },
+    "upstream_composer_recovery_budget_followup": {
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 153,
+      "max_direct_upstream_files": 154,
+      "measured_upstream_net_added_loc": 3600,
+      "scoped_paths": [
+        "web/src/pages/ChatPage.tsx",
+        "web/src/pages/ChatPage.composer.test.tsx"
+      ],
+      "new_official_path": "web/src/pages/ChatPage.composer.test.tsx",
+      "upstream_revision": "3138c7dfeb24a12f2aaf6d7ffeffc9d491d69df1",
+      "reason": "Requester explicitly approved only the old018 rollback branch 153-to154 increase for the exact pinned-target upstream Composer draft-restoration fix and owning regression. The 0.19 cap remains 157 because that target already contains both. Preserve product assertions, 4576 net LOC, nine patches, .85 isolation and all release gates. The final source requires its own mandatory technical CI before merge."
+    },
+    "host_ping_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 151,
+      "max_direct_upstream_files": 152,
+      "scoped_paths": [
+        "tests/server/integration/test_session_host_launch.py"
+      ],
+      "measured_upstream_net_added_loc": 3528,
+      "reason": "Requester explicitly approved only the old018 rollback branch 151-to152 increase for the transport Ping/Pong test helper correction. All typed refusal/history assertions, unknown-frame rejection, product behavior, 4576 lines, nine patches, .85 isolation and release gates remain unchanged. New source needs its own mandatory CI."
+    },
+    "upstream_watchdog_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 152,
+      "max_direct_upstream_files": 153,
+      "scoped_paths": [
+        "tests/inner/conftest.py"
+      ],
+      "upstream_test_fix_revision": "0a9937ec379ea51cf1d51576484fa14d3722d9ef",
+      "reason": "Requester explicitly approved old018 152-to153 for the exact pinned-target upstream diagnostic watchdog fix. Keep 90s complete Python-thread stack dumps, all test bodies/guards, product behavior, 4576 net LOC, nine patches, .85 isolation and every release gate. Fresh final-source Linux mandatory CI still required."
+    },
+    "ui8_recovery_test_budget_followup": {
+      "approved_at": "2026-10-23",
+      "previous_max_direct_upstream_files": 150,
+      "max_direct_upstream_files": 151,
+      "measured_upstream_net_added_loc": 3494,
+      "scoped_paths": [
+        "tests/e2e_ui/chat/test_claude_sdk_terminated_cli_recovery.py"
+      ],
+      "upstream_test_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+      "reason": "The requester explicitly approved only the old018 rollback-branch increase from 150 to 151 files for the exact upstream Claude SDK test process-ownership correction. Product code, workflow policy, 4576 net LOC, nine patches, .85 isolation and all release gates remain unchanged. New source requires its own mandatory technical CI before merge; local browser setup did not execute a test body."
+    },
     "litellm_deployment_path_followup": {
       "approved_at": "2026-10-23",
       "governance_mode": "single_owner_beta",
@@ -82,7 +253,9 @@
         "upstream_net_added_loc": 5291,
         "active_patches": 9
       },
-      "scoped_paths": ["tests/e2e/test_governed_litellm_e2e.py"],
+      "scoped_paths": [
+        "tests/e2e/test_governed_litellm_e2e.py"
+      ],
       "reason": "The account owner explicitly approved raising only the direct upstream file ceiling from 166 to 167 for the eight-line governed LiteLLM E2E entry. Reuse the maintained controller, Host, LiteLLM and PostgreSQL billing scenario; missing runtime prerequisites must remain explicit skips, not passes. Preserve the 5,300-net-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every production gate. This scope approval is not CI, independent review, image admission, a shared release-window authorization or production acceptance."
     },
     "pagination_test_followup": {
@@ -154,7 +327,9 @@
       "measured_direct_upstream_files": 156,
       "previous_max_upstream_net_added_loc": 4576,
       "measured_upstream_net_added_loc": 3453,
-      "scoped_paths": ["tests/e2e/test_mcp_registry_compat_e2e.py"],
+      "scoped_paths": [
+        "tests/e2e/test_mcp_registry_compat_e2e.py"
+      ],
       "reason": "The requester explicitly approved only the 155-to-156 direct-file ceiling increase for the upstream b4b08f5c test correction. Use the real Server version to retain strict pre-0.19 transport/header expectations while checking Registry support in stable0.19 and current builds. Exact tagged0.18, tagged0.19 and current real Server/Runner HTTP cases pass with zero pytest retries; all bundle, selection-header and root/child tool restrictions remain asserted. Product code and Managed MCP production enablement are unchanged. Preserve the 4,576-line ceiling, nine-patch ceiling,0.85 isolation floor, protected-policy review and all CI, OCI, real P4, signing, restore, canary, rollback and independent admission gates. This source-budget approval is not production admission.",
       "previous_revision": {
         "revision": "upstream-019-toast-cleanup-test-budget-v34",
@@ -164,7 +339,9 @@
         "measured_direct_upstream_files": 155,
         "previous_max_upstream_net_added_loc": 4576,
         "measured_upstream_net_added_loc": 3416,
-        "scoped_paths": ["web/src/shell/archiveUndoToast.test.tsx"],
+        "scoped_paths": [
+          "web/src/shell/archiveUndoToast.test.tsx"
+        ],
         "reason": "The requester explicitly authorized sequential execution of the final-source freeze, candidate OCI, all P4 acceptance and conditional P5. This approves the reviewed 154-to-155 file proposal for awaiting actual Sonner toast removal before test DOM teardown. Preserve all existing assertions, the 4,576-line ceiling, nine patches, 0.85 isolation floor and all technical/live/signing/restore/canary/independent admission gates. This source-scope approval is not a passed acceptance result.",
         "previous_revision": {
           "revision": "upstream-019-abrupt-death-test-budget-v33",
@@ -174,7 +351,9 @@
           "measured_direct_upstream_files": 154,
           "previous_max_upstream_net_added_loc": 4576,
           "measured_upstream_net_added_loc": 3415,
-          "scoped_paths": ["tests/inner/test_brokered_auth_abrupt_death.py"],
+          "scoped_paths": [
+            "tests/inner/test_brokered_auth_abrupt_death.py"
+          ],
           "reason": "The requester explicitly approved only the direct-file ceiling increase from 153 to 154 for atomic publication of the upstream abrupt-death test fixture. A deterministic pipe handshake reproduces the empty JSON read before the fix; macOS and Linux real-process scenarios pass without retries after writing the complete state to a same-directory temporary file and atomically replacing state.json. Retain every SIGKILL, descendant and socket cleanup assertion; no product runtime code changes. The approved main c90a079c build metadata fix adds four net official lines, resulting in 3,415 measured lines. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and all release gates. This Single-Owner Beta approval is not independent production review or release admission.",
           "previous_revision": {
             "revision": "upstream-019-terminal-reconnect-test-budget-v32",

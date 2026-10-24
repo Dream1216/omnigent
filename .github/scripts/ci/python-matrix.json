@@ -74,6 +74,7 @@
   {
     "group": "slack",
     "paths": "integrations/slack/tests",
-    "extra": "slack"
+    "extra": "slack",
+    "workers": "0"
   }
 ]

@@ -130,11 +130,43 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 5300
-    assert budget["max_direct_upstream_files"] == 167
+    assert budget["max_upstream_net_added_loc"] == 5414
+    assert budget["max_direct_upstream_files"] == 172
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    security = revision["litellm_exact_security_followup"]
+    assert security["revision"] == "litellm-reviewed-exact-security-budget-v36"
+    assert security["approved_at"] == "2026-10-24"
+    assert security["previous_max_direct_upstream_files"] == 170
+    assert security["previous_max_upstream_net_added_loc"] == 5400
+    assert security["approved_max_direct_upstream_files"] == 172
+    assert security["approved_max_upstream_net_added_loc"] == 5414
+    assert security["review_patch_sha256"] == (
+        "7bd05d2f3b5a1ab579935741db538ec3fe664b132cf049fc2c0158f4d83179d9"
+    )
+    assert security["direct_human_approval_sha256"] == (
+        "b69e97b3ca53a68ae4941b3d83354de2a5dcf5389fe50e4b2239525a74e314d7"
+    )
+    assert len(security["scoped_paths"]) == 11
+    alignment = revision["litellm_main_alignment_followup"]
+    assert alignment["revision"] == "litellm-reviewed-main-kimi-alignment-budget-v35"
+    assert alignment["approved_at"] == "2026-10-24"
+    assert alignment["previous_max_direct_upstream_files"] == 167
+    assert alignment["previous_max_upstream_net_added_loc"] == 5300
+    assert alignment["approved_max_direct_upstream_files"] == 170
+    assert alignment["approved_max_upstream_net_added_loc"] == 5400
+    assert alignment["integrated_main_revision"] == "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+    assert alignment["conditional_preview"] == {
+        "direct_upstream_files": 170,
+        "upstream_net_added_loc": 5339,
+        "active_patches": 9,
+    }
+    assert alignment["preserved_dependency_paths"] == [
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "uv.toml",
+    ]
     e2e = revision["governed_litellm_e2e_entry"]
     assert e2e["revision"] == "litellm-governed-e2e-entry-budget-v34"
     assert e2e["approved_at"] == "2026-10-22"
@@ -182,6 +214,26 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert len(litellm["scoped_paths"]) == 16
     assert "omnigent/server/routes/sessions/routes_events.py" in litellm["scoped_paths"]
     assert litellm["previous_revision_reference"] == "platform-model-token-renewal-budget-v30"
+    composer_followup = revision["upstream_composer_recovery_budget_followup"]
+    assert composer_followup["approved_at"] == "2026-10-24"
+    assert composer_followup["previous_max_direct_upstream_files"] == 153
+    assert composer_followup["max_direct_upstream_files"] == 154
+    assert composer_followup["measured_upstream_net_added_loc"] == 3600
+    assert composer_followup["scoped_paths"] == [
+        "web/src/pages/ChatPage.tsx",
+        "web/src/pages/ChatPage.composer.test.tsx",
+    ]
+    assert composer_followup["new_official_path"] == "web/src/pages/ChatPage.composer.test.tsx"
+    assert composer_followup["upstream_revision"] == "3138c7dfeb24a12f2aaf6d7ffeffc9d491d69df1"
+    ui8_followup = revision["ui8_recovery_test_budget_followup"]
+    assert ui8_followup["approved_at"] == "2026-10-23"
+    assert ui8_followup["previous_max_direct_upstream_files"] == 150
+    assert ui8_followup["max_direct_upstream_files"] == 151
+    assert ui8_followup["measured_upstream_net_added_loc"] == 3494
+    assert ui8_followup["scoped_paths"] == [
+        "tests/e2e_ui/chat/test_claude_sdk_terminated_cli_recovery.py"
+    ]
+    assert ui8_followup["upstream_test_revision"] == "3db749d784ff044304473939acaae3a65c0fec61"
     followup = revision["followup"]
     assert followup["revision"] == "upstream-019-mcp-compat-version-test-budget-v35"
     assert followup["approved_at"] == "2026-10-21"

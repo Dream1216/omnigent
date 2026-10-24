@@ -80,6 +80,7 @@ def test_unknown_transport_and_routing_fields_never_reach_configuration_or_budge
         {"service_tier": "priority"},
         {"tools": [{"type": "web_search_preview"}]},
         {"tools": [{"type": "code_interpreter", "container": {"type": "auto"}}]},
+        {"tools": [{"type": "custom", "name": "unreviewed", "format": {"type": "text"}}]},
         {"tools": [{"type": "function", "function": {"name": "ok"}, "api_key": "bad"}]},
         {"tool_choice": {"type": "mcp", "server_url": "https://unapproved.invalid"}},
     ),
@@ -101,6 +102,51 @@ def test_unapproved_state_identity_and_server_tools_are_rejected(responses, over
         {"text": {"format": {"type": "text"}, "api_base": "bad"}},
         {"include": ["web_search_call.action.sources"]},
         {"input": [{"type": "item_reference", "id": "other"}]},
+        {
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "name": "old",
+                    "call_id": "1",
+                    "input": {},
+                }
+            ]
+        },
+        {
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "name": "old",
+                    "call_id": "1",
+                    "input": "text",
+                    "api_key": "bad",
+                }
+            ]
+        },
+        {
+            "input": [
+                {"type": "custom_tool_call_output", "call_id": "1", "output": {"api_base": "bad"}}
+            ]
+        },
+        {
+            "input": [
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "1",
+                    "output": "text",
+                    "headers": {},
+                }
+            ]
+        },
+        {
+            "input": [
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "1",
+                    "output": [{"type": "input_file", "file_url": "https://unapproved.invalid"}],
+                }
+            ]
+        },
         {
             "input": [
                 {
@@ -173,8 +219,13 @@ def test_noncanonical_or_nonfinite_json_is_rejected(responses, suffix) -> None:
         _request_document(raw, responses=responses)
 
 
-@pytest.mark.parametrize("responses", (False, True))
-def test_text_function_history_and_json_schema_reach_one_fenced_stream(responses) -> None:
+@pytest.mark.parametrize(
+    ("responses", "call_kind"),
+    ((False, "function_call"), (True, "function_call"), (True, "custom_tool_call")),
+)
+def test_text_function_history_and_json_schema_reach_one_fenced_stream(
+    responses, call_kind
+) -> None:
     seen = []
 
     def upstream(request):
@@ -215,12 +266,14 @@ def test_text_function_history_and_json_schema_reach_one_fenced_stream(responses
                     "content": [{"type": "input_text", "text": "api_key is ordinary text"}],
                 },
                 {
-                    "type": "function_call",
+                    "type": call_kind,
                     "name": "lookup",
                     "call_id": "c1",
-                    "arguments": '{"api_key":"fixture"}',
+                    "arguments"
+                    if call_kind == "function_call"
+                    else "input": '{"api_key":"fixture"}',
                 },
-                {"type": "function_call_output", "call_id": "c1", "output": "result"},
+                {"type": call_kind + "_output", "call_id": "c1", "output": "result"},
                 {
                     "type": "reasoning",
                     "summary": [{"type": "summary_text", "text": "summary"}],

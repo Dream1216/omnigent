@@ -54,7 +54,13 @@ from omnigent.host.frames import (
 )
 from omnigent.host.identity import HostIdentity
 from omnigent.runner.identity import token_bound_runner_id
-from omnigent.runner.transports.ws_tunnel.frames import HelloFrame
+from omnigent.runner.transports.ws_tunnel.frames import (
+    HelloFrame,
+    PingFrame,
+    PongFrame,
+    decode_frame,
+    encode_frame,
+)
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
 from omnigent.server.host_registry import HostConnection
@@ -242,6 +248,14 @@ async def _serve_one_launch(
         # a slow session create fail with a spurious "host is offline" 409.
         output = await comm.receive_output(timeout=deadline.next_wait(30.0))
         if output["type"] != "websocket.send":
+            continue
+        wire = json.loads(output["text"])
+        if isinstance(wire, dict) and wire.get("kind") == "ping":
+            ping = decode_frame(output["text"])
+            assert isinstance(ping, PingFrame)
+            await comm.send_input(
+                {"type": "websocket.receive", "text": encode_frame(PongFrame(ts=ping.ts))}
+            )
             continue
         frame = decode_host_frame(output["text"])
         if isinstance(frame, HostStatFrame):

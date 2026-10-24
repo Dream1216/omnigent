@@ -160,6 +160,7 @@ def _client(
     configuration: PlatformManagedModelRuntimeConfiguration
     | object
     | None = _DEFAULT_CONFIGURATION,
+    retry_clock=None,
 ) -> tuple[TestClient, _Budgets, str]:
     authority = PlatformModelGatewayTokenAuthority(
         signing_key=SIGNING_KEY,
@@ -191,6 +192,7 @@ def _client(
         ),
         client_factory=lambda: httpx.AsyncClient(transport=handler),
         clock=lambda: datetime(2026, 9, 14, 0, 30, tzinfo=timezone.utc),
+        retry_clock=retry_clock,
     )
     return (
         TestClient(create_platform_model_gateway_app(gateway)),
@@ -514,6 +516,102 @@ def test_ambiguous_or_multisample_limits_fail_before_budget_or_provider(
     assert not calls and not budgets.reserved and not budgets.settled and not budgets.released
 
 
+@pytest.mark.parametrize(
+    ("call_kind", "output_kind"),
+    [("function_call", "function_call_output"), ("custom_tool_call", "custom_tool_call_output")],
+)
+def test_replayed_parallel_results_precede_progress_without_replaying_tools(
+    call_kind, output_kind, caplog
+):
+    history = [
+        {"type": "message", "role": "user", "content": "Keep the existing task."},
+        {"type": call_kind, "call_id": "slow", "name": "read_file", "arguments": "{}"},
+        {"type": call_kind, "call_id": "fast", "name": "read_file", "arguments": "{}"},
+        {"type": output_kind, "call_id": "fast", "output": "already completed fast result"},
+        {"type": "message", "role": "assistant", "content": "Progress before slow result."},
+        {"type": call_kind, "call_id": "later", "name": "read_file", "arguments": "{}"},
+        {"type": output_kind, "call_id": "later", "output": "already completed later result"},
+        {"type": output_kind, "call_id": "slow", "output": "already completed slow result"},
+        {"type": "message", "role": "user", "content": "Continue without repeating tools."},
+    ]
+    if call_kind == "custom_tool_call":
+        history = [
+            {**{key: value for key, value in item.items() if key != "arguments"}, "input": "{}"}
+            if item["type"] == call_kind
+            else item
+            for item in history
+        ]
+    original = json.loads(json.dumps(history))
+    observed = []
+
+    async def upstream(request):
+        sent = json.loads(request.content)
+        observed.append(sent["input"])
+        assert sent["input"] == [original[i] for i in (0, 1, 2, 3, 7, 4, 5, 6, 8)]
+        return httpx.Response(
+            200,
+            content=b'data: {"type":"response.completed","response":{"usage":'
+            b'{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}\n\n',
+        )
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": history, "stream": True},
+    )
+    assert response.status_code == 200
+    assert len(observed) == 1 and len(budgets.settled) == 1 and not budgets.released
+    assert history == original
+    assert "already completed" not in caplog.text
+    assert _normalize_responses_tool_history(observed[0]) is observed[0]
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["missing", "duplicate", "orphan", "user-boundary", "unknown-boundary", "kind-mismatch"],
+)
+def test_history_normalization_does_not_invent_results_or_cross_control_boundaries(case):
+    call = {"type": "function_call", "call_id": "one", "name": "read_file", "arguments": "{}"}
+    progress = {"type": "message", "role": "assistant", "content": "Still working."}
+    output = {"type": "function_call_output", "call_id": "one", "output": "existing result"}
+    histories = {
+        "missing": [call, progress],
+        "duplicate": [call, call, progress, output],
+        "orphan": [output, call, progress],
+        "user-boundary": [
+            call,
+            progress,
+            {"type": "message", "role": "user", "content": "Stop."},
+            output,
+        ],
+        "unknown-boundary": [call, progress, {"type": "item_reference", "id": "opaque"}, output],
+        "kind-mismatch": [call, progress, {**output, "type": "custom_tool_call_output"}],
+    }
+    history = histories[case]
+    original = json.loads(json.dumps(history))
+    assert _normalize_responses_tool_history(history) is history
+    assert history == original
+
+
+def test_history_normalization_preserves_valid_and_non_list_inputs():
+    for value in (
+        None,
+        "plain input",
+        [],
+        [{"type": "message", "role": "user", "content": "hello"}],
+    ):
+        assert _normalize_responses_tool_history(value) is value
+
+
+@pytest.mark.parametrize(
+    "item", [{"type": []}, {"type": {}}, None, "opaque", {"type": "function_call", "call_id": []}]
+)
+def test_malformed_history_items_do_not_crash_gateway_normalization(item):
+    history = [item]
+    assert _normalize_responses_tool_history(history) is history
+
+
 def test_provider_rejection_retains_uncertain_budget_without_leaking_body() -> None:
     async def upstream(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "contains-sensitive-provider-detail"})
@@ -525,10 +623,414 @@ def test_provider_rejection_retains_uncertain_budget_without_leaking_body() -> N
         json={"model": "deepseek-flash", "messages": [], "stream": True},
     )
 
-    assert response.status_code == 502
+    assert response.status_code == 424
+    assert response.json()["error"]["code"] == "platform_model_provider_authentication_failed"
     assert "contains-sensitive-provider-detail" not in response.text
     assert len(budgets.uncertain) == 1
     assert not budgets.settled and not budgets.released
+
+
+@pytest.mark.parametrize(
+    ("upstream_status", "expected_status", "code", "retryable"),
+    [
+        (400, 400, "platform_model_provider_request_invalid", False),
+        (422, 422, "platform_model_provider_request_invalid", False),
+        (401, 424, "platform_model_provider_authentication_failed", False),
+        (403, 424, "platform_model_provider_authentication_failed", False),
+        (402, 424, "platform_model_provider_budget_exhausted", False),
+        (404, 422, "platform_model_provider_protocol_unavailable", False),
+        (405, 422, "platform_model_provider_protocol_unavailable", False),
+        (429, 429, "platform_model_provider_rate_limited", True),
+        (503, 503, "platform_model_provider_unavailable", True),
+    ],
+)
+def test_provider_failures_are_classified_without_exposing_private_details(
+    upstream_status, expected_status, code, retryable, caplog
+):
+    secret = "provider-secret-never-returned"
+
+    async def upstream(_request):
+        return httpx.Response(
+            upstream_status,
+            json={"error": {"code": secret, "message": "private prompt " + secret}},
+            headers={"x-request-id": secret, "retry-after": "12"},
+        )
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "private user prompt", "stream": True},
+    )
+
+    error = response.json()["error"]
+    assert response.status_code == expected_status
+    assert error["code"] == code and error["retryable"] is retryable
+    assert UUID(error["request_id"]).hex == response.headers["x-request-id"]
+    assert error["request_id"] in error["message"]
+    assert error["request_id"] in caplog.text
+    assert f"provider_status={upstream_status}" in caplog.text
+    assert secret not in response.text + caplog.text
+    assert "private prompt" not in response.text + caplog.text
+    assert "private user prompt" not in response.text + caplog.text
+    assert len(budgets.uncertain) == 1 and not budgets.settled
+    if upstream_status == 429:
+        assert response.headers["retry-after"] == "12"
+
+
+def test_transient_failures_stop_egress_and_reservations_during_session_cooldown():
+    calls = 0
+    now = [0.0]
+
+    async def upstream(_request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    client, budgets, token = _client(httpx.MockTransport(upstream), retry_clock=lambda: now[0])
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"model": "deepseek-flash", "input": "hello", "stream": True}
+    assert client.post("/v1/responses", headers=headers, json=body).status_code == 503
+    assert client.post("/v1/responses", headers=headers, json=body).status_code == 503
+    reservations_before = len(budgets.reserved)
+    for _ in range(8):
+        response = client.post("/v1/responses", headers=headers, json=body)
+        assert response.status_code == 424
+        assert response.json()["error"]["code"] == "platform_model_retry_cooldown"
+        assert response.json()["error"]["retryable"] is False
+    assert calls == 2 and len(budgets.uncertain) == 2
+    assert len(budgets.reserved) == reservations_before
+
+    # One failing session must not stop another session using the same tenant.
+    other = PlatformModelGatewayTokenAuthority(signing_key=SIGNING_KEY, tenant_id=TENANT_ID)
+    other_token = other.issue(session_id=uuid4())
+    assert (
+        client.post(
+            "/v1/responses", headers={"Authorization": f"Bearer {other_token}"}, json=body
+        ).status_code
+        == 503
+    )
+    now[0] = 61.0
+    assert client.post("/v1/responses", headers=headers, json=body).status_code == 503
+    assert calls == 4
+
+
+def test_provider_retry_after_prevents_early_egress():
+    calls = 0
+    now = [10.0]
+
+    async def upstream(_request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"retry-after": "120"})
+
+    client, budgets, token = _client(httpx.MockTransport(upstream), retry_clock=lambda: now[0])
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"model": "deepseek-flash", "input": "hello", "stream": True}
+    assert client.post("/v1/responses", headers=headers, json=body).status_code == 429
+    now[0] = 70.0
+    blocked = client.post("/v1/responses", headers=headers, json=body)
+    assert blocked.status_code == 424 and blocked.headers["retry-after"] == "60"
+    assert calls == 1 and len(budgets.uncertain) == 1
+    now[0] = 131.0
+    assert client.post("/v1/responses", headers=headers, json=body).status_code == 429
+    assert calls == 2
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_transport_failure_is_redacted_and_releases_reservation(timeout, caplog):
+    async def upstream(request):
+        error = httpx.ReadTimeout if timeout else httpx.ConnectError
+        raise error("provider-secret-never-returned", request=request)
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "hello", "stream": True},
+    )
+    assert response.status_code == (504 if timeout else 502)
+    assert response.json()["error"]["retryable"] is True
+    assert "provider-secret-never-returned" not in response.text + caplog.text
+    assert len(budgets.uncertain) == 1 and not budgets.settled
+
+
+@pytest.mark.parametrize(
+    ("status", "provider_code", "expected_code"),
+    [
+        (400, "context_length_exceeded", "platform_model_context_length_exceeded"),
+        (400, "model_not_found", "platform_model_provider_protocol_unavailable"),
+        (429, "insufficient_quota", "platform_model_provider_budget_exhausted"),
+    ],
+)
+def test_allowlisted_provider_error_codes_produce_actionable_diagnostics(
+    status, provider_code, expected_code, caplog
+):
+    client, budgets, token = _client(
+        httpx.MockTransport(
+            lambda _request: httpx.Response(
+                status, json={"error": {"code": provider_code, "message": "private detail"}}
+            )
+        )
+    )
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "hello", "stream": True},
+    )
+    assert response.json()["error"]["code"] == expected_code
+    assert response.json()["error"]["retryable"] is False
+    assert f"provider_code={provider_code}" in caplog.text
+    assert "private detail" not in caplog.text + response.text
+    assert len(budgets.uncertain) == 1 and not budgets.settled
+
+
+@pytest.mark.parametrize(
+    ("value", "seconds"),
+    [
+        ("Mon, 14 Sep 2026 00:32:00 GMT", "120"),
+        ("99999", "3600"),
+        ("0", "1"),
+        ("-3", "60"),
+        ("not-a-date", "60"),
+    ],
+)
+def test_retry_after_is_bounded_and_accepts_http_dates(value, seconds):
+    client, _budgets, token = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(429, headers={"retry-after": value}))
+    )
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "hello", "stream": True},
+    )
+    assert response.headers["retry-after"] == seconds
+
+
+def test_oversized_provider_error_is_bounded_closed_and_redacted(caplog):
+    class ErrorStream(httpx.AsyncByteStream):
+        chunks = 0
+        closed = False
+
+        async def __aiter__(self):
+            for _ in range(4):
+                self.chunks += 1
+                yield b"private-provider-detail" * 512
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = ErrorStream()
+    client, budgets, token = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(400, stream=stream))
+    )
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "hello", "stream": True},
+    )
+    assert response.status_code == 400
+    assert stream.chunks == 2 and stream.closed
+    assert "provider_code=error_body_oversized" in caplog.text
+    assert "private-provider-detail" not in response.text + caplog.text
+    assert len(budgets.uncertain) == 1
+
+
+def test_success_clears_previous_transient_failure_without_replaying_requests():
+    statuses = iter([503, 200, 503, 503])
+
+    async def upstream(_request):
+        return httpx.Response(
+            next(statuses),
+            content=(
+                b'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,'
+                b'"output_tokens":1,"total_tokens":2}}}\n\n'
+            ),
+        )
+
+    client, budgets, token = _client(httpx.MockTransport(upstream), retry_clock=lambda: 0.0)
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"model": "deepseek-flash", "input": "hello", "stream": True}
+    for expected in (503, 200, 503, 503, 424):
+        assert client.post("/v1/responses", headers=headers, json=body).status_code == expected
+    assert len(budgets.uncertain) == 3 and len(budgets.settled) == 1
+    assert budgets.settled[0]["actual_tokens"] == 2
+
+
+def test_interrupted_stream_is_not_replayed_and_retains_positive_unknown_hold(caplog):
+    calls = 0
+
+    class BrokenStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+            raise httpx.ReadError("private-stream-error")
+
+    async def upstream(_request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, stream=BrokenStream())
+
+    client, budgets, token = _client(httpx.MockTransport(upstream), retry_clock=lambda: 0.0)
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"model": "deepseek-flash", "input": "hello", "stream": True}
+    for _ in range(2):
+        with pytest.raises(httpx.ReadError):
+            client.post("/v1/responses", headers=headers, json=body)
+    assert client.post("/v1/responses", headers=headers, json=body).status_code == 424
+    assert calls == 2 and len(budgets.uncertain) == 2
+    assert not budgets.settled and not budgets.released
+    assert all(
+        view.status == "uncertain"
+        and view.admitted_tokens > 0
+        and view.admitted_microusd > 0
+        and view.released_tokens == view.released_microusd == 0
+        for view in budgets.reservations.values()
+    )
+    assert "exception=stream_transport_error" in caplog.text
+    assert "private-stream-error" not in caplog.text
+
+
+def test_failure_tracking_is_bounded_and_scoped_to_configuration_and_tenant():
+    from saas.production.platform_model_gateway import _ProviderFailures
+
+    failures = _ProviderFailures(lambda: 0.0)
+    key = (TENANT_ID, SESSION_ID, 7)
+    failures.failed(key)
+    failures.failed(key)
+    assert failures.cooldown(key) == 60
+    assert failures.cooldown((TENANT_ID, SESSION_ID, 8)) == 0
+    assert failures.cooldown((uuid4(), SESSION_ID, 7)) == 0
+    for _ in range(4100):
+        failures.failed((TENANT_ID, uuid4(), 7))
+    assert len(failures._states) == 4096
+
+
+def test_unreadable_provider_error_still_retains_budget_and_closes_stream(caplog):
+    class BrokenErrorStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b'{"error":'
+            raise httpx.ReadError("private-provider-detail")
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = BrokenErrorStream()
+    client, budgets, token = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(400, stream=stream))
+    )
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "hello", "stream": True},
+    )
+    assert response.status_code == 400 and stream.closed
+    assert len(budgets.uncertain) == 1 and not budgets.settled
+    assert "provider_code=error_body_unavailable" in caplog.text
+    assert "private-provider-detail" not in response.text + caplog.text
+
+
+def test_slow_provider_error_body_has_a_separate_bounded_read_deadline(caplog):
+    class SlowErrorStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b'{"error":'
+            await asyncio.sleep(10)
+            raise AssertionError("error body read exceeded its deadline")
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = SlowErrorStream()
+    client, budgets, token = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(400, stream=stream))
+    )
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "hello", "stream": True},
+    )
+    assert response.status_code == 400 and stream.closed
+    assert len(budgets.uncertain) == 1 and not budgets.settled
+    assert "provider_code=error_body_unavailable" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<html>private-provider-detail</html>",
+        b'{"error":"private-provider-detail"}',
+        b'{"error":{"code":["private-provider-detail"]}}',
+        b"\xff",
+        b"[" * 2000 + b'"private-provider-detail"' + b"]" * 2000,
+    ],
+    ids=["html", "string-error", "invalid-code-type", "invalid-encoding", "deep-json"],
+)
+def test_malformed_provider_errors_keep_original_classification_and_retain_budget(body, caplog):
+    client, budgets, token = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(400, content=body))
+    )
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": "hello", "stream": True},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "platform_model_provider_request_invalid"
+    assert len(budgets.uncertain) == 1 and not budgets.settled
+    assert "private-provider-detail" not in response.text + caplog.text
+
+
+@pytest.mark.parametrize("provider_status", [401, 503])
+def test_existing_relay_preserves_classification_without_auth_refresh_or_task_replay(
+    provider_status,
+):
+    provider_calls = []
+
+    async def upstream(request):
+        provider_calls.append(request)
+        return httpx.Response(provider_status)
+
+    gateway_client, budgets, _ = _client(httpx.MockTransport(upstream))
+    attempts = []
+
+    async def gateway_transport(request):
+        attempts.append(request)
+        response = await asyncio.to_thread(
+            gateway_client.post,
+            request.url.path,
+            headers={"Authorization": request.headers["authorization"]},
+            content=request.content,
+        )
+        return httpx.Response(
+            response.status_code, content=response.content, headers=response.headers
+        )
+
+    relay = PlatformModelRelay(
+        authority=PlatformModelGatewayTokenAuthority(signing_key=SIGNING_KEY, tenant_id=TENANT_ID),
+        session_id=SESSION_ID,
+        ttl_seconds=60,
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(gateway_transport)),
+    )
+    expected = [424] if provider_status == 401 else [503, 503, 424]
+    with TestClient(relay.app) as client:
+        for status in expected:
+            response = client.post(
+                "/v1/responses",
+                headers={"Authorization": f"Bearer {relay.capability}"},
+                json={"model": "deepseek-flash", "input": "preserve this task", "stream": True},
+            )
+            assert response.status_code == status
+            assert response.json()["error"]["request_id"] in response.json()["error"]["message"]
+    assert len(attempts) == len(expected)
+    assert len({request.headers["authorization"] for request in attempts}) == 1
+    assert len(provider_calls) == (1 if provider_status == 401 else 2)
+    assert len(budgets.uncertain) == len(provider_calls) and not budgets.settled
+    if provider_status == 503:
+        assert response.json()["error"]["retry_after_seconds"] > 0
+        assert "Retry after" in response.json()["error"]["message"]
 
 
 def test_unconfigured_provider_is_ready_but_requests_fail_closed() -> None:

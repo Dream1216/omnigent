@@ -52,6 +52,7 @@ from saas.runner_adapter.metering import (
     ProviderUsageMeter,
     build_metering_client,
 )
+from tests._helpers.polling import poll_until
 from tests.saas import test_tenant_model_catalog_postgresql
 from tests.saas.postgresql_retention import snapshot_nonempty_model_facts
 from tests.saas.test_billing_metering_transport import _server_context, _ServerThread
@@ -400,6 +401,7 @@ def _exercise_run_inference(
                     assert result.content == _stream(responses)
                 retained, original_authority, known_reservation_id = None, {}, None
                 if send:
+                    poll_until(lambda: recorder.lost, timeout_s=10, interval_s=0.05)
                     assert not meter.flush(timeout_seconds=0)
                     assert recorder.lost
                     pending = list(grant.spool_directory.glob("*.pending.json"))

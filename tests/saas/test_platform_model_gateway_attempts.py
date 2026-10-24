@@ -161,7 +161,10 @@ def test_ambiguous_sent_requests_keep_the_hold_without_fabricating_actual_spend(
 
     client, path, request, budgets, sessions, _ = _fixture(tmp_path, handler)
     response = client.post(path, **request)
-    assert response.status_code in {200, 502}
+    expected_status = 424 if case == "401" else 502 if case == "write_error" else 200
+    assert response.status_code == expected_status
+    if case == "401":
+        assert response.json()["error"]["code"] == "platform_model_provider_authentication_failed"
     assert "private-supplier-error" not in response.text
     row = _row(sessions)
     assert row.status == "uncertain"
