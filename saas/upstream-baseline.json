@@ -114,11 +114,23 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 159,
+    "max_direct_upstream_files": 161,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "reviewed_security_dependency_budget_followup": {
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 159,
+      "max_direct_upstream_files": 161,
+      "measured_upstream_net_added_loc": 3951,
+      "scoped_paths": [
+        ".github/actions/setup-harness-cli/locks/pi/package.json",
+        ".github/actions/setup-harness-cli/locks/pi/package-lock.json"
+      ],
+      "review_packet_sha256": "c561c350ad596d16b38bc6152c0a3e90ca3cef2081245a9608ed581cd2d2110b",
+      "reason": "Requester explicitly approved rollback156-to158 and 019159-to161 only for the Pi manifest and generated lock required to retain fixed Undici under native npm installation. Preserve4576 net LOC,nine patches,.85 isolation and every release gate. The same pinned review separately approves only its exact security artifacts/package cooldown exceptions,Slack serial scheduling and seven trusted input rows; no enforcement,security,signing,restore,canary or production-admission waiver. New source requires its own complete CI/qualified images and applicable P4/P5,with the unified release window required before merge."
+    },
     "kimi_terminal_pending_budget_followup": {
       "approved_at": "2026-10-24",
       "previous_max_direct_upstream_files": 157,

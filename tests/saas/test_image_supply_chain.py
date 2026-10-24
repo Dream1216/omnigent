@@ -1221,6 +1221,8 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
     ("target", "replacement"),
     [
         ("'http-cache-semantics@4.3.0'", "'http-cache-semantics@*'"),
+        ("'body-parser@2.4.0'", "'body-parser@*'"),
+        ("'electron@42.11.16'", "'electron@*'"),
         ("'source-map-js@1.2.2'", "'source-map-js@*'"),
         ("'@modelcontextprotocol/sdk@1.32.0'", "'@modelcontextprotocol/sdk@*'"),
         ("'@moonshot-ai/kimi-code@0.43.1'", "'@moonshot-ai/kimi-code@*'"),
