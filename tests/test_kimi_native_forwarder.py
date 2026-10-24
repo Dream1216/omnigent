@@ -19,6 +19,7 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -2648,6 +2649,58 @@ class TestForwardLoopPostFailures:
         await _drive_loop_until(tmp_path, rows, lambda: bool(posted), quiescence_s=0.2)
         assert edge_attempts == 4
         assert posted == [("failed", "boom")]
+
+    @pytest.mark.parametrize("reason", ["completed", "cancelled", "failed"])
+    @pytest.mark.parametrize("status_code", [404, 401, 429])
+    @pytest.mark.parametrize("pane_up", [True, False])
+    async def test_pending_terminal_is_not_replaced_by_watchdog(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reason: str,
+        status_code: int,
+        pane_up: bool,
+    ) -> None:
+        posted: list[tuple[str, str]] = []
+        attempts: list[tuple[str, str]] = []
+        delay = 0.0
+        monkeypatch.setattr(
+            fwd,
+            "time",
+            SimpleNamespace(time=time.time, monotonic=lambda: time.monotonic() + delay),
+        )
+
+        async def _item(_client: object, **kwargs: object) -> None:
+            return None
+
+        async def _status(_client: object, **kwargs: object) -> None:
+            nonlocal delay
+            edge = (str(kwargs["status"]), str(kwargs["output"]))
+            attempts.append(edge)
+            if len(attempts) <= 3:
+                delay = 0.25
+                request = httpx.Request("POST", "http://test")
+                raise httpx.HTTPStatusError(
+                    str(status_code),
+                    request=request,
+                    response=httpx.Response(status_code, request=request),
+                )
+            posted.append(edge)
+
+        monkeypatch.setattr(fwd, "_post_conversation_item", _item)
+        monkeypatch.setattr(fwd, "_post_external_session_status", _status)
+        output = "boom" if reason == "failed" else ""
+        expected = ("failed" if reason == "failed" else "idle", output)
+        rows = [_prompt_row(), _turn_ended_row(reason, error_message=output or None)]
+        await _drive_loop_until(
+            tmp_path,
+            rows,
+            lambda: bool(posted),
+            pane_alive=lambda: pane_up,
+            quiescence_s=0.2,
+        )
+        assert attempts == [expected] * 4
+        assert posted == [expected]
 
     async def test_redelivered_prompt_keeps_one_fallback_sequence(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
