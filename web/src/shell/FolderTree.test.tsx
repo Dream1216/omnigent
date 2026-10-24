@@ -42,6 +42,7 @@ import { FolderTree } from "./FolderTree";
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 beforeEach(() => copyTextMock.mockClear());
@@ -165,6 +166,67 @@ describe("FolderTree sorting", () => {
 });
 
 describe("FolderTree file size / download alignment", () => {
+  it.each([
+    {
+      location: "",
+      path: "README.md",
+      expectedPath: "/v1/sessions/conv_abc/resources/environments/default/filesystem/README.md",
+      hostBase: false,
+      search: false,
+    },
+    {
+      location: "workspace",
+      path: "README.md",
+      expectedPath:
+        "/v1/sessions/conv_abc/resources/environments/default/filesystem/workspace/README.md",
+      hostBase: false,
+      search: false,
+    },
+    {
+      location: "/home/omnigent",
+      path: "linxuan-workspace-20261024.zip",
+      expectedPath:
+        "/v1/sessions/conv_abc/resources/environments/default/filesystem/home/omnigent/linxuan-workspace-20261024.zip",
+      hostBase: true,
+      search: false,
+    },
+    {
+      location: "/home/omnigent",
+      path: "workspace/README.md",
+      expectedPath:
+        "/v1/sessions/conv_abc/resources/environments/default/filesystem/home/omnigent/workspace/README.md",
+      hostBase: true,
+      search: true,
+    },
+  ])("downloads $path from $location with the complete browse path", async (scenario) => {
+    let downloadHref: string | undefined;
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadHref = this.href;
+    });
+    renderTree({
+      browseLocation: scenario.location,
+      files: scenario.search ? [] : [file(scenario.path)],
+      searchQuery: scenario.search ? "README" : "",
+      searchResults: scenario.search ? [file(scenario.path)] : undefined,
+    });
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /download (README\.md|linxuan-workspace-20261024\.zip)/i,
+        }),
+      );
+    });
+
+    expect(downloadHref).toBeDefined();
+    const url = new URL(downloadHref!);
+    expect(url.pathname).toBe(scenario.expectedPath);
+    expect(url.searchParams.get("download")).toBe("true");
+    expect(url.searchParams.get("base")).toBe(scenario.hostBase ? "host" : null);
+  });
+
   it("overlays the download button on the file size so both share one slot", () => {
     // The size label and the hover download button must occupy the same
     // relative container: the size reserves the width and the button overlays

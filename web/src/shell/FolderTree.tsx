@@ -1,5 +1,14 @@
 import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -7,6 +16,7 @@ import {
   RunnerOfflineError,
   type WorkspaceChangedFile,
   type WorkspaceFile,
+  joinBrowseLocation,
   useWorkspaceDirectories,
 } from "@/hooks/useWorkspaceChangedFiles";
 import { cn } from "@/lib/utils";
@@ -947,7 +957,7 @@ function FileRowItem({
   onFileSelect,
   conversationId,
 }: {
-  /** Canonical workspace-relative path, used for the download button and title. */
+  /** Path relative to the browsed directory, used for row selection and title. */
   path: string;
   /** Text shown in the label span — full path for search results, filename for tree. */
   displayLabel: string;
@@ -962,6 +972,8 @@ function FileRowItem({
   onFileSelect: (path: string) => void;
   conversationId: string | undefined;
 }) {
+  const browseLocation = useContext(RevealBaseContext);
+  const downloadPath = joinBrowseLocation(browseLocation, path);
   const isDeleted = fileStatus === "deleted";
   const fileColorClass =
     fileStatus === "created"
@@ -1036,7 +1048,7 @@ function FileRowItem({
           )}
           <span className="absolute inset-0 flex items-center justify-end gap-1">
             {!isDeleted && conversationId ? (
-              <FileDownloadButton conversationId={conversationId} path={path} />
+              <FileDownloadButton conversationId={conversationId} path={downloadPath} />
             ) : (
               <span className={cn("shrink-0", ROW_ACTION_SIZE_CLASS)} aria-hidden />
             )}
