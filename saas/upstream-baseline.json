@@ -48,11 +48,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 154,
+    "max_direct_upstream_files": 156,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "kimi_terminal_pending_budget_followup": {
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 154,
+      "max_direct_upstream_files": 156,
+      "measured_upstream_net_added_loc": 3664,
+      "scoped_paths": [
+        "omnigent/harnesses/kimi_native/forwarder.py",
+        "tests/test_kimi_native_forwarder.py"
+      ],
+      "reason": "Requester explicitly approved rollback 154-to156 and 0.19 157-to159 for the minimal known-terminal POST/watchdog ordering correction and its owning regressions. Preserve all existing behavior assertions, 4576 net LOC, nine patches, .85 isolation and every release gate. New source requires its own mandatory CI, qualified paired images, P4 and P5; previous failed CI and cancelled build remain retained."
+    },
     "upstream_composer_recovery_budget_followup": {
       "approved_at": "2026-10-24",
       "previous_max_direct_upstream_files": 153,
