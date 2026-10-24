@@ -31,8 +31,9 @@
 # arm64 hosts (Apple Silicon laptops, arm64 clusters) as well as amd64.
 # Nothing below is arch-specific: the python/node base images are
 # multi-arch and apt/pip/npm/COPY-from-node all resolve per-arch under
-# buildx. Amd64-only consumers (Modal, Daytona, CoreWeave) keep pulling
-# the amd64 variant from the manifest list, unchanged.
+# buildx. Only web-builder is pinned to $BUILDPLATFORM (see that stage).
+# Amd64-only consumers (Modal, Daytona, CoreWeave) keep pulling the
+# amd64 variant from the manifest list, unchanged.
 #
 # Build (from repo root):
 #
@@ -83,18 +84,24 @@ ARG ADAPTER_CONTRACT_VERSION=unknown
 # /web/omnigent/server/static/web-ui, which the server builder overlays.
 # Server-only: the host target never reaches this stage.
 #
+# Pinned to the build host's platform: the bundle is arch-independent
+# (plain JS/CSS/HTML), and vite's native bundler has stalled indefinitely
+# at "rendering chunks" under QEMU arm64 emulation, timing out releases.
+#
 # Behind a corporate npm proxy, pass it through:
 #   --build-arg NPM_CONFIG_REGISTRY=https://npm-proxy.example.com
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS web-builder
 ARG NPM_CONFIG_REGISTRY=
 ARG PNPM_VERSION
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+ENV PNPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 WORKDIR /web
 
 # Workspace manifests + lockfile first so the install layer caches across pure
 # source edits. The electron package JSON is included so the root workspace is
 # structurally complete, but we --filter web to avoid downloading Electron.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY patches/ ./patches/
 COPY web/package.json ./web/
 COPY web/electron/package.json ./web/electron/
 
@@ -103,6 +110,7 @@ RUN npm install -g "pnpm@${PNPM_VERSION}" \
 RUN pnpm install --frozen-lockfile --filter web
 
 COPY web/ ./web/
+ARG VITE_OMNIGENT_HOST_ROUTING=false
 RUN pnpm --filter web run build
 
 # The login is an isolated Next.js / React 18 export; no Node service is added.
@@ -433,9 +441,9 @@ ARG NPM_CONFIG_REGISTRY=
 ARG PNPM_VERSION
 ARG NPM_VERSION
 ARG SOURCE_DATE_EPOCH
-ARG CLAUDE_CODE_VERSION=2.1.266
+ARG CLAUDE_CODE_VERSION=2.1.283
 ARG CODEX_CLI_VERSION=0.139.0
-ARG PI_CODING_AGENT_VERSION=0.84.2
+ARG PI_CODING_AGENT_VERSION=1.0.4
 ARG KIMI_CODE_VERSION=0.43.1
 ARG QWEN_CODE_VERSION=0.23.4
 ARG OPENCODE_VERSION=1.18.31
@@ -540,6 +548,7 @@ RUN export HOME=/tmp/npm-version-home \
 WORKDIR /opt/omnigent-host-cli
 ENV PATH="/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:${PATH}"
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY patches/ ./patches/
 COPY saas/scripts/normalize_host_cli_tree.py /tmp/normalize_host_cli_tree.py
 # npm/pnpm installers and CLI probes may write wall-clock or reify metadata.
 # Keep all installer state under one disposable prefix, retain only the pinned

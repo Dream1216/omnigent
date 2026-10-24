@@ -327,6 +327,14 @@ def test_registration_journey_reaches_ready_workspace(
     expect(page.get_by_role("heading", name="Secure your account")).to_be_visible()
     expect(page).to_have_url(pending_url)
     assert page.evaluate("window.location.hash") == ""
+    if page.locator("#__NEXT_DATA__").count():
+        # A later Pages Router update must not restore the consumed fragment.
+        page.evaluate(
+            "url => window.next.router.replace(url, url, {shallow: true, scroll: false})",
+            verification_url,
+        )
+        expect(page).to_have_url(pending_url)
+        assert page.evaluate("window.location.hash") == ""
 
     email = page.get_by_label("Work email")
     expect(email).to_have_value(_EMAIL)

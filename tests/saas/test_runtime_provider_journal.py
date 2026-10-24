@@ -15,6 +15,7 @@ from alembic.config import Config
 from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.db.utils import shared_read_scope
+from saas.control_plane.migrations.schema_metadata import _MODEL_TABLES
 from saas.control_plane.onboarding_workflow import (
     RuntimePartitionProvisioner,
     TenantOnboardingWorkflow,
@@ -35,7 +36,6 @@ from saas.control_plane.runtime_provider import (
 from saas.control_plane.runtime_provider_journal import (
     PostgresqlRuntimeProviderOperationJournal,
 )
-from saas.production.postgresql_migration import _expected_head
 
 _JOURNAL_ROLE = "saas_runtime_provider_journal"
 _TABLE = "saas_runtime_provider_operation_journal"
@@ -560,7 +560,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(database_authority)
         with owner_engine.begin() as connection:
-            command.upgrade(_migration_config(connection), "head")
+            command.upgrade(_migration_config(connection), "p0s000000015")
             connection.exec_driver_sql(authority)
             connection.exec_driver_sql(
                 f"CREATE ROLE {quoted_login} LOGIN PASSWORD '{login_password}' "
@@ -810,7 +810,9 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
                 ).scalars()
             )
             assert len(CONTROL_PLANE_RLS_TABLES) == 131
-            assert forced_tables == CONTROL_PLANE_RLS_TABLES
+            p15_rls_tables = CONTROL_PLANE_RLS_TABLES - _MODEL_TABLES
+            assert len(p15_rls_tables) == 119
+            assert forced_tables == p15_rls_tables
             role_facts = connection.execute(
                 sa.text(
                     "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
@@ -1445,9 +1447,10 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
             migration_transaction.rollback()
             migration_connection.close()
         with owner_engine.connect() as connection:
-            assert connection.scalar(
-                sa.text("SELECT version_num FROM saas_alembic_version")
-            ) == _expected_head("saas")
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version"))
+                == "p0s000000015"
+            )
             assert (
                 connection.scalar(
                     sa.text(

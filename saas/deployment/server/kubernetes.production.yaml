@@ -29,7 +29,7 @@ items:
       OMNIGENT_SAAS_RELEASE_INCARNATION: "00000000000000000000000000000000"
       OMNIGENT_SAAS_RUNTIME_VERSION: replace-with-runtime-version
       OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION: replace-with-official-schema-head
-      OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION: p0s000000015
+      OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION: p0s000000018
       OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION: replace-with-adapter-contract
       OMNIGENT_SAAS_PUBLIC_ORIGIN: https://next.jxhh.com
       OMNIGENT_SAAS_CAPABILITIES: tenant,run,runner,preview
@@ -88,6 +88,7 @@ items:
       OMNIGENT_SAAS_PREVIEW_MAX_REQUEST_BYTES: "1048576"
       OMNIGENT_SAAS_PREVIEW_MAX_RESPONSE_BYTES: "10485760"
       OMNIGENT_SAAS_HOST: 0.0.0.0
+      OMNIGENT_SAAS_HOST_SHARDED: "true"
       OMNIGENT_SAAS_PORT: "8000"
       PYTHONDONTWRITEBYTECODE: "1"
   - apiVersion: v1
@@ -148,6 +149,9 @@ items:
                   install -m 0400 /source/receipt/value /runtime/postgresql-migration-receipt
                   install -m 0400 /source/artifact-receipt/value /runtime/artifact-admission-receipt
                   install -m 0400 /source/runtime/value /runtime/runtime-database-url
+                  if [ -f /source/revocation/value ]; then
+                    install -m 0400 /source/revocation/value /runtime/revocation-consumer-database-url
+                  fi
                   install -m 0400 /source/authenticator/value /runtime/authenticator-database-url
                   install -m 0400 /source/app/value /runtime/app-database-url
                   install -m 0400 /source/governance/value /runtime/governance-database-url
@@ -173,6 +177,7 @@ items:
                 - {name: receipt-source, mountPath: /source/receipt, readOnly: true}
                 - {name: artifact-receipt-source, mountPath: /source/artifact-receipt, readOnly: true}
                 - {name: runtime-source, mountPath: /source/runtime, readOnly: true}
+                - {name: revocation-source, mountPath: /source/revocation, readOnly: true}
                 - {name: authenticator-source, mountPath: /source/authenticator, readOnly: true}
                 - {name: app-source, mountPath: /source/app, readOnly: true}
                 - {name: governance-source, mountPath: /source/governance, readOnly: true}
@@ -196,6 +201,9 @@ items:
                 - {name: OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE, value: /runtime/postgresql-migration-receipt}
                 - {name: OMNIGENT_SAAS_ARTIFACT_ADMISSION_RECEIPT_FILE, value: /runtime/artifact-admission-receipt}
                 - {name: OMNIGENT_SAAS_RUNTIME_DATABASE_URL_FILE, value: /runtime/runtime-database-url}
+                - {name: OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE, value: /runtime/revocation-consumer-database-url}
+                - name: OMNIGENT_SAAS_POD_UID
+                  valueFrom: {fieldRef: {apiVersion: v1, fieldPath: metadata.uid}}
                 - {name: OMNIGENT_SAAS_AUTHENTICATOR_DATABASE_URL_FILE, value: /runtime/authenticator-database-url}
                 - {name: OMNIGENT_SAAS_APP_DATABASE_URL_FILE, value: /runtime/app-database-url}
                 - {name: OMNIGENT_SAAS_GOVERNANCE_DATABASE_URL_FILE, value: /runtime/governance-database-url}
@@ -249,6 +257,13 @@ items:
             - {name: receipt-source, secret: {secretName: omnigent-saas-migration-receipt, defaultMode: 0400}}
             - {name: artifact-receipt-source, secret: {secretName: omnigent-artifact-receipt-replace-release12, defaultMode: 0400}}
             - {name: runtime-source, secret: {secretName: omnigent-saas-runtime-database, defaultMode: 0400}}
+            # Legacy schemas do not load this file; P17 refuses startup without it.
+            - name: revocation-source
+              secret:
+                secretName: omnigent-saas-revocation-consumer-database
+                defaultMode: 0400
+                optional: true
+                items: [{key: value, path: value}]
             - {name: authenticator-source, secret: {secretName: omnigent-saas-authenticator-database, defaultMode: 0400}}
             - {name: app-source, secret: {secretName: omnigent-saas-app-database, defaultMode: 0400}}
             - {name: governance-source, secret: {secretName: omnigent-saas-governance-database, defaultMode: 0400}}

@@ -34,6 +34,7 @@ from omnigent.db import ConversationBase, OmnigentBase
 from saas.runtime_rls import install_runtime_rls, load_runtime_rls_contract, verify_runtime_rls
 
 from .service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
@@ -215,6 +216,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independently old-anchor-verified clean PG16/18 P17 replay.
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "487767ff4154e92effb751324ead7b3bed392c342a054cdc58cf59088f74ad6c",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "e3b526ba9f74a30026ba3ee64f22f96174239d9bed31f1fd468c42fd086642c2",
     # Source replay: exact owner-scoped budget settlement without ACL widening.
     (
         16,
@@ -502,6 +514,26 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "65f5ec6d09613562d255304cadb522d03b6eff2041e91932408683b2ff9b556b",
     (
         16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "60eb65c90e638b2287c580ed382a56b5cc66b3d631baf7079fe50b446540add3",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "b7d392d2f9735d5ad330c9fac68fd2fd1865f6a1f5071bec5cb02ce85a45dcc1",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
+    (
+        16,
         "mm1a2b3c4d5e",
         "p0s000000015",
     ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
@@ -580,8 +612,38 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "hh1b2c3d4e5f",
         "p0s000000014",
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "9f23a4b04c47086d91a73393c062620cd7ea5264aa0e49d169ca87b76b69ad7a",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "65cdff3e1cf583f8fb0a61adc8d17f40d649fa993255af8bb6ec3d10ed7c0867",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "a2eabd3ddc1c42c7ffb405948bd83e0ce1eae4bf09d7b44a0db3555ecd066ca7",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "04a54a1b32a40e6e2477640dab6911e183f82937222931c8644d68000288d986",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "8e535eb8515687213b7f62e3cb06a6757c59ca028af42efe7893978c66310f49",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "d4b69a4e5b16c963196b79bacc4b784af48d347dd6b5aa26d006f900f6039491",
     (
         16,
         "mm1a2b3c4d5e",
@@ -948,6 +1010,26 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "43fb356c2dff8a18b3989ac1233b1ef6ac81dd14834f07b2d142a5abdc811e67",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "6f266ed84bcf28ac4f7f4fdb0438ea73e79e12ddb90767102635a920ffa7af46",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "38bacb4070264eaa1b764c433a23550dc8d98cbcc729f1452514597d79636df1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "94e868710ff88c16507dfb95f648ac134219c3c4bee1cbd06ff9e7eaebf86106",
+    (
+        16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
     ): "9deb086b3e5d131d0b04c432bdabc36dec5dc6b52136193d4eeaad9c8680e09d",
@@ -1282,6 +1364,26 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "0aceff134402bd462e04e2a30320b6c956eb4c6a246e1e78c2db0204be3af81b",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "ada0ecc253539b93fa6918dd7345601b0aae2f4ca460389cf3c47f1c22de4b90",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "c7040d4e24bb8f02c175a49534ffcde09260dc707048835cf5774d9440e5822a",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "b0f24327c0d603112e7bd88159819ddae025fe1f10389b3968f5ce57c2b5cbf1",
+    (
+        16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
     ): "1b9152fe524c60b009db0d06b70a4211e67cfab49cbf89fbced73a835d64a310",
@@ -1609,6 +1711,37 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independently old-anchor-verified clean PG16/18 P17 replay.
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "3a01557a39e8f8cbcb63a7444e8ed669d676ff5ad8e3064d12eb126ae33612af",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "37417a278e9e13dcf57990012dded55cfc96e5f743c80a511ebfa3ff30326562",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "50fdd2521871d6619519cfaf5c2a5e4cfd1e9fed2fcfa6f567b7397d6994937e",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "ec3ed16dd01d6a05f7930f26f1e46ccac50c5bcd93a5e08008ee5acd1f8cfa57",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "389098bfb06040e6e5e8c0fdd00a3014057ef772769fd86760f03286e33c5f7f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "b9259705dd665c9c08201bc929e75cd0c8db927dc94db98fad1c7b0c083b6fad",
     (
         16,
         "mm1a2b3c4d5e",
@@ -1911,8 +2044,49 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         "hh1b2c3d4e5f",
         "p0s000000014",
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "585d5f46973f5924387223a2deee1b78c1b28ad92a419a954d5ba031dd0d8cb3",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "05a3b8eca8a8fffccd1ea093c7afa3f7ef62abb845fd9547ceaa0d5ce1eccbf6",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independently old-anchor-verified clean PG16/18 P17 replay.
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "b5af69731caa7e52039a043de97ca9bd680fe92bb5a8891b8318a955a75fccaf",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "89c7f24d86dfdb666df48dec42027de69fa954fcf7f0260034208061c4a0a045",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "5d0fe538017cb0926f7d08c833df89766dfc667ad06a6fe0774cd28c1a749428",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000016",
+    ): "be256ac4d20d551073fa5baae1e75412b2e680f46a999d59e389ab21b1f58e16",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "9a6b3dd2af5a9db7af81f9bbebe16b96a007c7404151d2302145cb9f25465e62",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "p0s000000016",
+    ): "4bafa07bee798b114c04df1e0be3a488ff3afe837ab7c25f3d45f90b55b49ae1",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2220,6 +2394,16 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
         "hh1b2c3d4e5f",
         "p0s000000014",
     ): "9839f65fa0ff7614c4bc7566fda9ae18223924cf9ad63adbf71e66433f995e34",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "9c2d2778b777aa28f06747905ad0727d4e03cbdb8d5ffe95ae059a043d3c1351",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "07c19758147cdd617a795a22bc4ac8f5ebacd5676d81881ddb90476f48c92087",
 }
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
@@ -2770,6 +2954,118 @@ _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
         "mm1a2b3c4d5e",
         "lm1b00000001",
     ): "2046e9e8550bf5dafab2111e24cb4276418f483a2b0ef169fea3881a750622db",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "9bd115e77773e339cef8e58d2b3e394bd80129af42252c9b665ca025c90a78db",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000017",
+    ): "352ed24346a1d7fec6cc4d0c6b74f847f11638bb35e232bdccdce3b968d75a1a",
+    (
+        16,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "41787ed7af10ad239976b2de1baa3328153dfc23e05cfb8ba5c22bf90f34eb69",
+    (
+        18,
+        "nf12ab34cd56",
+        "p0s000000018",
+    ): "c08f677f1b24eeacb70e0df15c1a73c0b18f25cec9dd98c2c893dc0510b8385e",
+}
+# Populated only by the reviewed clean-source PG16/18 replay. Missing anchors
+# fail preflight; live deployment receipts can never teach these baselines.
+_BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str], str]] = {
+    "core": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "235f96ec2549ebf6f3b2926f672bea6ef87aa1410dcb61f87a6ee432a41b8643",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "876d5be267c8e348c6e471452b1e35c613538111e10546d37ee510e85ee6c8c8",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "7b53c4b56b028c1115918ca450192280d703ec5e4fd88ffeaf5265ae6bbb54cc",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "f7989192a42530b9361cdeadad84e2981fdad330705dc7165baeb4b690aaaabb",
+    },
+    "model": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "b1921174cfcb080d39c4ddcaef38fb50a1bd5af4aafdbe7e2429dc12b90807bb",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "21c0aded1cc3203bf177ada27207d60021e865fc4b1fbe714e1f592692bb15ac",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "b89a75372a53dd358aa283c7a9d46f4b2b0b8e76da69a3734c8913d7e535c53c",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "e48a5d3b6a3ada8ea9615e63f0bc467b6bc6fa6c40a713d72d82ead29ee94b08",
+    },
+    "admin": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "dad33b5d96b876ec9bae02529028746d0d94fc49c16cf69b49f391d37c496189",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "a02f8eaec24f0946c25c9dd8ea5f401833400e58613606da823292800debe494",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "8b6a678538c96ada904b9d33aaacfb0f76f28f06ecb2eb79bc232188405050d2",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "839de6b98bf8f67ea4c3a7c41ab09da91e729bc0ed08f2a280051cd3e6be2b01",
+    },
+    "projection": {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "d2c5cab9deaeafac42245998426338c3ddbec5f751fda4bf1408659c71e804cb",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000017",
+        ): "80091db4068aef752cb0b5e78d6ec8619466285859970b72557df2c1546803ac",
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "b17294a3a172ef515cbab0053cca55455a315a808280fb28fc819e9d63864c2a",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000018",
+        ): "9a6749caa1b40c6ca947c4be8d1ec2330fa9e22106e0dbe8c366480b098d499b",
+    },
 }
 _CAPABILITY_ROLES = (
     "saas_app",
@@ -2780,6 +3076,9 @@ _CAPABILITY_ROLES = (
     "saas_executor",
     "saas_runner_agent",
     "saas_model_projection",
+    "saas_usage_consumer",
+    "saas_audit_delivery",
+    "saas_revocation_consumer",
     "saas_secret_broker",
     "saas_preview_gateway",
     "saas_preview_edge",
@@ -2849,6 +3148,7 @@ class ProductionPostgreSqlPlan:
     platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None
     platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None
+    business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = None
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
     verification_saas_head: str | None = None
@@ -2866,6 +3166,7 @@ class ProductionPostgreSqlPlan:
         platform_model_service_role_bindings: ProductionServiceRoleBindings | None = None,
         platform_admin_service_role_bindings: ProductionServiceRoleBindings | None = None,
         model_projection_service_role_bindings: ProductionServiceRoleBindings | None = None,
+        business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = None,
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
         verification_saas_head: str | None = None,
@@ -2896,6 +3197,7 @@ class ProductionPostgreSqlPlan:
             platform_model_service_role_bindings=platform_model_service_role_bindings,
             platform_admin_service_role_bindings=platform_admin_service_role_bindings,
             model_projection_service_role_bindings=model_projection_service_role_bindings,
+            business_delivery_service_role_bindings=business_delivery_service_role_bindings,
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
             verification_saas_head=verification_saas_head,
@@ -2919,6 +3221,7 @@ class ProductionPostgreSqlPlan:
                 self.platform_model_service_role_bindings,
                 self.platform_admin_service_role_bindings,
                 self.model_projection_service_role_bindings,
+                self.business_delivery_service_role_bindings,
             )
         except ProductionServiceRoleBindingsError as error:
             raise PostgreSqlMigrationError(
@@ -3145,6 +3448,18 @@ def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
             or _SHA256.fullmatch(projection_bindings.sha256) is None
         ):
             raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    delivery_bindings = plan.business_delivery_service_role_bindings
+    if delivery_bindings is not None and (
+        {binding.service: binding.base_role for binding in delivery_bindings.bindings}
+        != dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        or len({binding.login for binding in delivery_bindings.bindings}) != 3
+        or any(binding.login in _CAPABILITY_ROLES for binding in delivery_bindings.bindings)
+        or set(logins) & {binding.login for binding in delivery_bindings.bindings}
+        or _SHA256.fullmatch(delivery_bindings.sha256) is None
+    ):
+        raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
+    if _expected_head("saas") in {"p0s000000017", "p0s000000018"} and delivery_bindings is None:
+        raise PostgreSqlMigrationError("business_delivery_profile_required", "configuration")
     graph = plan.service_role_graph
     if set(logins) & {binding.login for binding in graph.bindings}:
         raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
@@ -3378,17 +3693,37 @@ def _source_security_catalog_baselines(
     if bindings is None:
         return _SOURCE_SECURITY_CATALOG_SHA256
     observed = {binding.service: binding.base_role for binding in bindings.bindings}
+    delivery = dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+    has_delivery = all(observed.get(key) == value for key, value in delivery.items())
+    if has_delivery:
+        observed = {key: value for key, value in observed.items() if key not in delivery}
     core = dict(EXPECTED_PRODUCTION_SERVICE_ROLES)
     if observed == core:
-        return _SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["core"]
+            if has_delivery
+            else _SOURCE_SECURITY_CATALOG_SHA256
+        )
     platform_model = {**core, **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)}
     if observed == platform_model:
-        return _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["model"]
+            if has_delivery
+            else _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256
+        )
     platform_admin = {**platform_model, **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)}
     if observed == platform_admin:
-        return _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["admin"]
+            if has_delivery
+            else _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
+        )
     if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
-        return _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+        return (
+            _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS["projection"]
+            if has_delivery
+            else _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+        )
     raise PostgreSqlMigrationError("service_role_bindings_invalid", "configuration")
 
 
@@ -3416,7 +3751,11 @@ def _capability_roles(saas_head: str | None = None) -> tuple[str, ...]:
     return tuple(
         role
         for role in _CAPABILITY_ROLES
-        if selected_head != "p0s000000015" or role != "saas_model_projection"
+        if (selected_head != "p0s000000015" or role != "saas_model_projection")
+        and (
+            selected_head in {"p0s000000017", "p0s000000018"}
+            or role not in EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.values()
+        )
     )
 
 
@@ -4112,6 +4451,9 @@ def _expected_head(kind: Literal["official", "saas"]) -> str:
 
 def _runtime_saas_head(requested: object) -> str:
     supported = {
+        "p0s000000018": ("p0s000000018",),
+        "p0s000000017": ("p0s000000017",),
+        "p0s000000016": ("p0s000000016",),
         "p0s000000015": ("p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"),
         "lm2r00000001": ("lm2r00000001", "lm2s00000001", "lm2t00000001"),
         "lm2s00000001": ("lm2s00000001", "lm2t00000001"),
@@ -4790,6 +5132,11 @@ def _verify_source_security_catalog_digest(
     accepted_digests = {_source_security_catalog_baselines(bindings).get(key)}
     if bindings is not None:
         observed = {binding.service: binding.base_role for binding in bindings.bindings}
+        delivery = dict(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        if all(observed.get(service) == role for service, role in delivery.items()):
+            observed = {
+                service: role for service, role in observed.items() if service not in delivery
+            }
         platform_admin = {
             **dict(EXPECTED_PRODUCTION_SERVICE_ROLES),
             **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES),
@@ -4952,13 +5299,12 @@ def _verify_preview_owner_lease_definers(
     return frozenset(f"routine:{row[1]}" for row in function_rows)
 
 
-def _verify_object_ownership(
+def _object_ownership_projection(
     official_connection: Connection,
     saas_connection: Connection,
     *,
     official_owner: str,
     saas_owner: str,
-    saas_head: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
     official_names = _official_table_names()
     official_rows = official_connection.execute(
@@ -5026,13 +5372,30 @@ def _verify_object_ownership(
         for table, owner in foreign_saas_owners
     ):
         raise PostgreSqlMigrationError("saas_object_ownership_drifted", "verification")
+    return tuple((str(table), str(owner)) for table, owner in (*official_rows, *saas_rows))
+
+
+def _verify_object_ownership(
+    official_connection: Connection,
+    saas_connection: Connection,
+    *,
+    official_owner: str,
+    saas_owner: str,
+    saas_head: str | None = None,
+) -> tuple[tuple[str, str], ...]:
+    ownership = _object_ownership_projection(
+        official_connection,
+        saas_connection,
+        official_owner=official_owner,
+        saas_owner=saas_owner,
+    )
     _verify_public_schema_inventory(
         official_connection,
         official_owner=official_owner,
         saas_owner=saas_owner,
         saas_head=saas_head,
     )
-    return tuple((str(table), str(owner)) for table, owner in (*official_rows, *saas_rows))
+    return ownership
 
 
 def _verify_runtime_acl(connection: Connection) -> tuple[tuple[str, str, bool], ...]:
@@ -5568,7 +5931,13 @@ def _preflight_pg_trgm_extension(connection: Connection, *, official_owner: str)
     if revision == _expected_head("official"):
         expected_indexes = _PG_TRGM_INDEXES
     elif _source_pinned_pg_trgm_predecessor(revision, server_major):
-        expected_indexes = _PG_TRGM_PREDECESSOR_INDEXES
+        scripts = ScriptDirectory.from_config(_migration_config("official"))
+        content_index_was_dropped = any(
+            item.revision == "gf1b2c3d4e5f" for item in scripts.walk_revisions(head=revision)
+        )
+        expected_indexes = (
+            _PG_TRGM_INDEXES if content_index_was_dropped else _PG_TRGM_PREDECESSOR_INDEXES
+        )
     else:
         raise PostgreSqlMigrationError("pg_trgm_preexisting_before_head", "official_alembic")
     _pg_trgm_security_catalog(
@@ -6251,6 +6620,8 @@ def verify_production_postgresql_state(
         expected_service_roles = dict(_SERVER_SERVICE_ROLES)
         if "billing" in config.capabilities:
             expected_service_roles["billing"] = "saas_billing"
+        if getattr(config, "business_delivery_service_role_bindings", None) is not None:
+            expected_service_roles["revocation_consumer"] = "saas_revocation_consumer"
         _verify_service_postgresql_state(
             engines=engines,
             config=config,
@@ -6275,6 +6646,18 @@ def verify_model_projection_postgresql_state(
         config=config,
         expected_service_roles=EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
         configured_urls={"model_projection": database_url},
+    )
+
+
+def verify_business_delivery_postgresql_state(
+    *, engines: Mapping[str, Engine], database_urls: Mapping[str, str], config: Any
+) -> None:
+    """Verify the three separate native consumers using the original receipt proof."""
+    _verify_service_postgresql_state(
+        engines=engines,
+        config=config,
+        expected_service_roles=EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
+        configured_urls=database_urls,
     )
 
 
@@ -6585,6 +6968,7 @@ __all__ = [
     "ProductionPostgreSqlPlan",
     "parse_production_postgresql_url",
     "run_production_postgresql_migration",
+    "verify_business_delivery_postgresql_state",
     "verify_model_projection_postgresql_state",
     "verify_production_postgresql_state",
 ]

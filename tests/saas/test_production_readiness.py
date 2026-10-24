@@ -4,8 +4,10 @@ import copy
 import json
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
+from saas.production.admission import validate_evidence_admission
 from saas.production.readiness import (
     derive_gate_results,
     validate_candidate_revision,
@@ -153,7 +155,8 @@ def test_manual_pass_cannot_override_a_blocked_derived_gate() -> None:
 
 def test_current_overall_readiness_is_structurally_valid_and_no_go() -> None:
     require_current_approval_history(_repo())
-    report = validate_production_readiness(_repo())
+    now = datetime(2026, 10, 21, 13, tzinfo=UTC)
+    report = validate_production_readiness(_repo(), now=now)
 
     assert report["status"] == "pass"
     assert report["production_readiness"] == "blocked"
@@ -169,10 +172,16 @@ def test_current_overall_readiness_is_structurally_valid_and_no_go() -> None:
     assert report["verifiers"]["candidate_revision"]["production_readiness"] == "blocked"
     assert report["verifiers"]["deployment"]["production_readiness"] == "blocked"
     assert report["verifiers"]["baseline_admission"]["production_readiness"] == "blocked"
-    assert any(
-        "no active trusted production evidence admission key" in blocker
-        for blocker in report["verifiers"]["baseline_admission"]["blockers"]
+    assert report["verifiers"]["baseline_admission"]["blockers"] == [
+        "no valid signed admission receipt for saas/production/baseline.json"
+    ]
+    policy = json.loads(
+        (_repo() / "saas/production/evidence-admission-policy.json").read_text(encoding="utf-8")
     )
+    admission = validate_evidence_admission(_repo(), policy, now=now)
+    assert admission["metrics"]["active_trusted_key_count"] == 1
+    assert admission["metrics"]["admitted_document_count"] == 0
+    assert admission["metrics"]["receipt_count"] == 0
 
 
 def test_release_candidate_revision_is_an_explicit_common_gate() -> None:

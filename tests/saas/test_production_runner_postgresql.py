@@ -42,6 +42,9 @@ from saas.production.runner_executor import (
     _verify_runner_agent_database_authority,
 )
 from saas.runner_adapter import RunnerIsolationAdapter, RunnerWorktreeAdapter
+from tests.saas.test_production_runner_executor import (
+    _close_heartbeat_workers as _close_heartbeat_workers,
+)
 from tests.saas.test_scheduling_postgresql import _migrate, _seed_scope
 
 _PRODUCT_REVISION = "a" * 40
@@ -63,6 +66,118 @@ def _saas_migration_config(connection: sa.Connection) -> Config:
     )
     config.attributes["connection"] = connection
     return config
+
+
+def _assert_revocation_writer_after_runner_hardening(
+    engine: sa.Engine, *, schema_owner: str, tenant_id: UUID, actor_id: UUID
+) -> None:
+    """Runner catalog hardening must preserve the original P17 governance writer."""
+    account = uuid4()
+    with engine.begin() as connection:
+        assert tuple(
+            connection.execute(
+                sa.text(
+                    "SELECT rolsuper,rolbypassrls,rolcreaterole FROM pg_roles WHERE rolname=:owner"
+                ),
+                {"owner": schema_owner},
+            ).one()
+        ) == (False, False, False)
+        assert connection.scalar(
+            sa.text(
+                "SELECT prosecdef AND pg_get_userbyid(proowner)=:owner FROM pg_proc "
+                "WHERE oid='public.saas_delivery_enqueue_revocation_v1()'::regprocedure"
+            ),
+            {"owner": schema_owner},
+        )
+        assert connection.scalar(
+            sa.text(
+                "SELECT has_column_privilege('saas_governance','public.saas_service_accounts',"
+                "'security_version','UPDATE')"
+            )
+        )
+        assert (
+            connection.scalar(
+                sa.text(
+                    "SELECT count(*) FROM pg_proc routine "
+                    "CROSS JOIN LATERAL aclexplode(routine.proacl) acl "
+                    "JOIN pg_roles role ON role.oid=acl.grantee "
+                    "WHERE routine.oid='pg_catalog.pg_notify(text,text)'::regprocedure "
+                    "AND role.rolname=:owner AND acl.privilege_type='EXECUTE' "
+                    "AND NOT acl.is_grantable"
+                ),
+                {"owner": schema_owner},
+            )
+            == 1
+        )
+        # The original Runner seed has project ownership only. The real
+        # credential-governance writer also requires active Tenant membership.
+        connection.execute(
+            sa.text(
+                "INSERT INTO public.saas_tenant_memberships "
+                "(tenant_id,user_id,role,status,version) "
+                "VALUES (:tenant,:actor,'owner','active',1)"
+            ),
+            {"tenant": tenant_id, "actor": actor_id},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO public.saas_service_accounts "
+                "(id,tenant_id,name,steward_user_id,created_by,status,security_version) "
+                "VALUES (:id,:tenant,'p17-notify-boundary',:actor,:actor,'active',1)"
+            ),
+            {"id": account, "tenant": tenant_id, "actor": actor_id},
+        )
+        connection.exec_driver_sql("SET LOCAL ROLE saas_governance")
+        connection.execute(
+            sa.text(
+                "SELECT set_config('app.tenant_id',:tenant,true),"
+                "set_config('app.actor_id',:actor,true)"
+            ),
+            {"tenant": str(tenant_id), "actor": str(actor_id)},
+        )
+        assert (
+            connection.execute(
+                sa.text(
+                    "UPDATE public.saas_service_accounts SET security_version=2 "
+                    "WHERE id=:id AND tenant_id=:tenant RETURNING security_version"
+                ),
+                {"id": account, "tenant": tenant_id},
+            ).scalar_one()
+            == 2
+        )
+        connection.exec_driver_sql("RESET ROLE")
+    # A fresh transaction proves both the legitimate write and its source
+    # committed; the later real follower tests own notification/ACK semantics.
+    with engine.connect() as connection:
+        assert (
+            connection.scalar(
+                sa.text("SELECT security_version FROM public.saas_service_accounts WHERE id=:id"),
+                {"id": account},
+            )
+            == 2
+        )
+        row = connection.execute(
+            sa.text(
+                "SELECT event_type,payload,request_hash="
+                "public.saas_canonical_json_sha256_v1(payload::jsonb) "
+                "FROM public.saas_control_plane_outbox "
+                "WHERE aggregate_type='authorization_service_account' AND aggregate_key=:id"
+            ),
+            {"id": str(account)},
+        ).one()
+        assert row[0] == "authorization.service_account.version_changed"
+        assert row[1] == {"kind": "service_account", "entity_id": str(account), "version_floor": 2}
+        assert row[2]
+        assert not any(
+            connection.scalar(
+                sa.text(
+                    "SELECT has_function_privilege("
+                    ":role,'pg_catalog.pg_notify(text,text)','EXECUTE')"
+                ),
+                {"role": role},
+            )
+            for role in ("saas_app", "saas_governance", "saas_runner_agent")
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -892,6 +1007,14 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                     ":role, 'pg_catalog.pg_try_advisory_lock(bigint)', 'EXECUTE')"
                 ),
                 {"role": schema_owner},
+            )
+
+        if _expected_head("saas") in {"p0s000000017", "p0s000000018"}:
+            _assert_revocation_writer_after_runner_hardening(
+                owner_engine,
+                schema_owner=schema_owner,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
             )
 
         canonical_payload = {
@@ -2885,7 +3008,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
             connection.exec_driver_sql(f"GRANT USAGE, CREATE ON SCHEMA public TO {quoted_owner}")
             connection.exec_driver_sql("CREATE EXTENSION pg_trgm WITH SCHEMA public")
             connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
-            _migrate(connection, root)
+            command.upgrade(_saas_migration_config(connection), "p0s000000015")
             connection.exec_driver_sql("RESET ROLE")
             connection.exec_driver_sql(
                 f"GRANT CONNECT ON DATABASE {quoted_database} TO saas_runner_agent"
@@ -2935,12 +3058,7 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
                 )
 
         before = current_projection()
-        assert before == (
-            _expected_head("saas"),
-            len(_RUNNER_AGENT_CONTRACT_FUNCTION_NAMES),
-            19,
-            2,
-        )
+        assert before == ("p0s000000015", 18, 19, 2)
         with pytest.raises(sa.exc.DBAPIError, match="must be drained before downgrade"):
             with owner_engine.begin() as connection:
                 connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
@@ -3005,13 +3123,13 @@ def test_p0s10_runner_authority_downgrade_requires_complete_drain(
 
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
-            command.upgrade(_saas_migration_config(connection), "head")
+            command.upgrade(_saas_migration_config(connection), "p0s000000015")
             connection.exec_driver_sql(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
             )
         # The roles projection re-verifies the exact policy/function digests,
         # owners, FORCE RLS flags, and sole Runner EXECUTE edges.  Reaching the
-        # identical structural projection proves a clean current-head restoration.
+        # identical structural projection proves a clean P0S16 restoration.
         assert current_projection() == before
     finally:
         if login_connection is not None:

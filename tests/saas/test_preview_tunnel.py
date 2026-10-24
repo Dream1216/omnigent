@@ -227,7 +227,7 @@ async def _dispatch_one(
 ) -> RequestFrame:
     raw = await session.outbound_queue.get()
     assert raw is not None
-    frame = decode_frame(raw)
+    frame = decode_frame(raw.data)
     assert isinstance(frame, RequestFrame)
 
     async def send_back(payload: str) -> None:
@@ -368,7 +368,7 @@ async def test_preview_response_close_sends_cancel_and_releases_inflight_slot() 
     )
     raw = await session.outbound_queue.get()
     assert raw is not None
-    request_frame = decode_frame(raw)
+    request_frame = decode_frame(raw.data)
     assert isinstance(request_frame, RequestFrame)
     assert registry.route_response_frame(
         session.runner_id,
@@ -381,7 +381,7 @@ async def test_preview_response_close_sends_cancel_and_releases_inflight_slot() 
 
     cancel_raw = await session.outbound_queue.get()
     assert cancel_raw is not None
-    cancel = decode_frame(cancel_raw)
+    cancel = decode_frame(cancel_raw.data)
     assert isinstance(cancel, RequestCancelFrame)
     assert cancel.id == request_frame.id
     assert not session.in_flight

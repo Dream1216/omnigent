@@ -196,6 +196,7 @@ def test_cross_instance_publish_loser_consumes_complete_winner(
                 ),
                 encoding="utf-8",
             )
+            (workdir / agent_cache_module._LOCATION_MARKER).write_text(location, encoding="utf-8")
             raise OSError(errno.ENOTEMPTY, "simulated cross-instance publish race")
         return real_rename(source, target)
 

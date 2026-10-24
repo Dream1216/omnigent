@@ -202,11 +202,13 @@ class ApiCredentialService:
         session_factory: sessionmaker[Session],
         *,
         credential_pepper: bytes,
+        invalidations=None,
     ) -> None:
         if len(credential_pepper) < 32:
             raise ValueError("API credential pepper must contain at least 32 bytes")
         self._session_factory = session_factory
         self._pepper = bytes(credential_pepper)
+        self._invalidations = invalidations
 
     @staticmethod
     def is_api_credential(token: str) -> bool:
@@ -748,6 +750,10 @@ class ApiCredentialService:
         checked_at = now or _now()
         _require_aware(checked_at, "now")
         credential_id = _parse_token(token)
+        if self._invalidations is not None and self._invalidations.minimum(
+            "api_credential", credential_id
+        ):
+            raise ApiCredentialError("invalid_api_credential", "API credential is invalid")
         with self._session_factory.begin() as db:
             apply_rls_context(db, RlsContext(api_credential_id=credential_id))
             credential = db.execute(
@@ -765,6 +771,12 @@ class ApiCredentialService:
                     api_credential_id=credential_id,
                 ),
             )
+            if (
+                self._invalidations is not None
+                and credential.account_security_version
+                < self._invalidations.minimum("service_account", credential.service_account_id)
+            ):
+                raise ApiCredentialError("invalid_api_credential", "API credential is invalid")
             account = db.execute(
                 sa.select(ServiceAccountRecord).where(
                     ServiceAccountRecord.id == credential.service_account_id,

@@ -47,3 +47,21 @@ Review is claimed. Production verification gates remain mandatory.
 
 The technical owner confirms the Resolver inputs, migration state machine,
 fencing rules, compatibility window, and rollback retention for the candidate.
+
+## P18 owner maintenance implementation
+
+An in-place upstream runtime upgrade can retain the same Placement, physical
+partition and Project binding. Only the original direct SaaS table owner may
+perform the existing release/recovery maintenance operation. P18 adds four
+owner-only RLS policies; it grants no service membership or tenant route. The
+coordinator verifies the real installed product/provider/database tuple, retained
+backup and write fence before applying the complete Placement collection CAS.
+Every partition and active binding generation advances; identities, physical
+keys, projects and retired history remain unchanged. Metadata and its Outbox
+receipt commit together; an unknown commit is reconciled read-only.
+
+Ordinary downgrade refuses. A reviewed policy inverse removes only the exact
+P18 additions, and retained execution data follows the original protected
+database recovery path. Current PG16/18 clean-source catalog gold, least-role
+negative tests, runtime migration and full rollback evidence remain necessary.
+This implementation note does not grant production approval.

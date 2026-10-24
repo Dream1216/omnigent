@@ -29,14 +29,14 @@ from saas.outbox_worker import verify_dispatcher_database_role
 _CONTROL_PLANE_RLS_TABLES = CONTROL_PLANE_RLS_TABLES
 
 
-def _migrate(connection: sa.Connection, root: Path) -> None:
+def _migrate(connection: sa.Connection, root: Path, revision: str = "head") -> None:
     connection.exec_driver_sql(
         (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
     )
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)
 
 
 def test_real_postgresql_rls_denies_cross_tenant_and_missing_context(
@@ -612,7 +612,7 @@ def test_real_postgresql_exact_invitation_policy_round_trips_fail_closed(
     engine = sa.create_engine(isolated_postgres_url)
 
     with engine.begin() as connection:
-        _migrate(connection, root)
+        _migrate(connection, root, "p0s000000015")
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
         config.attributes["connection"] = connection

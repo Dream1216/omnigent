@@ -132,7 +132,8 @@ async def test_live_tunnel_closes_after_machine_credential_revocation(
         socket,  # type: ignore[arg-type]
         SimpleNamespace(last_frame_at=time.time(), outbound_queue=asyncio.Queue()),
         "ce5bb44730f64f47ac427f216e64bb33",
-        _Store(),  # type: ignore[arg-type]
+        asyncio.Event(),
+        host_store=_Store(),  # type: ignore[arg-type]
         presented_host_token="revoked-secret",
     )
 

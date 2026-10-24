@@ -131,7 +131,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 156
+    assert budget["max_direct_upstream_files"] == 159
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -146,16 +146,61 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     ]
     assert composer_followup["new_official_path"] == "web/src/pages/ChatPage.composer.test.tsx"
     assert composer_followup["upstream_revision"] == "3138c7dfeb24a12f2aaf6d7ffeffc9d491d69df1"
-    ui8_followup = revision["ui8_recovery_test_budget_followup"]
-    assert ui8_followup["approved_at"] == "2026-10-23"
-    assert ui8_followup["previous_max_direct_upstream_files"] == 150
-    assert ui8_followup["max_direct_upstream_files"] == 151
-    assert ui8_followup["measured_upstream_net_added_loc"] == 3494
-    assert ui8_followup["scoped_paths"] == [
-        "tests/e2e_ui/chat/test_claude_sdk_terminated_cli_recovery.py"
-    ]
-    assert ui8_followup["upstream_test_revision"] == "3db749d784ff044304473939acaae3a65c0fec61"
     followup = revision["followup"]
+    assert followup["revision"] == "upstream-019-mcp-compat-version-test-budget-v35"
+    assert followup["approved_at"] == "2026-10-21"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 155
+    assert followup["measured_direct_upstream_files"] == 156
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3453
+    assert followup["scoped_paths"] == ["tests/e2e/test_mcp_registry_compat_e2e.py"]
+    followup = followup["previous_revision"]
+    assert followup["revision"] == "upstream-019-toast-cleanup-test-budget-v34"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 154
+    assert followup["measured_direct_upstream_files"] == 155
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3416
+    assert followup["scoped_paths"] == ["web/src/shell/archiveUndoToast.test.tsx"]
+    followup = followup["previous_revision"]
+    assert followup["revision"] == "upstream-019-abrupt-death-test-budget-v33"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 153
+    assert followup["measured_direct_upstream_files"] == 154
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3415
+    assert followup["scoped_paths"] == ["tests/inner/test_brokered_auth_abrupt_death.py"]
+    followup = followup["previous_revision"]
+    assert followup["revision"] == "upstream-019-terminal-reconnect-test-budget-v32"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 152
+    assert followup["measured_direct_upstream_files"] == 153
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3409
+    assert followup["scoped_paths"] == ["tests/e2e_ui/shells/test_terminal_bridge_reconnect.py"]
+    assert followup["previous_revision_reference"] == "upstream-019-reviewed-visual-budget-v31"
+    followup = revision["previous_followup"]
+    assert followup["revision"] == "upstream-019-reviewed-visual-budget-v31"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 150
+    assert followup["measured_direct_upstream_files"] == 152
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3389
+    assert followup["scoped_paths"] == [
+        "web/src/lib/identity.managedRouting.test.ts",
+        "web/src/lib/viteProxy.test.ts",
+        "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png",
+    ]
+    followup = followup["previous_revision"]
     assert followup["revision"] == "platform-model-token-renewal-budget-v30"
     assert followup["approved_at"] == "2026-10-15"
     assert followup["previous_max_direct_upstream_files"] == 148

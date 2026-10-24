@@ -13,7 +13,10 @@ import yaml
 
 import saas.scripts.render_kubernetes_release as release_renderer_module
 from saas.production.postgresql_migration import _expected_head
-from saas.production.service_bindings import EXPECTED_PRODUCTION_SERVICE_ROLES
+from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
+    EXPECTED_PRODUCTION_SERVICE_ROLES,
+)
 from saas.scripts.render_kubernetes_namespace import MANIFEST_NAMES, TARGET_NAMESPACE
 from saas.scripts.render_kubernetes_release import (
     EVIDENCE_FILE_NAME,
@@ -45,7 +48,9 @@ def _copy_sources(tmp_path: Path) -> Path:
     return source
 
 
-def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
+def _spec_document(*, mode: str = "stage", schema_head: str | None = None) -> dict[str, Any]:
+    if schema_head is None:
+        schema_head = _expected_head("saas")
     store_uri = "s3://omnigent-release/runtime"
     runners = {
         "a": {
@@ -148,7 +153,7 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
             "region": "cn-east-1",
             "store_uri": store_uri,
         },
-        "control_plane_schema_revision": _expected_head("saas"),
+        "control_plane_schema_revision": schema_head,
         "image_digest": "sha256:" + ("3" * 64),
         "ingress": {"namespace": "kube-system", "workload": "traefik"},
         "mode": mode,
@@ -171,7 +176,17 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
         "schema_version": 1,
         "service_logins": {
             service: f"login_{index:02d}"
-            for index, service in enumerate(EXPECTED_PRODUCTION_SERVICE_ROLES, start=1)
+            for index, service in enumerate(
+                {
+                    **EXPECTED_PRODUCTION_SERVICE_ROLES,
+                    **(
+                        EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
+                        if schema_head in {"p0s000000017", "p0s000000018"}
+                        else {}
+                    ),
+                },
+                start=1,
+            )
         },
         "source_revision": "1" * 40,
         "upstream_revision": "2" * 40,
@@ -880,3 +895,97 @@ def test_failed_render_does_not_modify_source_templates(tmp_path: Path) -> None:
         render_kubernetes_release(spec_file, source, tmp_path / "rendered")
 
     assert {name: (source / name).read_bytes() for name in MANIFEST_NAMES} == before
+
+
+@pytest.mark.parametrize("profile", ["core", "model", "admin", "projection"])
+def test_p17_business_bindings_are_complete_and_server_identity_is_native(tmp_path, profile):
+    from saas.production.service_bindings import (
+        EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+        EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
+        EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
+    )
+
+    document = _spec_document()
+    for roles in (
+        (() if profile == "core" else EXPECTED_PLATFORM_MODEL_SERVICE_ROLES),
+        (() if profile not in {"admin", "projection"} else EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES),
+        (() if profile != "projection" else EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+    ):
+        for service in roles:
+            document["service_logins"].setdefault(service, f"release_{service}_login")
+    path = tmp_path / "spec.json"
+    path.write_bytes(_canonical_json(document))
+    path.chmod(0o600)
+    output = tmp_path / "output"
+    render_kubernetes_release(path, _copy_sources(tmp_path), output)
+    filename = "business-delivery-service-role-bindings.json"
+    texts = []
+    for manifest, directory in (
+        ("kubernetes.migration.yaml", "/authority"),
+        ("kubernetes.production.yaml", "/runtime"),
+    ):
+        rendered = _document(output / manifest)
+        config = _resource(rendered, kind="ConfigMap", data_key="service-role-bindings.json")
+        raw = config["data"][filename].encode("ascii")
+        texts.append(raw)
+        assert {row["service"] for row in json.loads(raw)["bindings"]} == set(
+            EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
+        )
+        release = _resource(rendered, kind="ConfigMap", data_key="OMNIGENT_SAAS_PRODUCT_REVISION")
+        prefix = "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS"
+        assert release["data"][prefix + "_FILE"] == directory + "/" + filename
+        assert release["data"][prefix + "_SHA256"] == hashlib.sha256(raw).hexdigest()
+        assert any(
+            f"install -m 0400 /source/bindings/{filename} {directory}/{filename}"
+            in "\n".join(init.get("args", []))
+            for resource in rendered["items"]
+            for init in resource.get("spec", {})
+            .get("template", {})
+            .get("spec", {})
+            .get("initContainers", [])
+        )
+    assert texts[0] == texts[1]
+    production = _document(output / "kubernetes.production.yaml")
+    server = _resource(production, kind="Deployment", name="omnigent-saas-server")
+    release_renderer_module._validate_revocation_projection(server)
+    env = {row["name"]: row for row in server["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["OMNIGENT_SAAS_POD_UID"]["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.uid"
+
+
+@pytest.mark.parametrize("missing", tuple(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES))
+def test_p17_renderer_rejects_partial_business_profiles(tmp_path, missing):
+    value = _spec_document()
+    del value["service_logins"][missing]
+    path = tmp_path / "spec.json"
+    path.write_bytes(_canonical_json(value))
+    path.chmod(0o600)
+    with pytest.raises(ReleaseRenderError, match="complete schema-bound"):
+        load_public_release_spec(path)
+
+
+@pytest.mark.parametrize("mutation", ["uid", "url", "secret", "main-mount"])
+def test_server_revocation_projection_rejects_source_drift(tmp_path, mutation):
+    source = _copy_sources(tmp_path)
+    path = source / "kubernetes.production.yaml"
+    value = _document(path)
+    server = _resource(value, kind="Deployment", name="omnigent-saas-server")
+    pod = server["spec"]["template"]["spec"]
+    main = pod["containers"][0]
+    env = {row["name"]: row for row in main["env"]}
+    if mutation == "uid":
+        env["OMNIGENT_SAAS_POD_UID"]["valueFrom"]["fieldRef"]["fieldPath"] = "metadata.name"
+    elif mutation == "url":
+        env["OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE"]["value"] = (
+            "/runtime/app-database-url"
+        )
+    elif mutation == "secret":
+        next(row for row in pod["volumes"] if row["name"] == "revocation-source")["secret"][
+            "items"
+        ].append({"key": "owner", "path": "owner"})
+    else:
+        main["volumeMounts"].append(
+            {"name": "revocation-source", "mountPath": "/source/revocation", "readOnly": True}
+        )
+    path.write_text(yaml.safe_dump(value, sort_keys=False))
+    with pytest.raises(ReleaseRenderError, match="native revocation projection"):
+        render_kubernetes_release(_write_spec(tmp_path), source, tmp_path / "output")

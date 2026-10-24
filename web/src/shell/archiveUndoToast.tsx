@@ -24,7 +24,7 @@ const ARCHIVE_UNDO_DURATION_MS = 3000;
  */
 const ARCHIVE_UNDO_MAX_LIFETIME_MS = 5000;
 
-/** Stable id so repeated archives update ONE pill (merge). */
+/** Archives in one batch update one pill; later batches get a fresh id. */
 const ARCHIVE_UNDO_TOAST_ID = "archive-undo";
 
 // The sessions the visible pill would undo. Archives in quick succession
@@ -37,6 +37,7 @@ const ARCHIVE_UNDO_TOAST_ID = "archive-undo";
 let batched: Conversation[] = [];
 // When the current batch's pill first appeared (epoch ms), or null if none.
 let batchStartedAtMs: number | null = null;
+let batchGeneration = 0;
 // The most recent caller's QueryClient. Every entry point resolves the same
 // app-level client, so the latest one correctly unarchives the whole batch.
 let activeQueryClient: QueryClient | null = null;
@@ -49,20 +50,22 @@ function clearBatch(): void {
   activeNavigate = null;
 }
 
-function runUndo(): void {
+function runUndo(generation: number): void {
+  if (generation !== batchGeneration) return;
   const conversations = batched;
   const queryClient = activeQueryClient;
   clearBatch();
-  toast.dismiss(ARCHIVE_UNDO_TOAST_ID);
+  toast.dismiss(`${ARCHIVE_UNDO_TOAST_ID}-${generation}`);
   if (queryClient && conversations.length > 0) {
     void undoArchiveConversations(queryClient, conversations);
   }
 }
 
-function runViewArchived(): void {
+function runViewArchived(generation: number): void {
+  if (generation !== batchGeneration) return;
   const navigate = activeNavigate;
   clearBatch();
-  toast.dismiss(ARCHIVE_UNDO_TOAST_ID);
+  toast.dismiss(`${ARCHIVE_UNDO_TOAST_ID}-${generation}`);
   navigate?.("/settings/archived");
 }
 
@@ -94,6 +97,8 @@ export function showArchiveUndoToast(
   // has hit its absolute deadline — a late archive must not join a batch whose
   // pill is expiring, or it would extend an Undo past the server grace.
   if (batchStartedAtMs === null || now - batchStartedAtMs >= ARCHIVE_UNDO_MAX_LIFETIME_MS) {
+    if (batchStartedAtMs !== null) toast.dismiss(`${ARCHIVE_UNDO_TOAST_ID}-${batchGeneration}`);
+    batchGeneration += 1;
     batched = [];
     batchStartedAtMs = now;
   }
@@ -114,14 +119,18 @@ export function showArchiveUndoToast(
     batchStartedAtMs + ARCHIVE_UNDO_MAX_LIFETIME_MS - now,
   );
   const count = batched.length;
+  const generation = batchGeneration;
+  const clearCurrentBatch = () => {
+    if (generation === batchGeneration) clearBatch();
+  };
   toast(`Archived ${count} ${count === 1 ? "session" : "sessions"}`, {
-    id: ARCHIVE_UNDO_TOAST_ID,
+    id: `${ARCHIVE_UNDO_TOAST_ID}-${generation}`,
     duration: remaining,
-    action: { label: "Undo", onClick: runUndo },
-    cancel: { label: "View archived", onClick: runViewArchived },
+    action: { label: "Undo", onClick: () => runUndo(generation) },
+    cancel: { label: "View archived", onClick: () => runViewArchived(generation) },
     testId: "archive-undo-toast-item",
-    onAutoClose: clearBatch,
-    onDismiss: clearBatch,
+    onAutoClose: clearCurrentBatch,
+    onDismiss: clearCurrentBatch,
   });
 }
 

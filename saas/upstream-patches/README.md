@@ -1,5 +1,24 @@
 # Upstream patch queue
 
+
+## Current replay target: daily20 (2026-10-20)
+
+The user retargeted the upgrade to `v0.19.0.dev20261020`, full revision
+`3db749d784ff044304473939acaae3a65c0fec61`. The existing nine-patch boundary
+is retained. Patches0005 and0010 have been regenerated against this exact tree
+from the merged source, preserving SaaS workspace routing, token expiry/revocation,
+stable input receipts and upstream startup-worker wakeups, auth-rejected exits and
+monotonic tunnel liveness. The other seven patches replay unchanged. Old patch
+bytes and hashes are preserved in the daily20 BuildArtifacts evidence directory.
+
+Text application alone initially succeeded for all nine patches, but replayed
+bytes differed on eleven files; that failure is retained. The new replay must
+match every official-source byte. This records source rebasing only: dependency,
+protocol, migration, original scope approvals, full CI, physical multiarch builds,
+real business P4 and production admission remain pending. Historical approved
+budgets and hash/workflow exceptions below are not extended by this section.
+
+
 Every `.patch` must have a ledger entry recording its owner, affected upstream
 paths, tests, upstream issue or pull request, first/last replayed revisions, and
 removal condition. Runtime monkey patches and whole-file overrides are not
@@ -10,7 +29,7 @@ with the repository's trailing-whitespace hook. This does not relax the binding:
 every patch is applied only to the pinned upstream revision, and the checker
 then requires every replayed official-source byte to match the product tree.
 
-The `825f8500` (v0.18.0.dev20261006) replay keeps adapter contract `0.2.0`: the Host factory and
+The `09152b0a` (v0.19.0.dev20261015) replay keeps adapter contract `0.2.0`: the Host factory and
 Runner-entry changes are additive composition seams that preserve the existing
 Runtime Partition wire protocol, receipt schema, and persisted compatibility
 fields. A future wire or receipt change must bump the contract independently.
@@ -28,12 +47,21 @@ The error-banner source/test add two direct upstream files. The requester's
 All remaining source limits, protected CI and production admission gates stay
 unchanged; this scope approval is not independent code review or a waiver.
 
+The requester separately approved the exact 0.19 file ceiling of 152 on
+2026-10-16 (`upstream-019-reviewed-visual-budget-v31`). The measured 152 files
+include two frontend contract-test adaptations and five reviewed Linux visual
+baselines preserving SaaS language switching and Agent readiness hints. Retain
+the 4,576-line ceiling, nine patches, 0.85 isolation floor and every release gate.
+The approval covers source scope only; independent review, administrator CI
+policy review and production admission remain required.
+
 This baseline includes the upstream `c90e5de4` AgentSpec tool-grant enforcement
 and `f754c140` sidecar MCP allow-list enforcement. The downstream queue does
-not replace either security boundary. Patch 0003 owns the complete
+not replace either security boundary. Patch 0005 owns the complete
 `host/connect.py` delta so the Host factory, Runner entrypoint, interactive
 shell inventory and external workspace propagation remain one replayable file;
-patch 0005 owns the remaining external Host bridge paths.
+the same patch owns the remaining external Host bridge paths. Patch 0003 owns
+the atomic credential and lifecycle admission in `host_store.py`.
 
 The 2026-09-13 external Host registration correction is carried by patch 0005.
 The token resolver and atomic registration both reject `expires_at <= now`.
@@ -233,14 +261,54 @@ the initial SPA HTML title while preserving the upstream default and escaping
 the configured value. Patch 0010 now also owns `omnigent/server/app.py`; the
 nine-patch ceiling and existing source-delta ceilings remain unchanged.
 
+## 0.19 integration replay
+
+Same-repository pull requests retain the sealed, scanned unsigned OCI archives
+for three days under `saas-oci-validation-<revision>` so the pre-merge live gates
+can exercise the actual candidate. The protected main promotion artifact retains
+its distinct name, conditions and signing authority; the promotion verifier
+rejects validation artifacts. This export grants no package or OIDC permissions.
+
+All nine patches are regenerated against `09152b0a15af5075f20dd8f9178066957908a810`;
+the queue still owns the same 27 official Python paths. Patches 0005 and 0007
+are rewritten for the new Host diagnostics/heartbeat split and Unity Gateway
+naming. Host credential expiry/revocation remains fail closed on the ping path;
+ordinary liveness writes use the upstream heartbeat worker. Patch 0010 retains
+committed-input deduplication alongside upstream delivery diagnostics and keeps
+the SaaS Agent-readiness and branding behavior. Upstream's new launch admission
+wrapper already preserves the previous account-owner check and adds MCP
+capability validation, so the old `partial` wrapper is superseded.
+
+The `upstream-019-abrupt-death-test-budget-v33` approval raises only the direct
+file ceiling from 153 to 154. Publish the abrupt-death fixture state through a
+same-directory temporary file and atomic replacement, preserving all SIGKILL,
+descendant and socket cleanup assertions. The deterministic empty-read race is
+reproduced before the fix; real processes pass on macOS and Linux without
+retries afterward. Including the merged main build metadata correction, the
+measured delta is 154 files / 3,415 net lines. The 4,576-line ceiling, nine
+patches, 0.85 isolation floor and every technical/live/release gate remain.
+
+The requester approved `upstream-019-toast-cleanup-test-budget-v34` on
+2026-10-16, raising only the direct-file ceiling from 154 to 155. The existing
+archive Undo toast tests now await Sonner DOM removal before teardown; all
+rendering, Undo, batch, deduplication and deadline assertions remain. The
+measured scope is 155 files / 3,416 net lines. This source-scope approval retains
+the 4,576-line ceiling, nine patches, 0.85 isolation floor and all release gates.
+
+The initial focused replay verification covers external Host credential
+revocation, pending-input delivery/deduplication, and snapshot workflow archive
+safety. Full Agent, tenant-isolation, N-1 and release gates remain required.
+No wire or receipt change is introduced by this replay; adapter contract `0.2.0`
+and Runner Session protocol `2` must still pass the integration matrix.
+
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
-| `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `825f8500` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
-| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry and revocation matrix | External Host lifecycle proposal pending | `825f8500` | Remove when upstream exposes equivalent external Host lifecycle semantics |
-| `0004-agent-cache-legacy-recovery.patch` | Runtime Compatibility | `omnigent/onboarding/harness_install.py` | Harness install and managed-image version contracts | Harness fleet proposal pending | `825f8500` | Remove when upstream ships the managed fleet versions and install behavior |
-| `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/host/identity_env.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/server/routes/host_tunnel.py` | owner-only rotatable token file; workspace propagation; revocation heartbeat; Kubernetes proc binding | External Host bridge proposal pending | `825f8500` | Remove when upstream supports the complete managed Host credential and workspace route |
-| `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/bridge.py`; `omnigent/onboarding/provider_config.py` | Platform gateway catalog and delegated workspace callback routing | Gateway catalog proposal pending | `825f8500` | Remove when upstream publishes configured gateway models and managed callback routing |
-| `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py` | OpenCode synthetic-token platform routing | Provider fallback proposal pending | `825f8500` | Remove when upstream routes OpenCode through configured OpenAI-compatible providers without persisting credentials |
-| `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `825f8500` | Remove when upstream supports the same credential-free platform routing |
-| `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `825f8500` | Remove when upstream exposes the equivalent dual managed runtime provider |
-| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
+| `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `09152b0a` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
+| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry and revocation matrix | External Host lifecycle proposal pending | `09152b0a` | Remove when upstream exposes equivalent external Host lifecycle semantics |
+| `0004-agent-cache-legacy-recovery.patch` | Runtime Compatibility | `omnigent/onboarding/harness_install.py` | Harness install and managed-image version contracts | Harness fleet proposal pending | `09152b0a` | Remove when upstream ships the managed fleet versions and install behavior |
+| `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/host/identity_env.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/server/routes/host_tunnel.py` | owner-only rotatable token file; workspace propagation; revocation heartbeat; Kubernetes proc binding | External Host bridge proposal pending | `09152b0a` | Remove when upstream supports the complete managed Host credential and workspace route |
+| `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/bridge.py`; `omnigent/onboarding/provider_config.py` | Platform gateway catalog and delegated workspace callback routing | Gateway catalog proposal pending | `09152b0a` | Remove when upstream publishes configured gateway models and managed callback routing |
+| `0007-opencode-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/opencode_native/provider.py` | OpenCode synthetic-token platform routing | Provider fallback proposal pending | `09152b0a` | Remove when upstream routes OpenCode through configured OpenAI-compatible providers without persisting credentials |
+| `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `09152b0a` | Remove when upstream supports the same credential-free platform routing |
+| `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `09152b0a` | Remove when upstream exposes the equivalent dual managed runtime provider |
+| `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `09152b0a` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |

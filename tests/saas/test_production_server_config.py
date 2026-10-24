@@ -22,6 +22,7 @@ from saas.production.service_bindings import (
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
+    load_production_service_role_graph,
     render_production_service_role_bindings,
 )
 
@@ -274,6 +275,27 @@ def test_loads_exact_release_and_owner_only_secret_files(tmp_path: Path) -> None
     )
     assert config.official_builtin_agent_seed_enabled is False
     assert config.official_cross_workspace_scheduler_enabled is False
+    assert config.host_sharded is False
+
+
+@pytest.mark.parametrize("value", ["false", "true"])
+def test_loads_explicit_host_sharding_topology(tmp_path: Path, value: str) -> None:
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_HOST_SHARDED"] = value
+
+    config = load_production_server_config(environment)
+
+    assert config.host_sharded is (value == "true")
+    assert config.version_document["host_sharded"] is config.host_sharded
+
+
+@pytest.mark.parametrize("value", ["", "1", "TRUE", " true", "unknown"])
+def test_rejects_ambiguous_host_sharding_topology(tmp_path: Path, value: str) -> None:
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_HOST_SHARDED"] = value
+
+    with pytest.raises(ProductionServerConfigError, match="must be true or false"):
+        load_production_server_config(environment)
 
 
 @pytest.mark.parametrize("projection", [False, True])
@@ -739,3 +761,55 @@ def test_artifact_admission_receipt_is_read_only_and_exactly_bound(tmp_path: Pat
     receipt.chmod(0o400)
     with pytest.raises(ProductionServerConfigError, match="does not match the receipt file"):
         load_production_server_config(tampered)
+
+
+@pytest.mark.parametrize("head", ["p0s000000017", "p0s000000018"])
+def test_p17_requires_exact_business_profile_and_dedicated_revocation_file(tmp_path, head):
+    from saas.production.service_bindings import EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
+
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] = head
+    environment["OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION"] = "nf12ab34cd56"
+    with pytest.raises(ProductionServerConfigError, match="P17 requires native"):
+        load_production_server_config(environment)
+    profile = tmp_path / "business-delivery-service-role-bindings.json"
+    profile.write_text(
+        render_production_service_role_bindings(
+            tuple(
+                ProductionServiceRoleBinding(service, service + "_login", role)
+                for service, role in EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items()
+            )
+        ),
+        encoding="ascii",
+    )
+    profile.chmod(0o400)
+    environment["OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE"] = str(profile)
+    with pytest.raises(ProductionServerConfigError, match="REVOCATION_CONSUMER_DATABASE_URL_FILE"):
+        load_production_server_config(environment)
+    environment["OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE"] = _secret(
+        tmp_path / "revocation-url",
+        "postgresql+psycopg://revocation_consumer_login:synthetic-password@postgres.internal:5432/omnigent?sslmode=verify-full&sslrootcert=/runtime/postgresql-ca.crt",
+    )
+    graph = load_production_service_role_graph(environment)
+    receipt_path = Path(environment["OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE"])
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt.update(
+        official_head="nf12ab34cd56",
+        saas_head=head,
+        runtime_rls_table_count=19,
+        service_role_graph_sha256=graph.sha256,
+    )
+    receipt_path.chmod(0o600)
+    receipt_path.write_text(json.dumps(receipt))
+    receipt_path.chmod(0o400)
+    config = load_production_server_config(environment)
+    assert config.control_plane_schema_revision == head
+    assert len(config.service_role_graph.bindings) == 18
+    assert config.secrets.database_urls.revocation_consumer.startswith(
+        "postgresql+psycopg://revocation_consumer_login:"
+    )
+    environment["OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE"] = environment[
+        "OMNIGENT_SAAS_APP_DATABASE_URL_FILE"
+    ]
+    with pytest.raises(ProductionServerConfigError, match="distinct secret files"):
+        load_production_server_config(environment)

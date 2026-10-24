@@ -34,6 +34,13 @@ from saas.control_plane.execution_models import (
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
+from saas.observability import (
+    capture_event_page_floor,
+    ensure_observed_factory,
+    measure_stage,
+    require_event_page_witness,
+    require_run_witness,
+)
 
 _LEASED_STATUSES = frozenset(
     {"leased", "starting", "running", "waiting_input", "waiting_approval", "cancelling"}
@@ -181,6 +188,7 @@ class ExecutionControlPlane:
         authorizer: ProjectAuthorizer | None = None,
     ) -> None:
         self._session_factory = session_factory
+        ensure_observed_factory(session_factory)
         self._authorizer = authorizer or ProjectAuthorizer(session_factory)
 
     def create_task(self, request: RequestContext, *, project_id: UUID, title: str) -> UUID:
@@ -325,6 +333,7 @@ class ExecutionControlPlane:
             quota.version += 1
             return quota.id
 
+    @measure_stage("admission")
     def admit_run(
         self,
         request: RequestContext,
@@ -389,6 +398,7 @@ class ExecutionControlPlane:
                     raise ExecutionControlPlaneError(
                         "admission_invariant_broken", "Run is missing its quota reservation"
                     )
+                require_run_witness(db, existing)
                 return RunAdmission(
                     existing.id,
                     existing.task_id,
@@ -741,6 +751,7 @@ class ExecutionControlPlane:
             self._apply_request_context(db, request)
             run = self._scoped_run(db, request, project_id, run_id, lock=True)
             if run.status in TERMINAL_RUN_STATUSES or run.status == "cancelling":
+                require_run_witness(db, run)
                 return RunMutation(
                     run.id, run.status, run.version, run.event_sequence, replayed=True
                 )
@@ -844,17 +855,42 @@ class ExecutionControlPlane:
         if after_sequence < 0 or not 1 <= limit <= 5000:
             raise ExecutionControlPlaneError("replay_cursor_invalid", "replay cursor is invalid")
         self._authorizer.require(request, action="run.read_metadata", project_id=project_id)
+        minimum_source_head = capture_event_page_floor(
+            self._session_factory, request.tenant_id, run_id
+        )
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
-            self._scoped_run(db, request, project_id, run_id, lock=False)
-            rows = db.scalars(
-                sa.select(RunEventRecord)
-                .where(
-                    RunEventRecord.run_id == run_id,
-                    RunEventRecord.sequence > after_sequence,
+            run = self._scoped_run(db, request, project_id, run_id, lock=False)
+            # The head and page must come from the same statement snapshot.
+            # Separate READ COMMITTED reads can invent a missing tail while a
+            # legitimate append commits between those two statements.
+            source = tuple(
+                db.execute(
+                    sa.select(RunRecord.event_sequence, RunEventRecord)
+                    .select_from(RunRecord)
+                    .outerjoin(
+                        RunEventRecord,
+                        sa.and_(
+                            RunEventRecord.run_id == RunRecord.id,
+                            RunEventRecord.sequence > after_sequence,
+                        ),
+                    )
+                    .where(RunRecord.id == run_id)
+                    .order_by(RunEventRecord.sequence)
+                    .limit(limit)
                 )
-                .order_by(RunEventRecord.sequence)
-                .limit(limit)
+            )
+            if not source:
+                raise ExecutionControlPlaneError("run_not_found", "Run is no longer visible")
+            rows = tuple(row[1] for row in source if row[1] is not None)
+            require_event_page_witness(
+                db,
+                run,
+                rows,
+                after_sequence=after_sequence,
+                source_head=source[0][0],
+                limit=limit,
+                minimum_source_head=minimum_source_head,
             )
             return tuple(
                 PersistedRunEvent(
@@ -930,6 +966,7 @@ class ExecutionControlPlane:
                     raise ExecutionControlPlaneError(
                         "idempotency_conflict", "effect key was used with another request"
                     )
+                require_run_witness(db, run)
                 return self._effect_state(existing, replayed=True)
             effect = EffectCallRecord(
                 tenant_id=run.tenant_id,
@@ -997,6 +1034,7 @@ class ExecutionControlPlane:
                     and effect.response == response
                     and effect.error_code == error_code
                 ):
+                    require_run_witness(db, run)
                     return self._effect_state(effect, replayed=True)
                 raise ExecutionControlPlaneError(
                     "effect_already_resolved", "effect call already has an authoritative result"
@@ -1177,6 +1215,8 @@ class ExecutionControlPlane:
                 raise ExecutionControlPlaneError(
                     "artifact_link_conflict", "artifact is already linked with another role"
                 )
+            if replayed and link is not None:
+                require_run_witness(db, run)
             return ArtifactRegistration(artifact.id, run.id, digest, replayed and link is not None)
 
     @staticmethod

@@ -24,11 +24,11 @@ def _postgres_url() -> str:
     return url
 
 
-def _migrate(connection: sa.Connection, root: Path) -> None:
+def _migrate(connection: sa.Connection, root: Path, revision: str = "head") -> None:
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)
 
 
 class _PlatformGovernanceSession(Session):
@@ -293,7 +293,7 @@ def test_real_postgresql_identity_conflict_review_is_content_blind_and_exact_tar
     candidate_id, conflict_id, other_conflict_id = uuid4(), uuid4(), uuid4()
     now = datetime.now(timezone.utc)
     with engine.begin() as connection:
-        _migrate(connection, root)
+        _migrate(connection, root, "p0s000000015")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )

@@ -254,9 +254,7 @@ jobs:
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
         run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_control_plane_migration_cli
           uv run python -m saas.scripts.check_patch_queue
           uv run python -m saas.scripts.check_upstream_delta
           uv run python -m saas.scripts.check_production_baseline
@@ -397,6 +395,17 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 30
+      - name: Upload unsigned OCI bytes for isolated PR validation
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-oci-validation-${{ env.CANDIDATE_REVISION }}
+          path: artifacts/promotion/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
       - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

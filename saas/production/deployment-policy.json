@@ -3,20 +3,30 @@
   "policy_id": "omnigent-saas-production-deployment-v1",
   "reviewed_at": "2026-09-18",
   "revision_contract": {
-  "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
+    "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "lm2t00000001"
+    "control_plane_schema_revision": "p0s000000018"
   },
   "evidence_directory": "saas/production/deployment-evidence",
   "max_evidence_age_days": 30,
   "minimum_failure_domains": 2,
   "minimum_physical_hosts": 2,
   "required_components": {
-    "control-plane": {"minimum_replicas": 2},
-    "queue-worker": {"minimum_replicas": 2},
-    "runner": {"minimum_replicas": 2},
-    "preview-gateway": {"minimum_replicas": 2},
-    "egress-proxy": {"minimum_replicas": 2}
+    "control-plane": {
+      "minimum_replicas": 2
+    },
+    "queue-worker": {
+      "minimum_replicas": 2
+    },
+    "runner": {
+      "minimum_replicas": 2
+    },
+    "preview-gateway": {
+      "minimum_replicas": 2
+    },
+    "egress-proxy": {
+      "minimum_replicas": 2
+    }
   },
   "required_network_controls": [
     "default_deny_ingress",
