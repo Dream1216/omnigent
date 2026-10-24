@@ -17,6 +17,9 @@ minimumReleaseAgeExclude:
   # Security-only exception: supersedes the vulnerable <=4.2.0 line. The
   # exact artifact remains integrity-locked and policy-verified.
   - 'http-cache-semantics@4.3.0'
+  # Exact security fixes for compressed-body DoS and revoked TLS intermediates.
+  - 'body-parser@2.4.0'
+  - 'electron@42.11.16'
   # Security-only exception: fixes GHSA-68fv-2mgg-jv7q. The exact artifact is
   # integrity-locked in pnpm-lock.yaml and remains subject to lockfile policy.
   - 'source-map-js@1.2.2'
@@ -88,9 +91,13 @@ overrides:
   dompurify: 3.4.17
   mermaid: 11.16.1
   tar: 7.5.21
-  'node-gyp>undici': 6.28.1
-  'undici@>=7.0.0 <8.0.0': 7.29.1
-  'undici@>=8.0.0 <9.0.0': 8.10.2
+  'node-gyp>undici': 6.29.1
+  '@ai-sdk/provider-utils>undici': 6.29.1
+  'undici@>=7.0.0 <8.0.0': 7.30.1
+  'undici@>=8.0.0 <9.0.0': 8.12.2
+  'zod@>=4.0.0 <5.0.0': 4.6.7
+  'body-parser@>=2.0.0 <3.0.0': 2.4.0
+  '@azure/identity@4.13.3>@azure/msal-node': 7.1.0
   proxy-addr: 2.0.8
   'brace-expansion@>=1.0.0 <2.0.0': 1.1.20
   'brace-expansion@>=2.0.0 <3.0.0': 2.1.6
