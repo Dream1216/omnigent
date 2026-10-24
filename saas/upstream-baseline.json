@@ -48,11 +48,22 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 156,
+    "max_direct_upstream_files": 158,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "file_download_browse_path_budget_followup": {
+      "approved_at": "2026-10-24",
+      "previous_max_direct_upstream_files": 156,
+      "max_direct_upstream_files": 158,
+      "measured_upstream_net_added_loc": 3738,
+      "scoped_paths": [
+        "web/src/shell/FolderTree.tsx",
+        "web/src/shell/FolderTree.test.tsx"
+      ],
+      "reason": "Requester authorized the file-manager download fix and release. The two newly changed upstream files are the file-row path correction and its owning click-through regression. Keep the 4576 net-LOC and nine-patch caps, 0.85 isolation floor, all compatibility checks, exact-image scans, and protected promotion unchanged; this revision requires fresh evidence for its own SHA."
+    },
     "kimi_terminal_pending_budget_followup": {
       "approved_at": "2026-10-24",
       "previous_max_direct_upstream_files": 154,
