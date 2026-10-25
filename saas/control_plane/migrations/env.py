@@ -17,7 +17,9 @@ from saas.control_plane import (
 from saas.control_plane import execution_models as _execution_models  # noqa: F401
 from saas.control_plane import gateway_models as _gateway_models  # noqa: F401
 from saas.control_plane import isolation_models as _isolation_models  # noqa: F401
+from saas.control_plane import model_routing_models as _model_routing_models  # noqa: F401
 from saas.control_plane import onboarding_models as _onboarding_models  # noqa: F401
+from saas.control_plane import outbox_delivery_models as _outbox_delivery_models  # noqa: F401
 from saas.control_plane import placement_models as _placement_models  # noqa: F401
 from saas.control_plane import platform_governed_models as _platform_governed_models  # noqa: F401
 from saas.control_plane import platform_models as _platform_models  # noqa: F401

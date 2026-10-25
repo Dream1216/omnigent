@@ -210,12 +210,16 @@ class ProductionRunnerAgent:
         lease: RunnerControlClientLease,
         stop: asyncio.Event,
         terminalizing: asyncio.Event,
+        mutation_lock: asyncio.Lock,
     ) -> str:
         while not stop.is_set():
             try:
                 await asyncio.wait_for(stop.wait(), timeout=self._heartbeat_interval)
             except TimeoutError:
-                state = await self._client.heartbeat_run(lease)
+                async with mutation_lock:
+                    if stop.is_set():
+                        break
+                    state = await self._client.heartbeat_run(lease)
                 status = state.get("status")
                 if status == "cancelling":
                     return "cancelling"
@@ -257,7 +261,14 @@ class ProductionRunnerAgent:
             with suppress(asyncio.CancelledError):
                 await execution
             return "orphaned"
-        return "cancelled" if result in {"cancelled", "succeeded", "failed"} else "orphaned"
+        return "cancelled" if result in _TERMINAL_RESULTS else "orphaned"
+
+    async def _prepare_terminal_result(self, lease: RunnerControlClientLease, result: str) -> str:
+        try:
+            prepared = await self._executor.prepare_finalization(lease, result=result)
+        except Exception:  # noqa: BLE001 - executor errors are content-sensitive.
+            return "orphaned"
+        return prepared if prepared in _TERMINAL_RESULTS | {"orphaned"} else "orphaned"
 
     async def _execute_lease(
         self,
@@ -281,15 +292,25 @@ class ProductionRunnerAgent:
         cancellation = asyncio.Event()
         heartbeat_stop = asyncio.Event()
         terminalizing = asyncio.Event()
+        mutation_lock = asyncio.Lock()
         execution = asyncio.create_task(
             self._executor.execute(lease, cancellation=cancellation),
             name=f"runner-execute-{lease.run_id}",
         )
         heartbeat = asyncio.create_task(
-            self._heartbeat_lease(lease, heartbeat_stop, terminalizing),
+            self._heartbeat_lease(lease, heartbeat_stop, terminalizing, mutation_lock),
             name=f"runner-heartbeat-{lease.run_id}",
         )
         stopped = asyncio.create_task(stop.wait(), name=f"runner-stop-{lease.run_id}")
+
+        async def transition_terminal(target: str):
+            async with mutation_lock:
+                if heartbeat.done():
+                    await heartbeat
+                mutation = await self._client.transition_run(lease, target_status=target)
+                heartbeat_stop.set()
+                return mutation
+
         durable_cancellation = False
         result = "orphaned"
         try:
@@ -349,23 +370,15 @@ class ProductionRunnerAgent:
             # Run and Worktree heartbeats deliberately remain live while helper
             # shutdown and checkpointing finish.  A failed checkpoint may only
             # downgrade the result, never preserve succeeded.
-            try:
-                prepared_result = await self._executor.prepare_finalization(
-                    lease,
-                    result=result,
-                )
-            except Exception:  # noqa: BLE001 - executor errors are content-sensitive.
-                prepared_result = "orphaned"
-            if prepared_result not in _TERMINAL_RESULTS | {"orphaned"}:
-                prepared_result = "orphaned"
-            result = prepared_result
+            result = await self._prepare_terminal_result(lease, result)
 
             if heartbeat.done():
                 durable_status = await heartbeat
                 if durable_status == "cancelling":
+                    if not durable_cancellation:
+                        result = await self._cancel_execution(lease, execution, cancellation)
+                        result = await self._prepare_terminal_result(lease, result)
                     durable_cancellation = True
-                    if result != "orphaned":
-                        result = "cancelled"
                 else:
                     raise RunnerControlError(
                         "runner_control_durable_status_invalid",
@@ -382,7 +395,26 @@ class ProductionRunnerAgent:
             if result == "cancelled" and not durable_cancellation:
                 await self._client.transition_run(lease, target_status="cancelling")
             terminalizing.set()
-            await self._client.transition_run(lease, target_status=result)
+            try:
+                await transition_terminal(result)
+            except RunnerControlError as error:
+                # Only a known nonterminal outcome permits a different terminal command.
+                if error.code not in {
+                    "run_transition_invalid",
+                    "runner_control_cancellation_required",
+                } or result not in {
+                    "succeeded",
+                    "failed",
+                    "timed_out",
+                }:
+                    raise
+                state = await self._client.heartbeat_run(lease)
+                if state.get("status") != "cancelling":
+                    raise
+                result = await self._cancel_execution(lease, execution, cancellation)
+                result = await self._prepare_terminal_result(lease, result)
+                await self._executor.prepare_terminal_transition(lease)
+                await transition_terminal(result)
             heartbeat_stop.set()
             durable_status = await heartbeat
             if durable_status not in {"stopped", "cancelling", "terminal"}:
@@ -401,7 +433,7 @@ class ProductionRunnerAgent:
                 await heartbeat
 
     async def _run_claim_loop(self, stop: asyncio.Event) -> ProductionRunnerAgentStats:
-        self._executor.assert_production_ready()
+        await asyncio.to_thread(self._executor.assert_production_ready)
         await self._client.heartbeat_runner()
         claims = completed = failed = released = 0
         gc_stop = asyncio.Event()
@@ -411,8 +443,15 @@ class ProductionRunnerAgent:
                 # A timeout leaves an uninterruptible daemon/DB call with an
                 # unknown commit result.  The current lease may be recovered,
                 # but this process incarnation must never claim another Run.
-                self._executor.assert_claimable()
                 await self._client.heartbeat_runner()
+                try:
+                    await asyncio.to_thread(self._executor.assert_claimable)
+                except RunnerControlError as error:
+                    if error.code != "interactive_controller_recovery_pending":
+                        raise
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(stop.wait(), timeout=self._poll_interval)
+                    continue
                 lease = await self._client.claim_run()
                 if lease is None:
                     try:

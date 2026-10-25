@@ -170,6 +170,7 @@ def test_delivery_mtls_rejects_partial_or_exposed_private_key(tmp_path, delivery
     certs = _certificate_fixture(tmp_path, (uuid4(),))["runner-0"]
     with pytest.raises(ValueError, match="both"):
         replace(delivery_config, client_certificate_file=certs.certificate)
+    certs.private_key.chmod(0o644)
     with pytest.raises(ValueError, match="owner-only"):
         replace(
             delivery_config,

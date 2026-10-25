@@ -7,12 +7,17 @@ required-version = ">=0.11.8"
 # all-extras/dev lock. Keep them here (rather than under [tool.uv]) because
 # this repository uses uv.toml as the authoritative resolver configuration.
 constraint-dependencies = [
-    "urllib3>=2.8.0",
-    "virtualenv>=21.7.13",
     "aiohttp>=3.14.4,<4",
+    "urllib3>=2.8.0",
+    "virtualenv>=21.14.13,<22",
     "graphql-core>=3.2.12,<3.3",
     "gitpython>=3.2.1,<4",
     "opentelemetry-api>=1.45.1,<2",
+    "brotli>=1.2.1,<2",
+    "filelock>=4.2.1,<5",
+    "mlflow>=3.17.2,<4",
+    "mlflow-skinny>=3.17.2,<4",
+    "mlflow-tracing>=3.17.2,<4",
 ]
 
 # Dependency cooldown: never resolve a distribution uploaded within the
@@ -34,13 +39,18 @@ exclude-newer = "P7D"
 #   past P7D.
 # - nimble-python: the verified Agent API V2 1.2 contract release, required by
 #   nimble_research for typed run fields. Drop once it has aged past P7D.
-# - mlflow / mlflow-skinny / mlflow-tracing: the mlflow release train cross-pins
-#   all three to the same version (mlflow==X depends on mlflow-skinny==X and
-#   mlflow-tracing==X), so all three must be exempted together. 3.16.0
-#   (published 2026-09-04) relaxes the transitive cryptography cap from <50 to
-#   <51, which unblocks cryptography 50.0.0 (CVE-2026-69247); 3.16.0 is also
-#   above the mlflow AI Gateway SSRF range <=3.15.2 (CVE-2026-71211). Drop once
-#   aged past P7D (2026-09-11).
-# - pillow / certifi: fixed releases required by the production image scan
-#   (GHSA-8g5g-8vmr-9782 / GHSA-6q48-6c7w-9gw2). Drop after P7D.
-exclude-newer-package = { cwsandbox = "2026-06-12T00:00:00Z", google-antigravity = "2026-06-12T00:00:00Z", nimble-python = "2026-07-29T00:00:00Z", mlflow = "2026-09-05T00:00:00Z", mlflow-skinny = "2026-09-05T00:00:00Z", mlflow-tracing = "2026-09-05T00:00:00Z", pillow = "2026-10-21T00:00:00Z", certifi = "2026-10-21T00:00:00Z" }
+# - mlflow / mlflow-skinny / mlflow-tracing: cross-pinned 3.17.2 fixes the
+#   FileStore trace path traversal (CVE-2026-53995). The common cutoff is
+#   immediately after the last official 3.17.2 upload; no later train is admitted.
+#   Drop once aged past P7D (2026-10-28).
+# - pillow: 13.0.0 fixes the JPEG/TIFF decoder and encoder memory-safety
+#   advisories affecting 12.3.0. Drop once aged past P7D (2026-10-24).
+# - certifi: 2026.10.19 removes the compromised emSign ECC G3 root. Drop once
+#   aged past P7D (2026-10-28).
+# - brotli: 1.2.1 fixes decoder corruption (GHSA-9v8h-qqgm-4m35).
+#   Drop once aged past P7D (2026-10-29).
+# - filelock: 4.2.1 fixes lock path/symlink attacks including CVE-2026-112940.
+#   Drop once aged past P7D (2026-10-24).
+# - virtualenv: 21.14.13 fixes bash prompt execution and temporary cache links.
+#   Drop once aged past P7D (2026-10-29).
+exclude-newer-package = { cwsandbox = "2026-06-12T00:00:00Z", google-antigravity = "2026-06-12T00:00:00Z", nimble-python = "2026-07-29T00:00:00Z", mlflow = "2026-10-21T02:08:46Z", mlflow-skinny = "2026-10-21T02:08:46Z", mlflow-tracing = "2026-10-21T02:08:46Z", pillow = "2026-10-17T00:00:00Z", certifi = "2026-10-21T00:00:00Z", brotli = "2026-10-22T14:00:13Z", filelock = "2026-10-17T16:48:15Z", virtualenv = "2026-10-22T20:10:17Z" }

@@ -7,6 +7,7 @@ _SQL = (
     Path(__file__).resolve().parents[2] / "saas/control_plane/postgresql_runner_agent_cluster.sql"
 ).read_text()
 _MODEL_HEADS = ("lm2r00000001", "lm2s00000001", "lm2t00000001")
+_POST_T_HEADS = ("p0s000000016", "p0s000000017", "p0s000000018")
 
 
 def _heads(pattern: str) -> tuple[str, ...]:
@@ -17,7 +18,7 @@ def _heads(pattern: str) -> tuple[str, ...]:
 
 def test_cluster_bootstrap_accepts_only_exact_p0_r_s_t_heads():
     accepted = _heads(r"IF schema_head NOT IN \(([^)]+)\) THEN")
-    assert accepted == ("p0s000000015", *_MODEL_HEADS)
+    assert accepted == ("p0s000000015", *_MODEL_HEADS, *_POST_T_HEADS)
     assert all(head not in accepted for head in ("", "lm2u00000001", "lm2t00000001-extra"))
 
 
@@ -25,8 +26,9 @@ def test_t_bootstrap_preserves_recovery_api_and_support_grant_scope():
     recovery = _heads(r"IF schema_head IN \(([^)]+)\) THEN")
     grants = _heads(
         r"IF \(SELECT version_num FROM public\.saas_alembic_version\)\s+IN \(([^)]+)\) THEN"
+        r"\s+GRANT EXECUTE ON FUNCTION pg_catalog\.pg_advisory_xact_lock"
     )
-    assert recovery == grants == _MODEL_HEADS
+    assert recovery == grants == (*_MODEL_HEADS, *_POST_T_HEADS)
     assert "'saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)'" in _SQL
     assert "GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint)" in _SQL
     assert "GRANT EXECUTE ON FUNCTION pg_catalog.pg_try_advisory_xact_lock(bigint)" in _SQL

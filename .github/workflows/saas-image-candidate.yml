@@ -7,6 +7,7 @@ on:
       - ".github/workflows/saas-image-candidate.yml"
       - ".github/workflows/saas-production-admission.yml"
       - "deploy/docker/Dockerfile"
+      - "saas/deployment/litellm/**"
       - "deploy/docker/entrypoint.py"
       - "setup.py"
       - "pyproject.toml"
@@ -40,6 +41,7 @@ on:
       - ".github/workflows/saas-image-candidate.yml"
       - ".github/workflows/saas-production-admission.yml"
       - "deploy/docker/Dockerfile"
+      - "saas/deployment/litellm/**"
       - "deploy/docker/entrypoint.py"
       - "setup.py"
       - "pyproject.toml"
@@ -111,7 +113,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked preflight dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra kubernetes
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Set up crane for exact OCI transfer regression
@@ -127,6 +129,7 @@ jobs:
           tests/saas/test_scan_oci_candidates.py
           tests/saas/test_oci_candidate_build_capacity.py
           tests/saas/test_oci_promotion.py
+          tests/saas/test_litellm_oci_promotion.py
           tests/saas/test_runtime_security_overlays.py
           tests/saas/test_host_fleet_cli_supply.py
           -q
@@ -176,7 +179,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra kubernetes
       - name: Verify full four-authority fresh replay and predecessor upgrade
         run: >-
           uv run pytest tests/saas/test_production_migration_replay.py
@@ -199,6 +202,9 @@ jobs:
       oci-artifact-id: ${{ steps.upload-oci.outputs.artifact-id }}
       oci-artifact-sha256: ${{ steps.upload-oci.outputs.artifact-digest }}
       manifest-sha256: ${{ steps.seal.outputs.manifest-sha256 }}
+      litellm-oci-artifact-id: ${{ steps.upload-litellm-oci.outputs.artifact-id }}
+      litellm-oci-artifact-sha256: ${{ steps.upload-litellm-oci.outputs.artifact-digest }}
+      litellm-manifest-sha256: ${{ steps.seal-litellm.outputs.manifest-sha256 }}
     services:
       postgres:
         image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
@@ -234,7 +240,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra kubernetes
       - name: Configure exact PostgreSQL 18 runner contract
         env:
           PGPASSWORD: postgres
@@ -254,9 +260,7 @@ jobs:
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
         run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_control_plane_migration_cli
           uv run python -m saas.scripts.check_patch_queue
           uv run python -m saas.scripts.check_upstream_delta
           uv run python -m saas.scripts.check_production_baseline
@@ -301,7 +305,7 @@ jobs:
           source_revision="$CANDIDATE_REVISION"
           upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)
           adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)
-          schema_revision=$(jq -r .revision_contract.control_plane_schema_revision saas/production/baseline.json)
+          schema_revision=$(uv run python -m saas.scripts.check_image_supply_chain --print-schema-revision)
           echo "PYTHON_IMAGE=python:3.12-slim@${python_digest}" >> "$GITHUB_ENV"
           echo "RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@${runtime_digest}" >> "$GITHUB_ENV"
           echo "NODE_IMAGE=node:22-slim@${node_digest}" >> "$GITHUB_ENV"
@@ -385,6 +389,67 @@ jobs:
             --root artifacts/promotion --revision "$CANDIDATE_REVISION" \
             --source-date-epoch "$SOURCE_DATE_EPOCH" >> "$GITHUB_OUTPUT"
           cp artifacts/promotion/oci-promotion-manifest.json artifacts/
+      - name: Prepare locked LiteLLM build materials
+        run: |
+          set -euo pipefail
+          base=$(jq -er .image saas/production/litellm_release.json)
+          [[ "$base" =~ ^ghcr\.io/berriai/litellm@sha256:[0-9a-f]{64}$ ]]
+          echo "LITELLM_BASE_IMAGE=$base" >> "$GITHUB_ENV"
+          uv run python -m saas.scripts.prepare_litellm_runtime --destination .litellm-runtime
+          mkdir -p artifacts/litellm-promotion/grype
+          cp .litellm-runtime/materials.json artifacts/litellm-materials.json
+      - name: Build LiteLLM candidate attempt 1
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: litellm
+          target: runtime
+          attempt: "1"
+      - name: Build LiteLLM candidate attempt 2
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: litellm
+          target: runtime
+          attempt: "2"
+      - name: Reclaim ephemeral LiteLLM builder cache before inspection
+        env:
+          CANDIDATE_BUILDER_NAME: ${{ steps.candidate-builder.outputs.name }}
+        run: >-
+          python -m saas.scripts.reclaim_candidate_build_cache
+          --root "${RUNNER_TEMP}" --builder "$CANDIDATE_BUILDER_NAME" --scope litellm
+          > artifacts/litellm-storage-reclamation.json
+      - name: Compare repeated LiteLLM image facts
+        run: >-
+          python -m saas.scripts.compare_oci_rebuilds --label-profile litellm
+          --image omnigent-litellm=${{ runner.temp }}/litellm-1.tar,${{ runner.temp }}/litellm-2.tar
+          --output artifacts/litellm-image-candidate.json
+      - name: Scan exact LiteLLM candidates on both architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates --scope litellm-runtime
+          --image litellm=${{ runner.temp }}/litellm-1.tar
+          --output artifacts/litellm-grype
+      - name: Seal exact admitted LiteLLM OCI and scan evidence
+        id: seal-litellm
+        run: |
+          set -euo pipefail
+          mv "${RUNNER_TEMP}/litellm-1.tar" artifacts/litellm-promotion/litellm-1.tar
+          cp artifacts/litellm-image-candidate.json artifacts/litellm-promotion/
+          cp artifacts/litellm-grype/*.json artifacts/litellm-promotion/grype/
+          python -m saas.scripts.litellm_oci_promotion seal \
+            --root artifacts/litellm-promotion --revision "$CANDIDATE_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" >> "$GITHUB_OUTPUT"
+          cp artifacts/litellm-promotion/oci-promotion-manifest.json artifacts/litellm-oci-promotion-manifest.json
+      - name: Upload immutable admitted LiteLLM OCI bytes
+        id: upload-litellm-oci
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.publish_signed && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: litellm-oci-promotion-${{ env.CANDIDATE_REVISION }}
+          path: artifacts/litellm-promotion/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
       - name: Upload immutable admitted OCI bytes
         id: upload-oci
         if: >-
@@ -397,6 +462,17 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 30
+      - name: Upload unsigned OCI bytes for isolated PR validation
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-oci-validation-${{ env.CANDIDATE_REVISION }}
+          path: artifacts/promotion/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
       - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -409,6 +485,11 @@ jobs:
             artifacts/candidate-storage-reclamation.json
             artifacts/grype-preflight/*.json
             artifacts/grype/*.json
+            artifacts/litellm-image-candidate.json
+            artifacts/litellm-oci-promotion-manifest.json
+            artifacts/litellm-materials.json
+            artifacts/litellm-storage-reclamation.json
+            artifacts/litellm-grype/*.json
           if-no-files-found: error
           retention-days: 30
 
@@ -433,6 +514,7 @@ jobs:
       PRODUCT_REVISION: ${{ inputs.product_revision }}
       SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
       CANDIDATE_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.manifest-sha256 }}
+      LITELLM_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.litellm-manifest-sha256 }}
     steps:
       - name: Validate protected release coordinates
         env:
@@ -740,6 +822,119 @@ jobs:
           path: artifacts/signed-grype/*.json
           if-no-files-found: warn
           retention-days: 90
+      - name: Download and validate admitted LiteLLM OCI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OCI_ARTIFACT_ID: ${{ needs.build-candidate.outputs.litellm-oci-artifact-id }}
+          OCI_ARTIFACT_SHA256: ${{ needs.build-candidate.outputs.litellm-oci-artifact-sha256 }}
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.litellm_oci_promotion download \
+            --root "${RUNNER_TEMP}/admitted-litellm" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+            --run-id "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY"
+          python -m saas.scripts.scan_oci_candidates --scope litellm-runtime \
+            --image "litellm=${RUNNER_TEMP}/admitted-litellm/litellm-1.tar" \
+            --output artifacts/litellm-current-scans/grype
+          python -m saas.scripts.litellm_oci_promotion prepare \
+            --root "${RUNNER_TEMP}/admitted-litellm" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --manifest-sha256 "$LITELLM_MANIFEST_SHA256" \
+            --current-scans artifacts/litellm-current-scans \
+            --layout-root "${RUNNER_TEMP}/admitted-litellm-layouts"
+      - name: Promote admitted LiteLLM OCI without rebuilding
+        id: build-litellm
+        env:
+          IMAGE_TAG: ${{ steps.release.outputs.prefix }}/omnigent-litellm:${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          expected=$(jq -er .images.litellm.index_digest "${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json")
+          crane push "${RUNNER_TEMP}/admitted-litellm-layouts/litellm" "$IMAGE_TAG"
+          [[ "$(crane digest "$IMAGE_TAG")" == "$expected" ]]
+          echo "digest=${expected}" >> "$GITHUB_OUTPUT"
+          echo "LITELLM_IMAGE=${IMAGE_TAG%:*}@${expected}" >> "$GITHUB_ENV"
+          test -f "${RUNNER_TEMP}/admitted-litellm-layouts/litellm/index.json"
+          rm -r -- "${RUNNER_TEMP:?}/admitted-litellm-layouts/litellm"
+      - name: Read back promoted LiteLLM before signing
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/litellm
+          crane pull --format=oci --platform=all "$LITELLM_IMAGE" "${RUNNER_TEMP}/litellm-promoted-layout"
+          tar -cf "${RUNNER_TEMP}/litellm-promoted.tar" \
+            -C "${RUNNER_TEMP}/litellm-promoted-layout" oci-layout index.json blobs
+          python -m saas.scripts.litellm_oci_promotion readback \
+            --root "${RUNNER_TEMP}/admitted-litellm" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" --manifest-sha256 "$LITELLM_MANIFEST_SHA256" \
+            --archive "${RUNNER_TEMP}/litellm-promoted.tar" > artifacts/litellm/readback-before-signing.json
+      - name: Verify published LiteLLM runtime on both architectures
+        run: |
+          set -euo pipefail
+          version=$(jq -er .release saas/production/litellm_release.json)
+          crypto=$(jq -er .runtime_patch.openssl_version saas/production/litellm_release.json)
+          for arch in amd64 arm64; do
+            arch_digest=$(jq -er --arg platform "linux/$arch" \
+              '.images.litellm.facts.platforms[$platform].manifest_digest' \
+              "${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json")
+            [[ "$arch_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            arch_image="${LITELLM_IMAGE%@*}@${arch_digest}"
+            docker run --rm --pull always --platform "linux/$arch" --network none \
+              --env LITELLM_LOCAL_MODEL_COST_MAP=True --entrypoint /app/.venv/bin/python \
+              "$arch_image" -B -I -c \
+              'import ctypes, importlib.metadata as m, importlib.util as u, pathlib, sys; assert m.version("litellm") == sys.argv[1].removeprefix("v"); assert u.find_spec("litellm_enterprise") is None; assert not pathlib.Path("/app/enterprise").exists(); library=ctypes.CDLL("/usr/lib/libcrypto.so.3"); library.OpenSSL_version.restype=ctypes.c_char_p; assert library.OpenSSL_version(0).decode().startswith("OpenSSL " + sys.argv[2].split("-r", 1)[0] + " "); import litellm.proxy.proxy_server' \
+              "$version" "$crypto"
+          done
+      - name: Generate LiteLLM per-architecture SBOMs and check raw findings
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/litellm/supply-chain
+          for arch in amd64 arm64; do
+            prefix="artifacts/litellm/supply-chain/litellm-${arch}"
+            arch_digest=$(jq -er --arg platform "linux/$arch" \
+              '.images.litellm.facts.platforms[$platform].manifest_digest' \
+              "${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json")
+            [[ "$arch_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            arch_image="${LITELLM_IMAGE%@*}@${arch_digest}"
+            jq -n --arg index "$LITELLM_IMAGE" --arg manifest "$arch_image" --arg platform "linux/$arch" '{index: $index, manifest: $manifest, platform: $platform}' > "${prefix}.image-binding.json"
+            "${RUNNER_TEMP}/supply-chain-tools/syft" "$arch_image" --platform "linux/$arch" \
+              -o "spdx-json=${prefix}.spdx.json" -o "cyclonedx-json=${prefix}.cyclonedx.json"
+            cp "artifacts/litellm-current-scans/grype/litellm-${arch}-grype.json" "${prefix}.raw.grype.json"
+            jq -e '
+              ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
+              ([.matches[] | select(.vulnerability.severity == "High")] | length) == 0 and
+              (.ignoredMatches // []) == []
+            ' "${prefix}.raw.grype.json" >/dev/null
+          done
+      - name: Sign LiteLLM image provenance with GitHub OIDC
+        id: attest-litellm
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.release.outputs.prefix }}/omnigent-litellm
+          subject-digest: ${{ steps.build-litellm.outputs.digest }}
+          push-to-registry: true
+      - name: Verify signed LiteLLM digest and source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://${LITELLM_IMAGE}" \
+            --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER_WORKFLOW" \
+            --source-ref refs/heads/main --source-digest "$PRODUCT_REVISION" \
+            --deny-self-hosted-runners --format json > artifacts/litellm/signature-verification.json
+      - name: Read back signed LiteLLM OCI
+        run: |
+          set -euo pipefail
+          crane pull --format=oci --platform=all "$LITELLM_IMAGE" "${RUNNER_TEMP}/litellm-signed-layout"
+          tar -cf "${RUNNER_TEMP}/litellm-signed.tar" \
+            -C "${RUNNER_TEMP}/litellm-signed-layout" oci-layout index.json blobs
+          python -m saas.scripts.scan_oci_candidates --scope litellm-runtime \
+            --image "litellm=${RUNNER_TEMP}/litellm-signed.tar" --output artifacts/litellm/signed-scans/grype
+          python -m saas.scripts.litellm_oci_promotion readback \
+            --root "${RUNNER_TEMP}/admitted-litellm" --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" --manifest-sha256 "$LITELLM_MANIFEST_SHA256" \
+            --archive "${RUNNER_TEMP}/litellm-signed.tar" --current-scans artifacts/litellm/signed-scans \
+            > artifacts/litellm/readback-after-signing.json
+          cp "${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json" artifacts/litellm/
       - name: Record signed candidate facts
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
@@ -749,6 +944,9 @@ jobs:
           WHEEL_ATTESTATION: ${{ steps.attest-wheel.outputs.attestation-url }}
           SERVER_ATTESTATION: ${{ steps.attest-server.outputs.attestation-url }}
           HOST_ATTESTATION: ${{ steps.attest-host.outputs.attestation-url }}
+          LITELLM_ATTESTATION: ${{ steps.attest-litellm.outputs.attestation-url }}
+          LITELLM_OCI_ARTIFACT_ID: ${{ needs.build-candidate.outputs.litellm-oci-artifact-id }}
+          LITELLM_OCI_ARTIFACT_SHA256: ${{ needs.build-candidate.outputs.litellm-oci-artifact-sha256 }}
           OCI_ARTIFACT_ID: ${{ needs.build-candidate.outputs.oci-artifact-id }}
           OCI_ARTIFACT_SHA256: ${{ needs.build-candidate.outputs.oci-artifact-sha256 }}
         run: |
@@ -764,9 +962,12 @@ jobs:
             --arg host_image "$HOST_IMAGE" \
             --arg host_digest "$HOST_DIGEST" \
             --arg host_attestation "$HOST_ATTESTATION" \
+            --arg litellm_image "$LITELLM_IMAGE" --arg litellm_attestation "$LITELLM_ATTESTATION" \
+            --arg litellm_manifest_sha256 "$LITELLM_MANIFEST_SHA256" \
+            --arg litellm_artifact_id "$LITELLM_OCI_ARTIFACT_ID" --arg litellm_artifact_sha256 "$LITELLM_OCI_ARTIFACT_SHA256" \
             --arg manifest_sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --arg artifact_id "$OCI_ARTIFACT_ID" --arg artifact_sha256 "$OCI_ARTIFACT_SHA256" \
-            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: false}, production_deployment_receipt: null}' \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], runtime_components: {litellm: {image: $litellm_image, attestation: $litellm_attestation, candidate_manifest_sha256: $litellm_manifest_sha256, original_artifact_id: $litellm_artifact_id, original_artifact_sha256: $litellm_artifact_sha256, rebuilt: false}}, promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: false}, production_deployment_receipt: null}' \
             > artifacts/signed-release-candidate.json
       - name: Upload signed release candidate facts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -778,6 +979,8 @@ jobs:
             artifacts/promotion-readback-*.json
             artifacts/promotion-current-scans/
             artifacts/supply-chain/
+            artifacts/litellm/
+            artifacts/litellm-current-scans/
           if-no-files-found: error
           retention-days: 90
 
@@ -796,6 +999,7 @@ jobs:
     env:
       PRODUCT_REVISION: ${{ inputs.product_revision }}
       CANDIDATE_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.manifest-sha256 }}
+      LITELLM_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.litellm-manifest-sha256 }}
     steps:
       - name: Checkout immutable independent verifier
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -878,10 +1082,33 @@ jobs:
             --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --server "${RUNNER_TEMP}/server-readback.tar" --host "${RUNNER_TEMP}/host-readback.tar" \
             > release-facts/independent-oci-readback.json
+      - name: Independently verify LiteLLM runtime digest and source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
+        run: |
+          set -euo pipefail
+          image=$(jq -er '.runtime_components.litellm.image' release-facts/signed-release-candidate.json)
+          [[ "$image" =~ ^ghcr\.io/${GITHUB_REPOSITORY_OWNER,,}/omnigent-litellm@sha256:[0-9a-f]{64}$ ]]
+          [[ "$(jq -er .runtime_components.litellm.candidate_manifest_sha256 release-facts/signed-release-candidate.json)" == "$LITELLM_MANIFEST_SHA256" ]]
+          [[ "$(crane digest "$image")" == "${image##*@}" ]]
+          gh attestation verify "oci://${image}" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$SIGNER_WORKFLOW" --source-ref refs/heads/main \
+            --source-digest "$PRODUCT_REVISION" --deny-self-hosted-runners
+          crane pull --format=oci --platform=all "$image" "${RUNNER_TEMP}/litellm-readback-layout"
+          tar -cf "${RUNNER_TEMP}/litellm-readback.tar" \
+            -C "${RUNNER_TEMP}/litellm-readback-layout" oci-layout index.json blobs
+          source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
+          python -m saas.scripts.litellm_oci_promotion readback --root release-facts/litellm \
+            --revision "$PRODUCT_REVISION" --source-date-epoch "$source_epoch" \
+            --manifest-sha256 "$LITELLM_MANIFEST_SHA256" --archive "${RUNNER_TEMP}/litellm-readback.tar" \
+            > release-facts/independent-litellm-readback.json
       - name: Upload independent OCI readback receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: independent-oci-readback-${{ inputs.product_revision }}
-          path: release-facts/independent-oci-readback.json
+          path: |
+            release-facts/independent-oci-readback.json
+            release-facts/independent-litellm-readback.json
           if-no-files-found: error
           retention-days: 90

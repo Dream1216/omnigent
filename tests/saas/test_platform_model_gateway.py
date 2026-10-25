@@ -26,6 +26,7 @@ from saas.production.platform_model_gateway import (
     PlatformModelPrice,
     PlatformModelPricingPolicy,
     _normalize_responses_tool_history,
+    _UsageParser,
     build_platform_model_gateway,
     create_platform_model_gateway_app,
     load_platform_model_pricing,
@@ -64,6 +65,8 @@ class _Budgets:
         self.reserved: list[dict[str, object]] = []
         self.settled: list[dict[str, object]] = []
         self.released: list[dict[str, object]] = []
+        self.uncertain: list[dict[str, object]] = []
+        self.reservations: dict[UUID, ModelProviderBudgetReservationView] = {}
 
     def reserve(self, **kwargs: object) -> ModelProviderBudgetReservationView:
         self.reserved.append(kwargs)
@@ -71,7 +74,7 @@ class _Budgets:
         requested_tokens = kwargs["requested_tokens"]
         assert isinstance(requested_microusd, int)
         assert isinstance(requested_tokens, int)
-        return ModelProviderBudgetReservationView(
+        view = ModelProviderBudgetReservationView(
             id=uuid4(),
             provider_id="deepseek",
             tenant_id=TENANT_ID,
@@ -90,18 +93,50 @@ class _Budgets:
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
             version=1,
         )
+        self.reservations[view.id] = view
+        return view
 
-    def settle(self, **kwargs: object) -> ModelProviderBudgetReservationView:
-        self.settled.append(kwargs)
-        raise_if_called = kwargs.pop("raise_if_called", False)
-        assert not raise_if_called
-        reservation = self.reserved[-1]
-        return self.reserve(**reservation)
+    def _replace(self, kwargs, **changes):
+        identity = kwargs["reservation_id"]
+        view = replace(self.reservations[identity], **changes)
+        self.reservations[identity] = view
+        return view
+
+    def begin_attempt(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "reserved"
+        return self._replace(kwargs, status="in_flight")
+
+    def mark_uncertain(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "in_flight"
+        self.uncertain.append(kwargs)
+        return self._replace(kwargs, status="uncertain")
+
+    def resolve_attempt(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "in_flight"
+        witness = kwargs["evidence_sha256"]
+        if kwargs.get("gateway_usage") is not None:
+            assert witness is None
+            witness = "f" * 64
+        assert isinstance(witness, str) and len(witness) == 64
+        self.settled.append(
+            {
+                name: value
+                for name, value in kwargs.items()
+                if name not in {"evidence_sha256", "gateway_usage"}
+            }
+        )
+        return self._replace(
+            kwargs,
+            status="settled",
+            settled_microusd=kwargs["actual_microusd"],
+            settled_tokens=kwargs["actual_tokens"],
+            outcome_evidence_sha256=witness,
+        )
 
     def release(self, **kwargs: object) -> ModelProviderBudgetReservationView:
+        assert self.reservations[kwargs["reservation_id"]].status == "reserved"
         self.released.append(kwargs)
-        reservation = self.reserved[-1]
-        return self.reserve(**reservation)
+        return self._replace(kwargs, status="released")
 
 
 def _configuration() -> PlatformManagedModelRuntimeConfiguration:
@@ -166,7 +201,107 @@ def _client(
     )
 
 
-def test_streams_provider_bytes_and_settles_observed_usage() -> None:
+def _parallel_tool_history(*, explicit_message_type: bool = True):
+    progress = {"role": "assistant", "content": "Progress before slow result."}
+    if explicit_message_type:
+        progress["type"] = "message"
+    return [
+        {"type": "message", "role": "user", "content": "Keep the existing task."},
+        {"type": "function_call", "call_id": "slow", "name": "read_file", "arguments": "{}"},
+        {"type": "function_call", "call_id": "fast", "name": "read_file", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "fast", "output": "completed fast result"},
+        progress,
+        {"type": "function_call", "call_id": "later", "name": "read_file", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "later", "output": "completed later result"},
+        {"type": "function_call_output", "call_id": "slow", "output": "completed slow result"},
+        {"type": "message", "role": "user", "content": "Continue without repeating tools."},
+    ]
+
+
+@pytest.mark.parametrize("explicit_message_type", (False, True))
+def test_replayed_parallel_results_precede_progress_without_repeating_tools(
+    explicit_message_type,
+):
+    history = _parallel_tool_history(explicit_message_type=explicit_message_type)
+    original = json.loads(json.dumps(history))
+    observed = []
+
+    async def upstream(request):
+        sent = json.loads(request.content)["input"]
+        observed.append(sent)
+        assert sent == [original[index] for index in (0, 1, 2, 3, 7, 4, 5, 6, 8)]
+        return httpx.Response(
+            200,
+            content=b'data: {"type":"response.completed","response":{"usage":'
+            b'{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}\n\n',
+        )
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "input": history, "stream": True},
+    )
+    assert response.status_code == 200
+    assert len(observed) == len(budgets.settled) == 1
+    assert not budgets.released and not budgets.uncertain
+    assert history == original
+    assert _normalize_responses_tool_history(observed[0]) is observed[0]
+
+
+@pytest.mark.parametrize("case", ("missing", "duplicate", "orphan", "user", "unknown", "kind"))
+def test_history_ordering_preserves_incomplete_or_cross_boundary_inputs(case):
+    call = {"type": "function_call", "call_id": "one", "name": "read_file", "arguments": "{}"}
+    progress = {"type": "message", "role": "assistant", "content": "Still working."}
+    output = {"type": "function_call_output", "call_id": "one", "output": "existing result"}
+    histories = {
+        "missing": [call, progress],
+        "duplicate": [call, call, progress, output],
+        "orphan": [output, call, progress],
+        "user": [call, progress, {"type": "message", "role": "user", "content": "Stop."}, output],
+        "unknown": [call, progress, {"type": "item_reference", "id": "opaque"}, output],
+        "kind": [call, progress, {**output, "type": "custom_tool_call_output"}],
+    }
+    history = histories[case]
+    original = json.loads(json.dumps(history))
+    assert _normalize_responses_tool_history(history) is history
+    assert history == original
+
+
+@pytest.mark.parametrize(
+    "value", [None, "plain input", [], {"input": "opaque"}, [{"type": []}], [None]]
+)
+def test_history_ordering_preserves_non_history_and_malformed_inputs(value):
+    assert _normalize_responses_tool_history(value) is value
+
+
+def test_custom_tool_history_stays_unavailable_before_budget_or_egress():
+    async def forbidden(_request):
+        raise AssertionError("unsupported custom tools must never leave the gateway")
+
+    client, budgets, token = _client(httpx.MockTransport(forbidden))
+    response = client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model": "deepseek-flash",
+            "stream": True,
+            "input": [{"type": "custom_tool_call", "call_id": "one", "input": "opaque"}],
+        },
+    )
+    assert response.status_code == 400
+    assert not budgets.reserved
+
+
+@pytest.mark.parametrize(
+    "cache_fields",
+    (
+        b'"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":6,',
+        b'"prompt_tokens_details":{"cached_tokens":4},',
+    ),
+    ids=("deepseek-native-cache", "litellm-standard-cache"),
+)
+def test_streams_provider_bytes_and_settles_observed_usage(cache_fields: bytes) -> None:
     async def upstream(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Bearer provider-secret-never-returned"
         sent = __import__("json").loads(request.content)
@@ -174,9 +309,9 @@ def test_streams_provider_bytes_and_settles_observed_usage() -> None:
         body = (
             b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
             b'data: {"choices":[],"usage":{"prompt_tokens":10,'
-            b'"prompt_cache_hit_tokens":4,"prompt_cache_miss_tokens":6,'
-            b'"completion_tokens":5,"total_tokens":15}}\n\n'
-            b"data: [DONE]\n\n"
+            + cache_fields
+            + b'"completion_tokens":5,"total_tokens":15}}\n\n'
+            + b"data: [DONE]\n\n"
         )
         return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
@@ -204,6 +339,38 @@ def test_streams_provider_bytes_and_settles_observed_usage() -> None:
         }
     ]
     assert not budgets.released
+
+
+@pytest.mark.parametrize("cached", (-1, 11, True, "4", None))
+def test_standard_cache_usage_rejects_invalid_token_counts(cached: object) -> None:
+    parser = _UsageParser()
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "prompt_tokens_details": {"cached_tokens": cached},
+    }
+    parser.feed(("data: " + json.dumps({"usage": usage}) + "\n\n").encode())
+    parser.finish()
+    assert parser.total_tokens is None
+
+
+@pytest.mark.parametrize("legacy_hit", (3, True))
+def test_standard_cache_usage_does_not_hide_inconsistent_native_fields(
+    legacy_hit: object,
+) -> None:
+    parser = _UsageParser()
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "prompt_cache_hit_tokens": legacy_hit,
+        "prompt_cache_miss_tokens": 6,
+        "prompt_tokens_details": {"cached_tokens": 4},
+    }
+    parser.feed(("data: " + json.dumps({"usage": usage}) + "\n\n").encode())
+    parser.finish()
+    assert parser.total_tokens is None
 
 
 def test_streams_responses_api_and_settles_nested_usage() -> None:
@@ -245,10 +412,10 @@ def test_streams_responses_api_and_settles_nested_usage() -> None:
     ]
 
 
-def test_responses_accepts_nullable_output_limit() -> None:
+def test_responses_materializes_nullable_output_limit_before_egress() -> None:
     async def upstream(request: httpx.Request) -> httpx.Response:
         sent = json.loads(request.content)
-        assert sent["max_output_tokens"] is None
+        assert sent["max_output_tokens"] == 4096
         body = (
             b"event: response.completed\n"
             b'data: {"type":"response.completed","response":{"usage":'
@@ -272,6 +439,84 @@ def test_responses_accepts_nullable_output_limit() -> None:
 
 
 @pytest.mark.parametrize(
+    ("responses", "limits", "expected"),
+    (
+        (False, {}, 4096),
+        (False, {"max_tokens": None}, 4096),
+        (False, {"max_completion_tokens": None}, 4096),
+        (False, {"max_tokens": 17}, 17),
+        (False, {"max_completion_tokens": 19}, 19),
+        (False, {"max_tokens": 17, "max_completion_tokens": 17}, 17),
+        (True, {}, 4096),
+        (True, {"max_output_tokens": None}, 4096),
+        (True, {"max_output_tokens": 23}, 23),
+    ),
+)
+def test_output_hold_limit_is_always_an_explicit_upstream_bound(
+    responses: bool, limits: dict[str, object], expected: int
+) -> None:
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        assert sent["max_output_tokens" if responses else "max_tokens"] == expected
+        assert "max_completion_tokens" not in sent
+        if responses:
+            body = (
+                b'data: {"type":"response.completed","response":{"usage":'
+                b'{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+            )
+        else:
+            body = (
+                b'data: {"usage":{"prompt_tokens":1,"completion_tokens":1,'
+                b'"total_tokens":2}}\n\ndata: [DONE]\n\n'
+            )
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    document = {"model": "deepseek-flash", "stream": True, **limits}
+    document["input" if responses else "messages"] = "hello" if responses else []
+    response = client.post(
+        "/v1/responses" if responses else "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json=document,
+    )
+    assert response.status_code == 200
+    assert budgets.reserved[0]["requested_tokens"] >= expected
+    assert len(budgets.settled) == 1 and not budgets.released
+
+
+@pytest.mark.parametrize(
+    ("responses", "limits"),
+    (
+        (False, {"max_tokens": 17, "max_completion_tokens": 19}),
+        (False, {"max_tokens": None, "max_completion_tokens": 19}),
+        (False, {"n": 2}),
+        (False, {"n": True}),
+        (False, {"n": None}),
+        (False, {"n": "1"}),
+        (True, {"n": 1}),
+    ),
+)
+def test_ambiguous_or_multisample_limits_fail_before_budget_or_provider(
+    responses: bool, limits: dict[str, object]
+) -> None:
+    calls = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(500)
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    response = client.post(
+        "/v1/responses" if responses else "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "deepseek-flash", "stream": True, **limits},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "platform_model_request_invalid"
+    assert not calls and not budgets.reserved and not budgets.settled and not budgets.released
+
+
+@pytest.mark.parametrize(
     ("call_kind", "output_kind"),
     [("function_call", "function_call_output"), ("custom_tool_call", "custom_tool_call_output")],
 )
@@ -289,6 +534,13 @@ def test_replayed_parallel_results_precede_progress_without_replaying_tools(
         {"type": output_kind, "call_id": "slow", "output": "already completed slow result"},
         {"type": "message", "role": "user", "content": "Continue without repeating tools."},
     ]
+    if call_kind == "custom_tool_call":
+        history = [
+            {**{key: value for key, value in item.items() if key != "arguments"}, "input": "{}"}
+            if item["type"] == call_kind
+            else item
+            for item in history
+        ]
     original = json.loads(json.dumps(history))
     observed = []
 
@@ -360,7 +612,7 @@ def test_malformed_history_items_do_not_crash_gateway_normalization(item):
     assert _normalize_responses_tool_history(history) is history
 
 
-def test_provider_rejection_releases_budget_without_leaking_body() -> None:
+def test_provider_rejection_retains_uncertain_budget_without_leaking_body() -> None:
     async def upstream(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "contains-sensitive-provider-detail"})
 
@@ -374,8 +626,8 @@ def test_provider_rejection_releases_budget_without_leaking_body() -> None:
     assert response.status_code == 424
     assert response.json()["error"]["code"] == "platform_model_provider_authentication_failed"
     assert "contains-sensitive-provider-detail" not in response.text
-    assert len(budgets.released) == 1
-    assert not budgets.settled
+    assert len(budgets.uncertain) == 1
+    assert not budgets.settled and not budgets.released
 
 
 @pytest.mark.parametrize(
@@ -421,7 +673,7 @@ def test_provider_failures_are_classified_without_exposing_private_details(
     assert secret not in response.text + caplog.text
     assert "private prompt" not in response.text + caplog.text
     assert "private user prompt" not in response.text + caplog.text
-    assert len(budgets.released) == 1 and not budgets.settled
+    assert len(budgets.uncertain) == 1 and not budgets.settled
     if upstream_status == 429:
         assert response.headers["retry-after"] == "12"
 
@@ -446,7 +698,7 @@ def test_transient_failures_stop_egress_and_reservations_during_session_cooldown
         assert response.status_code == 424
         assert response.json()["error"]["code"] == "platform_model_retry_cooldown"
         assert response.json()["error"]["retryable"] is False
-    assert calls == 2 and len(budgets.released) == 2
+    assert calls == 2 and len(budgets.uncertain) == 2
     assert len(budgets.reserved) == reservations_before
 
     # One failing session must not stop another session using the same tenant.
@@ -479,7 +731,7 @@ def test_provider_retry_after_prevents_early_egress():
     now[0] = 70.0
     blocked = client.post("/v1/responses", headers=headers, json=body)
     assert blocked.status_code == 424 and blocked.headers["retry-after"] == "60"
-    assert calls == 1 and len(budgets.released) == 1
+    assert calls == 1 and len(budgets.uncertain) == 1
     now[0] = 131.0
     assert client.post("/v1/responses", headers=headers, json=body).status_code == 429
     assert calls == 2
@@ -500,7 +752,7 @@ def test_transport_failure_is_redacted_and_releases_reservation(timeout, caplog)
     assert response.status_code == (504 if timeout else 502)
     assert response.json()["error"]["retryable"] is True
     assert "provider-secret-never-returned" not in response.text + caplog.text
-    assert len(budgets.released) == 1 and not budgets.settled
+    assert len(budgets.uncertain) == 1 and not budgets.settled
 
 
 @pytest.mark.parametrize(
@@ -530,7 +782,7 @@ def test_allowlisted_provider_error_codes_produce_actionable_diagnostics(
     assert response.json()["error"]["retryable"] is False
     assert f"provider_code={provider_code}" in caplog.text
     assert "private detail" not in caplog.text + response.text
-    assert len(budgets.released) == 1 and not budgets.settled
+    assert len(budgets.uncertain) == 1 and not budgets.settled
 
 
 @pytest.mark.parametrize(
@@ -581,7 +833,7 @@ def test_oversized_provider_error_is_bounded_closed_and_redacted(caplog):
     assert stream.chunks == 2 and stream.closed
     assert "provider_code=error_body_oversized" in caplog.text
     assert "private-provider-detail" not in response.text + caplog.text
-    assert len(budgets.released) == 1
+    assert len(budgets.uncertain) == 1
 
 
 def test_success_clears_previous_transient_failure_without_replaying_requests():
@@ -591,7 +843,7 @@ def test_success_clears_previous_transient_failure_without_replaying_requests():
         return httpx.Response(
             next(statuses),
             content=(
-                b'data: {"response":{"usage":{"input_tokens":1,'
+                b'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,'
                 b'"output_tokens":1,"total_tokens":2}}}\n\n'
             ),
         )
@@ -601,11 +853,11 @@ def test_success_clears_previous_transient_failure_without_replaying_requests():
     body = {"model": "deepseek-flash", "input": "hello", "stream": True}
     for expected in (503, 200, 503, 503, 424):
         assert client.post("/v1/responses", headers=headers, json=body).status_code == expected
-    assert len(budgets.released) == 3 and len(budgets.settled) == 1
+    assert len(budgets.uncertain) == 3 and len(budgets.settled) == 1
     assert budgets.settled[0]["actual_tokens"] == 2
 
 
-def test_interrupted_stream_is_not_replayed_and_keeps_existing_settlement_policy(caplog):
+def test_interrupted_stream_is_not_replayed_and_retains_positive_unknown_hold(caplog):
     calls = 0
 
     class BrokenStream(httpx.AsyncByteStream):
@@ -625,8 +877,15 @@ def test_interrupted_stream_is_not_replayed_and_keeps_existing_settlement_policy
         with pytest.raises(httpx.ReadError):
             client.post("/v1/responses", headers=headers, json=body)
     assert client.post("/v1/responses", headers=headers, json=body).status_code == 424
-    assert calls == 2 and len(budgets.settled) == 2 and not budgets.released
-    assert all(s["actual_tokens"] > 0 for s in budgets.settled)
+    assert calls == 2 and len(budgets.uncertain) == 2
+    assert not budgets.settled and not budgets.released
+    assert all(
+        view.status == "uncertain"
+        and view.admitted_tokens > 0
+        and view.admitted_microusd > 0
+        and view.released_tokens == view.released_microusd == 0
+        for view in budgets.reservations.values()
+    )
     assert "exception=stream_transport_error" in caplog.text
     assert "private-stream-error" not in caplog.text
 
@@ -646,7 +905,7 @@ def test_failure_tracking_is_bounded_and_scoped_to_configuration_and_tenant():
     assert len(failures._states) == 4096
 
 
-def test_unreadable_provider_error_still_releases_budget_and_closes_stream(caplog):
+def test_unreadable_provider_error_still_retains_budget_and_closes_stream(caplog):
     class BrokenErrorStream(httpx.AsyncByteStream):
         closed = False
 
@@ -667,7 +926,7 @@ def test_unreadable_provider_error_still_releases_budget_and_closes_stream(caplo
         json={"model": "deepseek-flash", "input": "hello", "stream": True},
     )
     assert response.status_code == 400 and stream.closed
-    assert len(budgets.released) == 1 and not budgets.settled
+    assert len(budgets.uncertain) == 1 and not budgets.settled
     assert "provider_code=error_body_unavailable" in caplog.text
     assert "private-provider-detail" not in response.text + caplog.text
 
@@ -694,7 +953,7 @@ def test_slow_provider_error_body_has_a_separate_bounded_read_deadline(caplog):
         json={"model": "deepseek-flash", "input": "hello", "stream": True},
     )
     assert response.status_code == 400 and stream.closed
-    assert len(budgets.released) == 1 and not budgets.settled
+    assert len(budgets.uncertain) == 1 and not budgets.settled
     assert "provider_code=error_body_unavailable" in caplog.text
 
 
@@ -709,7 +968,7 @@ def test_slow_provider_error_body_has_a_separate_bounded_read_deadline(caplog):
     ],
     ids=["html", "string-error", "invalid-code-type", "invalid-encoding", "deep-json"],
 )
-def test_malformed_provider_errors_keep_original_classification_and_release_budget(body, caplog):
+def test_malformed_provider_errors_keep_original_classification_and_retain_budget(body, caplog):
     client, budgets, token = _client(
         httpx.MockTransport(lambda _request: httpx.Response(400, content=body))
     )
@@ -720,7 +979,7 @@ def test_malformed_provider_errors_keep_original_classification_and_release_budg
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "platform_model_provider_request_invalid"
-    assert len(budgets.released) == 1 and not budgets.settled
+    assert len(budgets.uncertain) == 1 and not budgets.settled
     assert "private-provider-detail" not in response.text + caplog.text
 
 
@@ -768,7 +1027,7 @@ def test_existing_relay_preserves_classification_without_auth_refresh_or_task_re
     assert len(attempts) == len(expected)
     assert len({request.headers["authorization"] for request in attempts}) == 1
     assert len(provider_calls) == (1 if provider_status == 401 else 2)
-    assert len(budgets.released) == len(provider_calls) and not budgets.settled
+    assert len(budgets.uncertain) == len(provider_calls) and not budgets.settled
     if provider_status == 503:
         assert response.json()["error"]["retry_after_seconds"] > 0
         assert "Retry after" in response.json()["error"]["message"]
@@ -1166,9 +1425,11 @@ def test_host_gateway_config_contains_only_synthetic_bearer_name() -> None:
     assert "sk-" not in rendered
 
 
+@pytest.mark.parametrize("managed", [False, True])
 def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
     tmp_path: Path,
     monkeypatch,
+    managed,
 ) -> None:
     from saas.production import platform_model_gateway as module
 
@@ -1194,6 +1455,10 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
         path=tmp_path / "platform-model-bindings.json",
         sha256="0" * 64,
         bindings=(
+            ProductionServiceRoleBinding("app", "next_beta_app", "saas_app"),
+            ProductionServiceRoleBinding(
+                "authenticator", "next_beta_authenticator", "saas_authenticator"
+            ),
             ProductionServiceRoleBinding("billing", "next_beta_billing", "saas_billing"),
             ProductionServiceRoleBinding(
                 "secret_broker", "next_beta_secret_broker", "saas_secret_broker"
@@ -1228,15 +1493,31 @@ def test_gateway_composition_requires_isolated_billing_and_secret_bindings(
         lambda *_args, **_kwargs: _ConfigurationReader(None),
     )
 
-    app, built_engines = build_platform_model_gateway(
-        {
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID": str(TENANT_ID),
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
-        }
-    )
+    source = {
+        "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID": str(TENANT_ID),
+        "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
+    }
+    if managed:
+        inference_key = tmp_path / "inference-only-key"
+        inference_key.write_text("isolated-runtime-inference-key")
+        inference_key.chmod(0o400)
+        source.update(
+            {
+                "OMNIGENT_SAAS_MODEL_RUN_INFERENCE_ENABLED": "true",
+                "OMNIGENT_SAAS_LITELLM_INFERENCE_BASE_URL": "http://omnigent-litellm",
+                "OMNIGENT_SAAS_LITELLM_INFERENCE_KEY_FILE": str(inference_key),
+                "OMNIGENT_SAAS_LITELLM_RUN_ALIASES": "platform-model-" + "1" * 32,
+                "OMNIGENT_SAAS_RUNTIME_VERSION": "isolated-version",
+                "OMNIGENT_SAAS_UPSTREAM_REVISION": "a" * 40,
+                "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION": "isolated-schema",
+                "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": "isolated-contract",
+            }
+        )
+    app, built_engines = build_platform_model_gateway(source)
 
     assert app is not None
     assert built_engines == tuple(engines)
+    assert len(built_engines) == (4 if managed else 2)
     health = TestClient(app).get("/healthz")
     assert health.status_code == 200
     assert health.json() == {"status": "ok", "provider_secret_exported": False}
@@ -1263,3 +1544,156 @@ def test_module_entrypoint_runs_after_response_helpers() -> None:
     )
 
     assert entrypoint.lineno > (helper.end_lineno or helper.lineno)
+
+
+@pytest.mark.parametrize("endpoint", ["chat/completions", "responses"])
+@pytest.mark.parametrize(
+    "component,usage_state",
+    [
+        ("gateway", "absent"),
+        ("gateway", "interim"),
+        ("gateway", "terminal"),
+        ("gateway", "malformed"),
+        ("relay", "absent"),
+    ],
+)
+def test_client_disconnect_cannot_cancel_stream_finalization(
+    endpoint: str, component: str, usage_state: str
+) -> None:
+    import anyio
+    from fastapi import FastAPI
+    from starlette.types import ASGIApp, Message, Scope
+
+    class ProviderStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            total = 14 if usage_state == "malformed" else 15
+            if endpoint == "responses":
+                frame = b'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+                if usage_state != "absent":
+                    event = {
+                        "type": "response.in_progress"
+                        if usage_state == "interim"
+                        else "response.completed",
+                        "response": {
+                            "usage": {
+                                "input_tokens": 10,
+                                "input_tokens_details": {"cached_tokens": 4},
+                                "output_tokens": 5,
+                                "total_tokens": total,
+                            }
+                        },
+                    }
+                    frame += b"data: " + json.dumps(event).encode() + b"\n\n"
+            else:
+                frame = b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+                if usage_state != "absent":
+                    event = {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "prompt_cache_hit_tokens": 4,
+                            "prompt_cache_miss_tokens": 6,
+                            "completion_tokens": 5,
+                            "total_tokens": total,
+                        },
+                    }
+                    frame += b"data: " + json.dumps(event).encode() + b"\n\n"
+                    if usage_state != "interim":
+                        frame += b"data: [DONE]\n\n"
+            yield frame
+            await anyio.sleep_forever()
+
+        async def aclose(self) -> None:
+            await anyio.sleep(0)
+            self.closed = True
+
+    provider = ProviderStream()
+    requests: list[httpx.Request] = []
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, stream=provider)
+
+    client, budgets, token = _client(httpx.MockTransport(upstream))
+    application = cast(FastAPI, client.app)
+    if component == "relay":
+        relay = PlatformModelRelay(
+            authority=PlatformModelGatewayTokenAuthority(
+                signing_key=SIGNING_KEY, tenant_id=TENANT_ID
+            ),
+            session_id=SESSION_ID,
+            ttl_seconds=60,
+            clock=lambda: 1000,
+            client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(upstream)),
+        )
+        application = relay.app
+        token = relay.capability
+    payload: dict[str, object] = {"model": "deepseek-flash", "stream": True}
+    if endpoint == "responses":
+        payload.update(input="hello", max_output_tokens=100)
+    else:
+        payload.update(messages=[{"role": "user", "content": "hello"}], max_tokens=100)
+
+    async def disconnect_after_output() -> None:
+        output = anyio.Event()
+        body_sent = False
+
+        async def receive() -> Message:
+            nonlocal body_sent
+            if not body_sent:
+                body_sent = True
+                return {"type": "http.request", "body": json.dumps(payload).encode()}
+            await output.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: Message) -> None:
+            if message["type"] == "http.response.body" and message.get("body"):
+                output.set()
+
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/v1/" + endpoint,
+            "raw_path": ("/v1/" + endpoint).encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"authorization", ("Bearer " + token).encode()),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("gateway.test", 443),
+        }
+        with anyio.fail_after(3):
+            async with application.router.lifespan_context(application):
+                await cast(ASGIApp, application)(scope, receive, send)
+
+    anyio.run(disconnect_after_output)
+
+    assert len(requests) == 1
+    assert provider.closed
+    if component == "gateway":
+        assert len(budgets.reserved) == len(budgets.reservations) == 1
+        reservation = next(iter(budgets.reservations.values()))
+        if usage_state == "terminal":
+            assert len(budgets.settled) == 1 and not budgets.uncertain
+            assert budgets.settled[0]["actual_tokens"] == 15
+            assert budgets.settled[0]["actual_microusd"] == 5
+            assert reservation.status == "settled"
+        else:
+            assert not budgets.settled and len(budgets.uncertain) == 1
+            assert budgets.uncertain[0]["reservation_id"] == reservation.id
+            assert budgets.uncertain[0]["reason"] == "stream_incomplete"
+            assert reservation.status == "uncertain"
+            assert reservation.admitted_tokens > 0 and reservation.admitted_microusd > 0
+            assert reservation.settled_tokens == reservation.settled_microusd == 0
+            assert reservation.released_tokens == reservation.released_microusd == 0
+            assert reservation.outcome_evidence_sha256 is None
+    else:
+        assert not budgets.reserved and not budgets.settled
+    assert not budgets.released

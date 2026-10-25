@@ -306,6 +306,7 @@ class RoleSessionFactories:
     public_api: sessionmaker[Session]
     _engines: tuple[Engine, ...] = field(repr=False)
     billing: sessionmaker[Session] | None = None
+    revocation_consumer: sessionmaker[Session] | None = None
     _readiness_engines: Mapping[str, Engine] = field(
         default_factory=dict,
         repr=False,
@@ -315,6 +316,8 @@ class RoleSessionFactories:
         factories = (self.authenticator, self.app, self.governance, self.public_api)
         if self.billing is not None:
             factories = (*factories, self.billing)
+        if self.revocation_consumer is not None:
+            factories = (*factories, self.revocation_consumer)
         if any(not callable(factory) for factory in factories):
             raise TypeError("role Session factories must be callable")
         binds = tuple(factory.kw.get("bind") for factory in factories)
@@ -352,6 +355,8 @@ class RoleSessionFactories:
         }
         if self.billing is not None:
             engines["billing"] = cast(Engine, self.billing.kw["bind"])
+        if self.revocation_consumer is not None:
+            engines["revocation_consumer"] = cast(Engine, self.revocation_consumer.kw["bind"])
         return MappingProxyType(engines)
 
     def close(self) -> None:
@@ -451,6 +456,7 @@ class ProductionSaasServices:
         default=None,
         repr=False,
     )
+    invalidation_follower: Any | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def close(self) -> None:
@@ -460,10 +466,14 @@ class ProductionSaasServices:
             return
         self._closed = True
         try:
-            self.readiness.close()
+            if self.invalidation_follower is not None:
+                self.invalidation_follower.close()
         finally:
-            if self.onboarding is not None:
-                self.onboarding.close()
+            try:
+                self.readiness.close()
+            finally:
+                if self.onboarding is not None:
+                    self.onboarding.close()
 
 
 @dataclass(slots=True)
@@ -651,7 +661,9 @@ def load_external_adapters(config: ProductionServerConfig) -> ProductionExternal
     )
 
 
-def _load_official_config(path: Path | None) -> dict[str, Any]:
+def _load_official_config(
+    path: Path | None, *, controller_origin: str | None = None
+) -> dict[str, Any]:
     if path is None:
         return {}
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -696,7 +708,9 @@ def _load_official_config(path: Path | None) -> dict[str, Any]:
         raise ProductionServerCompositionError(
             "official server LLM config contains an unsupported production field"
         )
-    _validate_production_sandbox_config(document.get("sandbox"))
+    _validate_production_sandbox_config(
+        document.get("sandbox"), controller_origin=controller_origin
+    )
     # ``sandbox`` is checked against a closed production profile above.  It
     # deliberately contains Secret *references* and provider authority; the
     # generic recursive guard is for the remaining secret-free official config.
@@ -707,13 +721,15 @@ def _load_official_config(path: Path | None) -> dict[str, Any]:
     return cast(dict[str, Any], document)
 
 
-def _validate_production_sandbox_config(value: object) -> None:
+def _validate_production_sandbox_config(
+    value: object, *, controller_origin: str | None = None
+) -> None:
     """Admit only the reviewed dual Kubernetes runtime profile.
 
     The OSS parser intentionally supports many providers and operator knobs.
     The hosted production entrypoint is narrower: both supported runtimes share
     one pinned Host image, one powerless runner ServiceAccount, one execution
-    namespace, and one file-mounted model signing authority.  A typo or an
+    namespace, and an explicitly selected model authority profile. A typo or an
     attempted expansion therefore stops startup instead of silently widening
     the deployment's authority.
     """
@@ -735,7 +751,18 @@ def _validate_production_sandbox_config(value: object) -> None:
         raise ProductionServerCompositionError(
             "official server sandbox providers are not the reviewed production profile"
         )
-    if value.get("server_url") != _PRODUCTION_SANDBOX_SERVER_URL:
+    controller_bound = controller_origin is not None
+    if controller_origin is not None:
+        from saas.production.interactive_model_channel import model_channel_origin
+
+        try:
+            model_channel_origin(controller_origin)
+        except ValueError:
+            raise ProductionServerCompositionError(
+                "official server sandbox controller origin must use HTTPS"
+            ) from None
+    callback = controller_origin if controller_bound else _PRODUCTION_SANDBOX_SERVER_URL
+    if value.get("server_url") != callback:
         raise ProductionServerCompositionError(
             "official server sandbox callback is not the reviewed production service"
         )
@@ -758,7 +785,7 @@ def _validate_production_sandbox_config(value: object) -> None:
     openai_config = provider_config.get("openai") if isinstance(provider_config, dict) else None
     models = openai_config.get("models") if isinstance(openai_config, dict) else None
     default_model = models.get("default") if isinstance(models, dict) else None
-    if (
+    legacy_host_invalid = (
         not isinstance(host_config, dict)
         or set(host_config) != {"providers"}
         or not isinstance(providers_config, dict)
@@ -787,7 +814,9 @@ def _validate_production_sandbox_config(value: object) -> None:
         or not isinstance(default_model, str)
         or _PRODUCTION_SANDBOX_MODEL_RE.fullmatch(default_model) is None
         or models.get("allowed-1") != default_model
-    ):
+    )
+    invalid_host = host_config != {} if controller_bound else legacy_host_invalid
+    if invalid_host:
         raise ProductionServerCompositionError(
             "official server sandbox Host config is not the reviewed production profile"
         )
@@ -804,11 +833,16 @@ def _validate_production_sandbox_config(value: object) -> None:
         or kubernetes.get("env")
         != [
             "OMNIGENT_HOST_WORKSPACE_ID",
-            "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID",
+            (
+                "OMNIGENT_SAAS_PLATFORM_MODEL_CONTROLLER_BOUND"
+                if controller_bound
+                else "OMNIGENT_SAAS_PLATFORM_MODEL_TENANT_ID"
+            ),
         ]
         or kubernetes.get("node_selector") != _PRODUCTION_SANDBOX_NODE_SELECTOR
         or kubernetes.get("tolerations") != _PRODUCTION_SANDBOX_TOLERATIONS
-        or kubernetes.get("secret_mounts") != _PRODUCTION_SANDBOX_SECRET_MOUNTS
+        or kubernetes.get("secret_mounts")
+        != ([] if controller_bound else _PRODUCTION_SANDBOX_SECRET_MOUNTS)
         or kubernetes.get("host_command") != _PRODUCTION_SANDBOX_HOST_COMMAND
         or kubernetes.get("pod_ready_timeout_s") != 180
         or kubernetes.get("home_size_limit") != "20Gi"
@@ -931,6 +965,11 @@ def create_role_session_factories(
             _new_readiness_engine if engine_factory is _new_engine else engine_factory
         )
         for role, database_url in urls.items():
+            if role == "revocation_consumer":
+                value = sa.make_url(database_url)
+                database_url = value.update_query_dict(
+                    {"application_name": "saas-revocation-worker"}
+                ).render_as_string(hide_password=False)
             engine = engine_factory(database_url)
             if engine.dialect.name != "postgresql":
                 raise ProductionServerCompositionError(f"{role} service login must use PostgreSQL")
@@ -954,6 +993,11 @@ def create_role_session_factories(
             billing=(
                 sessionmaker(engines["billing"], expire_on_commit=False)
                 if "billing" in engines
+                else None
+            ),
+            revocation_consumer=(
+                sessionmaker(engines["revocation_consumer"], expire_on_commit=False)
+                if "revocation_consumer" in engines
                 else None
             ),
             _readiness_engines=MappingProxyType(readiness_engines),
@@ -1119,7 +1163,10 @@ def build_official_runtime_dependencies(
     from saas.production.artifact_store import build_production_s3_artifact_store
 
     database_url = config.secrets.database_urls.runtime
-    official_config = _load_official_config(config.official_config_path)
+    official_config = _load_official_config(
+        config.official_config_path,
+        controller_origin=config.public_origin if config.interactive_controller_enabled else None,
+    )
     tenant_model_bindings = load_tenant_model_bindings(os.environ)
     sandbox_config = parse_tenant_sandbox_config(
         official_config.get("sandbox"),
@@ -1279,6 +1326,14 @@ def build_production_saas_services(
             )
         checks.update(extra_readiness_checks)
 
+    from saas.control_plane.revocation import AuthorizationInvalidations
+
+    if config.control_plane_schema_revision in {"p0s000000017", "p0s000000018"} and (
+        config.business_delivery_service_role_bindings is None
+        or sessions.revocation_consumer is None
+    ):
+        raise ProductionServerCompositionError("P17 requires its native invalidation authority")
+    invalidations = AuthorizationInvalidations() if sessions.revocation_consumer else None
     lifecycle = MembershipLifecycleService(sessions.authenticator)
     identities = IdentityManagementService(sessions.authenticator)
     passwords = PasswordCredentialService(sessions.authenticator)
@@ -1297,7 +1352,8 @@ def build_production_saas_services(
             issuer=f"{config.public_origin}/saas",
             audience=config.public_origin,
             ttl=timedelta(seconds=config.snapshot_ttl_seconds),
-        )
+        ),
+        invalidations=invalidations,
     )
     # Credential lifecycle is a governance mutation; public Run transactions
     # use the separate saas_public_api login below.  The existing integration
@@ -1308,14 +1364,17 @@ def build_production_saas_services(
         authenticator=ApiCredentialService(
             sessions.authenticator,
             credential_pepper=config.secrets.api_credential_pepper,
+            invalidations=invalidations,
         ),
         governance=ApiCredentialService(
             sessions.governance,
             credential_pepper=config.secrets.api_credential_pepper,
+            invalidations=invalidations,
         ),
     )
     public_execution = PublicApiExecutionService(
         sessions.public_api,
+        database_login=config.service_role_bindings.login_for("public_api"),
         cursor_codec=FilterBoundCursorCodec(
             keys={config.active_key_id: config.secrets.cursor_hmac_key},
             active_key_id=config.active_key_id,
@@ -1343,7 +1402,7 @@ def build_production_saas_services(
             raise ProductionServerCompositionError(
                 "billing capability requires its dedicated service login"
             )
-        billing = BillingControlPlane(sessions.billing)
+        billing = BillingControlPlane(sessions.billing, require_usage_ingress=True)
     elif sessions.billing is not None:
         raise ProductionServerCompositionError(
             "billing service login requires the billing capability"
@@ -1378,6 +1437,16 @@ def build_production_saas_services(
         runtime_initializer=runtime_initializer,
     )
     if integration.runtime_router is not None:
+        from saas.control_plane.tenant_model_catalog import TenantModelCatalog
+        from saas.production.tenant_model_catalog import create_tenant_model_catalog_router
+
+        integration.runtime_router.include_router(
+            create_tenant_model_catalog_router(
+                auth_provider=integration.auth_provider,
+                catalog=TenantModelCatalog(sessions.engines["app"]),
+                billing_sessions=sessions.billing,
+            )
+        )
         integration.runtime_router.include_router(
             create_legacy_delivery_router(
                 DeliveryAccess(
@@ -1424,17 +1493,49 @@ def build_production_saas_services(
     readiness = ProductionReadiness(checks)
     # The readiness/version endpoints are SaaS-owned and therefore live below
     # the existing /saas router; no competing official router is introduced.
-    integration.router.include_router(_production_router(config, readiness))
     try:
         readiness.assert_ready()
     except Exception:
         readiness.close()
         raise
-    return ProductionSaasServices(
-        integration=integration,
-        readiness=readiness,
-        onboarding=onboarding,
-    )
+    follower = None
+    try:
+        if invalidations is not None:
+            from saas.production.business_delivery import start_revocation_follower
+
+            follower = start_revocation_follower(
+                sessions.revocation_consumer,
+                invalidations,
+                product_revision=config.product_revision,
+                pod_uid=os.environ.get("OMNIGENT_SAAS_POD_UID", ""),
+            )
+            # Async full-source catch-up is not a static connection prerequisite.
+            # Process stays alive, but its live readiness remains503 until actual
+            # cache application/ACK completes; no caller may set Ready itself.
+            readiness.close()
+
+            def invalidation_ready() -> None:
+                # The original readiness protocol uses exceptions, not a return
+                # boolean. A false value alone would accidentally count as ready.
+                if not invalidations.ready:
+                    raise ProductionServerCompositionError(
+                        "native invalidation catch-up and old-snapshot expiry are pending"
+                    )
+
+            checks["authorization_invalidation"] = invalidation_ready
+            readiness = ProductionReadiness(checks)
+        integration.router.include_router(_production_router(config, readiness))
+        return ProductionSaasServices(
+            integration=integration,
+            readiness=readiness,
+            onboarding=onboarding,
+            invalidation_follower=follower,
+        )
+    except Exception:
+        if follower is not None:
+            follower.close()
+        readiness.close()
+        raise
 
 
 def build_production_server(
@@ -1491,6 +1592,28 @@ def build_production_server(
             onboarding.close()
         raise
     app_dependencies = official_dependencies.as_app_dependencies()
+    from saas.control_plane.execution import ExecutionRevisionSet
+    from saas.control_plane.interactive_execution import RuntimeSessionRunAdmission
+    from saas.production.interactive_execution import InteractiveConversationStore
+
+    app_dependencies["conversation_store"] = InteractiveConversationStore(
+        official_dependencies.conversation_store,
+        RuntimeSessionRunAdmission(
+            sessions.app,
+            file_store=official_dependencies.file_store,
+            artifact_store=official_dependencies.artifact_store,
+            revisions=ExecutionRevisionSet(
+                config.product_revision,
+                config.upstream_revision,
+                config.official_schema_revision,
+                config.adapter_contract_version,
+            ),
+        ),
+        permission_store=app_dependencies["permission_store"],
+        agent_cache=official_dependencies.agent_cache,
+        public_origin=config.public_origin,
+        runtime_enabled=config.interactive_controller_enabled,
+    )
     # These official lifespan jobs run before request middleware can bind a
     # RuntimeContext. Keep both disabled in production even when a caller
     # injects an otherwise valid official dependency bundle.
@@ -1504,6 +1627,14 @@ def build_production_server(
             "context-free official lifespan jobs cannot be enabled in production"
         )
     app_dependencies["scheduled_task_store"] = None
+    app_dependencies["mcp_registry"] = None
+    app_dependencies["public_sharing_max_level"] = "read"
+    app_dependencies["host_sharded"] = config.host_sharded
+    from saas.production.agent_store import disable_standalone_agent_installs
+
+    app_dependencies["agent_store"] = disable_standalone_agent_installs(
+        official_dependencies.agent_store
+    )
     try:
         app = create_omnigent_saas_app(
             integration=services.integration,
@@ -1517,6 +1648,46 @@ def build_production_server(
     app.state.production_saas_readiness = services.readiness
     app.state.production_saas_version = dict(config.version_document)
     app.state.production_saas_services = services
+    from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
+
+    interactive_runtime = ProductionInteractiveRuntimeFactory(
+        product_revision=config.product_revision,
+        image_digest=config.image_digest,
+        app_sessions=sessions.app,
+        authenticator_sessions=sessions.authenticator,
+        compatibility=RuntimeCompatibilityPolicy(
+            runtime_type="omnigent",
+            allowed_runtime_versions=frozenset({config.runtime_version}),
+            allowed_source_revisions=frozenset({config.upstream_revision}),
+            allowed_schema_revisions=frozenset({config.official_schema_revision}),
+            adapter_contract_version=config.adapter_contract_version,
+        ),
+        conversation_store=official_dependencies.conversation_store,
+        permission_store=official_dependencies.permission_store,
+    )
+    app.state.production_interactive_runtime = interactive_runtime
+    app.state.production_interactive_conversation_store = app_dependencies["conversation_store"]
+    bind_runtime = getattr(external.runner, "bind_runtime", None) if external is not None else None
+    if bind_runtime is not None:
+        try:
+            if inspect.iscoroutinefunction(bind_runtime):
+                raise TypeError("Runtime binding must synchronously register its lifespan")
+            bound = bind_runtime(
+                app=app,
+                runtime=interactive_runtime,
+                official=official_dependencies,
+                auth_provider=services.integration.auth_provider,
+            )
+            if bound is not None:
+                if inspect.iscoroutine(bound):
+                    bound.close()
+                raise TypeError("Runtime binding must complete before server startup")
+        except Exception:  # noqa: BLE001 - adapter failures may contain credentials.
+            services.close()
+            official_dependencies.close()
+            raise ProductionServerCompositionError(
+                "production interactive Runtime binding failed"
+            ) from None
     return BuiltProductionServer(
         app=app,
         host=config.host,

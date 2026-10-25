@@ -33,12 +33,24 @@ from saas.control_plane.execution_models import (
     SessionTaskRecord,
     TaskRecord,
 )
+from saas.control_plane.interactive_run_route import (
+    INTERACTIVE_EXECUTION_KIND,
+    INTERACTIVE_QUEUE_CLASS,
+)
 from saas.control_plane.permissions import PERMISSION_CATALOG
 from saas.control_plane.public_api_models import (
     PublicApiMutationReceiptRecord,
     PublicApiRateLimitRecord,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
+from saas.observability import (
+    capture_event_page_floor,
+    ensure_observed_factory,
+    measure_stage,
+    require_event_page_witness,
+    require_run_witness,
+)
 from saas.public_api_contract import CursorError, FilterBoundCursorCodec
 
 _LEASED_STATUSES = frozenset(
@@ -75,6 +87,17 @@ def _text(value: str, field: str, maximum: int) -> str:
     if not cleaned or len(cleaned) > maximum:
         raise PublicApiError(f"{field}_invalid", f"{field} is invalid")
     return cleaned
+
+
+def _require_public_execution_target(queue_class: str, input_payload: dict[str, object]) -> None:
+    execution = input_payload.get("execution")
+    if queue_class == INTERACTIVE_QUEUE_CLASS or (
+        isinstance(execution, dict) and execution.get("kind") == INTERACTIVE_EXECUTION_KIND
+    ):
+        raise PublicApiError(
+            "interactive_execution_requires_human_session",
+            "Interactive execution requires an authenticated Runtime session",
+        )
 
 
 class PublicApiError(RuntimeError):
@@ -215,9 +238,12 @@ class PublicApiExecutionService:
         upstream_revision: str,
         schema_revision: str,
         adapter_contract_version: str,
+        database_login: str = "saas_public_api",
         rate_limits: Mapping[str, tuple[int, timedelta]] | None = None,
     ) -> None:
         self._sessions = session_factory
+        ensure_observed_factory(session_factory)
+        self._database_login = _text(database_login, "database_login", 63)
         self._cursors = cursor_codec
         self._idempotency = PublicApiIdempotencyKeyring(
             keys=idempotency_keys,
@@ -379,6 +405,7 @@ class PublicApiExecutionService:
             )
             return self._project_view(self._project(db, principal, project_id))
 
+    @measure_stage("admission")
     def create_run(
         self,
         principal: ValidatedApiCredential,
@@ -398,6 +425,7 @@ class PublicApiExecutionService:
         clean_title = _text(title, "title", 256)
         clean_trace = _text(trace_id, "trace_id", 128)
         clean_queue = _text(queue_class, "queue_class", 64)
+        _require_public_execution_target(clean_queue, input_payload)
         clean_resource = _text(quota_resource, "quota_resource", 64)
         if quota_units <= 0:
             raise PublicApiError("quota_units_invalid", "quota_units must be positive")
@@ -457,6 +485,7 @@ class PublicApiExecutionService:
             )
             if existing is not None:
                 self._require_replay_match(existing, principal, project_id, digest)
+                require_run_witness(db, existing)
                 return self._run_view(existing, replayed=True)
             quota = self._reserve_quota(
                 db,
@@ -512,6 +541,7 @@ class PublicApiExecutionService:
                 queue_class=clean_queue,
                 priority=priority,
             )
+            freeze_sqlite_customer_pricing(db, run)
             db.add(run)
             db.flush()
             reservation = QuotaReservationRecord(
@@ -735,6 +765,8 @@ class PublicApiExecutionService:
                 request_hash=request_hash,
             )
             if replay is not None:
+                # Cached success still requires the current independent ACK witness.
+                require_run_witness(db, self._run(db, principal, project_id, run_id))
                 return self._run_view_from_receipt(replay)
             run = self._run(db, principal, project_id, run_id, lock=True)
             self._require_version(run, expected_version)
@@ -786,6 +818,7 @@ class PublicApiExecutionService:
             )
             return view
 
+    @measure_stage("admission")
     def retry_run(
         self,
         principal: ValidatedApiCredential,
@@ -852,12 +885,16 @@ class PublicApiExecutionService:
             )
             if existing is not None:
                 self._require_replay_match(existing, principal, project_id, digest)
+                require_run_witness(db, existing)
                 return self._run_view(existing, replayed=True)
             source = self._run(db, principal, project_id, run_id, lock=True)
             self._require_version(source, expected_version)
             if source.status not in TERMINAL_RUN_STATUSES:
                 raise PublicApiError("run_not_terminal", "Only a terminal Run can be retried")
             target_queue = _text(queue_class or source.queue_class, "queue_class", 64)
+            _require_public_execution_target(
+                target_queue, source.input if input_override is None else input_override
+            )
             target_priority = source.priority if priority is None else priority
             quota = self._reserve_quota(
                 db,
@@ -890,6 +927,7 @@ class PublicApiExecutionService:
                 adapter_contract_version=source.adapter_contract_version,
                 fence_token=0,
             )
+            freeze_sqlite_customer_pricing(db, run)
             db.add(run)
             db.flush()
             reservation = QuotaReservationRecord(
@@ -969,29 +1007,46 @@ class PublicApiExecutionService:
                 raise PublicApiError("cursor_invalid", "cursor is invalid")
             resolved_after_sequence = raw_sequence
             after_event_id = self._uuid_value(values, "event_id")
+        # Authorize scope before independent I/O. Release this short connection,
+        # then capture the floor before the final source snapshot below. Its
+        # original permission check remains mandatory for intervening revocation.
+        with self._sessions.begin() as preflight:
+            self._require_machine_permission(
+                preflight, principal, project_id=project_id, permission="run.read_content"
+            )
+            self._run(preflight, principal, project_id, run_id)
+        minimum_source_head = capture_event_page_floor(self._sessions, principal.tenant_id, run_id)
         with self._sessions.begin() as db:
             self._require_machine_permission(
                 db, principal, project_id=project_id, permission="run.read_content"
             )
-            self._run(db, principal, project_id, run_id)
-            query = sa.select(RunEventRecord).where(
-                RunEventRecord.run_id == run_id,
+            run = self._run(db, principal, project_id, run_id)
+            predicate = sa.and_(
+                RunEventRecord.run_id == RunRecord.id,
                 RunEventRecord.tenant_id == principal.tenant_id,
                 RunEventRecord.space_id == principal.space_id,
                 RunEventRecord.project_id == project_id,
+                RunEventRecord.sequence > resolved_after_sequence,
             )
-            if after_event_id is None:
-                query = query.where(RunEventRecord.sequence > resolved_after_sequence)
-            else:
-                query = query.where(
+            if after_event_id is not None:
+                predicate = sa.and_(
+                    predicate,
                     sa.tuple_(RunEventRecord.sequence, RunEventRecord.id)
-                    > sa.tuple_(sa.literal(resolved_after_sequence), sa.literal(after_event_id))
+                    > sa.tuple_(sa.literal(resolved_after_sequence), sa.literal(after_event_id)),
                 )
-            rows = tuple(
-                db.scalars(
-                    query.order_by(RunEventRecord.sequence, RunEventRecord.id).limit(limit + 1)
+            source = tuple(
+                db.execute(
+                    sa.select(RunRecord.event_sequence, RunEventRecord)
+                    .select_from(RunRecord)
+                    .outerjoin(RunEventRecord, predicate)
+                    .where(RunRecord.id == run_id)
+                    .order_by(RunEventRecord.sequence, RunEventRecord.id)
+                    .limit(limit + 1)
                 )
             )
+            if not source:
+                raise PublicApiError("run_not_found", "Run is no longer visible")
+            rows = tuple(row[1] for row in source if row[1] is not None)
             visible = rows[:limit]
             next_cursor = None
             if len(rows) > limit and visible:
@@ -1005,6 +1060,15 @@ class PublicApiExecutionService:
                         "event_id": str(visible[-1].id),
                     },
                 )
+            require_event_page_witness(
+                db,
+                run,
+                visible,
+                after_sequence=resolved_after_sequence,
+                source_head=source[0][0],
+                limit=limit,
+                minimum_source_head=minimum_source_head,
+            )
             return PublicApiPage(
                 tuple(
                     PublicApiRunEventView(
@@ -1043,7 +1107,22 @@ class PublicApiExecutionService:
                 "project_scope_required", "Public execution requires a project-scoped credential"
             )
         if db.get_bind().dialect.name == "postgresql" and not bool(
-            db.scalar(sa.text("SELECT current_user = 'saas_public_api'"))
+            db.scalar(
+                sa.text(
+                    "SELECT current_user = :login AND NOT (role.rolsuper OR "
+                    "role.rolbypassrls OR role.rolcreaterole OR role.rolcreatedb OR "
+                    "role.rolreplication) AND "
+                    "pg_has_role(current_user, 'saas_public_api', 'USAGE') AND "
+                    "(current_user = 'saas_public_api' OR "
+                    "(role.rolcanlogin AND role.rolinherit AND NOT EXISTS ("
+                    "SELECT 1 FROM pg_auth_members membership "
+                    "JOIN pg_roles granted ON granted.oid = membership.roleid "
+                    "WHERE membership.member = role.oid AND "
+                    "(granted.rolname <> 'saas_public_api' OR membership.admin_option)))) "
+                    "FROM pg_roles role WHERE role.rolname = current_user"
+                ),
+                {"login": self._database_login},
+            )
         ):
             raise PublicApiError(
                 "public_api_database_role_required",

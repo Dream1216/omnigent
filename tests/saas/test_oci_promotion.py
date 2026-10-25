@@ -45,14 +45,16 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def candidate(root: Path) -> tuple[dict[str, str], datetime]:
+def candidate(
+    root: Path, *, images: tuple[str, ...] = ("server", "host"), label_profile: str = "executable"
+) -> tuple[dict[str, str], datetime]:
     now = datetime.now(UTC)
     (root / "grype").mkdir(parents=True)
     comparisons, rows = {}, []
     labels: dict[str, str] = {}
-    for name in ("server", "host"):
+    for name in images:
         archive = root / f"{name}-1.tar"
-        _write_oci(archive, revision=REVISION, label_profile="executable", nested=True)
+        _write_oci(archive, revision=REVISION, label_profile=label_profile, nested=True)
         layout = root / f"{name}-1-layout"
         index = json.loads((layout / "index.json").read_text())
         descriptor = index["manifests"][0]
@@ -95,10 +97,9 @@ def candidate(root: Path) -> tuple[dict[str, str], datetime]:
         with tarfile.open(archive, "w") as bundle:
             for member in sorted(layout.rglob("*")):
                 bundle.add(member, arcname=member.relative_to(layout), recursive=False)
-        comparisons[f"omnigent-saas-{name}"] = compare_archives(
-            archive, archive, label_profile="executable"
-        )
-        facts = inspect_oci_archive(archive, label_profile="executable")
+        image_name = "omnigent-litellm" if name == "litellm" else f"omnigent-saas-{name}"
+        comparisons[image_name] = compare_archives(archive, archive, label_profile=label_profile)
+        facts = inspect_oci_archive(archive, label_profile=label_profile)
         for platform, item in facts["platforms"].items():
             labels = item["labels"]
             relative = f"grype/{name}-{platform.split('/')[-1]}-grype.json"
@@ -143,7 +144,12 @@ def candidate(root: Path) -> tuple[dict[str, str], datetime]:
                 }
             )
     write_json(
-        root / "saas-image-candidate.json",
+        root
+        / (
+            "litellm-image-candidate.json"
+            if images == ("litellm",)
+            else "saas-image-candidate.json"
+        ),
         {
             "candidate_evidence_version": 3,
             "status": "pass",
@@ -152,7 +158,7 @@ def candidate(root: Path) -> tuple[dict[str, str], datetime]:
             "source_date_epoch": EPOCH,
             "upstream_revision": labels["ai.omnigent.upstream.revision"],
             "adapter_contract_version": labels["ai.omnigent.saas.adapter-contract-version"],
-            "label_profile": "executable",
+            "label_profile": label_profile,
             "images": comparisons,
         },
     )
@@ -322,7 +328,9 @@ def test_registry_drift_is_not_accepted_as_metadata_only(tmp_path: Path) -> None
         verify_readback(tmp_path / "server-1.tar", changed)
 
 
-@pytest.mark.parametrize("field", ["id", "name", "expired", "digest", "run-id", "head-sha"])
+@pytest.mark.parametrize(
+    "field", ["id", "name", "validation-name", "expired", "digest", "run-id", "head-sha"]
+)
 def test_wrong_artifact_or_workflow_coordinates_are_rejected(field: str) -> None:
     metadata = {
         "id": 17,
@@ -334,7 +342,9 @@ def test_wrong_artifact_or_workflow_coordinates_are_rejected(field: str) -> None
     verify_artifact_metadata(
         metadata, artifact_id=17, zip_sha256="b" * 64, revision=REVISION, run_id=23
     )
-    if field in ("run-id", "head-sha"):
+    if field == "validation-name":
+        metadata["name"] = f"saas-oci-validation-{REVISION}"
+    elif field in ("run-id", "head-sha"):
         metadata["workflow_run"]["id" if field == "run-id" else "head_sha"] = "different"
     else:
         metadata[field] = "different"
@@ -385,8 +395,18 @@ def test_workflow_never_rebuilds_after_candidate_admission() -> None:
                 if step.get("uses") == "./saas/actions/build-oci-candidate"
             ]
         )
-        == 4
+        == 6
     )
+    coordinates = {
+        (step["with"]["artifact"], step["with"]["target"], step["with"]["attempt"])
+        for step in build["steps"]
+        if step.get("uses") == "./saas/actions/build-oci-candidate"
+    }
+    assert coordinates == {
+        (artifact, target, attempt)
+        for artifact, target in (("server", "runtime"), ("host", "host"), ("litellm", "runtime"))
+        for attempt in ("1", "2")
+    }
     assert all("build-push-action" not in step.get("uses", "") for step in publish["steps"])
     assert all("setup-buildx-action" not in step.get("uses", "") for step in publish["steps"])
     names = [step["name"] for step in publish["steps"]]
@@ -415,12 +435,22 @@ def test_policy_rejects_reintroduced_post_admission_builder(tmp_path: Path) -> N
     )
 
 
-def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path) -> None:
+@pytest.mark.parametrize("runtime", [False, True])
+def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path, runtime: bool) -> None:
     crane = os.environ.get("OCI_PROMOTION_TEST_CRANE")
     if not crane:
         pytest.skip("real crane round-trip is enabled in candidate preflight")
-    labels, now = candidate(tmp_path / "candidate")
-    manifest = seal(tmp_path / "candidate", labels, now)
+    names = ("litellm",) if runtime else ("server", "host")
+    profile = "litellm" if runtime else "executable"
+    labels, now = candidate(tmp_path / "candidate", images=names, label_profile=profile)
+    if runtime:
+        from saas.scripts.litellm_oci_promotion import seal_runtime
+
+        manifest = seal_runtime(
+            tmp_path / "candidate", labels=labels, source_date_epoch=EPOCH, now=now
+        )
+    else:
+        manifest = seal(tmp_path / "candidate", labels, now)
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         address = f"127.0.0.1:{reservation.getsockname()[1]}"
@@ -439,10 +469,11 @@ def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path) -> Non
                     if time.monotonic() >= deadline:
                         raise AssertionError("temporary registry did not start") from None
                     time.sleep(0.05)
-            for name in ("server", "host"):
+            for name in names:
                 layout = tmp_path / name
                 extract_layout(tmp_path / "candidate" / f"{name}-1.tar", layout)
-                tag = f"{address}/omnigent-saas-{name}:candidate"
+                image_name = "omnigent-litellm" if runtime else f"omnigent-saas-{name}"
+                tag = f"{address}/{image_name}:candidate"
                 subprocess.run([crane, "push", str(layout), tag], check=True, capture_output=True)
                 digest = subprocess.check_output([crane, "digest", tag], text=True).strip()
                 assert digest == manifest["images"][name]["index_digest"]
@@ -466,7 +497,7 @@ def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path) -> Non
                     ],
                     check=True,
                 )
-                verify_readback(readback, manifest["images"][name])
+                verify_readback(readback, manifest["images"][name], label_profile=profile)
         finally:
             registry.terminate()
             registry.wait(timeout=5)

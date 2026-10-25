@@ -17,7 +17,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from omnigent.onboarding.sandboxes.kubernetes import MANAGED_SERVER_URL_ENV_VAR
-from saas.production.platform_model_host import run_platform_model_host
+from saas.production.platform_model_host import controller_bound_enabled, run_platform_model_host
 from saas.runner_adapter.platform_model_gateway import DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS
 
 _SOURCE_KEY = Path("/credentials/omnigent-platform-model/key")
@@ -91,7 +91,10 @@ def run_platform_model_sandbox_host(
 ) -> None:
     """Stage sandbox-only authorities, then run the production Platform Host."""
 
-    stage_platform_model_key(environ)
+    if controller_bound_enabled(environ):
+        environ[_SERVER_URL_ENV] = environ.get(MANAGED_SERVER_URL_ENV_VAR, "")
+    else:
+        stage_platform_model_key(environ)
     run_platform_model_host(environ)
 
 

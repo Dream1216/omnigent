@@ -342,6 +342,7 @@ def test_activation_rejects_public_root_symlink_and_same_version_conflict(
 ) -> None:
     public = tmp_path / "public"
     public.mkdir(mode=0o755)
+    public.chmod(0o755)
     with pytest.raises(ValueError, match="not private"):
         activate_platform_managed_model_secret(_configuration(), secret_root=public)
 

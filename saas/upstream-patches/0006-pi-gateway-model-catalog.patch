@@ -21,7 +21,7 @@ index 89e10a838..8c40d157e 100644
 -        "authHeaders": auth_headers or {},
 +        "authHeaders": resolved_auth_headers,
 diff --git a/omnigent/onboarding/provider_config.py b/omnigent/onboarding/provider_config.py
-index 9d23287a5..3761bbb00 100644
+index c3fae48ee..5d698a633 100644
 --- a/omnigent/onboarding/provider_config.py
 +++ b/omnigent/onboarding/provider_config.py
 @@ -46,0 +47 @@ from __future__ import annotations

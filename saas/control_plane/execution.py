@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
+from omnigent.db.query_context import query_name_scope
 from saas.compatibility import RequestContext
 from saas.control_plane.authorization import ProjectAuthorizer
 from saas.control_plane.db_models import ControlPlaneOutboxEvent
@@ -32,8 +33,17 @@ from saas.control_plane.execution_models import (
     SessionTaskRecord,
     TaskRecord,
 )
+from saas.control_plane.interactive_run_route import INTERACTIVE_QUEUE_CLASS
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
 from saas.control_plane.scheduling_models import CapabilityTokenRecord, RunDispatchRecord
+from saas.observability import (
+    capture_event_page_floor,
+    ensure_observed_factory,
+    measure_stage,
+    require_event_page_witness,
+    require_run_witness,
+)
 
 _LEASED_STATUSES = frozenset(
     {"leased", "starting", "running", "waiting_input", "waiting_approval", "cancelling"}
@@ -181,6 +191,7 @@ class ExecutionControlPlane:
         authorizer: ProjectAuthorizer | None = None,
     ) -> None:
         self._session_factory = session_factory
+        ensure_observed_factory(session_factory)
         self._authorizer = authorizer or ProjectAuthorizer(session_factory)
 
     def create_task(self, request: RequestContext, *, project_id: UUID, title: str) -> UUID:
@@ -211,17 +222,17 @@ class ExecutionControlPlane:
         session_id = uuid4()
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
-            db.add(
-                ExecutionSessionRecord(
-                    id=session_id,
-                    tenant_id=request.tenant_id,
-                    space_id=request.space_id,
-                    project_id=project_id,
-                    created_by=request.actor_id,
-                    status="active",
-                    version=1,
-                )
+            row = ExecutionSessionRecord(
+                id=session_id,
+                tenant_id=request.tenant_id,
+                space_id=request.space_id,
+                project_id=project_id,
+                created_by=request.actor_id,
+                status="active",
+                version=1,
             )
+            freeze_sqlite_customer_pricing(db, row)
+            db.add(row)
         return session_id
 
     def attach_task(
@@ -325,6 +336,7 @@ class ExecutionControlPlane:
             quota.version += 1
             return quota.id
 
+    @measure_stage("admission")
     def admit_run(
         self,
         request: RequestContext,
@@ -369,92 +381,247 @@ class ExecutionControlPlane:
         digest = _canonical_hash(payload)
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
-            existing = db.scalar(
-                sa.select(RunRecord).where(
-                    RunRecord.tenant_id == request.tenant_id,
-                    RunRecord.idempotency_key == key,
-                )
-            )
-            if existing is not None:
-                if existing.request_hash != digest:
-                    raise ExecutionControlPlaneError(
-                        "idempotency_conflict", "idempotency key was used with another request"
-                    )
-                reservation_id = db.scalar(
-                    sa.select(QuotaReservationRecord.id).where(
-                        QuotaReservationRecord.run_id == existing.id
-                    )
-                )
-                if reservation_id is None:
-                    raise ExecutionControlPlaneError(
-                        "admission_invariant_broken", "Run is missing its quota reservation"
-                    )
-                return RunAdmission(
-                    existing.id,
-                    existing.task_id,
-                    existing.session_id,
-                    existing.status,
-                    reservation_id,
-                    existing.event_sequence,
-                    True,
-                )
-
-            self._task(db, request, project_id, task_id, lock=False)
-            if session_id is not None:
-                execution_session = self._session(db, request, project_id, session_id, lock=False)
-                if execution_session.status != "active":
-                    raise ExecutionControlPlaneError("session_closed", "Session is closed")
-                link = db.scalar(
-                    sa.select(SessionTaskRecord.id).where(
-                        SessionTaskRecord.session_id == session_id,
-                        SessionTaskRecord.task_id == task_id,
-                    )
-                )
-                if link is None:
-                    raise ExecutionControlPlaneError(
-                        "session_task_unlinked", "Task is not attached to Session"
-                    )
-
-            quota = db.scalar(
-                sa.select(AdmissionQuotaRecord)
-                .where(
-                    AdmissionQuotaRecord.tenant_id == request.tenant_id,
-                    AdmissionQuotaRecord.space_id == request.space_id,
-                    AdmissionQuotaRecord.project_id == project_id,
-                    AdmissionQuotaRecord.resource == resource,
-                )
-                .with_for_update()
-            )
-            if quota is None:
-                raise ExecutionControlPlaneError("quota_not_configured", "quota is not configured")
-            if quota.reserved_units + quota.consumed_units + quota_units > quota.limit_units:
-                raise ExecutionControlPlaneError("quota_exceeded", "admission quota is exhausted")
-
-            run = RunRecord(
-                tenant_id=request.tenant_id,
-                space_id=request.space_id,
+            self._serialize_admission(db, request.tenant_id, key)
+            return self._admit_run_in_transaction(
+                db,
+                request,
                 project_id=project_id,
                 task_id=task_id,
                 session_id=session_id,
-                created_by=request.actor_id,
-                status="created",
-                version=1,
-                event_sequence=0,
-                queue_class=queue,
+                input_payload=input_payload,
+                resource=resource,
+                quota_units=quota_units,
+                key=key,
+                digest=digest,
+                revisions=revisions,
+                queue=queue,
                 priority=priority,
-                idempotency_key=key,
-                request_hash=digest,
-                input=input_payload,
-                product_revision=revisions.product_revision,
-                upstream_revision=revisions.upstream_revision,
-                schema_revision=revisions.schema_revision,
-                adapter_contract_version=revisions.adapter_contract_version,
-                fence_token=0,
             )
-            db.add(run)
+
+    @measure_stage("admission")
+    def admit_task_run(
+        self,
+        request: RequestContext,
+        *,
+        project_id: UUID,
+        session_id: UUID,
+        title: str,
+        input_payload: dict[str, object],
+        quota_resource: str,
+        quota_units: int,
+        idempotency_key: str,
+        revisions: ExecutionRevisionSet,
+        queue_class: str = "interactive",
+        priority: int = 0,
+    ) -> RunAdmission:
+        """Admit actual input, its Task and Session link in one transaction.
+
+        The caller must resolve an existing SaaS Session; a Runtime session ID
+        is not accepted as an execution identity. This queues intent only and
+        never grants a Runner lease or authorizes a model request.
+        """
+
+        self._authorizer.require(request, action="run.create", project_id=project_id)
+        revisions.validate()
+        cleaned_title = _validate_text(title, field="task_title", maximum=256)
+        key = _validate_text(idempotency_key, field="idempotency_key", maximum=128)
+        resource = _validate_text(quota_resource, field="quota_resource", maximum=64)
+        queue = _validate_text(queue_class, field="queue_class", maximum=64)
+        if quota_units <= 0:
+            raise ExecutionControlPlaneError("quota_units_invalid", "quota units must be positive")
+        if not isinstance(input_payload, dict) or not input_payload:
+            raise ExecutionControlPlaneError("run_input_invalid", "Run input must not be empty")
+        try:
+            frozen_input = json.loads(json.dumps(input_payload, allow_nan=False))
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            raise ExecutionControlPlaneError("run_input_invalid", "Run input is invalid") from None
+        digest = _canonical_hash(
+            {
+                "operation": "task_run.admit.v1",
+                "actor_id": str(request.actor_id),
+                "tenant_id": str(request.tenant_id),
+                "space_id": str(request.space_id),
+                "project_id": str(project_id),
+                "session_id": str(session_id),
+                "title": cleaned_title,
+                "input": frozen_input,
+                "quota_resource": resource,
+                "quota_units": quota_units,
+                "queue_class": queue,
+                "priority": priority,
+                "product_revision": revisions.product_revision,
+                "upstream_revision": revisions.upstream_revision,
+                "schema_revision": revisions.schema_revision,
+                "adapter_contract_version": revisions.adapter_contract_version,
+            }
+        )
+        with (
+            query_name_scope("saas.execution.admit_task_run"),
+            self._session_factory.begin() as db,
+        ):
+            self._apply_request_context(db, request)
+            self._serialize_admission(db, request.tenant_id, key)
+            replay = self._admission_replay(db, request.tenant_id, key, digest)
+            if replay is not None:
+                return replay
+            execution_session = self._session(db, request, project_id, session_id, lock=True)
+            if execution_session.status != "active":
+                raise ExecutionControlPlaneError("session_closed", "Session is closed")
+            task = TaskRecord(
+                tenant_id=request.tenant_id,
+                space_id=request.space_id,
+                project_id=project_id,
+                created_by=request.actor_id,
+                title=cleaned_title,
+                version=1,
+            )
+            db.add(task)
             db.flush()
-            reservation_id = uuid4()
-            reservation = QuotaReservationRecord(
+            db.add(
+                SessionTaskRecord(
+                    tenant_id=request.tenant_id,
+                    space_id=request.space_id,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task.id,
+                    attached_by=request.actor_id,
+                )
+            )
+            return self._admit_run_in_transaction(
+                db,
+                request,
+                project_id=project_id,
+                task_id=task.id,
+                session_id=session_id,
+                input_payload=frozen_input,
+                resource=resource,
+                quota_units=quota_units,
+                key=key,
+                digest=digest,
+                revisions=revisions,
+                queue=queue,
+                priority=priority,
+            )
+
+    @staticmethod
+    def _serialize_admission(db: Session, tenant_id: UUID, key: str) -> None:
+        if db.get_bind().dialect.name == "postgresql":
+            db.execute(
+                sa.text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {"key": f"run-admission:{tenant_id}:{key}"},
+            )
+
+    @staticmethod
+    def _admission_replay(
+        db: Session, tenant_id: UUID, key: str, digest: str
+    ) -> RunAdmission | None:
+        existing = db.scalar(
+            sa.select(RunRecord).where(
+                RunRecord.tenant_id == tenant_id, RunRecord.idempotency_key == key
+            )
+        )
+        if existing is None:
+            return None
+        if existing.request_hash != digest:
+            raise ExecutionControlPlaneError(
+                "idempotency_conflict", "idempotency key was used with another request"
+            )
+        reservation_id = db.scalar(
+            sa.select(QuotaReservationRecord.id).where(
+                QuotaReservationRecord.run_id == existing.id
+            )
+        )
+        if reservation_id is None:
+            raise ExecutionControlPlaneError(
+                "admission_invariant_broken", "Run is missing its quota reservation"
+            )
+        require_run_witness(db, existing)
+        return RunAdmission(
+            existing.id,
+            existing.task_id,
+            existing.session_id,
+            existing.status,
+            reservation_id,
+            existing.event_sequence,
+            True,
+        )
+
+    def _admit_run_in_transaction(
+        self,
+        db: Session,
+        request: RequestContext,
+        *,
+        project_id: UUID,
+        task_id: UUID,
+        session_id: UUID | None,
+        input_payload: dict[str, object],
+        resource: str,
+        quota_units: int,
+        key: str,
+        digest: str,
+        revisions: ExecutionRevisionSet,
+        queue: str,
+        priority: int,
+    ) -> RunAdmission:
+        replay = self._admission_replay(db, request.tenant_id, key, digest)
+        if replay is not None:
+            return replay
+        self._task(db, request, project_id, task_id, lock=False)
+        if session_id is not None:
+            execution_session = self._session(db, request, project_id, session_id, lock=False)
+            if execution_session.status != "active":
+                raise ExecutionControlPlaneError("session_closed", "Session is closed")
+            link = db.scalar(
+                sa.select(SessionTaskRecord.id).where(
+                    SessionTaskRecord.session_id == session_id,
+                    SessionTaskRecord.task_id == task_id,
+                )
+            )
+            if link is None:
+                raise ExecutionControlPlaneError(
+                    "session_task_unlinked", "Task is not attached to Session"
+                )
+        quota = db.scalar(
+            sa.select(AdmissionQuotaRecord)
+            .where(
+                AdmissionQuotaRecord.tenant_id == request.tenant_id,
+                AdmissionQuotaRecord.space_id == request.space_id,
+                AdmissionQuotaRecord.project_id == project_id,
+                AdmissionQuotaRecord.resource == resource,
+            )
+            .with_for_update()
+        )
+        if quota is None:
+            raise ExecutionControlPlaneError("quota_not_configured", "quota is not configured")
+        if quota.reserved_units + quota.consumed_units + quota_units > quota.limit_units:
+            raise ExecutionControlPlaneError("quota_exceeded", "admission quota is exhausted")
+        run = RunRecord(
+            tenant_id=request.tenant_id,
+            space_id=request.space_id,
+            project_id=project_id,
+            task_id=task_id,
+            session_id=session_id,
+            created_by=request.actor_id,
+            status="created",
+            version=1,
+            event_sequence=0,
+            queue_class=queue,
+            priority=priority,
+            idempotency_key=key,
+            request_hash=digest,
+            input=input_payload,
+            product_revision=revisions.product_revision,
+            upstream_revision=revisions.upstream_revision,
+            schema_revision=revisions.schema_revision,
+            adapter_contract_version=revisions.adapter_contract_version,
+            fence_token=0,
+        )
+        freeze_sqlite_customer_pricing(db, run)
+        db.add(run)
+        db.flush()
+        reservation_id = uuid4()
+        db.add(
+            QuotaReservationRecord(
                 id=reservation_id,
                 tenant_id=request.tenant_id,
                 space_id=request.space_id,
@@ -465,45 +632,49 @@ class ExecutionControlPlane:
                 status="reserved",
                 version=1,
             )
-            db.add(reservation)
-            quota.reserved_units += quota_units
-            quota.version += 1
-            self._append_event(
-                db,
-                run,
-                event_type="run.created",
-                payload={
-                    "status": "created",
-                    "quota_reservation_id": str(reservation_id),
-                    "quota_resource": resource,
-                    "quota_units": quota_units,
-                    "revisions": {
-                        "product": revisions.product_revision,
-                        "upstream": revisions.upstream_revision,
-                        "schema": revisions.schema_revision,
-                        "adapter": revisions.adapter_contract_version,
-                    },
+        )
+        quota.reserved_units += quota_units
+        quota.version += 1
+        self._append_event(
+            db,
+            run,
+            event_type="run.created",
+            payload={
+                "status": "created",
+                "quota_reservation_id": str(reservation_id),
+                "quota_resource": resource,
+                "quota_units": quota_units,
+                "revisions": {
+                    "product": revisions.product_revision,
+                    "upstream": revisions.upstream_revision,
+                    "schema": revisions.schema_revision,
+                    "adapter": revisions.adapter_contract_version,
                 },
-                trace_id=request.trace_id,
-            )
-            run.status = "queued"
-            run.version += 1
-            self._append_event(
-                db,
-                run,
-                event_type="run.queued",
-                payload={"status": "queued", "queue_class": queue, "priority": priority},
-                trace_id=request.trace_id,
-            )
-            return RunAdmission(
-                run.id,
-                task_id,
-                session_id,
-                run.status,
-                reservation_id,
-                run.event_sequence,
-                False,
-            )
+            },
+            trace_id=request.trace_id,
+        )
+        run.status = "queued"
+        run.version += 1
+        self._append_event(
+            db,
+            run,
+            event_type="run.queued",
+            payload={
+                "status": "queued",
+                "queue_class": queue,
+                "priority": priority,
+            },
+            trace_id=request.trace_id,
+        )
+        return RunAdmission(
+            run.id,
+            task_id,
+            session_id,
+            run.status,
+            reservation_id,
+            run.event_sequence,
+            False,
+        )
 
     def claim_next_run(
         self,
@@ -702,6 +873,9 @@ class ExecutionControlPlane:
         trace = _validate_text(trace_id, field="trace_id", maximum=128)
         run = self._run(db, run_id, lock=True)
         self._require_lease(run, lease_token, fence_token, now)
+        if target_status == run.status == "cancelling" and not payload:
+            require_run_witness(db, run)
+            return RunMutation(run.id, run.status, run.version, run.event_sequence, replayed=True)
         if target_status not in _ALLOWED_TRANSITIONS[run.status]:
             raise ExecutionControlPlaneError(
                 "run_transition_invalid", f"cannot transition {run.status} to {target_status}"
@@ -740,38 +914,49 @@ class ExecutionControlPlane:
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
             run = self._scoped_run(db, request, project_id, run_id, lock=True)
-            if run.status in TERMINAL_RUN_STATUSES or run.status == "cancelling":
-                return RunMutation(
-                    run.id, run.status, run.version, run.event_sequence, replayed=True
-                )
-            run.cancel_requested_at = requested_at
-            if run.status in {"created", "queued"}:
-                run.status = "cancelled"
-                run.terminal_at = requested_at
-                self._finalize_reservations(db, run, succeeded=False)
-                event_type = "run.cancelled"
-            elif run.status in _LEASED_STATUSES:
-                run.status = "cancelling"
-                event_type = "run.cancelling"
-            else:
-                raise ExecutionControlPlaneError(
-                    "run_cancel_invalid", f"Run in {run.status} cannot be cancelled"
-                )
-            run.version += 1
-            self._append_event(
+            return self._cancel_in_session(
                 db,
                 run,
-                event_type=event_type,
-                payload={
-                    "status": run.status,
-                    "reason": cleaned_reason,
-                    "requested_by": str(request.actor_id),
-                },
+                requested_at=requested_at,
+                payload={"reason": cleaned_reason, "requested_by": str(request.actor_id)},
                 trace_id=request.trace_id,
             )
-            if run.status == "cancelled":
-                self._clear_lease(run)
-            return RunMutation(run.id, run.status, run.version, run.event_sequence)
+
+    @classmethod
+    def _cancel_in_session(
+        cls,
+        db: Session,
+        run: RunRecord,
+        *,
+        requested_at: datetime,
+        payload: dict[str, object],
+        trace_id: str,
+    ) -> RunMutation:
+        """Apply an already-authorized cancellation through one execution lifecycle."""
+        if run.status in TERMINAL_RUN_STATUSES or run.status == "cancelling":
+            require_run_witness(db, run)
+            return RunMutation(run.id, run.status, run.version, run.event_sequence, replayed=True)
+        run.cancel_requested_at = requested_at
+        if run.status in {"created", "queued"}:
+            run.status, run.terminal_at = "cancelled", requested_at
+            cls._finalize_reservations(db, run, succeeded=False)
+        elif run.status in _LEASED_STATUSES:
+            run.status = "cancelling"
+        else:
+            raise ExecutionControlPlaneError(
+                "run_cancel_invalid", f"Run in {run.status} cannot be cancelled"
+            )
+        run.version += 1
+        cls._append_event(
+            db,
+            run,
+            event_type=f"run.{run.status}",
+            payload={**payload, "status": run.status},
+            trace_id=trace_id,
+        )
+        if run.status == "cancelled":
+            cls._clear_lease(run)
+        return RunMutation(run.id, run.status, run.version, run.event_sequence)
 
     def recover_expired_runs(
         self,
@@ -803,7 +988,17 @@ class ExecutionControlPlane:
             runs = tuple(db.scalars(query))
             results: list[RunMutation] = []
             for run in runs:
-                if run.status == "cancelling":
+                apply_rls_context(
+                    db,
+                    RlsContext(
+                        tenant_id=run.tenant_id,
+                        space_id=run.space_id,
+                        project_id=run.project_id,
+                    ),
+                )
+                if run.queue_class == INTERACTIVE_QUEUE_CLASS:
+                    target = "orphaned"
+                elif run.status == "cancelling":
                     target = "cancelled"
                 elif run.fence_token >= max_fence_token:
                     target = "orphaned"
@@ -828,6 +1023,8 @@ class ExecutionControlPlane:
                     trace_id="recovery:lease-expired",
                 )
                 results.append(RunMutation(run.id, run.status, run.version, run.event_sequence))
+                # Persist this scope's pending Outbox before binding the next Run.
+                db.flush()
             return tuple(results)
 
     def replay_events(
@@ -844,17 +1041,42 @@ class ExecutionControlPlane:
         if after_sequence < 0 or not 1 <= limit <= 5000:
             raise ExecutionControlPlaneError("replay_cursor_invalid", "replay cursor is invalid")
         self._authorizer.require(request, action="run.read_metadata", project_id=project_id)
+        minimum_source_head = capture_event_page_floor(
+            self._session_factory, request.tenant_id, run_id
+        )
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
-            self._scoped_run(db, request, project_id, run_id, lock=False)
-            rows = db.scalars(
-                sa.select(RunEventRecord)
-                .where(
-                    RunEventRecord.run_id == run_id,
-                    RunEventRecord.sequence > after_sequence,
+            run = self._scoped_run(db, request, project_id, run_id, lock=False)
+            # The head and page must come from the same statement snapshot.
+            # Separate READ COMMITTED reads can invent a missing tail while a
+            # legitimate append commits between those two statements.
+            source = tuple(
+                db.execute(
+                    sa.select(RunRecord.event_sequence, RunEventRecord)
+                    .select_from(RunRecord)
+                    .outerjoin(
+                        RunEventRecord,
+                        sa.and_(
+                            RunEventRecord.run_id == RunRecord.id,
+                            RunEventRecord.sequence > after_sequence,
+                        ),
+                    )
+                    .where(RunRecord.id == run_id)
+                    .order_by(RunEventRecord.sequence)
+                    .limit(limit)
                 )
-                .order_by(RunEventRecord.sequence)
-                .limit(limit)
+            )
+            if not source:
+                raise ExecutionControlPlaneError("run_not_found", "Run is no longer visible")
+            rows = tuple(row[1] for row in source if row[1] is not None)
+            require_event_page_witness(
+                db,
+                run,
+                rows,
+                after_sequence=after_sequence,
+                source_head=source[0][0],
+                limit=limit,
+                minimum_source_head=minimum_source_head,
             )
             return tuple(
                 PersistedRunEvent(
@@ -930,6 +1152,7 @@ class ExecutionControlPlane:
                     raise ExecutionControlPlaneError(
                         "idempotency_conflict", "effect key was used with another request"
                     )
+                require_run_witness(db, run)
                 return self._effect_state(existing, replayed=True)
             effect = EffectCallRecord(
                 tenant_id=run.tenant_id,
@@ -997,6 +1220,7 @@ class ExecutionControlPlane:
                     and effect.response == response
                     and effect.error_code == error_code
                 ):
+                    require_run_witness(db, run)
                     return self._effect_state(effect, replayed=True)
                 raise ExecutionControlPlaneError(
                     "effect_already_resolved", "effect call already has an authoritative result"
@@ -1177,6 +1401,8 @@ class ExecutionControlPlane:
                 raise ExecutionControlPlaneError(
                     "artifact_link_conflict", "artifact is already linked with another role"
                 )
+            if replayed and link is not None:
+                require_run_witness(db, run)
             return ArtifactRegistration(artifact.id, run.id, digest, replayed and link is not None)
 
     @staticmethod

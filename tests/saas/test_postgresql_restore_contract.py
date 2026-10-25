@@ -9,6 +9,7 @@ import sqlalchemy as sa
 
 from saas.control_plane.onboarding import OnboardingPlan
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
+from saas.production import postgresql_restore as restore
 from saas.production.postgresql_restore import (
     _SELECTED_HASH_TABLES,
     PostgreSqlEndpoint,
@@ -138,7 +139,40 @@ def test_restore_contract_uses_and_cleans_up_a_disposable_narrow_owner() -> None
     assert report["status"] == "pass"
     assert report["database_authority_applied_to_source_and_restore"] is True
     assert report["disposable_narrow_owner_applied_to_source_and_restore"] is True
+    assert report["post_backup_revocation_event_count"] == 3
     assert owners_after == owners_before
+
+
+@pytest.mark.parametrize("fault", ["missing", "payload"])
+def test_restore_rejects_incomplete_or_conflicting_committed_revocation_facts(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    raw_url = os.environ.get("OMNIGENT_SAAS_TEST_POSTGRES_URL")
+    if not raw_url:
+        pytest.skip("OMNIGENT_SAAS_TEST_POSTGRES_URL is required")
+    replay = restore._apply_post_backup_replay
+
+    def corrupt_target_replay(*args, **kwargs):
+        events = kwargs.get("revocation_events")
+        if events is not None:
+            events = [dict(row) for row in events]
+            if fault == "missing":
+                events.pop()
+            else:
+                events[0]["payload"] = {**events[0]["payload"], "version_floor": 999}
+            kwargs["revocation_events"] = events
+        return replay(*args, **kwargs)
+
+    monkeypatch.setattr(restore, "_apply_post_backup_replay", corrupt_target_replay)
+    error, message = (
+        (PostgreSqlRestoreContractError, "incomplete revocation replay facts")
+        if fault == "missing"
+        else (sa.exc.DBAPIError, "revocation source idempotency conflict")
+    )
+    with pytest.raises(error, match=message):
+        run_logical_restore_contract(
+            Path.cwd(), raw_url, product_revision="a" * 40, allow_disposable_databases=True
+        )
 
 
 def test_restore_fixture_uses_current_vertical_onboarding_plan_contract() -> None:

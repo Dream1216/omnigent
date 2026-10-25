@@ -26,6 +26,7 @@ from saas.control_plane.retained_model_audit import (
     RetainedModelAuditPublisher,
     verify_retained_model_audit_functions,
 )
+from saas.observability import ensure_observed_factory
 from saas.onboarding_composition import validate_production_outbox_publisher
 
 _LOGGER = logging.getLogger("omnigent-saas-outbox")
@@ -911,6 +912,7 @@ def main() -> int:
     try:
         verify_dispatcher_database_role(engine)
         sessions = sessionmaker(engine, expire_on_commit=False, class_=Session)
+        ensure_observed_factory(sessions)
         max_attempts = cast(
             int,
             _positive_number("OMNIGENT_SAAS_OUTBOX_MAX_ATTEMPTS", "8", integer=True),
@@ -920,7 +922,12 @@ def main() -> int:
         publisher = _load_publisher(publisher_reference)
         publisher = RetainedModelAuditPublisher(engine, publisher)
         publisher.validate_outbox_configuration()
-        dispatcher = OutboxDispatcher(sessions, publisher, max_attempts=max_attempts)
+        dispatcher = OutboxDispatcher(
+            sessions,
+            publisher,
+            max_attempts=max_attempts,
+            claim_routes=publisher.claim_routes,
+        )
         stop = threading.Event()
 
         def _stop(_signum: int, _frame: object) -> None:

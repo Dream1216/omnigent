@@ -101,3 +101,6 @@ deploy/databricks/.databricks/
 web/package-lock.json
 # Generated demo recordings belong in PR evidence or artifacts, not Git.
 recordings/
+
+# Downloaded LiteLLM runtime materials; release CI publishes their evidence.
+.litellm-runtime/

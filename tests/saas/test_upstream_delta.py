@@ -130,11 +130,105 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 156
+    assert budget["max_upstream_net_added_loc"] == 5427
+    assert budget["max_direct_upstream_files"] == 185
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    complete_security = revision["litellm_complete_security_followup"]
+    assert complete_security["revision"] == "litellm-reviewed-complete-security-budget-v37"
+    assert complete_security["approved_at"] == "2026-10-25"
+    assert complete_security["previous_max_direct_upstream_files"] == 172
+    assert complete_security["previous_max_upstream_net_added_loc"] == 5414
+    assert complete_security["approved_max_direct_upstream_files"] == 185
+    assert complete_security["approved_max_upstream_net_added_loc"] == 5427
+    assert complete_security["review_packet_sha256"] == (
+        "213efdc87c8c542c9e9779b5d10234641b860a3fcf5d33e4186a0b31ca1abb51"
+    )
+    assert complete_security["direct_human_approval_sha256"] == (
+        "f58f72774c26dc2294ec4dfe0ef05c0682011784c0b2c53e924d487134d78f11"
+    )
+    assert len(complete_security["review_patch_sha256"]) == 3
+    assert len(complete_security["scoped_paths"]) == 23
+    security = revision["litellm_exact_security_followup"]
+    assert security["revision"] == "litellm-reviewed-exact-security-budget-v36"
+    assert security["approved_at"] == "2026-10-24"
+    assert security["previous_max_direct_upstream_files"] == 170
+    assert security["previous_max_upstream_net_added_loc"] == 5400
+    assert security["approved_max_direct_upstream_files"] == 172
+    assert security["approved_max_upstream_net_added_loc"] == 5414
+    assert security["review_patch_sha256"] == (
+        "7bd05d2f3b5a1ab579935741db538ec3fe664b132cf049fc2c0158f4d83179d9"
+    )
+    assert security["direct_human_approval_sha256"] == (
+        "b69e97b3ca53a68ae4941b3d83354de2a5dcf5389fe50e4b2239525a74e314d7"
+    )
+    assert len(security["scoped_paths"]) == 11
+    alignment = revision["litellm_main_alignment_followup"]
+    assert alignment["revision"] == "litellm-reviewed-main-kimi-alignment-budget-v35"
+    assert alignment["approved_at"] == "2026-10-24"
+    assert alignment["previous_max_direct_upstream_files"] == 167
+    assert alignment["previous_max_upstream_net_added_loc"] == 5300
+    assert alignment["approved_max_direct_upstream_files"] == 170
+    assert alignment["approved_max_upstream_net_added_loc"] == 5400
+    assert alignment["integrated_main_revision"] == "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+    assert alignment["conditional_preview"] == {
+        "direct_upstream_files": 170,
+        "upstream_net_added_loc": 5339,
+        "active_patches": 9,
+    }
+    assert alignment["preserved_dependency_paths"] == [
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "uv.toml",
+    ]
+    e2e = revision["governed_litellm_e2e_entry"]
+    assert e2e["revision"] == "litellm-governed-e2e-entry-budget-v34"
+    assert e2e["approved_at"] == "2026-10-22"
+    assert e2e["previous_max_direct_upstream_files"] == 166
+    assert e2e["approved_max_direct_upstream_files"] == 167
+    assert e2e["measured_before_integration"] == {
+        "direct_upstream_files": 166,
+        "upstream_net_added_loc": 5291,
+        "active_patches": 9,
+    }
+    assert e2e["scoped_paths"] == ["tests/e2e/test_governed_litellm_e2e.py"]
+    pagination = revision["pagination_test_followup"]
+    assert pagination["revision"] == "litellm-customer-pagination-tests-budget-v33"
+    assert pagination["approved_at"] == "2026-10-20"
+    assert pagination["previous_max_upstream_net_added_loc"] == 5000
+    assert pagination["approved_max_upstream_net_added_loc"] == 5300
+    assert pagination["measured_before_integration"] == 4990
+    assert pagination["scoped_paths"] == [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "tests/browser_ui/chat/test_tenant_model_candidates.py",
+        "feature-map/composer.md",
+        "feature-map/platform-managed-models.md",
+    ]
+    litellm = revision["litellm_application_followup"]
+    assert litellm["applies_to_upstream_revision"] == "825f8500d7cc8e997e5562fa55694cd146165f3c"
+    assert litellm["revision"] == "litellm-customer-model-picker-budget-v32"
+    assert litellm["approved_at"] == "2026-10-20"
+    assert litellm["previous_max_direct_upstream_files"] == 166
+    assert litellm["previous_max_upstream_net_added_loc"] == 4576
+    assert litellm["approved_max_upstream_net_added_loc"] == 5000
+    assert litellm["scoped_paths"] == [
+        "web/src/components/composer/TenantModelCandidatesSection.tsx",
+        "web/src/components/composer/TenantModelCandidatesSection.test.tsx",
+        "web/src/components/composer/ComposerConfigSections.tsx",
+        "web/src/shell/NewChatDialog.tsx",
+        "web/src/shell/NewChatDialog.test.tsx",
+    ]
+    litellm = litellm["previous_revision"]
+    assert litellm["revision"] == "litellm-interactive-admission-budget-v31"
+    assert litellm["approved_at"] == "2026-10-17"
+    assert litellm["previous_max_direct_upstream_files"] == 150
+    assert litellm["measured_direct_upstream_files"] == 166
+    assert litellm["previous_max_upstream_net_added_loc"] == 4576
+    assert len(litellm["scoped_paths"]) == 16
+    assert "omnigent/server/routes/sessions/routes_events.py" in litellm["scoped_paths"]
+    assert litellm["previous_revision_reference"] == "platform-model-token-renewal-budget-v30"
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153
@@ -156,6 +250,60 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     ]
     assert ui8_followup["upstream_test_revision"] == "3db749d784ff044304473939acaae3a65c0fec61"
     followup = revision["followup"]
+    assert followup["revision"] == "upstream-019-mcp-compat-version-test-budget-v35"
+    assert followup["approved_at"] == "2026-10-21"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 155
+    assert followup["measured_direct_upstream_files"] == 156
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3453
+    assert followup["scoped_paths"] == ["tests/e2e/test_mcp_registry_compat_e2e.py"]
+    followup = followup["previous_revision"]
+    assert followup["revision"] == "upstream-019-toast-cleanup-test-budget-v34"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 154
+    assert followup["measured_direct_upstream_files"] == 155
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3416
+    assert followup["scoped_paths"] == ["web/src/shell/archiveUndoToast.test.tsx"]
+    followup = followup["previous_revision"]
+    assert followup["revision"] == "upstream-019-abrupt-death-test-budget-v33"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 153
+    assert followup["measured_direct_upstream_files"] == 154
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3415
+    assert followup["scoped_paths"] == ["tests/inner/test_brokered_auth_abrupt_death.py"]
+    followup = followup["previous_revision"]
+    assert followup["revision"] == "upstream-019-terminal-reconnect-test-budget-v32"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 152
+    assert followup["measured_direct_upstream_files"] == 153
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3409
+    assert followup["scoped_paths"] == ["tests/e2e_ui/shells/test_terminal_bridge_reconnect.py"]
+    assert followup["previous_revision_reference"] == "upstream-019-reviewed-visual-budget-v31"
+    followup = revision["previous_followup"]
+    assert followup["revision"] == "upstream-019-reviewed-visual-budget-v31"
+    assert followup["approved_at"] == "2026-10-16"
+    assert followup["governance_mode"] == "single_owner_beta"
+    assert followup["previous_max_direct_upstream_files"] == 150
+    assert followup["measured_direct_upstream_files"] == 152
+    assert followup["previous_max_upstream_net_added_loc"] == 4576
+    assert followup["measured_upstream_net_added_loc"] == 3389
+    assert followup["scoped_paths"] == [
+        "web/src/lib/identity.managedRouting.test.ts",
+        "web/src/lib/viteProxy.test.ts",
+        "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png",
+    ]
+    followup = followup["previous_revision"]
     assert followup["revision"] == "platform-model-token-renewal-budget-v30"
     assert followup["approved_at"] == "2026-10-15"
     assert followup["previous_max_direct_upstream_files"] == 148
@@ -441,8 +589,12 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4576 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 30000, 0),
+            FileDelta(
+                "omnigent/stores/host_store.py",
+                budget["max_upstream_net_added_loc"] + extra_lines,
+                0,
+            ),
+            FileDelta("saas/control_plane/service.py", 40000, 0),
         ],
         manifest,
         active_patch_count=9,

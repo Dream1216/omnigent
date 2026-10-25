@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -12,6 +13,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import tomllib
+
+from saas.production.review_exception import apply_review_exception, review_verification_scope
 
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -29,6 +32,7 @@ _CANDIDATE_BUILD_USES = "./saas/actions/build-oci-candidate"
 _N1_CANDIDATE_WORKFLOW = ".github/workflows/saas-n1-compat-image.yml"
 _HOST_CLI_NORMALIZER = "saas/scripts/normalize_host_cli_tree.py"
 _RUNTIME_REVISION_BINDER = "saas/scripts/bind_runtime_build_revision.py"
+_SCHEMA_REVISION_SOURCE = "saas/control_plane/schema_revision.py"
 _WOLFI_RUNTIME_LOCK = "saas/supply_chain/wolfi-runtime-lock.json"
 _GITHUB_CLI_SOURCE_LOCK = "saas/supply_chain/github-cli-source-lock.json"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
@@ -37,8 +41,8 @@ _APPROVED_UV_VERSION = "0.12.1"
 _APPROVED_PNPM_VERSION = "12.10.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.266"),
-    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.283"),
+    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "1.0.4"),
     "@moonshot-ai/kimi-code": ("KIMI_CODE_VERSION", "0.43.1"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
@@ -47,6 +51,9 @@ _APPROVED_HOST_CLI_VERSIONS = {
 _APPROVED_MCP_SDK_VERSION = "1.32.0"
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
     "http-cache-semantics@4.3.0",
+    "body-parser@2.4.0",
+    "electron@42.11.16",
+    "fast-uri@3.1.9",
     "source-map-js@1.2.2",
     "@modelcontextprotocol/sdk@1.32.0",
     "@moonshot-ai/kimi-code@0.43.1",
@@ -118,11 +125,11 @@ _APPROVED_NPM_SECURITY_OVERLAYS = {
         },
         {
             "name": "undici",
-            "version": "6.28.1",
-            "tarball": "https://registry.npmjs.org/undici/-/undici-6.28.1.tgz",
+            "version": "6.29.1",
+            "tarball": "https://registry.npmjs.org/undici/-/undici-6.29.1.tgz",
             "integrity": (
-                "sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5Co"
-                "DcO53J4Pu5uXp7lNfjc6DRA=="
+                "sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2"
+                "XOZjKkYgueD12ZmGA=="
             ),
         },
     ],
@@ -514,6 +521,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     )
     if workflow is None:
         return violations
+    try:
+        candidate_schema_revision(repo)
+    except ValueError:
+        violations.append("packaged control-plane schema binding is invalid")
 
     candidate_steps = [
         (
@@ -570,8 +581,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "upstream_revision=$(jq -r .upstream_revision saas/upstream-baseline.json)",
         ("adapter_contract=$(jq -r .adapter_contract_version saas/upstream-baseline.json)"),
         (
-            "schema_revision=$(jq -r .revision_contract.control_plane_schema_revision "
-            "saas/production/baseline.json)"
+            "schema_revision=$(uv run python -m saas.scripts.check_image_supply_chain "
+            "--print-schema-revision)"
         ),
     }
     if any(source not in workflow for source in material_sources):
@@ -591,8 +602,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if any(workflow.count(export) != 1 for export in material_exports):
         violations.append("candidate workflow must export each resolved build material once")
 
-    if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 4:
-        violations.append("candidate workflow must invoke four repeated composite builds")
+    if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 6:
+        violations.append("candidate workflow must invoke six repeated composite builds")
     if workflow.count("--label-profile executable") != 1:
         violations.append("candidate workflow must select the executable label profile")
     coordinates = {
@@ -600,6 +611,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         ("server", "runtime", "2"),
         ("host", "host", "1"),
         ("host", "host", "2"),
+        ("litellm", "runtime", "1"),
+        ("litellm", "runtime", "2"),
     }
     for artifact, target, attempt in coordinates:
         invocation = (
@@ -611,7 +624,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         )
         if workflow.count(invocation) != 1:
             violations.append(
-                "candidate workflow build coordinates must cover server and host twice"
+                "candidate workflow build coordinates must cover application and LiteLLM twice"
             )
             break
 
@@ -635,10 +648,43 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     }
     if any(fragment not in workflow for fragment in protected_release_fragments):
         violations.append("protected signed release workflow contract is incomplete")
-    if workflow.count(f"uses: {_ATTEST_ACTION}") != 3:
-        violations.append("protected release must sign the wheel and both OCI images")
-    if workflow.count("push-to-registry: true") != 2 or workflow.count("crane push ") != 2:
-        violations.append("protected release must publish exactly two signed OCI images")
+    platform_steps = {
+        "Generate per-architecture SBOMs and check raw findings": {
+            ".images[$role].facts.platforms[$platform].manifest_digest",
+            '"${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json"',
+            '[[ "$child_digest" =~ ^sha256:[0-9a-f]{64}$ ]]',
+            'child_image="${image%@*}@${child_digest}"',
+            '--entrypoint /usr/local/bin/python "$child_image"',
+            '--entrypoint /bin/sh "$child_image"',
+            'supply-chain-tools/syft" "$child_image"',
+            'supply-chain-tools/grype" "$child_image"',
+        },
+        "Verify published LiteLLM runtime on both architectures": {
+            ".images.litellm.facts.platforms[$platform].manifest_digest",
+            '"${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json"',
+            '[[ "$arch_digest" =~ ^sha256:[0-9a-f]{64}$ ]]',
+            'arch_image="${LITELLM_IMAGE%@*}@${arch_digest}"',
+            '"$arch_image" -B -I -c',
+        },
+        "Generate LiteLLM per-architecture SBOMs and check raw findings": {
+            ".images.litellm.facts.platforms[$platform].manifest_digest",
+            '"${RUNNER_TEMP}/admitted-litellm/oci-promotion-manifest.json"',
+            '[[ "$arch_digest" =~ ^sha256:[0-9a-f]{64}$ ]]',
+            'arch_image="${LITELLM_IMAGE%@*}@${arch_digest}"',
+            'supply-chain-tools/syft" "$arch_image"',
+            '--arg index "$LITELLM_IMAGE" --arg manifest "$arch_image"',
+        },
+    }
+    if any(
+        (step := _named_workflow_step(workflow, name)) is None
+        or any(fragment not in step for fragment in fragments)
+        for name, fragments in platform_steps.items()
+    ):
+        violations.append("published probes and scanners must bind platform manifest digests")
+    if workflow.count(f"uses: {_ATTEST_ACTION}") != 4:
+        violations.append("protected release must sign the wheel and all three OCI images")
+    if workflow.count("push-to-registry: true") != 3 or workflow.count("crane push ") != 3:
+        violations.append("protected release must publish exactly three signed OCI images")
     publication = workflow.partition("  publish-signed:")[2].partition(
         "  verify-published-source:"
     )[0]
@@ -711,11 +757,14 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             "outputs: type=oci,dest=${{ runner.temp }}/"
             "${{ inputs.artifact }}-${{ inputs.attempt }}.tar,rewrite-timestamp=true"
         ),
-        "server:runtime|host:host",
+        "server:runtime|host:host|litellm:runtime",
         "1|2)",
     }
     if any(fragment not in action for fragment in required_action_fragments):
         violations.append("candidate composite build action weakens the approved build contract")
+    from saas.scripts.litellm_oci_promotion import validate_runtime_release_contract
+
+    violations.extend(validate_runtime_release_contract(repo, workflow, action))
     if action.count(f"uses: {_BUILD_PUSH_ACTION}") != 1:
         violations.append("candidate composite build action must use the pinned builder once")
     candidate_cache_contract = [
@@ -1300,6 +1349,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     ):
         violations.append("final images must use the approved locked Wolfi runtime contract")
     host_cli_reproducibility_contract = {
+        "cp -a /usr/local/lib/node_modules/npm/node_modules/undici",
+        'throw Error("pnpm undici overlay version differs")',
         "ARG SOURCE_DATE_EPOCH",
         ": > /etc/machine-id",
         "HOME=/tmp/npm-version-home",
@@ -2142,10 +2193,25 @@ def _validate_release_attestations(
     product_revision: object,
     operations_completed_at: datetime | None,
     evidence_completed_at: datetime | None,
+    repo: Path | None = None,
+    now: datetime | None = None,
 ) -> list[str]:
     if not isinstance(value, list):
         return ["release attestations must be a list"]
     violations: list[str] = []
+    required_roles = set(policy["promotion"]["required_approval_roles"])
+    review = apply_review_exception(
+        repo,
+        value,
+        domain="image",
+        required_roles=required_roles,
+        product_revision=product_revision,
+        now=now or datetime.now(UTC),
+    )
+    violations.extend(review.violations)
+    required_roles, value = review.required_roles, review.attestations
+    if not isinstance(value, list):
+        return [*violations, "release attestations must remain a list"]
     roles: set[str] = set()
     actors: set[str] = set()
     for raw in value:
@@ -2175,7 +2241,7 @@ def _validate_release_attestations(
             violations.append("release attestation time is outside the approval window")
         if raw.get("product_revision") != product_revision:
             violations.append("release attestation revision does not match evidence")
-    if roles != set(policy["promotion"]["required_approval_roles"]):
+    if roles != required_roles:
         violations.append("release attestations do not cover every approval role")
     return violations
 
@@ -2210,10 +2276,13 @@ def _validate_evidence(
     for field in ("upstream_revision", "adapter_contract_version"):
         if evidence.get(field) != upstream.get(field):
             violations.append(f"image evidence {field} does not match the upstream manifest")
-    baseline = json.loads((repo / "saas/production/baseline.json").read_text(encoding="utf-8"))
-    schema_revision = baseline["revision_contract"]["control_plane_schema_revision"]
-    if evidence.get("control_plane_schema_revision") != schema_revision:
-        violations.append("image evidence schema revision does not match production baseline")
+    try:
+        schema_revision = candidate_schema_revision(repo)
+    except ValueError:
+        violations.append("packaged control-plane schema binding is invalid")
+    else:
+        if evidence.get("control_plane_schema_revision") != schema_revision:
+            violations.append("image evidence schema revision does not match packaged source")
 
     violations.extend(_validate_workflow(policy, evidence.get("workflow")))
 
@@ -2320,6 +2389,8 @@ def _validate_evidence(
             product_revision=product_revision,
             operations_completed_at=operations_completed_at,
             evidence_completed_at=completed_at,
+            repo=repo,
+            now=now,
         )
     )
     if not _hex_sha256(evidence.get("evidence_sha256")) or evidence.get(
@@ -2329,6 +2400,7 @@ def _validate_evidence(
     return violations
 
 
+@review_verification_scope
 def validate_release(
     repo: Path,
     policy: dict[str, Any],
@@ -2382,15 +2454,52 @@ def validate_release(
     }
 
 
+def candidate_schema_revision(repo: Path) -> str:
+    """Read the packaged schema constant without executing candidate source."""
+
+    violations: list[str] = []
+    source = _read_repository_contract(
+        repo, _SCHEMA_REVISION_SOURCE, label="packaged schema", violations=violations
+    )
+    try:
+        body = ast.parse(source or "").body
+    except SyntaxError as error:
+        raise ValueError("packaged control-plane schema binding is invalid") from error
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        if isinstance(body[0].value.value, str):
+            body = body[1:]
+    if (
+        violations
+        or len(body) != 1
+        or not isinstance(body[0], ast.Assign)
+        or len(body[0].targets) != 1
+        or not isinstance(body[0].targets[0], ast.Name)
+        or body[0].targets[0].id != "CONTROL_PLANE_SCHEMA_REVISION"
+        or not isinstance(body[0].value, ast.Constant)
+        or not isinstance(body[0].value.value, str)
+        or re.fullmatch(r"[a-z0-9]{1,32}", body[0].value.value) is None
+    ):
+        raise ValueError("packaged control-plane schema binding is invalid")
+    return body[0].value.value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", default="saas/supply_chain/release-policy.json")
     parser.add_argument("--evidence")
     parser.add_argument("--product-revision")
     parser.add_argument("--output")
-    parser.add_argument("--require-ready", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--require-ready", action="store_true")
+    mode.add_argument("--print-schema-revision", action="store_true")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
+    if args.print_schema_revision:
+        try:
+            print(candidate_schema_revision(repo))
+        except ValueError as error:
+            parser.error(str(error))
+        return 0
     policy = json.loads((repo / args.policy).read_text(encoding="utf-8"))
     evidence_path = args.evidence or policy.get("production_evidence")
     try:

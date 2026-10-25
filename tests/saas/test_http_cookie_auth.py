@@ -342,6 +342,7 @@ def _build_fastapi_app(
     app.state.saas_test_sessions = sessions
     app.state.saas_test_support_access = platform_support_access
     app.state.saas_test_auth = auth
+    app.state.saas_test_integration = integration
     router, prefix, tags = integration.extra_router
     app.include_router(router, prefix=prefix, tags=tags)
 
@@ -632,6 +633,8 @@ def test_cookie_auth_binds_runtime_alias_and_enforces_origin_csrf() -> None:
         "user_id": scope["user_id"],
     }
     assert client.get("/saas/auth/me").json()["user_id"] == scope["user_id"]
+    assert client.get("/saas/auth/me").json()["password_version"] == 1
+    assert client.get("/saas/auth/me").headers["Cache-Control"] == "private, no-store"
     available_scopes = client.get("/saas/context/scopes")
     assert available_scopes.status_code == 200
     assert available_scopes.json() == [
@@ -941,6 +944,32 @@ def test_governance_http_routes_bind_fresh_session_and_impact_preflight() -> Non
     assert "Max-Age=0" in transferred.headers["set-cookie"]
 
     csrf = _login(client)
+    password_state = client.get("/saas/auth/me", params={"user_id": scope["member_id"]})
+    assert password_state.json()["user_id"] == scope["user_id"]
+    assert password_state.json()["password_version"] == 1
+    assert "password_hash" not in password_state.text
+    previous_session = TestClient(client.app)
+    _login(previous_session)
+    for key, current_password, expected_version, error in (
+        ("wrong-password", "wrong-current-password", 1, "invalid_credentials"),
+        ("stale-version", "initial-http-password", 999, "credential_version_conflict"),
+    ):
+        denied = client.put(
+            "/saas/password",
+            json={
+                "new_password": "rotated-http-password",
+                "current_password": current_password,
+                "expected_version": expected_version,
+            },
+            headers={
+                "Origin": "http://testserver",
+                "X-CSRF-Token": csrf,
+                "Idempotency-Key": key,
+            },
+        )
+        assert denied.status_code == 409
+        assert denied.json()["detail"]["code"] == error
+        assert client.get("/saas/auth/me").json()["password_version"] == 1
     rotated = client.put(
         "/saas/password",
         json={
@@ -956,8 +985,10 @@ def test_governance_http_routes_bind_fresh_session_and_impact_preflight() -> Non
     )
     assert rotated.status_code == 200
     assert rotated.json()["reauthentication_required"] is True
+    assert rotated.json()["password_version"] == 2
     assert "Max-Age=0" in rotated.headers["set-cookie"]
     assert client.get("/saas/auth/me").status_code == 401
+    assert previous_session.get("/saas/auth/me").status_code == 401
 
 
 def test_project_admin_http_permission_and_binding_matrix() -> None:

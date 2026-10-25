@@ -12,8 +12,17 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
+from omnigent.host.frames import CAP_MCP_REGISTRY
 from omnigent.runner.identity import token_bound_runner_id
-from saas.preview_relay_transport import PreviewRelayEndpointPolicy
+from omnigent.runner.transports.ws_tunnel.frames import (
+    HelloFrame,
+    PingFrame,
+    PongFrame,
+    decode_frame,
+    encode_frame,
+)
+from saas.preview_relay_transport import PreviewRelayEndpoint, PreviewRelayEndpointPolicy
+from saas.production import preview_runner_tunnel as tunnel_module
 from saas.production.preview_runner_tunnel import (
     ProductionPreviewRunnerTunnel,
     ProductionPreviewRunnerTunnelConfig,
@@ -95,6 +104,62 @@ class _RegistrationClient:
     async def mint_preview_tunnel(self) -> RunnerPreviewTunnelRegistration:
         self.calls += 1
         return self.registration
+
+
+def test_runner_rejects_private_function_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    monkeypatch.setattr(tunnel_module, "_send_hello", tunnel_module._cancel_dispatch_tasks)
+    with pytest.raises(ProductionPreviewRunnerTunnelError, match="contract changed"):
+        ProductionPreviewRunnerTunnel(config, _RegistrationClient(_registration(config)))
+
+
+@pytest.mark.asyncio
+async def test_preview_only_handshake_excludes_managed_mcp_and_handles_ping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    registration = _registration(config)
+    tunnel = ProductionPreviewRunnerTunnel(config, _RegistrationClient(registration))
+    stop = asyncio.Event()
+    sent = []
+    connection = {}
+
+    class Socket:
+        async def send(self, data: str) -> None:
+            frame = decode_frame(data)
+            sent.append(frame)
+            if isinstance(frame, PongFrame):
+                stop.set()
+
+        async def recv(self) -> str:
+            return encode_frame(PingFrame(ts=123))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    def connect(uri, **kwargs):
+        connection.update(uri=uri, **kwargs)
+        return Socket()
+
+    monkeypatch.setattr(tunnel_module.websockets, "connect", connect)
+    try:
+        await tunnel._serve_once(
+            registration, PreviewRelayEndpoint("10.42.1.17", 9442, registration.server_name), stop
+        )
+        assert isinstance(sent[0], HelloFrame)
+        assert CAP_MCP_REGISTRY not in sent[0].capabilities
+        assert sent[0].runner_version == config.product_revision
+        assert any(isinstance(frame, PongFrame) and frame.ts == 123 for frame in sent)
+        assert connection["uri"].startswith("wss://10.42.1.17:9442/")
+        assert connection["server_hostname"] == registration.server_name
+        tunnel.assert_production_ready()
+    finally:
+        await tunnel.aclose()
 
 
 def test_runner_tunnel_pins_server_selected_dns_to_cluster_cidr(

@@ -17,6 +17,11 @@ minimumReleaseAgeExclude:
   # Security-only exception: supersedes the vulnerable <=4.2.0 line. The
   # exact artifact remains integrity-locked and policy-verified.
   - 'http-cache-semantics@4.3.0'
+  # Exact security fixes for compressed-body DoS and revoked TLS intermediates.
+  - 'body-parser@2.4.0'
+  - 'electron@42.11.16'
+  # Exact security fixes for URI host, scheme and relative-path normalization.
+  - 'fast-uri@3.1.9'
   # Security-only exception: fixes GHSA-68fv-2mgg-jv7q. The exact artifact is
   # integrity-locked in pnpm-lock.yaml and remains subject to lockfile policy.
   - 'source-map-js@1.2.2'
@@ -63,19 +68,19 @@ overrides:
   # to resolve newer Vite/Tailwind patches whose new bundler/chunking produced a
   # broken split of the Shiki bundle and lost the PDF worker asset.
   vite: 8.1.6
-  '@vitest/coverage-v8': 4.1.12
-  vitest: 4.1.12
-  '@storybook/react-vite': 10.6.2
   storybook: 10.6.2
+  '@storybook/react-vite': 10.6.2
+  vitest: 4.1.12
+  '@vitest/coverage-v8': 4.1.12
   tailwindcss: 4.3.1
   '@tailwindcss/vite': 4.3.1
   '@tailwindcss/node': 4.3.1
   '@tailwindcss/postcss': 4.3.1
   jiti: 2.7.0
   lightningcss: 1.32.0
-  postcss: 8.5.23
+  postcss: 8.5.29
   browserslist: 4.28.8
-  fast-uri: 3.1.8
+  fast-uri: 3.1.9
   '@xmldom/xmldom': 0.8.15
   qs: 6.16.0
   query-string: 9.5.0
@@ -86,15 +91,23 @@ overrides:
   react: "catalog:"
   react-dom: "catalog:"
   dompurify: 3.4.17
+  'katex@>=0.16.0 <0.18.2': 0.18.10
+  # KaTeX 0.18.11 was accidentally published with breaking changes.
+  'katex@0.18.11': 0.18.10
   mermaid: 11.16.1
   tar: 7.5.21
-  'node-gyp>undici': 6.28.1
-  'undici@>=7.0.0 <8.0.0': 7.29.1
-  'undici@>=8.0.0 <9.0.0': 8.10.2
+  'node-gyp>undici': 6.29.1
+  '@ai-sdk/provider-utils>undici': 6.29.1
+  'undici@>=7.0.0 <8.0.0': 7.30.1
+  'undici@>=8.0.0 <9.0.0': 8.12.2
+  'zod@>=4.0.0 <5.0.0': 4.6.7
+  'body-parser@>=2.0.0 <3.0.0': 2.4.0
+  '@azure/identity@4.13.3>@azure/msal-node': 7.1.0
   proxy-addr: 2.0.8
-  'brace-expansion@>=1.0.0 <2.0.0': 1.1.20
-  'brace-expansion@>=2.0.0 <3.0.0': 2.1.6
+  'brace-expansion@>=1.0.0 <2.0.0': 1.1.21
+  'brace-expansion@>=2.0.0 <3.0.0': 2.1.7
   'brace-expansion@>=5.0.0 <6.0.0': 5.0.12
+  'postcss-selector-parser@>=6.0.0 <7.0.0': 7.1.6
   source-map-js: 1.2.2
   prosemirror-view: 1.42.3
   http-cache-semantics: 4.3.0
@@ -105,37 +118,37 @@ overrides:
   '@shikijs/themes': 4.2.0
   '@shikijs/types': 4.2.0
   '@shikijs/transformers': 4.2.0
-  '@tiptap/core': 3.30.5
-  '@tiptap/extension-blockquote': 3.30.5
-  '@tiptap/extension-bold': 3.30.5
-  '@tiptap/extension-bubble-menu': 3.30.5
-  '@tiptap/extension-bullet-list': 3.30.5
-  '@tiptap/extension-code': 3.30.5
-  '@tiptap/extension-code-block': 3.30.5
-  '@tiptap/extension-document': 3.30.5
-  '@tiptap/extension-dropcursor': 3.30.5
-  '@tiptap/extension-floating-menu': 3.30.5
-  '@tiptap/extension-gapcursor': 3.30.5
-  '@tiptap/extension-hard-break': 3.30.5
-  '@tiptap/extension-heading': 3.30.5
-  '@tiptap/extension-horizontal-rule': 3.30.5
-  '@tiptap/extension-image': 3.30.5
-  '@tiptap/extension-italic': 3.30.5
-  '@tiptap/extension-link': 3.30.5
-  '@tiptap/extension-list': 3.30.5
-  '@tiptap/extension-list-item': 3.30.5
-  '@tiptap/extension-list-keymap': 3.30.5
-  '@tiptap/extension-ordered-list': 3.30.5
-  '@tiptap/extension-paragraph': 3.30.5
-  '@tiptap/extension-strike': 3.30.5
-  '@tiptap/extension-table': 3.30.5
-  '@tiptap/extension-text': 3.30.5
-  '@tiptap/extension-underline': 3.30.5
-  '@tiptap/extensions': 3.30.5
-  '@tiptap/markdown': 3.30.5
-  '@tiptap/pm': 3.30.5
-  '@tiptap/react': 3.30.5
-  '@tiptap/starter-kit': 3.30.5
+  '@tiptap/core': 3.31.4
+  '@tiptap/extension-blockquote': 3.31.4
+  '@tiptap/extension-bold': 3.31.4
+  '@tiptap/extension-bubble-menu': 3.31.4
+  '@tiptap/extension-bullet-list': 3.31.4
+  '@tiptap/extension-code': 3.31.4
+  '@tiptap/extension-code-block': 3.31.4
+  '@tiptap/extension-document': 3.31.4
+  '@tiptap/extension-dropcursor': 3.31.4
+  '@tiptap/extension-floating-menu': 3.31.4
+  '@tiptap/extension-gapcursor': 3.31.4
+  '@tiptap/extension-hard-break': 3.31.4
+  '@tiptap/extension-heading': 3.31.4
+  '@tiptap/extension-horizontal-rule': 3.31.4
+  '@tiptap/extension-image': 3.31.4
+  '@tiptap/extension-italic': 3.31.4
+  '@tiptap/extension-link': 3.31.4
+  '@tiptap/extension-list': 3.31.4
+  '@tiptap/extension-list-item': 3.31.4
+  '@tiptap/extension-list-keymap': 3.31.4
+  '@tiptap/extension-ordered-list': 3.31.4
+  '@tiptap/extension-paragraph': 3.31.4
+  '@tiptap/extension-strike': 3.31.4
+  '@tiptap/extension-table': 3.31.4
+  '@tiptap/extension-text': 3.31.4
+  '@tiptap/extension-underline': 3.31.4
+  '@tiptap/extensions': 3.31.4
+  '@tiptap/markdown': 3.31.4
+  '@tiptap/pm': 3.31.4
+  '@tiptap/react': 3.31.4
+  '@tiptap/starter-kit': 3.31.4
   express-rate-limit>ip-address: 10.7.4
   sharp: 0.35.5
   '@modelcontextprotocol/sdk': 1.32.0
@@ -175,3 +188,5 @@ allowBuilds:
   workerd: true
 
 auditConfig: {}
+patchedDependencies:
+  '@tiptap/react@3.31.4': patches/@tiptap__react@3.31.4.patch

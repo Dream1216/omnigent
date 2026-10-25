@@ -22,6 +22,12 @@ def test_candidate_job_covers_two_uncached_multiarch_rebuilds() -> None:
     assert workflow["jobs"]["build-candidate"]["timeout-minutes"] == 240
 
 
+def test_compatibility_job_bounds_the_full_postgresql_suite() -> None:
+    workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-upstream-compat.yml").read_text())
+
+    assert workflow["jobs"]["compatibility-gate"]["timeout-minutes"] == 90
+
+
 def test_superseded_pr_candidates_cancel_without_interrupting_releases() -> None:
     """Only mutable PR heads should replace an in-flight candidate."""
     workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-image-candidate.yml").read_text())

@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
+    EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
@@ -14,9 +16,12 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindings,
     ProductionServiceRoleBindingsError,
     compose_production_service_role_graph,
+    load_business_delivery_service_role_bindings,
+    load_model_projection_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
+    load_production_service_role_graph,
     render_production_service_role_bindings,
 )
 
@@ -124,6 +129,33 @@ def test_loads_isolated_platform_admin_binding_profile(tmp_path: Path) -> None:
     assert set(loaded.by_service) == set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
 
 
+def test_projection_profile_is_owner_only_and_cannot_replace_browser_authority(
+    tmp_path: Path,
+) -> None:
+    binding = ProductionServiceRoleBinding(
+        service="model_projection",
+        login="prod_model_projection",
+        base_role="saas_model_projection",
+    )
+    path = tmp_path / "projection-bindings.json"
+    path.write_text(render_production_service_role_bindings((binding,)), encoding="ascii")
+    path.chmod(0o400)
+    source = {"OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE": str(path)}
+    loaded = load_model_projection_service_role_bindings(source)
+    assert loaded.by_service["model_projection"] == binding
+    assert dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES) == {
+        "model_projection": "saas_model_projection"
+    }
+    path.chmod(0o600)
+    with pytest.raises(ProductionServiceRoleBindingsError, match="owner-readable"):
+        load_model_projection_service_role_bindings(source)
+    path.chmod(0o400)
+    with pytest.raises(ProductionServiceRoleBindingsError, match="exact production"):
+        load_platform_admin_service_role_bindings(
+            {"OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE": str(path)}
+        )
+
+
 def test_composes_exact_platform_model_extension_without_weakening_core() -> None:
     production = ProductionServiceRoleBindings(
         path=Path("/production.json"),
@@ -181,6 +213,24 @@ def test_composes_exact_platform_model_extension_without_weakening_core() -> Non
     assert extended.login_for("platform_authenticator") == "next_beta_platform_authenticator"
     assert extended.login_for("platform_app") == "next_beta_platform_app"
     assert extended.login_for("platform_governance") == "prod_platform_governance"
+    projection = ProductionServiceRoleBindings(
+        path=Path("/projection.json"),
+        sha256="d" * 64,
+        bindings=(
+            ProductionServiceRoleBinding(
+                "model_projection", "prod_model_projection", "saas_model_projection"
+            ),
+        ),
+    )
+    with pytest.raises(ProductionServiceRoleBindingsError, match="requires both"):
+        compose_production_service_role_graph(production, model_projection=projection)
+    complete = compose_production_service_role_graph(
+        production, platform, platform_admin, projection
+    )
+    assert len(complete.bindings) == 19
+    assert complete.login_for("model_projection") == "prod_model_projection"
+    assert complete.by_service["platform_app"] == extended.by_service["platform_app"]
+    assert complete.sha256 != extended.sha256
 
 
 def test_composition_rejects_changed_overlap_and_reused_login() -> None:
@@ -250,3 +300,38 @@ def test_rejects_profile_drift(tmp_path: Path, mutation: str) -> None:
 
     with pytest.raises(ProductionServiceRoleBindingsError):
         load_production_service_role_bindings(_write(tmp_path / f"{mutation}.json", rendered))
+
+
+def test_native_business_receivers_are_separate_exact_service_logins(tmp_path):
+    source = _write(tmp_path / "core.json", render_production_service_role_bindings(_bindings()))
+    bindings = tuple(
+        ProductionServiceRoleBinding(service=service, login="recv_" + service, base_role=role)
+        for service, role in EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items()
+    )
+    path = tmp_path / "delivery.json"
+    path.write_text(render_production_service_role_bindings(bindings))
+    path.chmod(0o400)
+    source["OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE"] = str(path)
+    profile = load_business_delivery_service_role_bindings(source)
+    graph = load_production_service_role_graph(source)
+    assert len(graph.bindings) == 18
+    assert graph.login_for("audit_delivery") == "recv_audit_delivery"
+    assert profile.by_service["usage_consumer"].base_role == "saas_usage_consumer"
+    assert len({b.login for b in graph.bindings}) == len(graph.bindings)
+    changed = list(bindings)
+    changed[0] = ProductionServiceRoleBinding(
+        service=changed[0].service, login="prod_dispatcher", base_role=changed[0].base_role
+    )
+    path.chmod(0o600)
+    path.write_text(render_production_service_role_bindings(tuple(changed)))
+    path.chmod(0o400)
+    with pytest.raises(ProductionServiceRoleBindingsError, match="reuse a login"):
+        load_production_service_role_graph(source)
+    changed[0] = ProductionServiceRoleBinding(
+        service=changed[0].service, login="recv_" + changed[0].service, base_role="saas_billing"
+    )
+    path.chmod(0o600)
+    path.write_text(render_production_service_role_bindings(tuple(changed)))
+    path.chmod(0o400)
+    with pytest.raises(ProductionServiceRoleBindingsError):
+        load_business_delivery_service_role_bindings(source)

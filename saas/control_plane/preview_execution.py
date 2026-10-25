@@ -41,6 +41,7 @@ from saas.control_plane.preview_models import (
     PreviewSessionRecord,
 )
 from saas.control_plane.rls import RlsContext, apply_rls_context
+from saas.control_plane.run_customer_pricing import freeze_sqlite_customer_pricing
 from saas.control_plane.runner_execution_spec import (
     STATIC_WEB_PREVIEW_PROFILE,
     ManagedRunExecutionSpecError,
@@ -50,6 +51,7 @@ from saas.control_plane.runner_execution_spec import (
 )
 from saas.control_plane.scheduling_models import RunnerRegistrationRecord
 from saas.control_plane.worktree_models import ChangeSetRecord, WorktreeInstanceRecord
+from saas.observability import ensure_observed_factory, require_run_witness
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _DNS_SUFFIX = re.compile(
@@ -164,6 +166,7 @@ class PreviewExecutionControlPlane:
         authorizer: ProjectAuthorizer | None = None,
     ) -> None:
         self._session_factory = session_factory
+        ensure_observed_factory(session_factory)
         self._policy = policy
         self._authorizer = authorizer or ProjectAuthorizer(session_factory)
 
@@ -222,6 +225,10 @@ class PreviewExecutionControlPlane:
                     or existing.profile != STATIC_WEB_PREVIEW_PROFILE
                 ):
                     raise PreviewExecutionControlPlaneError("preview_idempotency_conflict")
+                child = db.get(RunRecord, existing.child_run_id)
+                if child is None:
+                    raise PreviewExecutionControlPlaneError("preview_child_unavailable")
+                require_run_witness(db, child)
                 return self._state(existing, replayed=True)
             active = db.scalar(
                 sa.select(PreviewExecutionRecord)
@@ -322,6 +329,7 @@ class PreviewExecutionControlPlane:
                 adapter_contract_version=parent.adapter_contract_version,
                 fence_token=0,
             )
+            freeze_sqlite_customer_pricing(db, child)
             db.add(child)
             db.flush()
             reservation_id = uuid4()

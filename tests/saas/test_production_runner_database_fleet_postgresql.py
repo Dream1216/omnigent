@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -26,8 +27,10 @@ from saas.control_plane import (
     RuntimePlacementRecord,
 )
 from saas.control_plane.isolation import IsolationControlPlane
+from saas.control_plane.resolver import load_runtime_compatibility_policy
 from saas.control_plane.worktrees import WorktreeControlPlane
-from saas.production.runner_control import RunnerControlError
+from saas.production.interactive_runtime import ProductionInteractiveRuntimeFactory
+from saas.production.runner_control import MutualTlsRunnerControlClient, RunnerControlError
 from saas.production.runner_database_fleet import (
     RUNNER_DATABASE_FLEET_ATTESTATION_FILE_ENV,
     RUNNER_DATABASE_FLEET_ATTESTATION_PUBLIC_KEY_FILE_ENV,
@@ -74,6 +77,9 @@ from saas.production.runner_executor import (
     runner_agent_database_authority_contract_sha256,
 )
 from saas.runner_adapter import RunnerIsolationAdapter, RunnerWorktreeAdapter
+from tests.saas.test_production_runner_executor import (
+    _close_heartbeat_workers as _close_heartbeat_workers,
+)
 from tests.saas.test_production_runner_postgresql import (
     _converge_external_runner_database_boundary,
     _public_database_privileges,
@@ -84,8 +90,17 @@ from tests.saas.test_scheduling_postgresql import _migrate
 
 
 def _write_0400(path: Path, value: str) -> None:
-    path.write_text(value, encoding="ascii")
-    path.chmod(0o400)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.temporary")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o400)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _capabilities_sha256(capabilities: tuple[str, ...]) -> str:
@@ -127,10 +142,165 @@ def _run_cluster_wrapper(owner_engine: sa.Engine, root: Path) -> None:
     )
 
 
+def _assert_interactive_factory_lifecycle(
+    *, owner_engine, runner_engine, member, source, product_revision, image_digest, root
+) -> None:
+    """Real catalog composition, not control RPC, model issuance or physical execution."""
+    engines = {}
+    logins = []
+    quoted_database = owner_engine.dialect.identifier_preparer.quote(owner_engine.url.database)
+    try:
+        for purpose, role in (("app", "saas_app"), ("authenticator", "saas_authenticator")):
+            login = f"saas_test_interactive_{purpose}_{uuid4().hex[:12]}"
+            quoted_login = owner_engine.dialect.identifier_preparer.quote(login)
+            password = f"isolated-factory-{uuid4().hex}"
+            with owner_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f"CREATE ROLE {quoted_login} LOGIN INHERIT NOSUPERUSER NOCREATEDB "
+                    "NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8 "
+                    f"PASSWORD '{password}'"
+                )
+                connection.exec_driver_sql(
+                    f"GRANT {role} TO {quoted_login} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
+                )
+                connection.exec_driver_sql(
+                    f"GRANT CONNECT ON DATABASE {quoted_database} TO {quoted_login}"
+                )
+            logins.append((quoted_login, role))
+            engine = sa.create_engine(owner_engine.url.set(username=login, password=password))
+            engines[purpose] = engine
+            with engine.connect() as connection:
+                assert connection.exec_driver_sql(
+                    "SELECT current_user=session_user,rolsuper,rolbypassrls "
+                    "FROM pg_roles WHERE rolname=current_user"
+                ).one() == (True, False, False)
+                assert connection.exec_driver_sql(
+                    "SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
+                ).scalar_one()
+                assert not connection.exec_driver_sql(
+                    "SELECT has_table_privilege("
+                    "current_user,'saas_customer_ledger_entries','INSERT')"
+                ).scalar_one()
+        identity = SimpleNamespace(
+            runner_id=member.runner_id,
+            connection_generation=member.connection_generation,
+            product_revision=product_revision,
+            image_digest=image_digest,
+        )
+        tls = ssl.create_default_context()
+        tls.minimum_version = ssl.TLSVersion.TLSv1_3
+        tls.maximum_version = ssl.TLSVersion.TLSv1_3
+        control = MutualTlsRunnerControlClient(
+            connect_host="runner-control.test",
+            port=8443,
+            server_name="runner-control.test",
+            tls_context=tls,
+            connection_generation=member.connection_generation,
+            connection_token="isolated-factory-connection-token",
+        )
+        runtime = ProductionInteractiveRuntimeFactory(
+            product_revision=product_revision,
+            image_digest=image_digest,
+            app_sessions=sessionmaker(engines["app"], expire_on_commit=False),
+            authenticator_sessions=sessionmaker(engines["authenticator"], expire_on_commit=False),
+            compatibility=load_runtime_compatibility_policy(root / "saas/upstream-baseline.json"),
+            conversation_store=None,
+            permission_store=None,
+        )
+
+        def create_authority():
+            return runtime.create_authority(
+                identity=identity,
+                control=control,
+                runner_sessions=sessionmaker(runner_engine, expire_on_commit=False),
+                fleet_source=source,
+            )
+
+        create_authority()
+        for status, count in (("online", 1), ("draining", 1), ("draining", 0)):
+            with owner_engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        "UPDATE saas_runner_registrations SET status=:status,active_leases=:count "
+                        "WHERE id=:runner"
+                    ),
+                    {"runner": member.runner_id, "status": status, "count": count},
+                )
+            with pytest.raises(RunnerControlError):
+                _verify_runner_agent_database_authority(
+                    runner_engine,
+                    runner_id=member.runner_id,
+                    connection_generation=member.connection_generation,
+                )
+            authority = create_authority()
+            with pytest.raises(RunnerControlError, match="Runtime authority changed"):
+                authority._read_run(SimpleNamespace(execution_envelope=None))
+        for status, count, capacity in (("online", 2, 2), ("offline", 0, 1)):
+            with owner_engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        "UPDATE saas_runner_registrations SET status=:status,active_leases=:count,"
+                        "max_concurrency=:capacity WHERE id=:runner"
+                    ),
+                    {
+                        "runner": member.runner_id,
+                        "status": status,
+                        "count": count,
+                        "capacity": capacity,
+                    },
+                )
+            with pytest.raises(RunnerControlError) as rejected:
+                create_authority()
+            assert rejected.value.code == "interactive_runtime_database_unavailable"
+        with owner_engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_runner_registrations SET status='online',active_leases=1,"
+                    "max_concurrency=1 WHERE id=:runner"
+                ),
+                {"runner": member.runner_id},
+            )
+            connection.exec_driver_sql(
+                "GRANT EXECUTE ON FUNCTION public.saas_interactive_recovery_owner_v1("
+                "uuid,bigint,uuid,bigint,jsonb) TO PUBLIC"
+            )
+        try:
+            with pytest.raises(RunnerControlError) as rejected:
+                create_authority()
+            assert rejected.value.code == "interactive_runtime_database_unavailable"
+        finally:
+            with owner_engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "REVOKE EXECUTE ON FUNCTION public.saas_interactive_recovery_owner_v1("
+                    "uuid,bigint,uuid,bigint,jsonb) FROM PUBLIC"
+                )
+        create_authority()
+    finally:
+        with owner_engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_runner_registrations SET status='online',active_leases=0,"
+                    "max_concurrency=1 "
+                    "WHERE id=:runner"
+                ),
+                {"runner": member.runner_id},
+            )
+        for engine in engines.values():
+            engine.dispose()
+        with owner_engine.begin() as connection:
+            for quoted_login, role in logins:
+                connection.exec_driver_sql(f"REVOKE {role} FROM {quoted_login}")
+                connection.exec_driver_sql(
+                    f"REVOKE CONNECT ON DATABASE {quoted_database} FROM {quoted_login}"
+                )
+                connection.exec_driver_sql(f"DROP ROLE {quoted_login}")
+
+
 def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
     isolated_postgres_url: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    runtime_probe=None,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     owner_engine = sa.create_engine(isolated_postgres_url, pool_pre_ping=True)
@@ -150,7 +320,24 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
     assert len(product_revision) == 40
     image_digest = "sha256:" + "b" * 64
     schema_revision = "official-head-v1"
+    protocol_version = 1
     capabilities = ("shell",)
+    if runtime_probe is not None:
+        from saas.control_plane.run_dispatch_projection import _REQUIRED_CAPABILITIES
+
+        manifest = json.loads((root / "saas/upstream-baseline.json").read_text())
+        schema_revision = manifest["official_schema_heads"][0]
+        protocol_version = 2
+        capabilities = tuple(
+            sorted(
+                {
+                    *_REQUIRED_CAPABILITIES,
+                    "runtime.interactive.v1",
+                    "sandbox.linux_bwrap",
+                    "syscall.default-v1",
+                }
+            )
+        )
     capabilities_sha256 = _capabilities_sha256(capabilities)
     suffix = uuid4().hex[:12]
     schema_owner = f"saas_test_fleet_owner_{suffix}"
@@ -212,11 +399,13 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     placement_id=placement_id,
                     failure_domain="cn-east-1a",
                     name="runner-fleet",
-                    queue_class="interactive",
+                    queue_class="managed_interactive"
+                    if runtime_probe is not None
+                    else "interactive",
                     capacity_slots=2,
                     reserved_slots=0,
                     status="active",
-                    protocol_version=1,
+                    protocol_version=protocol_version,
                     source_revision=product_revision,
                     schema_revision=schema_revision,
                     adapter_contract_version="0.2.0",
@@ -231,7 +420,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     placement_id=placement_id,
                     instance_key=f"runner-{slot}",
                     failure_domain="cn-east-1a",
-                    protocol_version=1,
+                    protocol_version=protocol_version,
                     source_revision=product_revision,
                     schema_revision=schema_revision,
                     adapter_contract_version="0.2.0",
@@ -297,7 +486,7 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                 placement_id=placement_id,
                 instance_key=f"runner-{slot}",
                 failure_domain="cn-east-1a",
-                protocol_version=1,
+                protocol_version=protocol_version,
                 source_revision=product_revision,
                 schema_revision=schema_revision,
                 adapter_contract_version="0.2.0",
@@ -644,6 +833,36 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     )
 
         first_member = fleet.runners[0]
+        _assert_interactive_factory_lifecycle(
+            owner_engine=owner_engine,
+            runner_engine=login_engines[0],
+            member=first_member,
+            source=source,
+            product_revision=product_revision,
+            image_digest=image_digest,
+            root=root,
+        )
+        if runtime_probe is not None:
+            runtime_probe(
+                SimpleNamespace(
+                    engine=owner_engine,
+                    factory=factory,
+                    runner_engine=login_engines[0],
+                    member=first_member,
+                    source=source,
+                    product_revision=product_revision,
+                    image_digest=image_digest,
+                    root=root,
+                    pool_id=pool_id,
+                    placement_id=placement_id,
+                    schema_revision=schema_revision,
+                    connection_token=next(
+                        row.connection_token
+                        for row in staged
+                        if row.runner_id == first_member.runner_id
+                    ),
+                )
+            )
 
         def verify_first_runtime() -> None:
             try:
@@ -670,24 +889,76 @@ def test_pg18_signed_exact_two_runner_fleet_lifecycle_and_sticky_poison(
                     "Runner database fleet admission is unavailable",
                 ) from None
 
-        executor = ProductionHostIsolationExecutor(
-            config=SimpleNamespace(
-                product_revision=product_revision,
-                image_digest=image_digest,
-                runner_id=first_member.runner_id,
-                connection_generation=first_member.connection_generation,
-            ),
-            engine=login_engines[0],
-            sessions=sessionmaker(login_engines[0], expire_on_commit=False, class_=Session),
-            worktrees=cast(WorktreeControlPlane, object()),
-            isolation=cast(IsolationControlPlane, object()),
-            worktree_adapter=cast(RunnerWorktreeAdapter, object()),
-            isolation_adapter=cast(RunnerIsolationAdapter, object()),
-            reserved_bytes=1,
-            worktree_lease_seconds=30,
-            command_timeout_seconds=30,
-            database_fleet_verifier=verify_first_runtime,
+        def build_executor() -> ProductionHostIsolationExecutor:
+            return ProductionHostIsolationExecutor(
+                config=SimpleNamespace(
+                    product_revision=product_revision,
+                    image_digest=image_digest,
+                    runner_id=first_member.runner_id,
+                    connection_generation=first_member.connection_generation,
+                ),
+                engine=login_engines[0],
+                sessions=sessionmaker(login_engines[0], expire_on_commit=False, class_=Session),
+                worktrees=cast(WorktreeControlPlane, object()),
+                isolation=cast(IsolationControlPlane, object()),
+                worktree_adapter=cast(RunnerWorktreeAdapter, object()),
+                isolation_adapter=cast(RunnerIsolationAdapter, object()),
+                reserved_bytes=1,
+                worktree_lease_seconds=30,
+                command_timeout_seconds=30,
+                database_fleet_verifier=verify_first_runtime,
+            )
+
+        recovery_signature = (
+            "public.saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)"
         )
+        with owner_engine.connect() as connection:
+            recovery_definition = str(
+                connection.scalar(
+                    sa.text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),
+                    {"signature": recovery_signature},
+                )
+            )
+        for mutation, restoration in (
+            (
+                "CREATE OR REPLACE FUNCTION public.saas_interactive_recovery_owner_v1("
+                "requested_run uuid, expected_fence bigint, expected_runner uuid, "
+                "expected_generation bigint, expected_binding jsonb) RETURNS boolean "
+                "LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog "
+                "AS 'SELECT true'",
+                recovery_definition,
+            ),
+            (
+                f"GRANT EXECUTE ON FUNCTION {recovery_signature} TO PUBLIC",
+                f"REVOKE EXECUTE ON FUNCTION {recovery_signature} FROM PUBLIC",
+            ),
+        ):
+            candidate = build_executor()
+            candidate.assert_claimable()
+            with owner_engine.begin() as connection:
+                connection.exec_driver_sql(mutation)
+            try:
+                for member, login_engine in zip(fleet.runners, login_engines, strict=True):
+                    with pytest.raises(RunnerControlError) as rejected:
+                        _verify_runner_agent_database_authority(
+                            login_engine,
+                            runner_id=member.runner_id,
+                            connection_generation=member.connection_generation,
+                            fleet_members=runtime_members,
+                        )
+                    assert rejected.value.code == "runner_executor_not_ready"
+                with pytest.raises(RunnerControlError) as drifted:
+                    candidate.assert_claimable()
+                assert drifted.value.code == "runner_database_authority_drifted"
+            finally:
+                with owner_engine.begin() as connection:
+                    connection.exec_driver_sql(restoration)
+            with pytest.raises(RunnerControlError) as poisoned:
+                candidate.assert_claimable()
+            assert poisoned.value.code == "runner_database_authority_poisoned"
+            verify_first_runtime()
+
+        executor = build_executor()
         executor.assert_claimable()
         with owner_engine.begin() as connection:
             connection.exec_driver_sql(

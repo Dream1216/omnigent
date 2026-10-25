@@ -60,11 +60,36 @@ uv run python -m saas.scripts.check_image_supply_chain \
 
 The `build-candidate` job in `saas-image-candidate.yml` repeats local OCI builds
 and compares executable manifest/config facts. Its protected `publish-signed`
-job can publish the wheel plus Server and Host images and attach GitHub OIDC
-attestations to those artifacts. It still does not run vulnerability or license
-admission scans, a one-hour Canary, an N-1 rollback exercise, or write the final
-canonical production evidence object. Successful publication therefore proves
-a signed candidate exists; it does not authorize production deployment.
+job publishes the wheel, Server/Host images and the separate MIT-core LiteLLM
+runtime, and attaches GitHub OIDC attestations. Both architectures receive raw
+Critical/High admission scans and SBOMs. The job does not complete legal license
+approval, a one-hour Canary, an N-1 rollback exercise, or the final canonical
+production evidence object. Successful publication proves that signed candidates
+exist; it does not authorize production deployment.
+
+### LiteLLM runtime artifact
+
+The locked runtime is a separate component, not a substitute for either Server
+or Host. Its two OCI builds use the exact product SHA and commit epoch, the
+pinned vendor base and verified APK materials. The `litellm` label profile binds
+the product/upstream/schema/adapter tuple, vendor digest, crypto version and
+OSS-only distribution. Publication starts from its sealed first OCI archive;
+no release step rebuilds it. Wrong artifacts, stale scan databases, missing
+architectures and ignored findings fail admission.
+
+The main-only `publish_signed=true` run transfers the original archive by exact
+artifact ID, ZIP digest and producing run. It rescans before promotion, checks
+registry readback, starts both architecture variants, generates SBOMs and signs
+the immutable digest. Signed bytes are read back and scanned again. The final
+registry verifier checks the exact source/workflow signature and sealed OCI
+contents. It does not replay provider requests or claim live protocol acceptance.
+
+Retain `litellm-oci-promotion-manifest.json` from candidate evidence and the
+`litellm/` directory in the signed-release facts. The signed candidate's
+`runtime_components.litellm` binds that separate seal and digest. Application
+image evidence continues to require all four Server/Host raw reports; the two
+LiteLLM reports cannot satisfy it. The complete workflow must pass before using
+any of these components in the isolated recovery or production rollout.
 
 ## Rollback
 

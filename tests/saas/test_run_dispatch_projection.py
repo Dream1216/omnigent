@@ -45,6 +45,7 @@ from saas.control_plane.scheduling import SchedulingControlPlane
 from saas.control_plane.scheduling_models import (
     CapabilityTokenRecord,
     RunDispatchRecord,
+    RunnerPoolRecord,
     RunnerRegistrationRecord,
     TenantQueueShareRecord,
 )
@@ -351,6 +352,32 @@ def _admit(fixture: RuntimeDispatchFixture, *, key: str) -> UUID:
         ),
     )
     return admission.run_id
+
+
+def test_product_fleet_pool_dispatch_keeps_upstream_and_product_revisions_distinct(
+    runtime_dispatch_fixture,
+):
+    fixture = runtime_dispatch_fixture
+    with fixture.factory.begin() as database:
+        database.get(RunnerPoolRecord, fixture.pool_id).source_revision = "product-revision"
+    run_id = _admit(fixture, key="product-fleet-revision")
+    result = _project(fixture, run_id)
+    assert result.pool_id == fixture.pool_id
+    with fixture.factory() as database:
+        run = database.get(RunRecord, run_id)
+        partition = database.get(RuntimePartitionRecord, fixture.partition_id)
+        assert run.product_revision == "product-revision"
+        assert run.upstream_revision == partition.source_revision == "upstream-revision"
+
+
+def test_upstream_only_pool_cannot_substitute_for_the_product_release(runtime_dispatch_fixture):
+    fixture = runtime_dispatch_fixture
+    with fixture.factory.begin() as database:
+        database.get(RunnerPoolRecord, fixture.pool_id).source_revision = "upstream-revision"
+    run_id = _admit(fixture, key="upstream-is-not-product")
+    with pytest.raises(OutboxPublishError) as rejected:
+        _project(fixture, run_id)
+    assert rejected.value.code == "run_dispatch_runner_pool_ambiguous"
 
 
 def _delivery(

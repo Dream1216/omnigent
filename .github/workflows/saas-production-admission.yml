@@ -11,10 +11,13 @@ on:
         description: Exact 40-character evidence-only revision SHA
         required: true
         type: string
+      review_exception_request_json:
+        description: Optional canonical sole-owner authorization request; never waives technical gates
+        type: string
       receipt_request_json:
         description: Optional canonical receipt request JSON; empty runs final admission
 
-permissions: {contents: read}
+permissions: {contents: read, actions: read}
 
 concurrency:
   group: saas-production-admission-${{ inputs.product_revision }}
@@ -28,15 +31,18 @@ jobs:
     env:
       EVIDENCE_REVISION: ${{ inputs.evidence_revision }}
       PRODUCT_REVISION: ${{ inputs.product_revision }}
+      REVIEW_EXCEPTION_REQUEST_JSON: ${{ inputs.review_exception_request_json }}
       RECEIPT_REQUEST_JSON: ${{ inputs.receipt_request_json }}
       TRUSTED_REF: ${{ github.ref }}
       TRUSTED_REF_REVISION: ${{ github.sha }}
       WORKFLOW_IDENTITY: ${{ github.workflow_ref }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Validate immutable revision inputs
         run: |
           set -euo pipefail
           [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]] && [[ "$EVIDENCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ -z "$REVIEW_EXCEPTION_REQUEST_JSON" || -z "$RECEIPT_REQUEST_JSON" ]]
           [[ "$TRUSTED_REF" == "refs/heads/main" ]] && [[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -48,7 +54,14 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --extra saas
-      - if: inputs.receipt_request_json == ''
+      - if: inputs.review_exception_request_json != ''
+        run: >-
+          uv run python -m saas.scripts.prepare_review_exception
+          --authorization-request-json "$REVIEW_EXCEPTION_REQUEST_JSON"
+          --product-revision "$PRODUCT_REVISION"
+          --evidence-revision "$EVIDENCE_REVISION"
+          --workflow-identity "$WORKFLOW_IDENTITY"
+      - if: inputs.receipt_request_json == '' && inputs.review_exception_request_json == ''
         run: >-
           uv run python -m saas.scripts.run_production_admission
           --product-revision "$PRODUCT_REVISION"
@@ -62,8 +75,16 @@ jobs:
           --product-revision "$PRODUCT_REVISION"
           --workflow-identity "$WORKFLOW_IDENTITY"
           --output-directory artifacts/evidence-receipt
+      - name: Upload immutable review authorization
+        if: inputs.review_exception_request_json != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-review-authorization-${{ inputs.evidence_revision }}
+          path: artifacts/review-exception/review-exception-authorization.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload immutable admission reports
-        if: always()
+        if: always() && inputs.review_exception_request_json == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-admission-${{ inputs.evidence_revision }}

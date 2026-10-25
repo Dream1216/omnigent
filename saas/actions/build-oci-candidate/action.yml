@@ -1,9 +1,9 @@
 name: Build reproducible OCI candidate
-description: Build one Server or Host OCI archive with pinned release materials.
+description: Build one application or LiteLLM OCI archive with pinned release materials.
 
 inputs:
   artifact:
-    description: Archive basename, either server or host.
+    description: Archive basename, server, host, or litellm.
     required: true
   target:
     description: Dockerfile target paired with the artifact.
@@ -24,7 +24,7 @@ runs:
       run: |
         set -euo pipefail
         case "${ARTIFACT}:${TARGET}" in
-          server:runtime|host:host) ;;
+          server:runtime|host:host|litellm:runtime) ;;
           *) echo "unsupported OCI artifact/target pair" >&2; exit 2 ;;
         esac
         case "${ATTEMPT}" in
@@ -36,12 +36,16 @@ runs:
           UPSTREAM_REVISION CONTROL_PLANE_SCHEMA_REVISION ADAPTER_CONTRACT_VERSION; do
           [[ -n "${!name:-}" ]] || { echo "missing build material: ${name}" >&2; exit 2; }
         done
+        if [[ "$ARTIFACT" == litellm ]]; then
+          expected=$(jq -er .image saas/production/litellm_release.json)
+          [[ "${LITELLM_BASE_IMAGE:-}" == "$expected" ]] || exit 2
+        fi
 
     - name: Build ${{ inputs.artifact }} candidate attempt ${{ inputs.attempt }}
       uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
       with:
         context: .
-        file: deploy/docker/Dockerfile
+        file: ${{ inputs.artifact == 'litellm' && 'saas/deployment/litellm/Dockerfile' || 'deploy/docker/Dockerfile' }}
         target: ${{ inputs.target }}
         push: false
         platforms: linux/amd64,linux/arm64
@@ -61,5 +65,7 @@ runs:
           UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
           CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
           ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+          VITE_OMNIGENT_HOST_ROUTING=true
+          LITELLM_BASE_IMAGE=${{ env.LITELLM_BASE_IMAGE }}
           OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && 'kubernetes' || '' }}
           EXTRA_HARNESS_CLIS=${{ inputs.artifact == 'host' && 'jcode@0.90.1 devin@3000.11.3' || '' }}

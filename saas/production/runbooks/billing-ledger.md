@@ -43,6 +43,54 @@ scheduler composition, or production commercial acceptance.
    commit in the same transaction; downstream consumers deduplicate by immutable Event
    ID and never rebuild financial truth from delivery order.
 
+## Dedicated receiver deployment boundary
+
+The receiver entry is `python -m saas.production.machine_metering`; use `--check`
+to verify startup admission and PKI without opening a listener. It reuses
+`BillingMeteringAuthority`, durable `RunnerCertificateAuthority` authorization and
+the existing TLS 1.3-only internal metering protocol. It never migrates, grants
+roles, replays inference or provides a human-facing financial ingestion route.
+
+Declare exactly one `metering` login inheriting only `saas_metering` in the
+canonical mode-0400 `OMNIGENT_SAAS_MACHINE_METERING_SERVICE_ROLE_BINDINGS_FILE`.
+This profile must be included in the complete migration receipt's role-graph
+hash. Provisioning and source-catalog qualification are separate privileged
+steps; a receiver configuration file is not authorization to perform them.
+Independent PG16/18 derivation covers the four existing core/model/admin/projection
+profiles, with no Delivery profile on original T and with Delivery on P18. The
+reference uses fixed main254 T SQL and the frozen A7 P18 source; each full catalog
+must equal the original catalog plus only the dedicated login's `saas_metering`
+membership (ADMIN false, INHERIT true, SET false) and base-role CONNECT. The source
+pins are separate from, and do not replace, the original Gold. Other schema/profile
+combinations remain unavailable. This SQL qualification does not qualify an old
+application binary to accept the new profile: exact compatible rollback-target,
+retained-data recovery and production release acceptance are still required before
+activation. Do not substitute an existing profile's baseline or waive those gates.
+
+Admin/projection profiles also have independently pinned reviewed-Preview catalogs
+for T and P18. Those pins retain the original reviewed Preview deployment state
+plus only the declared metering edge and CONNECT; they do not accept an unmetered
+profile's digest. After a reviewed Preview deployment changes the catalog, an old
+migration receipt must still be rejected until a privileged verify-only run emits
+the exact new receipt. Missing new-profile Preview pins remain a startup refusal.
+
+Mount only the dedicated `OMNIGENT_SAAS_METERING_DATABASE_URL_FILE`, requiring
+certificate-verified PostgreSQL TLS and the shared pinned PostgreSQL CA path.
+Ambient, owner, application and other service DSNs are refused. Mount the
+`OMNIGENT_SAAS_METERING_CLIENT_CA_FILE`, `TLS_CERT_FILE` and owner-only
+`TLS_KEY_FILE` (all with the same prefix), and declare an explicit
+`OMNIGENT_SAAS_METERING_TRUST_BUNDLE_VERSION`. Release/source SHA, immutable image
+digest, schema heads, core/optional role profiles and migration receipt use the
+existing production environment contracts.
+
+The listener defaults to loopback port9446; an internal-only Pod listener may
+explicitly set `OMNIGENT_SAAS_METERING_BIND_HOST` and `PORT`. Its expected internal
+HTTP Host is controlled by `OMNIGENT_SAAS_METERING_EXPECTED_HOST`. Keep the
+listener out of public ingress, enforce the approved NetworkPolicy and durable
+spool/PKI mounts, and validate the actual deployed service with real PostgreSQL,
+mTLS, usage/duplicate/uncertain recovery and signed rollback evidence before
+claiming the production billing loop.
+
 ## Monetary and metering invariants
 
 - Money is an integer in the currency's configured minor unit. Quantities and unit
@@ -51,9 +99,13 @@ scheduler composition, or production commercial acceptance.
   time. It is not itself a customer settlement or Provider cost.
 - Every machine-created Usage fact has exactly one immutable metering receipt binding
   it to Runner connection generation, certificate fingerprint, capability, Dispatch
-  generation, Run fence, idempotency key, and request hash. A replay must revalidate the
-  current certificate, capability, Runner, Dispatch, Run lease/fence, Subscription, and
-  Pricing authority before returning the existing receipt.
+  generation, Run fence, idempotency key, and request hash. New Usage requires the
+  current certificate, capability, Runner, Dispatch, Run lease/fence, Subscription,
+  and Pricing authority. Recovering an already committed receipt still requires a
+  current machine certificate and Runner incarnation, the original scoped capability,
+  exact request identity and unchanged facts. It returns the original price and receipt
+  without requiring an active Run, capability, or Subscription, and never creates Usage
+  or settles a budget again.
 - Pricing Snapshots and Usage facts are never updated or deleted. Corrections require a
   new snapshot or an explicit reversing/correcting ledger fact.
 - One Tenant billing account has one currency in this slice. A currency change requires
@@ -109,6 +161,13 @@ scheduler composition, or production commercial acceptance.
 
 ## Failure, reconciliation, and rollback
 
+- If a metering confirmation is lost, resend exactly the original request and key
+  through the mTLS transport. An authenticated same-incarnation Runner can recover its
+  committed receipt after Run termination or capability expiry/revocation. A changed
+  request, revoked/expired certificate, disconnected incarnation, or new fact is not
+  recovery. Usage that was never committed before authority expired remains an explicit
+  reconciliation item; do not create a new Run, use a human identity, or replay inference
+  to obtain a receipt.
 - On an unavailable Provider before acceptance, release the Reservation. After possible
   acceptance with a lost response, preserve it as reserved and recover by the stable
   Provider Request ID; a blind retry can double-charge.
