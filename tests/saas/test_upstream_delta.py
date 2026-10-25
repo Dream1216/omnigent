@@ -130,11 +130,26 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 5414
-    assert budget["max_direct_upstream_files"] == 172
+    assert budget["max_upstream_net_added_loc"] == 5427
+    assert budget["max_direct_upstream_files"] == 185
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    complete_security = revision["litellm_complete_security_followup"]
+    assert complete_security["revision"] == "litellm-reviewed-complete-security-budget-v37"
+    assert complete_security["approved_at"] == "2026-10-25"
+    assert complete_security["previous_max_direct_upstream_files"] == 172
+    assert complete_security["previous_max_upstream_net_added_loc"] == 5414
+    assert complete_security["approved_max_direct_upstream_files"] == 185
+    assert complete_security["approved_max_upstream_net_added_loc"] == 5427
+    assert complete_security["review_packet_sha256"] == (
+        "213efdc87c8c542c9e9779b5d10234641b860a3fcf5d33e4186a0b31ca1abb51"
+    )
+    assert complete_security["direct_human_approval_sha256"] == (
+        "f58f72774c26dc2294ec4dfe0ef05c0682011784c0b2c53e924d487134d78f11"
+    )
+    assert len(complete_security["review_patch_sha256"]) == 3
+    assert len(complete_security["scoped_paths"]) == 23
     security = revision["litellm_exact_security_followup"]
     assert security["revision"] == "litellm-reviewed-exact-security-budget-v36"
     assert security["approved_at"] == "2026-10-24"

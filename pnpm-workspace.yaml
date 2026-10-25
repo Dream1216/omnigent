@@ -20,6 +20,8 @@ minimumReleaseAgeExclude:
   # Exact security fixes for compressed-body DoS and revoked TLS intermediates.
   - 'body-parser@2.4.0'
   - 'electron@42.11.16'
+  # Exact security fixes for URI host, scheme and relative-path normalization.
+  - 'fast-uri@3.1.9'
   # Security-only exception: fixes GHSA-68fv-2mgg-jv7q. The exact artifact is
   # integrity-locked in pnpm-lock.yaml and remains subject to lockfile policy.
   - 'source-map-js@1.2.2'
@@ -78,7 +80,7 @@ overrides:
   lightningcss: 1.32.0
   postcss: 8.5.29
   browserslist: 4.28.8
-  fast-uri: 3.1.8
+  fast-uri: 3.1.9
   '@xmldom/xmldom': 0.8.15
   qs: 6.16.0
   query-string: 9.5.0

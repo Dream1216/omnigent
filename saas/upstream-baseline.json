@@ -114,11 +114,52 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 172,
-    "max_upstream_net_added_loc": 5414,
+    "max_direct_upstream_files": 185,
+    "max_upstream_net_added_loc": 5427,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "litellm_complete_security_followup": {
+      "revision": "litellm-reviewed-complete-security-budget-v37",
+      "approved_at": "2026-10-25",
+      "previous_max_direct_upstream_files": 172,
+      "previous_max_upstream_net_added_loc": 5414,
+      "approved_max_direct_upstream_files": 185,
+      "approved_max_upstream_net_added_loc": 5427,
+      "review_packet_sha256": "213efdc87c8c542c9e9779b5d10234641b860a3fcf5d33e4186a0b31ca1abb51",
+      "direct_human_approval_sha256": "f58f72774c26dc2294ec4dfe0ef05c0682011784c0b2c53e924d487134d78f11",
+      "review_patch_sha256": [
+        "3f00b74a2d621d2b626c729ba7908cab3d46057da1430e9bbfc034d7891ae095",
+        "37f2536f13b9b12542d1640604b060b079e26b02569a5820d5711a8f35e92322",
+        "da50390f66c132e3ba68b6e265c1565781fb4abe3c0f9805a2b04bc1554295f2"
+      ],
+      "scoped_paths": [
+        ".github/actions/compat-smoke-run/action.yml",
+        ".github/actions/e2e-run/action.yml",
+        ".github/actions/integration-run/action.yml",
+        ".github/actions/run-omnigent-agent/action.yml",
+        ".github/actions/setup-agy/action.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/doc-sync.yml",
+        ".github/workflows/e2e-ui.yml",
+        ".github/workflows/flake-stress-e2e.yml",
+        ".github/workflows/flake-stress-ui.yml",
+        ".github/workflows/issue-triage.yml",
+        ".github/workflows/polly-review.yml",
+        ".github/workflows/security-triage.yml",
+        ".github/workflows/setup-harness-cli-pin-test.yml",
+        "deploy/docker/Dockerfile",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "saas/scripts/check_image_supply_chain.py",
+        "saas/supply_chain/wolfi-runtime-lock.json",
+        "tests/saas/test_image_supply_chain.py",
+        "tests/server/test_performance_metrics.py",
+        "uv.lock",
+        "uv.toml"
+      ],
+      "reason": "Direct human approval of the reviewed R-only 185-file/5427-net-LOC scope and necessary existing budget assertions. Preserve the earlier 172/5414 approval history, nine patches, .85 isolation, forbidden paths, reverse dependencies and every gate. The six additional pnpm Docker lines add no upstream path. This record does not approve R final trusted policy hashes, three-image administrator scope, M budgets, production windows or reuse of evidence across source revisions."
+    },
     "litellm_exact_security_followup": {
       "revision": "litellm-reviewed-exact-security-budget-v36",
       "approved_at": "2026-10-24",

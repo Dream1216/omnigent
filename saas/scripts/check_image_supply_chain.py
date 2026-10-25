@@ -53,6 +53,7 @@ _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
     "http-cache-semantics@4.3.0",
     "body-parser@2.4.0",
     "electron@42.11.16",
+    "fast-uri@3.1.9",
     "source-map-js@1.2.2",
     "@modelcontextprotocol/sdk@1.32.0",
     "@moonshot-ai/kimi-code@0.43.1",
@@ -1348,6 +1349,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     ):
         violations.append("final images must use the approved locked Wolfi runtime contract")
     host_cli_reproducibility_contract = {
+        "cp -a /usr/local/lib/node_modules/npm/node_modules/undici",
+        'throw Error("pnpm undici overlay version differs")',
         "ARG SOURCE_DATE_EPOCH",
         ": > /etc/machine-id",
         "HOME=/tmp/npm-version-home",
