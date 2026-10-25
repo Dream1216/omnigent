@@ -421,15 +421,15 @@ class _HeartbeatBoundEnvironment(_CloseTrackingEnvironment):
 
 
 class _HeartbeatRaceEnvironment(_CloseTrackingEnvironment):
-    def __init__(self, committed: asyncio.Event, release_response: threading.Event) -> None:
+    def __init__(self, committed: asyncio.Event, shell_started: threading.Event) -> None:
         super().__init__()
         self._committed = committed
-        self._release_response = release_response
+        self._shell_started = shell_started
 
     async def shell(self, *_args, **_kwargs) -> dict[str, object]:
         self.shell_calls += 1
+        self._shell_started.set()
         await self._committed.wait()
-        self._release_response.set()
         return {"exit_code": 0}
 
 
@@ -1434,17 +1434,15 @@ async def test_unknown_worktree_heartbeat_fails_closed_without_checkpoint(
 
     heartbeat_committed = asyncio.Event()
     release_response = threading.Event()
-    environment = _HeartbeatRaceEnvironment(heartbeat_committed, release_response)
+    shell_started = threading.Event()
+    environment = _HeartbeatRaceEnvironment(heartbeat_committed, shell_started)
     active.prepared = cast(PreparedRunnerIsolation, _ImmediatePrepared(environment))
     original_heartbeat = context.executor._worktree_adapter.heartbeat
     loop = asyncio.get_running_loop()
-    heartbeat_count = 0
 
     def unknown_after_commit(*args, **kwargs):
-        nonlocal heartbeat_count
-        heartbeat_count += 1
         mutation = original_heartbeat(*args, **kwargs)
-        if heartbeat_count == 1:
+        if not shell_started.is_set():
             return mutation
         loop.call_soon_threadsafe(heartbeat_committed.set)
         assert release_response.wait(timeout=1)
@@ -1461,22 +1459,33 @@ async def test_unknown_worktree_heartbeat_fails_closed_without_checkpoint(
     context.executor._worktree_heartbeat_interval_seconds = 0.01
     context.executor._worktree_heartbeat_timeout_seconds = 1
 
-    result = await context.executor.execute(context.lease, cancellation=asyncio.Event())
-    # Shell completion and the heartbeat response race deliberately.  The
-    # executor may return the shell result first, but finalization must join the
-    # in-flight authority call before checkpointing.
-    assert result == "succeeded"
-    assert environment.closed == 1
+    try:
+        result = await context.executor.execute(context.lease, cancellation=asyncio.Event())
+        assert result == "succeeded"
+        assert environment.closed == 1
 
-    def checkpoint_must_not_run(*_args, **_kwargs):
-        raise AssertionError("checkpoint must not run after an unknown heartbeat")
+        checkpoint_called = False
 
-    monkeypatch.setattr(context.executor._worktree_adapter, "checkpoint", checkpoint_must_not_run)
-    assert (
-        await context.executor.prepare_finalization(context.lease, result="succeeded")
-        == "orphaned"
-    )
+        def checkpoint_must_not_run(*_args, **_kwargs):
+            nonlocal checkpoint_called
+            checkpoint_called = True
+            raise AssertionError("checkpoint must not run after an unknown heartbeat")
+
+        monkeypatch.setattr(
+            context.executor._worktree_adapter, "checkpoint", checkpoint_must_not_run
+        )
+        finalization = asyncio.create_task(
+            context.executor.prepare_finalization(context.lease, result="succeeded")
+        )
+        # Finalization must join the in-flight heartbeat before checkpointing.
+        await asyncio.sleep(0)
+        assert not finalization.done()
+        assert not active.checkpointed
+    finally:
+        release_response.set()
+    assert await finalization == "orphaned"
     assert active.lease_lost
+    assert not checkpoint_called
     assert not active.checkpointed
 
 
