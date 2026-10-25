@@ -114,11 +114,19 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 161,
+    "max_direct_upstream_files": 174,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "reviewed_complete_security_budget_followup": {
+      "approved_at": "2026-10-25",
+      "previous_max_direct_upstream_files": 161,
+      "max_direct_upstream_files": 174,
+      "measured_upstream_net_added_loc": 3964,
+      "review_packet_sha256": "213efdc87c8c542c9e9779b5d10234641b860a3fcf5d33e4186a0b31ca1abb51",
+      "reason": "Requester explicitly approved this complete bounded CI/security delta and existing budget assertion synchronization. Preserve4576 net LOC,nine patches,.85 isolation and every release gate. Conditional administrator scope is limited to the exact reviewed policy4895741c;own final-source mandatory CI,qualified same-source images and coordinated merge window remain required.019 additionally requires all real P4. No legacy new build/signing route or production window is released."
+    },
     "reviewed_security_dependency_budget_followup": {
       "approved_at": "2026-10-24",
       "previous_max_direct_upstream_files": 159,
