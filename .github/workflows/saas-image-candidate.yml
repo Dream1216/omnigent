@@ -397,6 +397,28 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 30
+      - name: Retain sealed OCI for frozen legacy validation
+        id: upload-legacy-validation-oci
+        if: >-
+          success() && github.event_name == 'pull_request' &&
+          github.repository == 'Dream1216/omnigent' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.base.repo.full_name == github.repository &&
+          (
+            (github.event.pull_request.base.ref == 'codex/legacy-validation-core-dc1e9a97' &&
+             github.event.pull_request.base.sha == 'dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec') ||
+            (github.event.pull_request.base.ref == 'codex/legacy-validation-gateway-3319b59a' &&
+             github.event.pull_request.base.sha == '3319b59a5d75a411f339b294cbe6b4133bfb851a') ||
+            (github.event.pull_request.base.ref == 'codex/legacy-validation-model-7cea0940' &&
+             github.event.pull_request.base.sha == '7cea09404d49fc965ce053e51803688a5be5fe53')
+          )
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-validation-oci-${{ github.event.pull_request.base.ref == 'codex/legacy-validation-core-dc1e9a97' && 'Core' || github.event.pull_request.base.ref == 'codex/legacy-validation-gateway-3319b59a' && 'Gateway' || 'Model' }}-${{ env.CANDIDATE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/promotion/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload candidate evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
