@@ -34,6 +34,7 @@ from saas.control_plane.preview_execution import (
     PreviewRunnerStopClaim,
 )
 from saas.control_plane.worktrees import WorktreeControlPlaneError, WorktreeLease
+from saas.production.preview_execution import PreviewExecutionContractError
 from saas.production.repository_mirror import RepositoryMirrorError
 from saas.production.runner_control import RunnerControlClientLease, RunnerControlError
 from saas.production.runner_executor import (
@@ -55,7 +56,10 @@ from saas.runner_adapter import (
     RunnerWorktreeAdapter,
     StaticRepositoryMirrorResolver,
 )
-from saas.runner_adapter.preview_supervisor import PreviewProcessExit
+from saas.runner_adapter.preview_supervisor import (
+    PreviewProcessExit,
+    PreviewProcessSupervisorError,
+)
 from tests.saas.test_worktree_control_plane import (
     WorktreeFixture,
     _configure_worktree_quota,
@@ -457,6 +461,9 @@ class _PreviewCommands:
     def abort_runtime(self, *_args, **_kwargs) -> None:
         self.calls.append("abort")
 
+    def fail_start(self, *_args, **kwargs) -> None:
+        self.calls.append("failed:" + kwargs["failure_code"])
+
 
 class _PreviewSupervisor:
     def __init__(self) -> None:
@@ -698,10 +705,14 @@ def _terminalize(context: _PreparedExecutor, status: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "startup_failure", [None, "preview_entry_unavailable", "missing-publication", "mark-ready"]
+)
 async def test_preview_execution_uses_readonly_static_supervisor_and_durable_stop(
     worktree_fixture: WorktreeFixture,  # noqa: F811
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    startup_failure: str | None,
 ) -> None:
     context = _build_prepared_executor(worktree_fixture, tmp_path, suffix="preview-closed")
     original_envelope = context.lease.execution_envelope
@@ -777,6 +788,20 @@ async def test_preview_execution_uses_readonly_static_supervisor_and_durable_sto
         ),
     )
     supervisor = _PreviewSupervisor()
+    if startup_failure == "missing-publication":
+        publish_root.rmdir()
+    elif startup_failure == "mark-ready":
+
+        def fail_ready(*_args, **_kwargs):
+            raise RuntimeError("ready persistence unavailable")
+
+        monkeypatch.setattr(commands, "mark_ready", fail_ready)
+    elif startup_failure:
+
+        async def fail_health(*_args):
+            raise PreviewProcessSupervisorError(startup_failure, "entry unavailable")
+
+        monkeypatch.setattr(supervisor, "start", fail_health)
     cast(Any, context.executor)._preview_commands = commands
     cast(Any, context.executor)._preview_supervisor = supervisor
 
@@ -799,12 +824,34 @@ async def test_preview_execution_uses_readonly_static_supervisor_and_durable_sto
 
     heartbeat = asyncio.create_task(pending_heartbeat())
     try:
-        result = await context.executor._execute_preview(
-            active,
-            lease,
-            cancellation=asyncio.Event(),
-            heartbeat=heartbeat,
-        )
+
+        async def execute():
+            return await context.executor._execute_preview(
+                active,
+                lease,
+                cancellation=asyncio.Event(),
+                heartbeat=heartbeat,
+            )
+
+        if startup_failure:
+            if startup_failure == "mark-ready":
+                with pytest.raises(RuntimeError, match="ready persistence unavailable"):
+                    await execute()
+                assert commands.calls == ["prepare-route", "abort"]
+                assert supervisor.calls == ["start", "stop"]
+                assert not active.preview_started
+                return
+            with pytest.raises((PreviewExecutionContractError, PreviewProcessSupervisorError)):
+                await execute()
+            expected = (
+                "preview_artifact_unavailable"
+                if startup_failure == "missing-publication"
+                else startup_failure
+            )
+            assert commands.calls == ["prepare-route", "failed:" + expected]
+            assert not active.preview_started
+            return
+        result = await execute()
     finally:
         heartbeat.cancel()
         await asyncio.gather(heartbeat, return_exceptions=True)

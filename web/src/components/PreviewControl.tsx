@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, LoaderCircleIcon, MonitorPlayIcon, SquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,24 +14,35 @@ interface SessionDelivery {
   runs: SourceRun[];
   preview_enabled: boolean;
   preview: string | null;
+  diagnostic_message?: string;
 }
 interface PreviewState {
   preview_id: string;
   status: string;
   url?: string;
   expires_at: string;
+  source_run_id?: string;
+  source_sha?: string;
+  failure_message?: string;
 }
 
 async function read<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(path, init);
   const value = await response.json();
-  if (!response.ok) throw new Error(value.detail?.code ?? "预览暂时不可用");
+  if (!response.ok)
+    throw new Error(value.detail?.message ?? value.detail?.code ?? "预览暂时不可用");
   return value as T;
 }
 
 export function PreviewControl({ sessionId, enabled }: { sessionId: string; enabled: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!expanded) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [expanded]);
   const client = useQueryClient();
   const source = useQuery({
     queryKey: ["delivery-session", sessionId],
@@ -86,7 +97,7 @@ export function PreviewControl({ sessionId, enabled }: { sessionId: string; enab
     !preview.error &&
     !source.error &&
     state?.status === "ready" &&
-    Date.parse(state.expires_at) > Date.now();
+    Date.parse(state.expires_at) > now;
   const active = !!state && !["stopped", "failed", "revoked", "expired"].includes(state.status);
   const error = action.error ?? preview.error ?? source.error;
   return (
@@ -95,7 +106,10 @@ export function PreviewControl({ sessionId, enabled }: { sessionId: string; enab
         variant="ghost"
         size="sm"
         aria-expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          setNow(Date.now());
+          setExpanded(!expanded);
+        }}
       >
         <MonitorPlayIcon className="size-4" /> 会话预览
       </Button>
@@ -107,8 +121,26 @@ export function PreviewControl({ sessionId, enabled }: { sessionId: string; enab
           <p className="font-medium">当前会话预览</p>
           <p className="text-xs text-muted-foreground">从已完成运行的检查点打开独立预览。</p>
           {error && <p role="alert">{error.message}</p>}
-          {!run && !source.isLoading && <p>当前会话还没有可预览的已完成运行。</p>}
-          {state && <p role="status">{ready ? "已就绪" : state.status}</p>}
+          {source.data?.diagnostic_message && <p role="alert">{source.data.diagnostic_message}</p>}
+          {!run && !source.isLoading && !source.data?.diagnostic_message && (
+            <p>当前会话还没有可预览的已完成运行。</p>
+          )}
+          {state && (
+            <p role="status">
+              {ready ? "已就绪" : Date.parse(state.expires_at) <= now ? "已过期" : state.status}
+            </p>
+          )}
+          {state && (
+            <dl className="break-all text-xs text-muted-foreground">
+              <dt>来源 Run</dt>
+              <dd>{state.source_run_id ?? "暂不可用"}</dd>
+              <dt>源码 SHA</dt>
+              <dd>{state.source_sha ?? "暂不可用"}</dd>
+              <dt>剩余有效期</dt>
+              <dd>{Math.max(0, Math.ceil((Date.parse(state.expires_at) - now) / 1000))} 秒</dd>
+            </dl>
+          )}
+          {state?.failure_message && <p role="alert">{state.failure_message}</p>}
           {ready && state.url && (
             <a
               href={state.url}

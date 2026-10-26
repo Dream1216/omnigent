@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import HTTPException, Request
@@ -13,17 +14,24 @@ from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.delivery.access import DeliveryAccess
 
 
-def session_runs(
+@dataclass(frozen=True)
+class SessionRunSelection:
+    runs: list[dict[str, str]]
+    diagnostic_code: str | None = None
+
+
+def select_session_runs(
     access: DeliveryAccess,
     request: Request,
     session_id: str,
     project_id: UUID | None = None,
     *,
     action: str = "preview.open",
-) -> list[dict[str, str]]:
+) -> SessionRunSelection:
     if access.client is None:
-        return []
+        return SessionRunSelection([], "delivery_not_configured")
     candidates = []
+    authorized_projects, bound_session = 0, False
     for project in access.client.config.projects:
         if project_id is not None and project_id != project.project_id:
             continue
@@ -31,6 +39,7 @@ def session_runs(
             current = access.context(request, project, action)
         except HTTPException:
             continue
+        authorized_projects += 1
         with access.sessions() as db:
             apply_rls_context(
                 db,
@@ -63,6 +72,7 @@ def session_runs(
                     ExecutionSessionRecord.id.in_(mappings),
                 ),
             )
+            bound_session = bound_session or bool(db.scalar(select(sessions.exists())))
             runs = db.scalars(
                 select(RunRecord)
                 .where(
@@ -90,4 +100,26 @@ def session_runs(
             )
     if project_id is None and len({item["project_id"] for item in candidates}) > 1:
         raise HTTPException(409, detail={"code": "session_project_ambiguous"})
-    return sorted(candidates, key=lambda item: item["created_at"], reverse=True)
+    diagnostic = None
+    if not candidates:
+        diagnostic = (
+            "preview_scope_unavailable"
+            if authorized_projects == 0 and access.client.config.projects
+            else "preview_source_unavailable"
+            if bound_session
+            else "preview_project_binding_missing"
+        )
+    return SessionRunSelection(
+        sorted(candidates, key=lambda item: item["created_at"], reverse=True), diagnostic
+    )
+
+
+def session_runs(
+    access: DeliveryAccess,
+    request: Request,
+    session_id: str,
+    project_id: UUID | None = None,
+    *,
+    action: str = "preview.open",
+) -> list[dict[str, str]]:
+    return select_session_runs(access, request, session_id, project_id, action=action).runs

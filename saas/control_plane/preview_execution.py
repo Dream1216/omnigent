@@ -124,6 +124,7 @@ class PreviewExecutionState:
     replayed: bool
     exchange_url: str | None = None
     failure_code: str | None = None
+    source_sha: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +224,7 @@ class PreviewExecutionControlPlane:
                     or existing.profile != STATIC_WEB_PREVIEW_PROFILE
                 ):
                     raise PreviewExecutionControlPlaneError("preview_idempotency_conflict")
-                return self._state(existing, replayed=True)
+                return self._state(db, existing, replayed=True)
             active = db.scalar(
                 sa.select(PreviewExecutionRecord)
                 .where(
@@ -418,7 +419,7 @@ class PreviewExecutionControlPlane:
                 )
             )
             db.flush()
-            return self._state(execution, replayed=False)
+            return self._state(db, execution, replayed=False)
 
     def get_preview(
         self,
@@ -446,7 +447,7 @@ class PreviewExecutionControlPlane:
             if execution is None:
                 raise PreviewExecutionControlPlaneError("preview_unavailable")
             if execution.status != "ready":
-                return self._state(execution, replayed=True)
+                return self._state(db, execution, replayed=True)
             raw_token = self._exchange_token(execution.id)
             token_hash = hashlib.sha256(raw_token.encode("ascii")).hexdigest()
             row = self._issue_exchange(
@@ -456,10 +457,10 @@ class PreviewExecutionControlPlane:
                 operation_at=checked_at,
             )
             if row is None:
-                return self._state(execution, replayed=True)
+                return self._state(db, execution, replayed=True)
             fragment_token = quote(raw_token, safe="")
             url = f"https://{execution.preview_host}/__omnigent/bootstrap#token={fragment_token}"
-            return self._state(execution, replayed=bool(row["replayed"]), exchange_url=url)
+            return self._state(db, execution, replayed=bool(row["replayed"]), exchange_url=url)
 
     def stop_preview(
         self,
@@ -512,7 +513,7 @@ class PreviewExecutionControlPlane:
                 )
             )
             if existing is not None:
-                return self._state(execution, replayed=True)
+                return self._state(db, execution, replayed=True)
             command_id = uuid4()
             self._create_command(
                 db,
@@ -540,7 +541,7 @@ class PreviewExecutionControlPlane:
                 )
             )
             db.flush()
-            return self._state(execution, replayed=False)
+            return self._state(db, execution, replayed=False)
 
     def _exchange_token(self, execution_id: UUID) -> str:
         digest = hmac.digest(
@@ -662,11 +663,22 @@ class PreviewExecutionControlPlane:
 
     @staticmethod
     def _state(
+        db: Session,
         execution: PreviewExecutionRecord,
         *,
         replayed: bool,
         exchange_url: str | None = None,
     ) -> PreviewExecutionState:
+        child = db.scalar(
+            sa.select(RunRecord).where(
+                RunRecord.id == execution.child_run_id,
+                RunRecord.tenant_id == execution.tenant_id,
+                RunRecord.space_id == execution.space_id,
+                RunRecord.project_id == execution.project_id,
+            )
+        )
+        surface = child.input.get("execution") if child is not None else None
+        source_sha = surface.get("checkpoint_revision") if isinstance(surface, dict) else None
         return PreviewExecutionState(
             preview_execution_id=execution.id,
             source_run_id=execution.source_run_id,
@@ -677,6 +689,9 @@ class PreviewExecutionControlPlane:
             replayed=replayed,
             exchange_url=exchange_url,
             failure_code=execution.failure_code,
+            source_sha=source_sha
+            if isinstance(source_sha, str) and _FULL_SHA.fullmatch(source_sha)
+            else None,
         )
 
 
