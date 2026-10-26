@@ -6,13 +6,14 @@ import hashlib
 import json
 import secrets
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 import jwt
 import sqlalchemy as sa
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.db.utils import make_named_managed_session_maker
@@ -166,7 +167,7 @@ class DevelopmentPreviewGrants:
                 .values(session_hash=hashlib.sha256(cookie.encode()).hexdigest(), redeemed_at=now)
                 .execution_options(synchronize_session=False)
             )
-            if changed.rowcount != 1:
+            if cast(CursorResult[tuple[object]], changed).rowcount != 1:
                 raise HTTPException(403, detail={"code": "preview_exchange_consumed"})
         return cookie, scope
 
