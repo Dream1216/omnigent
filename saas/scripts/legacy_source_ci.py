@@ -16,7 +16,7 @@ import subprocess
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts import legacy_security_policy as security
 from saas.scripts.legacy_native_evidence import api
@@ -177,6 +177,7 @@ def verify_run_pull_request(run: dict[str, Any], profile: dict[str, Any], number
         isinstance(pulls, list) and len(pulls) == 1,
         "native run PR association is ambiguous",
     )
+    pulls = cast(list[dict[str, Any]], pulls)
     pull = pulls[0]
     repository_url = f"https://api.github.com/repos/{REPOSITORY}"
     require(
@@ -244,7 +245,7 @@ def _job_pages(run_id: int, attempt: int) -> list[dict[str, Any]]:
         total = value["total_count"]
         rows = value.get("jobs")
         require(isinstance(rows, list) and bool(rows), "native job page is missing")
-        jobs.extend(rows)
+        jobs.extend(cast(list[dict[str, Any]], rows))
         require(len(jobs) <= total, "native job pages contain excess entries")
         if len(jobs) == total:
             require(

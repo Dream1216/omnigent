@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts.legacy_native_evidence import api
 from saas.scripts.oci_promotion import require
@@ -51,6 +51,7 @@ def _pages(endpoint: str, field: str | None) -> list[dict[str, Any]]:
             ),
             "native check history page is malformed",
         )
+        rows = cast(list[dict[str, Any]], rows)
         result.extend(rows)
         ids = [row["id"] for row in result]
         require(
@@ -106,6 +107,7 @@ def _run_key(row: dict[str, Any]) -> tuple[Any, ...]:
         ),
         "native workflow PR associations are malformed",
     )
+    pulls = cast(list[dict[str, Any]], pulls)
     numbers = [pull["number"] for pull in pulls]
     require(len(numbers) == len(set(numbers)), "native workflow repeats its PR association")
     return row["workflow_id"], row["path"], row["event"], tuple(sorted(numbers))
@@ -200,11 +202,13 @@ def verify_required_job_bindings(
             and current.get("conclusion") == "success",
             "required source workflow is not its latest successful native execution",
         )
+        current = cast(dict[str, Any], current)
         for job in observation["jobs"]:
             link = job.get("check_run_url", "")
             pattern = rf"https://api\.github\.com/repos/{REPOSITORY}/check-runs/([0-9]+)"
             match = re.fullmatch(pattern, link)
             require(match is not None, "native job check-run identity is missing")
+            match = cast(re.Match[str], match)
             check = checks.get(int(match.group(1)))
             require(
                 check is not None

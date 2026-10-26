@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts.legacy_native_evidence import api
 from saas.scripts.oci_promotion import require
@@ -171,6 +171,7 @@ def _trust_output(log, step):
             match is not None and match[1] not in values,
             "original OWNER environment is malformed or duplicated",
         )
+        match = cast(re.Match[str], match)
         values[match[1]] = match[2]
     require(
         token_fields == 1

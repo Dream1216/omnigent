@@ -13,7 +13,7 @@ import re
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode
 
 from saas.scripts import legacy_check_history as history
@@ -277,7 +277,13 @@ def _inspect_run(
             proof = nonexecution.collect_observation(
                 profile, identity, rules[0], observed, jobs, destination
             )
-            observations.append(proof)
+            cast(
+                list[
+                    nonexecution.ZeroExecutionObservation
+                    | nonexecution.InfrastructureCancellationObservation
+                ],
+                observations,
+            ).append(proof)
             field = (
                 "non_execution_observations"
                 if isinstance(proof, nonexecution.ZeroExecutionObservation)
@@ -302,6 +308,7 @@ def _inspect_run(
             re.escape(_REPO_URL) + r"/check-runs/([1-9][0-9]*)", job.get("check_run_url", "")
         )
         require(match is not None, "domain check URL is not native")
+        match = cast(re.Match[str], match)
         check = api(f"{_ROOT}/check-runs/{match[1]}")
         coordinate = _coordinates(observed, job, check)
         path = destination / f"run-{run['id']}-attempt-{attempt}-job-{job['id']}.log"

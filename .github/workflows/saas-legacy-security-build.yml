@@ -397,7 +397,6 @@ jobs:
     env:
       LEGACY_COMPONENT: ${{ inputs.component }}
       CONTROL_REVISION: ${{ github.sha }}
-      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication
     steps:
       - name: Checkout exact main publication control
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -434,7 +433,7 @@ jobs:
           python -B -m saas.scripts.legacy_initial_publisher prepare \
             --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
             --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
-            --destination "$LEGACY_DESTINATION" --github-output "$GITHUB_OUTPUT"
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
       - name: Retain publication preparation
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -479,7 +478,6 @@ jobs:
     env:
       LEGACY_COMPONENT: ${{ inputs.component }}
       CONTROL_REVISION: ${{ github.sha }}
-      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication
     steps:
       - name: Checkout exact main publication control
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -526,7 +524,7 @@ jobs:
           python -B -m saas.scripts.legacy_initial_publisher publish \
             --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
             --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
-            --destination "$LEGACY_DESTINATION" --github-output "$GITHUB_OUTPUT"
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
       - name: Retain exact publication receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -570,7 +568,6 @@ jobs:
     env:
       LEGACY_COMPONENT: ${{ inputs.component }}
       CONTROL_REVISION: ${{ github.sha }}
-      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication
     steps:
       - name: Checkout exact main publication control
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -619,7 +616,7 @@ jobs:
           python -B -m saas.scripts.legacy_initial_publisher runtime \
             --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
             --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
-            --destination "$LEGACY_DESTINATION" --github-output "$GITHUB_OUTPUT"
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
       - name: Retain independent runtime and SBOM evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -667,7 +664,6 @@ jobs:
     env:
       LEGACY_COMPONENT: ${{ inputs.component }}
       CONTROL_REVISION: ${{ github.sha }}
-      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication
     steps:
       - name: Checkout exact main publication control
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -714,7 +710,7 @@ jobs:
           python -B -m saas.scripts.legacy_initial_publisher attest-inputs \
             --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
             --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
-            --destination "$LEGACY_DESTINATION" --github-output "$GITHUB_OUTPUT"
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
       - name: Attest exact fresh wheel
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
         with:
@@ -778,7 +774,7 @@ jobs:
           python -B -m saas.scripts.legacy_initial_publisher verify-signatures \
             --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
             --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
-            --destination "$LEGACY_DESTINATION"
+            --destination "$RUNNER_TEMP/legacy-publication"
       - name: Retain native signature readback receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -823,7 +819,6 @@ jobs:
     env:
       LEGACY_COMPONENT: ${{ inputs.component }}
       CONTROL_REVISION: ${{ github.sha }}
-      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication
     steps:
       - name: Checkout exact main publication control
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -870,7 +865,7 @@ jobs:
           python -B -m saas.scripts.legacy_initial_publisher consume \
             --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
             --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
-            --destination "$LEGACY_DESTINATION" --github-output "$GITHUB_OUTPUT"
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
       - name: Retain independent native consumer result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

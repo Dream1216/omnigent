@@ -14,7 +14,7 @@ import json
 import re
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts.legacy_native_evidence import api
 from saas.scripts.legacy_source_ci import (
@@ -172,6 +172,7 @@ def verify_pr_oci_artifact(
         isinstance(steps, list) and all(isinstance(step, dict) for step in steps),
         "native candidate steps are missing",
     )
+    steps = cast(list[dict[str, Any]], steps)
     selected = []
     for name in _REQUIRED_STEPS:
         matching = [step for step in steps if step.get("name") == name]

@@ -551,13 +551,30 @@ def test_complete_native_pagination_partitions_search_cap_and_rejects_gaps(monke
         assert all("head_sha=" not in endpoint for endpoint in calls)
 
 
+def reviewed_source_bytes(root, relative, expected):
+    """Restore only exact reviewed corrections before checking original guard bytes."""
+    body = (root / relative).read_bytes()
+    correction = expected.get("type_and_context_correction")
+    if correction is not None:
+        assert hashlib.sha256(body).hexdigest() == correction["corrected_sha256"]
+        for fragment in correction["inverse_fragments"]:
+            before, after = fragment["before"].encode(), fragment["after"].encode()
+            assert before != after and body.count(after) == 1
+            body = body.replace(after, before)
+    return body
+
+
 def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged():
     parent = json.loads(
         (RESOURCE.parent / "native-domain-discovery-parent-hashes.json").read_text()
     )
     root = Path(__file__).resolve().parents[2]
     for relative, expected in parent.items():
-        body = (root / relative).read_bytes()
+        body = (
+            (root / relative).read_bytes()
+            if isinstance(expected, str)
+            else reviewed_source_bytes(root, relative, expected)
+        )
         if isinstance(expected, str):
             assert hashlib.sha256(body).hexdigest() == expected
             continue

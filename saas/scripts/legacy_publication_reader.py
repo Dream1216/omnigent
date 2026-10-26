@@ -13,7 +13,7 @@ import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -49,6 +49,7 @@ def trusted_entries(control: Path, component: str) -> dict[str, Any]:
             and isinstance(store[key].get(component), dict),
             "current exact legacy registration is missing: " + name,
         )
+        store = cast(dict[str, Any], store)
         entries[name] = store[key][component]
     return entries
 
@@ -57,7 +58,7 @@ def trusted_entries(control: Path, component: str) -> dict[str, Any]:
 def object_view(repository: Path, revision: str, destination: Path):
     """Create an owned index/worktree from existing objects, without hooks or fetch."""
     require(
-        isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision),
+        bool(isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision)),
         "historical object revision is not immutable",
     )
     environment = {
