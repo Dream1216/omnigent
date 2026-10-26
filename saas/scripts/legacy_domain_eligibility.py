@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts import legacy_domain_native as native
 from saas.scripts import legacy_domain_non_execution as nonexecution
@@ -244,7 +244,7 @@ def verify_main_domain_refusal(
     numbers = [item.get("number") for item in (checkout, refusal, *later)]
     require(
         all(type(number) is int and number > 0 for number in numbers)
-        and numbers == sorted(set(numbers))
+        and numbers == sorted(set(cast(list[int], numbers)))
         and [item.get("name") for item in steps if item.get("conclusion") == "failure"]
         == ["Resolve current PR head"]
         and checkout_commit(log, checkout) == rule["trusted_checkout_revision"],

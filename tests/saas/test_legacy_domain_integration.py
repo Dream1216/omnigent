@@ -11,7 +11,7 @@ from datetime import timedelta
 
 import pytest
 
-from tests.saas.test_legacy_domain_discovery import discovery, framed_log
+from tests.saas.test_legacy_domain_discovery import discovery, framed_log, reviewed_source_bytes
 from tests.saas.test_legacy_domain_discovery import discovery_case as discovery_case
 from tests.saas.test_legacy_domain_eligibility import domain
 from tests.saas.test_legacy_domain_eligibility import native_domain as native_domain
@@ -275,7 +275,7 @@ def test_shared_multiline_parser_keeps_original_generic_source_parser_bytes():
     resource = Path(__file__).parent / "resources/native-domain-discovery-parent-hashes.json"
     expected = json.loads(resource.read_text())["saas/scripts/legacy_source_ci.py"]
     root = Path(__file__).resolve().parents[2]
-    body = (root / "saas/scripts/legacy_source_ci.py").read_bytes()
+    body = reviewed_source_bytes(root, "saas/scripts/legacy_source_ci.py", expected)
     assert hashlib.sha256(body).hexdigest() == (
         expected if isinstance(expected, str) else expected["combined_sha256"]
     )

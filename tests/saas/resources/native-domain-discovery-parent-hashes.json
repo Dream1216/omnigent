@@ -15,6 +15,23 @@
       "completed_step_lines": "2058e64675a67265ab7137831f27ee8a155cffb9dce6fd540f93a8eeb1c1d827",
       "_load_contract": "b33f58ef5848513ad24928244624ae8937b4d2e19cdb1c884dd62ce5dfd75c8d",
       "collect_source_ci_bindings": "5bd9fe4b266d85666bd82f2e1499e7186040c9421a7f5ea7b0906f2bb5dbb27e"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "4812f6ef8ace8b0539391fb08ce4c0c110d6a9e0d6f75efec450eadef66e6e52",
+      "inverse_fragments": [
+        {
+          "before": "import threading\nfrom datetime import datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any\n\nfrom saas.scripts import legacy_security_policy as security\nfrom saas.scripts.legacy_native_evidence import api\n",
+          "after": "import threading\nfrom datetime import datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any, cast\n\nfrom saas.scripts import legacy_security_policy as security\nfrom saas.scripts.legacy_native_evidence import api\n"
+        },
+        {
+          "before": "        isinstance(pulls, list) and len(pulls) == 1,\n        \"native run PR association is ambiguous\",\n    )\n    pull = pulls[0]\n    repository_url = f\"https://api.github.com/repos/{REPOSITORY}\"\n    require(\n",
+          "after": "        isinstance(pulls, list) and len(pulls) == 1,\n        \"native run PR association is ambiguous\",\n    )\n    pulls = cast(list[dict[str, Any]], pulls)\n    pull = pulls[0]\n    repository_url = f\"https://api.github.com/repos/{REPOSITORY}\"\n    require(\n"
+        },
+        {
+          "before": "        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(isinstance(rows, list) and bool(rows), \"native job page is missing\")\n        jobs.extend(rows)\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n            require(\n",
+          "after": "        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(isinstance(rows, list) and bool(rows), \"native job page is missing\")\n        jobs.extend(cast(list[dict[str, Any]], rows))\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n            require(\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
@@ -59,13 +76,75 @@
     "approved_functions": {
       "stage": "bf43f0789ec0d1b55f92c36d9f8ad5c5af1953d9a6f01215e1bcf274bd21d427",
       "prepare_current_manifest": "10ecd42ff58af70a1f7a5d9b28744f08b1fe16e49a4427867dbd5db9a0490ee1"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "f8f1cda86c8e22fcfe173cfb1d35f95849e130332122afb4d5c3ba34fd28bc3b",
+      "inverse_fragments": [
+        {
+          "before": "import zipfile\nfrom datetime import UTC, datetime\nfrom pathlib import Path, PurePosixPath\nfrom typing import Any\n\nfrom saas.scripts.legacy_artifact_download import download_artifact_bytes\nfrom saas.scripts.legacy_build_controller import (\n",
+          "after": "import zipfile\nfrom datetime import UTC, datetime\nfrom pathlib import Path, PurePosixPath\nfrom typing import Any, BinaryIO, cast\n\nfrom saas.scripts.legacy_artifact_download import download_artifact_bytes\nfrom saas.scripts.legacy_build_controller import (\n"
+        },
+        {
+          "before": "        stream = bundle.extractfile(member)\n        require(stream is not None, \"missing Syft executable\")\n        with (root / \"syft\").open(\"xb\") as output:\n            shutil.copyfileobj(stream, output)\n    (root / \"syft\").chmod(0o700)\n    return root / \"syft\"\n\n",
+          "after": "        stream = bundle.extractfile(member)\n        require(stream is not None, \"missing Syft executable\")\n        with (root / \"syft\").open(\"xb\") as output:\n            shutil.copyfileobj(cast(BinaryIO, stream), output)\n    (root / \"syft\").chmod(0o700)\n    return root / \"syft\"\n\n"
+        }
+      ]
     }
   },
   ".github/workflows/saas-legacy-security-build.yml": {
     "parent_sha256": "1682c7afc66e338cb73bbfc8eb96d27abb547b3e823c8e8c88c83d6a61849795",
     "combined_sha256": "f796f8cebe845150f1ca8ebd5705a2bd09275cbd7885434c750c4c74e62e6a86",
     "approved_change": "Root ee94.Control exactly one fresh-wheel retention scalar30 to90",
-    "retention_fragment": "path: ${{ runner.temp }}/fresh-legacy-wheel/\n          compression-level: 0\n          if-no-files-found: error\n          retention-days: 90"
+    "retention_fragment": "path: ${{ runner.temp }}/fresh-legacy-wheel/\n          compression-level: 0\n          if-no-files-found: error\n          retention-days: 90",
+    "type_and_context_correction": {
+      "corrected_sha256": "6d42bd1c4d27f58c1aa504661efeb6a5055977592873c1f22c88a909a89fd69b",
+      "inverse_fragments": [
+        {
+          "before": "      checks: read\n      statuses: read\n      pull-requests: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      checks: read\n      statuses: read\n      pull-requests: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher prepare \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain publication preparation\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-preparation-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher prepare \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain publication preparation\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-preparation-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        },
+        {
+          "before": "      statuses: read\n      pull-requests: read\n      packages: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      statuses: read\n      pull-requests: read\n      packages: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher publish \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain exact publication receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-publication-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher publish \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain exact publication receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-publication-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        },
+        {
+          "before": "      statuses: read\n      pull-requests: read\n      packages: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      statuses: read\n      pull-requests: read\n      packages: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher runtime \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent runtime and SBOM evidence\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-runtime-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher runtime \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent runtime and SBOM evidence\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-runtime-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        },
+        {
+          "before": "      id-token: write\n      attestations: write\n      artifact-metadata: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      id-token: write\n      attestations: write\n      artifact-metadata: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher attest-inputs \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Attest exact fresh wheel\n        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0\n        with:\n          subject-path: ${{ steps.admission.outputs.wheel_path }}\n          predicate-type: https://slsa.dev/provenance/v1\n          predicate-path: ${{ runner.temp }}/legacy-publication/export/provenance.json\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher attest-inputs \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Attest exact fresh wheel\n        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0\n        with:\n          subject-path: ${{ steps.admission.outputs.wheel_path }}\n          predicate-type: https://slsa.dev/provenance/v1\n          predicate-path: ${{ runner.temp }}/legacy-publication/export/provenance.json\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher verify-signatures \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\"\n      - name: Retain native signature readback receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-signatures-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/native-signatures.json\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher verify-signatures \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\"\n      - name: Retain native signature readback receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-signatures-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/native-signatures.json\n          compression-level: 0\n"
+        },
+        {
+          "before": "      pull-requests: read\n      packages: read\n      attestations: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      pull-requests: read\n      packages: read\n      attestations: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher consume \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent native consumer result\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-consumer-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher consume \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent native consumer result\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-consumer-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        }
+      ]
+    }
   },
   "saas/scripts/legacy_pg_contract.py": {
     "parent_sha256": "e74d9fba8ee1f439e476eb04bca70045c557e325e85954bed3aa27dc7159576e",
@@ -81,6 +160,23 @@
     "approved_functions": {
       "verify_pg_source": "de58018130f7cb8c412483f221d62fc3e39e275d05c184a2f0ec35da84443b10",
       "_verify_pg_source": "44f5a9de0f75359d9b560ca0193bd5c918dd65edecd2047404281b23ac3fe224"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "79014acd4a646dddd4083302411fcc3ea05462d08af21db31b609b6d0954c792",
+      "inverse_fragments": [
+        {
+          "before": "import re\nimport subprocess\nfrom pathlib import Path\nfrom typing import Any\nfrom urllib.parse import urlsplit\n\nfrom saas.scripts.legacy_build_controller import control_context\n",
+          "after": "import re\nimport subprocess\nfrom pathlib import Path\nfrom typing import Any, cast\nfrom urllib.parse import urlsplit\n\nfrom saas.scripts.legacy_build_controller import control_context\n"
+        },
+        {
+          "before": "    policy = (control / \".github/actions/compat-smoke-saas-n1-gate/evaluate.sh\").read_text()\n    match = re.search(r\"POSTGRESQL_N1_TRUSTED_INPUTS=\\(\\n(.*?)\\n\\)\", policy, re.S)\n    require(match is not None, \"generic PG trusted-input path inventory missing\")\n    paths = []\n    for line in match.group(1).splitlines():\n        parsed = re.fullmatch(r'\\s*\"([^\"|]+)\\|[0-9a-f]{64}(?:,[0-9a-f]{64})?\"\\s*', line)\n        require(parsed is not None, \"generic PG trusted-input declaration is malformed\")\n        paths.append(parsed.group(1))\n    require(len(paths) == len(set(paths)) == 21, \"generic PG path inventory changed\")\n    return tuple(sorted(paths))\n",
+          "after": "    policy = (control / \".github/actions/compat-smoke-saas-n1-gate/evaluate.sh\").read_text()\n    match = re.search(r\"POSTGRESQL_N1_TRUSTED_INPUTS=\\(\\n(.*?)\\n\\)\", policy, re.S)\n    require(match is not None, \"generic PG trusted-input path inventory missing\")\n    match = cast(re.Match[str], match)\n    paths = []\n    for line in match.group(1).splitlines():\n        parsed = re.fullmatch(r'\\s*\"([^\"|]+)\\|[0-9a-f]{64}(?:,[0-9a-f]{64})?\"\\s*', line)\n        require(parsed is not None, \"generic PG trusted-input declaration is malformed\")\n        parsed = cast(re.Match[str], parsed)\n        paths.append(parsed.group(1))\n    require(len(paths) == len(set(paths)) == 21, \"generic PG path inventory changed\")\n    return tuple(sorted(paths))\n"
+        },
+        {
+          "before": "\ndef expected_cases(major: int) -> set[tuple[str, str]]:\n    require(major in PG_IMAGES, \"unsupported PG acceptance major\")\n    cases = set()\n    for selector in PG16_SELECTORS if major == 16 else COMMON_SELECTORS:\n        path, name = selector.split(\"::\", 1)\n        cases.add((path.removesuffix(\".py\").replace(\"/\", \".\"), name))\n",
+          "after": "\ndef expected_cases(major: int) -> set[tuple[str, str]]:\n    require(major in PG_IMAGES, \"unsupported PG acceptance major\")\n    cases: set[tuple[str, str]] = set()\n    for selector in PG16_SELECTORS if major == 16 else COMMON_SELECTORS:\n        path, name = selector.split(\"::\", 1)\n        cases.add((path.removesuffix(\".py\").replace(\"/\", \".\"), name))\n"
+        }
+      ]
     }
   },
   "saas/scripts/oci_promotion.py": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",

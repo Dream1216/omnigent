@@ -10,7 +10,7 @@ import zipfile
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts.legacy_source_ci import _instant, completed_step_lines
 from saas.scripts.oci_promotion import require
@@ -334,7 +334,7 @@ def inspect_junit(
                 isinstance(value, str) and re.fullmatch(r"[0-9]+", value) is not None,
                 "JUnit suite counter is missing or malformed",
             )
-            counts[key] = int(value)
+            counts[key] = int(cast(str, value))
         direct = [row for row in suite if _local(row.tag) == "testcase"]
         require(
             all(
@@ -353,6 +353,7 @@ def inspect_junit(
                 isinstance(name, str) and bool(name) and isinstance(classname, str),
                 "JUnit case identity is missing",
             )
+            name, classname = cast(str, name), cast(str, classname)
             results = [row for row in case if _local(row.tag) in {"failure", "error", "skipped"}]
             require(len(results) <= 1, "JUnit case has ambiguous outcomes")
             outcome = _local(results[0].tag) if results else "passed"
@@ -649,6 +650,7 @@ def _verify_compact_results(
         "compact pytest requires one exact xdist selection",
     )
     start, collection = collections[0]
+    collection = cast(re.Match[str], collection)
     collected = int(collection.group(1))
     summary_pattern = re.compile(
         r"=+ ([0-9]+) passed(?:, ([0-9]+) skipped)? in "
@@ -664,6 +666,7 @@ def _verify_compact_results(
         "compact pytest final summary is missing or ambiguous",
     )
     finish, summary = summaries[0]
+    summary = cast(re.Match[str], summary)
     progress_pattern = re.compile(r"([.s]+) +\[ *([0-9]+)%\]")
     progress = [
         (index, progress_pattern.fullmatch(line))
@@ -680,6 +683,7 @@ def _verify_compact_results(
     )
     marks = ""
     for _, match in progress:
+        match = cast(re.Match[str], match)
         marks += match.group(1)
         require(
             collected > 0

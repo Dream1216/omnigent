@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts import legacy_initial_publisher as publisher
 from saas.scripts.legacy_publication_reader import (
@@ -23,8 +23,10 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
     from saas.scripts.check_image_supply_chain import load_release_evidence
 
     require(
-        isinstance(identifier, str)
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identifier),
+        bool(
+            isinstance(identifier, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identifier)
+        ),
         "legacy publication identifier is invalid",
     )
     registry = load_release_evidence(repo, REGISTRY)
@@ -36,6 +38,7 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
         and isinstance(registry["publications"], dict),
         "legacy publication registry differs",
     )
+    registry = cast(dict[str, Any], registry)
     row = registry["publications"].get(identifier)
     require(isinstance(row, dict), "legacy publication is not registered")
     require(
@@ -69,7 +72,9 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
     )
     for field in ("control_revision", "control_tree"):
         require(
-            isinstance(producer[field], str) and re.fullmatch(r"[0-9a-f]{40}", producer[field]),
+            bool(
+                isinstance(producer[field], str) and re.fullmatch(r"[0-9a-f]{40}", producer[field])
+            ),
             "registered historical control object differs",
         )
     for field in ("run_id", "attempt"):
@@ -78,13 +83,15 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
             "registered historical run coordinate differs",
         )
     require(
-        isinstance(producer["actor"], str)
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?", producer["actor"]),
+        bool(
+            isinstance(producer["actor"], str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?", producer["actor"])
+        ),
         "registered historical actor differs",
     )
     for value in (producer["workflow_sha256"], row["predicate_sha256"]):
         require(
-            isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value),
+            bool(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)),
             "registered historical digest differs",
         )
     admission = row["admission"]
@@ -130,16 +137,18 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
     artifact_ids = []
     for role, coordinate in row["stage_artifacts"].items():
         require(
-            isinstance(coordinate, dict)
-            and set(coordinate)
-            == {"job_id", "artifact_id", "artifact_name", "zip_size", "zip_sha256"}
-            and all(
-                type(coordinate[field]) is int and coordinate[field] > 0
-                for field in ("job_id", "artifact_id", "zip_size")
-            )
-            and coordinate["artifact_name"] == publisher.artifact_name(role, profile, context)
-            and isinstance(coordinate["zip_sha256"], str)
-            and re.fullmatch(r"[0-9a-f]{64}", coordinate["zip_sha256"]),
+            bool(
+                isinstance(coordinate, dict)
+                and set(coordinate)
+                == {"job_id", "artifact_id", "artifact_name", "zip_size", "zip_sha256"}
+                and all(
+                    type(coordinate[field]) is int and coordinate[field] > 0
+                    for field in ("job_id", "artifact_id", "zip_size")
+                )
+                and coordinate["artifact_name"] == publisher.artifact_name(role, profile, context)
+                and isinstance(coordinate["zip_sha256"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", coordinate["zip_sha256"])
+            ),
             "registered legacy stage coordinate differs",
         )
         artifact_ids.append(coordinate["artifact_id"])
@@ -152,9 +161,11 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
     )
     roles = row["deployment_roles"]
     require(
-        isinstance(roles, dict)
-        and roles
-        and all(role in publisher.IMAGES for role in roles.values()),
+        bool(
+            isinstance(roles, dict)
+            and roles
+            and all(role in publisher.IMAGES for role in roles.values())
+        ),
         "registered legacy deployment roles differ",
     )
     return row

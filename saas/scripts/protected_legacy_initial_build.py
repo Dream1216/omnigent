@@ -11,7 +11,7 @@ import subprocess
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts.oci_promotion import require
 from saas.scripts.resume_oci_promotion import (
@@ -383,7 +383,7 @@ def verify_pr_tree(
         == [profile["baseline_revision"], profile["product_revision"]],
         "actual PR merge parents differ from the frozen base and product",
     )
-    return merge
+    return cast(str, merge)
 
 
 def verify_native_pr_tree(profile: dict[str, Any], *, number: int, base_ref: str) -> str:
@@ -527,7 +527,7 @@ def verify_wheel(path: Path, profile: dict[str, Any], expected_sha256: str) -> N
                     name not in constants and isinstance(value, ast.Constant),
                     "wheel build identity must be a unique literal",
                 )
-                constants[name] = value.value
+                constants[name] = cast(ast.Constant, value).value
         require(
             constants
             == {

@@ -8,6 +8,7 @@ import re
 import subprocess
 import threading
 from pathlib import Path
+from typing import BinaryIO, cast
 
 from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import REPOSITORY
@@ -51,7 +52,7 @@ def download_artifact_bytes(
             require(process.stdout is not None, "native artifact stream is missing")
             count = 0
             digest = hashlib.sha256()
-            while block := process.stdout.read(65536):
+            while block := cast(BinaryIO, process.stdout).read(65536):
                 count += len(block)
                 require(
                     count <= expected_size,

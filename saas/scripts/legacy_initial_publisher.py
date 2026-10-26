@@ -23,7 +23,7 @@ import urllib.request
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, BinaryIO, cast
 
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
 from saas.scripts.legacy_build_controller import (
@@ -736,7 +736,7 @@ def install_syft(root: Path) -> Path:
         stream = bundle.extractfile(member)
         require(stream is not None, "missing Syft executable")
         with (root / "syft").open("xb") as output:
-            shutil.copyfileobj(stream, output)
+            shutil.copyfileobj(cast(BinaryIO, stream), output)
     (root / "syft").chmod(0o700)
     return root / "syft"
 

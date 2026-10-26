@@ -8,7 +8,7 @@ import json
 import re
 from collections.abc import Callable
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts.legacy_native_evidence import api
 from saas.scripts.legacy_source_ci import _instant
@@ -95,7 +95,7 @@ def trigger_environment(log: str, step: dict[str, Any]) -> dict[str, Any]:
                 require(
                     environment and pending is not None, "unframed native environment continuation"
                 )
-                pending.append(line)
+                cast(list[str], pending).append(line)
                 pending_bytes += len(line.encode()) + 1
                 require(
                     pending_bytes <= 65536,
@@ -129,6 +129,7 @@ def trigger_environment(log: str, step: dict[str, Any]) -> dict[str, Any]:
             continue
         entry = _ENV.fullmatch(body)
         require(entry is not None, "domain runner environment framing differs")
+        entry = cast(re.Match[str], entry)
         name, value = entry[1], entry[2]
         if name not in _ENV_KEYS:
             continue

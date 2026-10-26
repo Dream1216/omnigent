@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from saas.scripts.legacy_build_controller import control_context
@@ -60,10 +60,12 @@ def trusted_pg_paths(control: Path) -> tuple[str, ...]:
     policy = (control / ".github/actions/compat-smoke-saas-n1-gate/evaluate.sh").read_text()
     match = re.search(r"POSTGRESQL_N1_TRUSTED_INPUTS=\(\n(.*?)\n\)", policy, re.S)
     require(match is not None, "generic PG trusted-input path inventory missing")
+    match = cast(re.Match[str], match)
     paths = []
     for line in match.group(1).splitlines():
         parsed = re.fullmatch(r'\s*"([^"|]+)\|[0-9a-f]{64}(?:,[0-9a-f]{64})?"\s*', line)
         require(parsed is not None, "generic PG trusted-input declaration is malformed")
+        parsed = cast(re.Match[str], parsed)
         paths.append(parsed.group(1))
     require(len(paths) == len(set(paths)) == 21, "generic PG path inventory changed")
     return tuple(sorted(paths))
@@ -150,7 +152,7 @@ def verify_disposable_database_url(value: str) -> None:
 
 def expected_cases(major: int) -> set[tuple[str, str]]:
     require(major in PG_IMAGES, "unsupported PG acceptance major")
-    cases = set()
+    cases: set[tuple[str, str]] = set()
     for selector in PG16_SELECTORS if major == 16 else COMMON_SELECTORS:
         path, name = selector.split("::", 1)
         cases.add((path.removesuffix(".py").replace("/", "."), name))

@@ -8,7 +8,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts import legacy_domain_non_execution as nonexecution
 from saas.scripts import legacy_security_policy as security
@@ -273,7 +273,7 @@ def validate_qualification_policy(
                 require(
                     row["kind"] == "pytest", "compact contract requires original pytest evidence"
                 )
-                expected = row["pytest"]
+                expected = cast(dict[str, Any], row["pytest"])
                 validate_compact_log_contract(
                     row["native_log_contract"],
                     {
@@ -541,10 +541,11 @@ def assess_all_app_policy(
                     )
                     and any(
                         nonexecution.matching_refusal(proof, refusal)
-                        for refusal in domain_receipts
+                        for refusal in cast(list[dict[str, Any]], domain_receipts)
                     ),
                     "main-domain audit check has no exact typed native audit and refusal",
                 )
+                proof = cast(dict[str, Any], proof)
                 if row["scope"] == "original-domain-infrastructure-cancellation":
                     require(
                         _digest(
@@ -736,6 +737,7 @@ def _qualify_source_ci(
         isinstance(merge, str) and re.fullmatch(r"[0-9a-f]{40}", merge) is not None,
         "initial native PR merge coordinate missing",
     )
+    merge = cast(str, merge)
     initial_commit = api(f"repos/{REPOSITORY}/git/commits/{merge}")
     verify_pr_tree(
         initial_pull,
@@ -900,7 +902,7 @@ def _qualify_source_ci(
         status = "pass"
     else:
         status = "blocked-governance"
-    result = {
+    result: dict[str, Any] = {
         "kind": "legacy_source_qualification/v1",
         "component": component,
         "control_revision": control_revision,

@@ -122,22 +122,24 @@ def validate_rules(rows, profile, identity):
             "zero-execution audit is not the exact frozen legacy domain",
         )
         require(
-            all(
-                type(row[key]) is int and row[key] > 0
-                for key in ("run_id", "attempt", "job_id", "check_id")
-            )
-            and all(
-                isinstance(row[key], str) and re.fullmatch(r"[0-9a-f]{64}", row[key])
-                for key in (
-                    "run_sha256",
-                    "job_sha256",
-                    "check_sha256",
-                    "annotations_sha256",
-                    "run_logs_sha256",
+            bool(
+                all(
+                    type(row[key]) is int and row[key] > 0
+                    for key in ("run_id", "attempt", "job_id", "check_id")
                 )
-            )
-            and isinstance(row["attachment_revision"], str)
-            and re.fullmatch(r"[0-9a-f]{40}", row["attachment_revision"]),
+                and all(
+                    isinstance(row[key], str) and re.fullmatch(r"[0-9a-f]{64}", row[key])
+                    for key in (
+                        "run_sha256",
+                        "job_sha256",
+                        "check_sha256",
+                        "annotations_sha256",
+                        "run_logs_sha256",
+                    )
+                )
+                and isinstance(row["attachment_revision"], str)
+                and re.fullmatch(r"[0-9a-f]{40}", row["attachment_revision"])
+            ),
             "zero-execution native coordinates or hashes differ",
         )
         key = row["run_id"], row["attempt"], row["job_id"], row["check_id"]
@@ -347,9 +349,11 @@ def _annotation(run, level, message, line=1):
 def _cancelled_annotations(run, check, annotations, *, infrastructure):
     """Keep the complete ordered failure set; permit only the exact runner notice."""
     require(
-        isinstance(annotations, list)
-        and annotations
-        and all(isinstance(row, dict) for row in annotations),
+        bool(
+            isinstance(annotations, list)
+            and annotations
+            and all(isinstance(row, dict) for row in annotations)
+        ),
         "cancelled domain annotation set is empty or malformed",
     )
     message = annotations[0].get("message", "")

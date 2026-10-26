@@ -7,7 +7,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.production.admission import validate_evidence_admission
 from saas.production.deployment import (
@@ -50,8 +50,10 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
     from saas.scripts.check_image_supply_chain import load_release_evidence
 
     require(
-        isinstance(identifier, str)
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identifier),
+        bool(
+            isinstance(identifier, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identifier)
+        ),
         "legacy stack identifier is invalid",
     )
     store = load_release_evidence(repo, STACK_REGISTRY)
@@ -63,6 +65,7 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
         and isinstance(store["stacks"], dict),
         "legacy stack registry differs",
     )
+    store = cast(dict[str, Any], store)
     row = store["stacks"].get(identifier)
     require(isinstance(row, dict), "complete legacy stack is not registered")
     require(
@@ -90,35 +93,39 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
     )
     inventory = row["physical_inventory"]
     require(
-        isinstance(inventory, dict)
-        and set(inventory) == {"cluster_uid_hash", "workloads"}
-        and _hex(inventory["cluster_uid_hash"])
-        and isinstance(inventory["workloads"], dict)
-        and inventory["workloads"],
+        bool(
+            isinstance(inventory, dict)
+            and set(inventory) == {"cluster_uid_hash", "workloads"}
+            and _hex(inventory["cluster_uid_hash"])
+            and isinstance(inventory["workloads"], dict)
+            and inventory["workloads"]
+        ),
         "legacy physical inventory is not registered",
     )
     seen = set()
     for identifier, workload in inventory["workloads"].items():
         require(
-            isinstance(identifier, str)
-            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identifier)
-            and isinstance(workload, dict)
-            and set(workload)
-            == {
-                "kind",
-                "namespace_uid_hash",
-                "workload_uid_hash",
-                "container_name",
-                "component",
-                "image_role",
-            }
-            and workload["kind"] in {"Deployment", "StatefulSet", "DaemonSet"}
-            and _hex(workload["namespace_uid_hash"])
-            and _hex(workload["workload_uid_hash"])
-            and isinstance(workload["container_name"], str)
-            and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", workload["container_name"])
-            and workload["component"] in COMPONENTS
-            and workload["image_role"] in publisher.IMAGES,
+            bool(
+                isinstance(identifier, str)
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identifier)
+                and isinstance(workload, dict)
+                and set(workload)
+                == {
+                    "kind",
+                    "namespace_uid_hash",
+                    "workload_uid_hash",
+                    "container_name",
+                    "component",
+                    "image_role",
+                }
+                and workload["kind"] in {"Deployment", "StatefulSet", "DaemonSet"}
+                and _hex(workload["namespace_uid_hash"])
+                and _hex(workload["workload_uid_hash"])
+                and isinstance(workload["container_name"], str)
+                and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", workload["container_name"])
+                and workload["component"] in COMPONENTS
+                and workload["image_role"] in publisher.IMAGES
+            ),
             "legacy physical workload identity differs",
         )
         coordinate = (
@@ -144,11 +151,13 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
     )
     for values in bindings.values():
         require(
-            isinstance(values, list)
-            and values
-            and all(isinstance(item, str) for item in values)
-            and len(values) == len(set(values))
-            and set(values) <= set(inventory["workloads"]),
+            bool(
+                isinstance(values, list)
+                and values
+                and all(isinstance(item, str) for item in values)
+                and len(values) == len(set(values))
+                and set(values) <= set(inventory["workloads"])
+            ),
             "legacy policy mapping references unknown or duplicate physical workloads",
         )
     require(
@@ -190,6 +199,7 @@ def _validate_pairs(body, stack, primary, facts):
         start is not None and end is not None and start <= end,
         "legacy complete rollback window is invalid",
     )
+    start, end = cast(datetime, start), cast(datetime, end)
     hashes = []
     for name, item in checks.items():
         require(
@@ -328,30 +338,32 @@ def validate_stack_fallback(
     }
     body = fallback["full_stack_rollback"]
     require(
-        isinstance(body, dict)
-        and set(body)
-        == {
-            "kind",
-            "product_revision",
-            "drill_id",
-            "started_at",
-            "completed_at",
-            "result",
-            "publication_bindings",
-            "cluster_uid_hash",
-            "workloads",
-            "pair_checks",
-            "protocol_database_contract_sha256",
-        }
-        and body["kind"] == "production_legacy_full_stack_rollback/v2"
-        and body["product_revision"] == envelope["product_revision"]
-        and body["result"] == "passed"
-        and isinstance(body["drill_id"], str)
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", body["drill_id"])
-        and body["publication_bindings"] == bindings
-        and body["cluster_uid_hash"] == stack["physical_inventory"]["cluster_uid_hash"]
-        and body["protocol_database_contract_sha256"]
-        == stack["protocol_database_contract_sha256"],
+        bool(
+            isinstance(body, dict)
+            and set(body)
+            == {
+                "kind",
+                "product_revision",
+                "drill_id",
+                "started_at",
+                "completed_at",
+                "result",
+                "publication_bindings",
+                "cluster_uid_hash",
+                "workloads",
+                "pair_checks",
+                "protocol_database_contract_sha256",
+            }
+            and body["kind"] == "production_legacy_full_stack_rollback/v2"
+            and body["product_revision"] == envelope["product_revision"]
+            and body["result"] == "passed"
+            and isinstance(body["drill_id"], str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", body["drill_id"])
+            and body["publication_bindings"] == bindings
+            and body["cluster_uid_hash"] == stack["physical_inventory"]["cluster_uid_hash"]
+            and body["protocol_database_contract_sha256"]
+            == stack["protocol_database_contract_sha256"]
+        ),
         "complete physical rollback does not bind all three exact publications",
     )
     primary = {}
