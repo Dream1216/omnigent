@@ -1,0 +1,44 @@
+{
+  "inputs": {
+    "Core": {
+      "component": "Core",
+      "original_pr_oci": {
+        "artifact_id": 12613851234,
+        "attempt": 1,
+        "run_id": 40222782261,
+        "seal_sha256": "d2122617f47966c209bc2f6b35b05047addc4e0d296dbea726d6afb46bb0841d",
+        "zip_sha256": "0d1b6ffc407a0c1b02399b5907ce26f9249e0597b5f29a7512ad1deb50e1ecdb",
+        "zip_size": 5108033301
+      },
+      "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+      "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e"
+    },
+    "Gateway": {
+      "component": "Gateway",
+      "original_pr_oci": {
+        "artifact_id": 12619335464,
+        "attempt": 1,
+        "run_id": 40238844364,
+        "seal_sha256": "086a47fa3035b818f04da22f6626b240c37d716c19582dd85219cd94991f07e8",
+        "zip_sha256": "9e972e9eb0d58ed7eacf64205fce1bfde012dc24c775e6091163c599aca8b683",
+        "zip_size": 5108885781
+      },
+      "product_revision": "073c73be7970e6593546e5cd339aa8f4e800cdc7",
+      "product_tree": "4760166d4ee3890a388485bea703ca0d205071cc"
+    },
+    "Model": {
+      "component": "Model",
+      "original_pr_oci": {
+        "artifact_id": 12628537463,
+        "attempt": 1,
+        "run_id": 40263218275,
+        "seal_sha256": "fa3a5d6d1ea949e65e8b91bc7bdaf7766ff40eb7d72495d8de64e1bfb4c03eab",
+        "zip_sha256": "e12939a16e3873053b9e7d58c64cac1e7fe7aa3ba93068ca67d7dfa7bfdd40c9",
+        "zip_size": 5107972885
+      },
+      "product_revision": "710ad7256deb1d65ab1830c43b852807b589ddcb",
+      "product_tree": "5a47b5847a6a6dc5a9bc0b73a2dd248713b64d55"
+    }
+  },
+  "schema_version": 1
+}

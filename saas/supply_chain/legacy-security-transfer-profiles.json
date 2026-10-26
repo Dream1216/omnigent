@@ -1,0 +1,26 @@
+{
+  "profiles": {
+    "Core": {
+      "actor": "Dream1216",
+      "base_ref": "codex/legacy-validation-core-dc1e9a97",
+      "component": "Core",
+      "pull_number": 189,
+      "workflow_sha256": "1f3cf6f3783238b381d9ea006e4130b3535019dea08d1bfca48c5cd4beb6dd71"
+    },
+    "Gateway": {
+      "actor": "Dream1216",
+      "base_ref": "codex/legacy-validation-gateway-3319b59a",
+      "component": "Gateway",
+      "pull_number": 190,
+      "workflow_sha256": "1f3cf6f3783238b381d9ea006e4130b3535019dea08d1bfca48c5cd4beb6dd71"
+    },
+    "Model": {
+      "actor": "Dream1216",
+      "base_ref": "codex/legacy-validation-model-7cea0940",
+      "component": "Model",
+      "pull_number": 191,
+      "workflow_sha256": "dcd81293bd9ea6519cb2203cc3bf4d922d91e2d9d4c0f6860bfb67eca4901de8"
+    }
+  },
+  "schema_version": 1
+}

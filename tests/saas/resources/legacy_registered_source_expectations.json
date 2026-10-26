@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "status": "UNAPPROVED_ACTUAL_RECORD_TEST_EXPECTATIONS",
+  "sources": {
+    "Core": {
+      "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+      "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e"
+    },
+    "Gateway": {
+      "product_revision": "073c73be7970e6593546e5cd339aa8f4e800cdc7",
+      "product_tree": "4760166d4ee3890a388485bea703ca0d205071cc"
+    },
+    "Model": {
+      "product_revision": "710ad7256deb1d65ab1830c43b852807b589ddcb",
+      "product_tree": "5a47b5847a6a6dc5a9bc0b73a2dd248713b64d55"
+    }
+  },
+  "tables": {
+    "legacy-security-build-profiles.json": {
+      "key": "profiles",
+      "record_sha256": {
+        "Core": "3f6f1e370f4ab7a87b9f6f4a9c942f39a2e36b60d5cdf5cf49c9b64aaa8e1c1c",
+        "Gateway": "5ec0f511c32151afff08602aa66bb61016251ffb5de2de6c76747b908727b4e2",
+        "Model": "eb5a15315143f83a9967be67cf7abad7dad9081d9c56ee6c389b9d29fb385f66"
+      }
+    },
+    "legacy-security-ci-profiles.json": {
+      "key": "profiles",
+      "record_sha256": {
+        "Core": "8e3c12c1962a065e89c3c2edf44e66b0e25fe9d4e7628f4e09b589de5c358646",
+        "Gateway": "65dd9b84347b9b8897f6e12b55dfc1b6c16103062cd5df22720f57dcb11a56b3",
+        "Model": "f0cec38bc26272115ccbf5ff97cd16c197a213f46e834bab56721327e9007786"
+      }
+    },
+    "legacy-security-original-inputs.json": {
+      "key": "inputs",
+      "record_sha256": {
+        "Core": "003eac26a12f6576f85fd5f866d421044ad437650c495824d2fdb190411a9b63",
+        "Gateway": "4a997f2840696061453d43bb96b06d1be15f6f283faf82991d9338ea894afaf9",
+        "Model": "98e59c4882b20a65522a21aa31438b9dac0a65d3d67ab37fb6a89334d6f02a68"
+      }
+    },
+    "legacy-security-pg-profiles.json": {
+      "key": "profiles",
+      "record_sha256": {
+        "Core": "6011d0e344f2d42a7af11a8764dcc369b47ab5deac103a19cc5f8faf9a8abcbd",
+        "Gateway": "bf580ce8b2eaa84bb8f73112d1341430cea62206518f284469f454351e49e5e0",
+        "Model": "d6c3bd50e0e51ce7b568c0fd3e074a836b6c3b08fb3fc9507b6cca9b063a805d"
+      }
+    },
+    "legacy-security-transfer-profiles.json": {
+      "key": "profiles",
+      "record_sha256": {
+        "Core": "eba8b63f52a0cc4bd6d3e8450869affd97cb56140a75f440f9479f51ddc1b169",
+        "Gateway": "7db28b8f315ddb770cfa17e5ccb270c869d87e83e77ed3a6938fc7866134ee59",
+        "Model": "0e61dbd22adfade4d3f9d777ed9d6a9051abb4bf871cf60316a6a5443743d682"
+      }
+    },
+    "legacy-source-qualification-profiles.json": {
+      "key": "profiles",
+      "record_sha256": {
+        "Core": "99f0aba3da4e551503439ef2c04f13e6cd56cabf9edbbe94af813754a7417df0",
+        "Gateway": "682e8ac46f0578ec183e3ae3c177d95de2ef6f2c248e1268911df58cb6e44632",
+        "Model": "64f5d3188dd053918bf55be41c1ea3eeb6f3c65d1929b6b1c97b323b11a5095a"
+      }
+    }
+  }
+}

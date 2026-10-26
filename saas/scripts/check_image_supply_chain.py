@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -2370,12 +2371,38 @@ def validate_release(
     violations = _validate_policy(repo, policy)
     blockers: list[str] = []
     evidence_violations: list[str] = []
+    legacy_violations: list[str] = []
+    if (
+        not violations
+        and isinstance(evidence, dict)
+        and evidence.get("kind")
+        in {
+            "production_release_with_legacy_fallback/v1",
+            "production_release_with_legacy_fallback/v2",
+        }
+    ):
+        from saas.production.legacy_publication import validate_legacy_fallback
+
+        envelope = evidence
+        if isinstance(envelope.get("release_evidence"), dict):
+            evidence = envelope["release_evidence"]
+        try:
+            validate_legacy_fallback(
+                repo,
+                envelope,
+                now=current,
+                expected_product_revision=expected_product_revision,
+            )
+        except ValueError as error:
+            legacy_violations.append("legacy fallback: " + str(error))
+        except (OSError, KeyError, TypeError, subprocess.SubprocessError):
+            legacy_violations.append("legacy fallback native verification failed")
     if evidence is None:
         blockers.append("no immutable signed production image evidence is recorded")
     elif violations:
         blockers.append("release policy must be valid before evidence can qualify")
     else:
-        evidence_violations = _validate_evidence(
+        evidence_violations = legacy_violations + _validate_evidence(
             repo,
             policy,
             evidence,

@@ -1,0 +1,3425 @@
+{
+  "profiles": {
+    "Core": {
+      "component": "Core",
+      "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+      "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e",
+      "schema_version": 1,
+      "validation_base_ref": "codex/legacy-validation-core-dc1e9a97",
+      "validation_pr": 189,
+      "workflows": [
+        {
+          "attempt": 1,
+          "jobs": {
+            "Coverage report": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (codex-parity)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (databricks)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (inner-rest)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (integration-mock)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (misc)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (repl-sdk)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runner-app)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-core)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-harnesses)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-policies)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-approvals)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-integration)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-rest)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (slack)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (spec-llms)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-crdb-23.2.28)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-mysql)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-postgres)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (tools)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "run_id": 40222782163,
+          "source_sha256": "0681439cfe818d7b5277234ef13656d9b4826add35c4f9be11abf4b981b3b5a3"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Docker build": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Docker build",
+          "path": ".github/workflows/docker-build.yml",
+          "run_id": 40222782169,
+          "source_sha256": "a78ddf58c06232be410641656b54f4838441d626e112c199972e670a7662090a"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Browser Contract UI": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 0/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 1/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 2/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 3/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 4/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 5/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 6/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 7/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 8/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 9/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "build codex-parity sidecar": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "E2E UI Tests",
+          "path": ".github/workflows/e2e-ui.yml",
+          "run_id": 40222782282,
+          "source_sha256": "9e4b11f44065bbadc64698219573e2bb5b5f799ee2ad13814f01753dc8fa94db"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "E2E Tests (shard 0/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 1/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 2/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 3/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "E2E Tests",
+          "path": ".github/workflows/e2e.yml",
+          "run_id": 40222782230,
+          "source_sha256": "6d652a385a9b611a2d751cfca64594de97932fcf20fe366ed7e6526db4ac504e"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Integration (openai-agents)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Integration Tests",
+          "path": ".github/workflows/integration.yml",
+          "run_id": 40222782122,
+          "source_sha256": "70db493196bd4b133e075d3e4e17ac7011cccb42e47ac70d01c79baa896b79cb"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Pre-commit checks": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Version lockstep check": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Lint",
+          "path": ".github/workflows/lint.yml",
+          "run_id": 40222782176,
+          "source_sha256": "ad768fcf2f8891d090c5a8334572d151c9afc919e14d8c647c48807200e963ce"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "build-candidate": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "publish-signed": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-candidate-preflight": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable preflight candidate",
+                  "number": 2,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable migration replay candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable migration replay candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-published-source": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS image candidate",
+          "path": ".github/workflows/saas-image-candidate.yml",
+          "run_id": 40222782261,
+          "source_sha256": "1f3cf6f3783238b381d9ea006e4130b3535019dea08d1bfca48c5cd4beb6dd71"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "publish-candidate": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-candidate": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable patch source",
+                  "number": 2,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-postgresql-current": {
+              "checkouts": [
+                {
+                  "name": "Checkout exact contract source",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-postgresql-n1": {
+              "checkouts": [
+                {
+                  "name": "Checkout exact N-1 contract source",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS N-1 pull_request pr=189 base=dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec head=3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+          "path": ".github/workflows/saas-n1-compat-image.yml",
+          "run_id": 40222782165,
+          "source_sha256": "2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "compatibility-gate": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS upstream compatibility",
+          "path": ".github/workflows/saas-upstream-compat.yml",
+          "run_id": 40222782171,
+          "source_sha256": "1b442b3e92c18dcf0926725040b556866757eaf8f85c8378110404d860a97bb3"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Security Scan": {
+              "checkouts": [
+                {
+                  "name": "Check out scanner from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Security Scan",
+          "path": ".github/workflows/security-scan.yml",
+          "run_id": 40222782143,
+          "source_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
+          "trusted_security_policy": {
+            "attempt": 1,
+            "baseline_revision": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
+            "check_id": 121257759177,
+            "check_sha256": "9ea84178bd11922a53b4e1f4c06b42f45bbc46024638fa98d00c42f4d9d86c59",
+            "check_suite_id": 109016896287,
+            "component": "Core",
+            "job_id": 121257759177,
+            "job_log_sha256": "07c28f43297af069bb0a83f8e4fe2d172f079b04e166a498ad6f42e672614729",
+            "job_sha256": "938f3d59d27ba38dd6987dc2cfa3ca34b6bafaef33f8c13014c3f5eb199acd57",
+            "kind": "legacy_original_OWNER_security_policy_decision/v1",
+            "load_maintainers_sha256": "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78",
+            "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+            "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e",
+            "run_id": 40222782143,
+            "run_sha256": "c575deff6362af3626022cae5dc1373cb99207a07eeb1fb3a4c44e0c07e290d1",
+            "should_scan_sha256": "d3a62e9e1300a9263b1677806c942e0733155e433881c4864b5f12639b032b00",
+            "trusted_checkout_revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
+            "validation_base_ref": "codex/legacy-validation-core-dc1e9a97",
+            "validation_pr": 189,
+            "workflow_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd"
+          }
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Pinned callers match tested action": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Harness CLI action pin consistency",
+          "path": ".github/workflows/setup-harness-cli-pin-test.yml",
+          "run_id": 40222782239,
+          "source_sha256": "f69f27f6ffe5ac023533c1191367d7ab68e542d193964e092a89dbffcf7e9275"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Install agy": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install claude": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install codex": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install pi": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Manifest and retry policy": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Setup harness CLI action tests",
+          "path": ".github/workflows/setup-harness-cli-test.yml",
+          "run_id": 40222782167,
+          "source_sha256": "d0a58addba9cf515415f73253497ee1dc3818fee6bddb9ea77f9b8d2be4d8379"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Trivy CVE Scan (dev-tools)": {
+              "checkouts": [
+                {
+                  "name": "Check out source",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Trivy CVE Scan (repository)": {
+              "checkouts": [
+                {
+                  "name": "Check out source",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Trivy CVE Scan",
+          "path": ".github/workflows/trivy.yml",
+          "run_id": 40222782141,
+          "source_sha256": "57c10d4b3df5054344c5780d75c12000ed15085600d57b18a09d743fc6e2f768"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Detect render-affecting changes": {
+              "checkouts": [],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "UI Snapshot (visual baselines)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-24.04"
+              ]
+            }
+          },
+          "name": "UI Snapshot",
+          "path": ".github/workflows/ui-snapshot.yml",
+          "run_id": 40222782173,
+          "source_sha256": "1b62597512c7e76293d0836abf1872969d5545cb9d3b2e7f0bbc942646e53f1a"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "web test": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "web Tests",
+          "path": ".github/workflows/web-tests.yml",
+          "run_id": 40222782251,
+          "source_sha256": "5d9ba9571ecebf279e79eb24a1d578d56d1dde49df5b0788d77a5132c5218f6e"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Windows smoke + unit": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "windows-latest"
+              ]
+            }
+          },
+          "name": "Windows (native)",
+          "path": ".github/workflows/windows.yml",
+          "run_id": 40222782209,
+          "source_sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
+        }
+      ]
+    },
+    "Gateway": {
+      "component": "Gateway",
+      "product_revision": "073c73be7970e6593546e5cd339aa8f4e800cdc7",
+      "product_tree": "4760166d4ee3890a388485bea703ca0d205071cc",
+      "schema_version": 1,
+      "validation_base_ref": "codex/legacy-validation-gateway-3319b59a",
+      "validation_pr": 190,
+      "workflows": [
+        {
+          "attempt": 1,
+          "jobs": {
+            "Coverage report": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (codex-parity)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (databricks)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (inner-rest)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (integration-mock)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (misc)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (repl-sdk)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runner-app)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-core)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-harnesses)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-policies)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-approvals)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-integration)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-rest)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (slack)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (spec-llms)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-crdb-23.2.28)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-mysql)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-postgres)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (tools)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "run_id": 40238844574,
+          "source_sha256": "0681439cfe818d7b5277234ef13656d9b4826add35c4f9be11abf4b981b3b5a3"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Docker build": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Docker build",
+          "path": ".github/workflows/docker-build.yml",
+          "run_id": 40238844402,
+          "source_sha256": "a78ddf58c06232be410641656b54f4838441d626e112c199972e670a7662090a"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Browser Contract UI": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 0/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 1/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 2/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 3/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 4/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 5/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 6/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 7/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 8/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 9/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "build codex-parity sidecar": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "E2E UI Tests",
+          "path": ".github/workflows/e2e-ui.yml",
+          "run_id": 40238844482,
+          "source_sha256": "9e4b11f44065bbadc64698219573e2bb5b5f799ee2ad13814f01753dc8fa94db"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "E2E Tests (shard 0/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 1/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 2/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 3/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "E2E Tests",
+          "path": ".github/workflows/e2e.yml",
+          "run_id": 40238844597,
+          "source_sha256": "6d652a385a9b611a2d751cfca64594de97932fcf20fe366ed7e6526db4ac504e"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Integration (openai-agents)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Integration Tests",
+          "path": ".github/workflows/integration.yml",
+          "run_id": 40238844472,
+          "source_sha256": "70db493196bd4b133e075d3e4e17ac7011cccb42e47ac70d01c79baa896b79cb"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Pre-commit checks": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Version lockstep check": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Lint",
+          "path": ".github/workflows/lint.yml",
+          "run_id": 40238844470,
+          "source_sha256": "ad768fcf2f8891d090c5a8334572d151c9afc919e14d8c647c48807200e963ce"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "build-candidate": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "publish-signed": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-candidate-preflight": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable preflight candidate",
+                  "number": 2,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable migration replay candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable migration replay candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-published-source": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS image candidate",
+          "path": ".github/workflows/saas-image-candidate.yml",
+          "run_id": 40238844364,
+          "source_sha256": "1f3cf6f3783238b381d9ea006e4130b3535019dea08d1bfca48c5cd4beb6dd71"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "publish-candidate": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-candidate": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable patch source",
+                  "number": 2,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-postgresql-current": {
+              "checkouts": [
+                {
+                  "name": "Checkout exact contract source",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-postgresql-n1": {
+              "checkouts": [
+                {
+                  "name": "Checkout exact N-1 contract source",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS N-1 compatibility image",
+          "path": ".github/workflows/saas-n1-compat-image.yml",
+          "run_id": 40238844284,
+          "source_sha256": "2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "compatibility-gate": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS upstream compatibility",
+          "path": ".github/workflows/saas-upstream-compat.yml",
+          "run_id": 40238844285,
+          "source_sha256": "1b442b3e92c18dcf0926725040b556866757eaf8f85c8378110404d860a97bb3"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Security Scan": {
+              "checkouts": [
+                {
+                  "name": "Check out scanner from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Security Scan",
+          "path": ".github/workflows/security-scan.yml",
+          "run_id": 40238844503,
+          "source_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
+          "trusted_security_policy": {
+            "attempt": 1,
+            "baseline_revision": "3319b59a5d75a411f339b294cbe6b4133bfb851a",
+            "check_id": 121306095411,
+            "check_sha256": "009c4e632cc13d11e3decf2ad20f690d494c23b82affeb52503ae8bedfd36780",
+            "check_suite_id": 109059047753,
+            "component": "Gateway",
+            "job_id": 121306095411,
+            "job_log_sha256": "1ddf214436da96df6682279437d98c821c677d9dc4f84f974b4c150a4be77807",
+            "job_sha256": "d185954c6d916aeb161b316dc34f559abffbbd47b67cdcd3f6733e14ca016907",
+            "kind": "legacy_original_OWNER_security_policy_decision/v1",
+            "load_maintainers_sha256": "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78",
+            "product_revision": "073c73be7970e6593546e5cd339aa8f4e800cdc7",
+            "product_tree": "4760166d4ee3890a388485bea703ca0d205071cc",
+            "run_id": 40238844503,
+            "run_sha256": "115ab2b6748a3de6f03bbb9b6efbf9e92dbfe3dbf69327665bebbb3d38a665de",
+            "should_scan_sha256": "d3a62e9e1300a9263b1677806c942e0733155e433881c4864b5f12639b032b00",
+            "trusted_checkout_revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
+            "validation_base_ref": "codex/legacy-validation-gateway-3319b59a",
+            "validation_pr": 190,
+            "workflow_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd"
+          }
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Pinned callers match tested action": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Harness CLI action pin consistency",
+          "path": ".github/workflows/setup-harness-cli-pin-test.yml",
+          "run_id": 40238844411,
+          "source_sha256": "f69f27f6ffe5ac023533c1191367d7ab68e542d193964e092a89dbffcf7e9275"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Install agy": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install claude": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install codex": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install pi": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Manifest and retry policy": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Setup harness CLI action tests",
+          "path": ".github/workflows/setup-harness-cli-test.yml",
+          "run_id": 40238844309,
+          "source_sha256": "d0a58addba9cf515415f73253497ee1dc3818fee6bddb9ea77f9b8d2be4d8379"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Trivy CVE Scan (dev-tools)": {
+              "checkouts": [
+                {
+                  "name": "Check out source",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Trivy CVE Scan (repository)": {
+              "checkouts": [
+                {
+                  "name": "Check out source",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Trivy CVE Scan",
+          "path": ".github/workflows/trivy.yml",
+          "run_id": 40238844460,
+          "source_sha256": "57c10d4b3df5054344c5780d75c12000ed15085600d57b18a09d743fc6e2f768"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Detect render-affecting changes": {
+              "checkouts": [],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "UI Snapshot (visual baselines)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-24.04"
+              ]
+            }
+          },
+          "name": "UI Snapshot",
+          "path": ".github/workflows/ui-snapshot.yml",
+          "run_id": 40238844349,
+          "source_sha256": "1b62597512c7e76293d0836abf1872969d5545cb9d3b2e7f0bbc942646e53f1a"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "web test": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "web Tests",
+          "path": ".github/workflows/web-tests.yml",
+          "run_id": 40238844425,
+          "source_sha256": "5d9ba9571ecebf279e79eb24a1d578d56d1dde49df5b0788d77a5132c5218f6e"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Windows smoke + unit": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "windows-latest"
+              ]
+            }
+          },
+          "name": "Windows (native)",
+          "path": ".github/workflows/windows.yml",
+          "run_id": 40238844346,
+          "source_sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
+        }
+      ]
+    },
+    "Model": {
+      "component": "Model",
+      "product_revision": "710ad7256deb1d65ab1830c43b852807b589ddcb",
+      "product_tree": "5a47b5847a6a6dc5a9bc0b73a2dd248713b64d55",
+      "schema_version": 1,
+      "validation_base_ref": "codex/legacy-validation-model-7cea0940",
+      "validation_pr": 191,
+      "workflows": [
+        {
+          "attempt": 1,
+          "jobs": {
+            "Coverage report": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (codex-parity)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (databricks)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (inner-rest)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (integration-mock)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (misc)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (repl-sdk)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runner-app)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-core)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-harnesses)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (runtime-policies)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-approvals)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-integration)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (server-rest)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (slack)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (spec-llms)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-crdb-23.2.28)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-mysql)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (stores-postgres)": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Pytest (tools)": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "run_id": 40263218426,
+          "source_sha256": "0681439cfe818d7b5277234ef13656d9b4826add35c4f9be11abf4b981b3b5a3"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Docker build": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Docker build",
+          "path": ".github/workflows/docker-build.yml",
+          "run_id": 40263218418,
+          "source_sha256": "a78ddf58c06232be410641656b54f4838441d626e112c199972e670a7662090a"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Browser Contract UI": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 0/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 1/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 2/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 3/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 4/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 5/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 6/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 7/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 8/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E UI Tests (shard 9/10)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "build codex-parity sidecar": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "E2E UI Tests",
+          "path": ".github/workflows/e2e-ui.yml",
+          "run_id": 40263218723,
+          "source_sha256": "9e4b11f44065bbadc64698219573e2bb5b5f799ee2ad13814f01753dc8fa94db"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "E2E Tests (shard 0/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 1/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 2/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "E2E Tests (shard 3/4)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "E2E Tests",
+          "path": ".github/workflows/e2e.yml",
+          "run_id": 40263218492,
+          "source_sha256": "6d652a385a9b611a2d751cfca64594de97932fcf20fe366ed7e6526db4ac504e"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Integration (openai-agents)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "setup": {
+              "checkouts": [
+                {
+                  "name": "Check out CI scripts",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Integration Tests",
+          "path": ".github/workflows/integration.yml",
+          "run_id": 40263218421,
+          "source_sha256": "70db493196bd4b133e075d3e4e17ac7011cccb42e47ac70d01c79baa896b79cb"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Pre-commit checks": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Version lockstep check": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Lint",
+          "path": ".github/workflows/lint.yml",
+          "run_id": 40263218356,
+          "source_sha256": "ad768fcf2f8891d090c5a8334572d151c9afc919e14d8c647c48807200e963ce"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "build-candidate": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "publish-signed": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-candidate-preflight": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable preflight candidate",
+                  "number": 2,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable migration replay candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable migration replay candidate",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-published-source": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS image candidate",
+          "path": ".github/workflows/saas-image-candidate.yml",
+          "run_id": 40263218275,
+          "source_sha256": "dcd81293bd9ea6519cb2203cc3bf4d922d91e2d9d4c0f6860bfb67eca4901de8"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "publish-candidate": {
+              "checkouts": [],
+              "conclusion": "skipped",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-candidate": {
+              "checkouts": [
+                {
+                  "name": "Checkout immutable patch source",
+                  "number": 2,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-postgresql-current": {
+              "checkouts": [
+                {
+                  "name": "Checkout exact contract source",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "verify-postgresql-n1": {
+              "checkouts": [
+                {
+                  "name": "Checkout exact N-1 contract source",
+                  "number": 3,
+                  "revision": "product"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS N-1 compatibility image",
+          "path": ".github/workflows/saas-n1-compat-image.yml",
+          "run_id": 40263218367,
+          "source_sha256": "2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "compatibility-gate": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "SaaS upstream compatibility",
+          "path": ".github/workflows/saas-upstream-compat.yml",
+          "run_id": 40263218325,
+          "source_sha256": "1b442b3e92c18dcf0926725040b556866757eaf8f85c8378110404d860a97bb3"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Security Scan": {
+              "checkouts": [
+                {
+                  "name": "Check out scanner from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Security Scan",
+          "path": ".github/workflows/security-scan.yml",
+          "run_id": 40263218311,
+          "source_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
+          "trusted_security_policy": {
+            "attempt": 1,
+            "baseline_revision": "7cea09404d49fc965ce053e51803688a5be5fe53",
+            "check_id": 121379855640,
+            "check_sha256": "6ddc0f54734d6339bcdcac35a05a69a1765e2cf1de48712e5f20010a3d6152da",
+            "check_suite_id": 109122885073,
+            "component": "Model",
+            "job_id": 121379855640,
+            "job_log_sha256": "9a654ad89d803d518bfbfa8acd72807bc4c605a6647f2c00916eec2adf8145d2",
+            "job_sha256": "9d9dbf9039233cca99f77f4d40e6a811c924c6bfc9435a617a7769caea6b5c99",
+            "kind": "legacy_original_OWNER_security_policy_decision/v1",
+            "load_maintainers_sha256": "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78",
+            "product_revision": "710ad7256deb1d65ab1830c43b852807b589ddcb",
+            "product_tree": "5a47b5847a6a6dc5a9bc0b73a2dd248713b64d55",
+            "run_id": 40263218311,
+            "run_sha256": "a5b27769ad7fcbaa215decca7bd50727575d49ec4bbb940a2d97ed149f7d4b5d",
+            "should_scan_sha256": "d3a62e9e1300a9263b1677806c942e0733155e433881c4864b5f12639b032b00",
+            "trusted_checkout_revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
+            "validation_base_ref": "codex/legacy-validation-model-7cea0940",
+            "validation_pr": 191,
+            "workflow_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd"
+          }
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Pinned callers match tested action": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Harness CLI action pin consistency",
+          "path": ".github/workflows/setup-harness-cli-pin-test.yml",
+          "run_id": 40263218487,
+          "source_sha256": "f69f27f6ffe5ac023533c1191367d7ab68e542d193964e092a89dbffcf7e9275"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Install agy": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install claude": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install codex": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Install pi": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Manifest and retry policy": {
+              "checkouts": [
+                {
+                  "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Setup harness CLI action tests",
+          "path": ".github/workflows/setup-harness-cli-test.yml",
+          "run_id": 40263218466,
+          "source_sha256": "d0a58addba9cf515415f73253497ee1dc3818fee6bddb9ea77f9b8d2be4d8379"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Trivy CVE Scan (dev-tools)": {
+              "checkouts": [
+                {
+                  "name": "Check out source",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "Trivy CVE Scan (repository)": {
+              "checkouts": [
+                {
+                  "name": "Check out source",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "Trivy CVE Scan",
+          "path": ".github/workflows/trivy.yml",
+          "run_id": 40263218425,
+          "source_sha256": "57c10d4b3df5054344c5780d75c12000ed15085600d57b18a09d743fc6e2f768"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Detect render-affecting changes": {
+              "checkouts": [],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "UI Snapshot (visual baselines)": {
+              "checkouts": [
+                {
+                  "name": "Checkout",
+                  "number": 3,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-24.04"
+              ]
+            }
+          },
+          "name": "UI Snapshot",
+          "path": ".github/workflows/ui-snapshot.yml",
+          "run_id": 40263218270,
+          "source_sha256": "1b62597512c7e76293d0836abf1872969d5545cb9d3b2e7f0bbc942646e53f1a"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "gate / Security Gate": {
+              "checkouts": [
+                {
+                  "name": "Check out trust check from main",
+                  "number": 2,
+                  "revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            },
+            "web test": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "ubuntu-latest"
+              ]
+            }
+          },
+          "name": "web Tests",
+          "path": ".github/workflows/web-tests.yml",
+          "run_id": 40263218413,
+          "source_sha256": "5d9ba9571ecebf279e79eb24a1d578d56d1dde49df5b0788d77a5132c5218f6e"
+        },
+        {
+          "attempt": 1,
+          "jobs": {
+            "Windows smoke + unit": {
+              "checkouts": [
+                {
+                  "name": "Check out repo",
+                  "number": 2,
+                  "revision": "product-merge"
+                }
+              ],
+              "conclusion": "success",
+              "labels": [
+                "windows-latest"
+              ]
+            }
+          },
+          "name": "Windows (native)",
+          "path": ".github/workflows/windows.yml",
+          "run_id": 40263218322,
+          "source_sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
+        }
+      ]
+    }
+  },
+  "schema_version": 1
+}
