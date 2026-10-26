@@ -1767,6 +1767,7 @@ def _write_oci(
     *,
     revision: str,
     label_profile: str = "n1",
+    schema_revision: str = "p0s000000003",
     missing_label: str | None = None,
     extra_label: str | None = None,
     nested: bool = False,
@@ -1788,7 +1789,7 @@ def _write_oci(
     labels = {
         "org.opencontainers.image.revision": revision,
         "ai.omnigent.upstream.revision": "u" * 40,
-        "ai.omnigent.saas.schema-revision": "p0s000000003",
+        "ai.omnigent.saas.schema-revision": schema_revision,
         "ai.omnigent.saas.adapter-contract-version": "adapter-v1",
     }
     if label_profile == "n1":

@@ -1,0 +1,208 @@
+{
+  "original_job": {
+    "id": 120898579385,
+    "run_id": 40102636795,
+    "run_attempt": 1,
+    "head_sha": "a3020c625fd14c083337329b2031582fd8f14161",
+    "name": "Pytest (server-rest)",
+    "status": "completed",
+    "conclusion": "failure",
+    "runner_group_name": "GitHub Actions",
+    "labels": [
+      "ubuntu-latest"
+    ],
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-24T14:35:31Z",
+        "completed_at": "2026-10-24T14:35:32Z"
+      },
+      {
+        "name": "Check out repo",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2,
+        "started_at": "2026-10-24T14:35:32Z",
+        "completed_at": "2026-10-24T14:35:38Z"
+      },
+      {
+        "name": "Set up Python",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-24T14:35:38Z",
+        "completed_at": "2026-10-24T14:35:38Z"
+      },
+      {
+        "name": "Set up uv",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-24T14:35:38Z",
+        "completed_at": "2026-10-24T14:35:43Z"
+      },
+      {
+        "name": "Set up Node.js for local relay tests",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 5,
+        "started_at": "2026-10-24T14:35:43Z",
+        "completed_at": "2026-10-24T14:35:43Z"
+      },
+      {
+        "name": "Install test system dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-24T14:35:43Z",
+        "completed_at": "2026-10-24T14:35:53Z"
+      },
+      {
+        "name": "Cache virtualenv",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-24T14:35:53Z",
+        "completed_at": "2026-10-24T14:35:56Z"
+      },
+      {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-24T14:35:56Z",
+        "completed_at": "2026-10-24T14:35:58Z"
+      },
+      {
+        "name": "Run pytest",
+        "status": "completed",
+        "conclusion": "failure",
+        "number": 9,
+        "started_at": "2026-10-24T14:35:58Z",
+        "completed_at": "2026-10-24T14:41:29Z"
+      },
+      {
+        "name": "Stage coverage data for upload",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-24T14:41:29Z",
+        "completed_at": "2026-10-24T14:41:29Z"
+      },
+      {
+        "name": "Upload pytest artifacts",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11,
+        "started_at": "2026-10-24T14:41:29Z",
+        "completed_at": "2026-10-24T14:41:30Z"
+      },
+      {
+        "name": "Post Cache virtualenv",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 19,
+        "started_at": "2026-10-24T14:41:30Z",
+        "completed_at": "2026-10-24T14:41:30Z"
+      },
+      {
+        "name": "Post Set up uv",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 20,
+        "started_at": "2026-10-24T14:41:30Z",
+        "completed_at": "2026-10-24T14:41:30Z"
+      },
+      {
+        "name": "Post Set up Python",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 21,
+        "started_at": "2026-10-24T14:41:30Z",
+        "completed_at": "2026-10-24T14:41:30Z"
+      },
+      {
+        "name": "Post Check out repo",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 22,
+        "started_at": "2026-10-24T14:41:30Z",
+        "completed_at": "2026-10-24T14:41:31Z"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 23,
+        "started_at": "2026-10-24T14:41:31Z",
+        "completed_at": "2026-10-24T14:41:31Z"
+      }
+    ]
+  },
+  "original_run": {
+    "id": 40102636795,
+    "run_attempt": 1,
+    "path": ".github/workflows/ci.yml",
+    "name": "CI",
+    "head_sha": "a3020c625fd14c083337329b2031582fd8f14161",
+    "event": "pull_request",
+    "repository": {
+      "full_name": "Dream1216/omnigent"
+    },
+    "head_repository": {
+      "full_name": "Dream1216/omnigent"
+    },
+    "status": "completed",
+    "conclusion": "failure",
+    "head_branch": "codex/018-security-floor-20261024",
+    "pull_requests": [
+      {
+        "url": "https://api.github.com/repos/Dream1216/omnigent/pulls/185",
+        "id": 4996233862,
+        "number": 185,
+        "head": {
+          "ref": "codex/018-security-floor-20261024",
+          "sha": "a3020c625fd14c083337329b2031582fd8f14161",
+          "repo": {
+            "id": 1319241251,
+            "url": "https://api.github.com/repos/Dream1216/omnigent",
+            "name": "omnigent"
+          }
+        },
+        "base": {
+          "ref": "main",
+          "sha": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
+          "repo": {
+            "id": 1319241251,
+            "url": "https://api.github.com/repos/Dream1216/omnigent",
+            "name": "omnigent"
+          }
+        }
+      }
+    ]
+  },
+  "checkout_log": "2026-10-24T14:35:32.7672150Z ##[group]Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\n2026-10-24T14:35:38.6446166Z [command]/usr/bin/git log -1 --format=%H\n2026-10-24T14:35:38.6477051Z ee47a950dafdf3c2ac372e16ba86feee5f0494bb\n",
+  "actual_merge": {
+    "sha": "ee47a950dafdf3c2ac372e16ba86feee5f0494bb",
+    "tree": {
+      "sha": "b723086c158cc3501d7377fcafb7eb25b6a71770",
+      "url": "https://api.github.com/repos/Dream1216/omnigent/git/trees/b723086c158cc3501d7377fcafb7eb25b6a71770"
+    },
+    "parents": [
+      {
+        "sha": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
+        "url": "https://api.github.com/repos/Dream1216/omnigent/git/commits/2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
+        "html_url": "https://github.com/Dream1216/omnigent/commit/2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+      },
+      {
+        "sha": "a3020c625fd14c083337329b2031582fd8f14161",
+        "url": "https://api.github.com/repos/Dream1216/omnigent/git/commits/a3020c625fd14c083337329b2031582fd8f14161",
+        "html_url": "https://github.com/Dream1216/omnigent/commit/a3020c625fd14c083337329b2031582fd8f14161"
+      }
+    ]
+  },
+  "scope": "Projection ofretainedfailed40102636795/job120898579385 nativeAPI/log only. Notnewlegacyqualification."
+}

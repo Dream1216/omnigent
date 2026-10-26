@@ -1,0 +1,124 @@
+{
+  "kind": "selected-native-PR-association-request-shapes/v1",
+  "not_original_event_source_evidence": true,
+  "scenarios": {
+    "explicit-false": {
+      "origin_sha256": "8770c8ba76016d5897692181e4bf2f7c9f8283b48923ac90111a9546d9ca3105",
+      "rows": [
+        {
+          "id": 40160849137,
+          "head_sha": "8ec644c4594912252ac123ed13915675edf3f330",
+          "pull_requests": []
+        },
+        {
+          "id": 40160847021,
+          "head_sha": "f3aabb9c15bdee0698909b4013a547e78acbe176",
+          "pull_requests": []
+        },
+        {
+          "id": 40106444402,
+          "head_sha": "5896b531b07daeb2f565a56bc10e2ca842aa0903",
+          "pull_requests": []
+        },
+        {
+          "id": 40105792589,
+          "head_sha": "d196ebb007aa10ef5c95f864d405ddd1a363edb2",
+          "pull_requests": []
+        },
+        {
+          "id": 40102636659,
+          "head_sha": "a3020c625fd14c083337329b2031582fd8f14161",
+          "pull_requests": []
+        }
+      ]
+    },
+    "omitted": {
+      "origin_sha256": "a6a325e0a533abe54b804c41bcc2b321ccda4098e448ab3679e048684feaf46f",
+      "rows": [
+        {
+          "id": 40160849137,
+          "head_sha": "8ec644c4594912252ac123ed13915675edf3f330",
+          "pull_requests": [
+            {
+              "number": 160,
+              "url": "https://api.github.com/repos/Dream1216/omnigent/pulls/160",
+              "head": {
+                "sha": "8ec644c4594912252ac123ed13915675edf3f330"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40160847021,
+          "head_sha": "f3aabb9c15bdee0698909b4013a547e78acbe176",
+          "pull_requests": [
+            {
+              "number": 185,
+              "url": "https://api.github.com/repos/Dream1216/omnigent/pulls/185",
+              "head": {
+                "sha": "f3aabb9c15bdee0698909b4013a547e78acbe176"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40106444402,
+          "head_sha": "5896b531b07daeb2f565a56bc10e2ca842aa0903",
+          "pull_requests": [
+            {
+              "number": 187,
+              "url": "https://api.github.com/repos/Dream1216/omnigent/pulls/187",
+              "head": {
+                "sha": "5896b531b07daeb2f565a56bc10e2ca842aa0903"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40105792589,
+          "head_sha": "d196ebb007aa10ef5c95f864d405ddd1a363edb2",
+          "pull_requests": [
+            {
+              "number": 187,
+              "url": "https://api.github.com/repos/Dream1216/omnigent/pulls/187",
+              "head": {
+                "sha": "5896b531b07daeb2f565a56bc10e2ca842aa0903"
+              }
+            }
+          ]
+        },
+        {
+          "id": 40102636659,
+          "head_sha": "a3020c625fd14c083337329b2031582fd8f14161",
+          "pull_requests": [
+            {
+              "number": 185,
+              "url": "https://api.github.com/repos/Dream1216/omnigent/pulls/185",
+              "head": {
+                "sha": "f3aabb9c15bdee0698909b4013a547e78acbe176"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "native-get-known-boundary": {
+      "origin_sha256": "ab4725450c03dd456540bd7a4cab3d5f59fc1a06a907cbd139382a118c73df87",
+      "rows": [
+        {
+          "id": 40106444402,
+          "head_sha": "5896b531b07daeb2f565a56bc10e2ca842aa0903",
+          "pull_requests": [
+            {
+              "number": 187,
+              "url": "https://api.github.com/repos/Dream1216/omnigent/pulls/187",
+              "head": {
+                "sha": "5896b531b07daeb2f565a56bc10e2ca842aa0903"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

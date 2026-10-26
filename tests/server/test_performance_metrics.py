@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import re
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -16,6 +16,7 @@ from opentelemetry.util.types import Attributes
 from starlette.types import Scope
 
 from omnigent.process_logging import DEFAULT_LOG_DATEFMT, DEFAULT_LOG_PREFIX_FORMAT
+from omnigent.server import performance_metrics
 from omnigent.server.performance_metrics import (
     RequestDurationAccessFormatter,
     ServerMetricsOtelPublisher,
@@ -809,14 +810,21 @@ def test_otel_publisher_records_request_duration_histogram() -> None:
 
 
 @pytest.mark.asyncio
-async def test_publish_server_metrics_periodically_exports_until_cancelled() -> None:
-    """
-    The periodic publisher emits metric snapshots through OTEL.
+async def test_publish_server_metrics_periodically_exports_until_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Controlled ticks publish real snapshots, repeat, and cancel promptly."""
+    delays: list[float] = []
+    tick = asyncio.Event()
 
-    The test waits for concrete fake OTEL records, so it fails if the
-    publisher stops snapshotting or forgets to publish counter/gauge
-    values. Cancelling the task then verifies shutdown does not hang.
-    """
+    async def controlled_sleep(delay: float) -> None:
+        delays.append(delay)
+        await tick.wait()
+        tick.clear()
+
+    publisher_asyncio = SimpleNamespace(**vars(asyncio))
+    publisher_asyncio.sleep = controlled_sleep
+    monkeypatch.setattr(performance_metrics, "asyncio", publisher_asyncio)
     inputs = _FakeMetricInputs()
     metrics = _fake_metrics(inputs)
     metrics.request_started()
@@ -829,25 +837,35 @@ async def test_publish_server_metrics_periodically_exports_until_cancelled() -> 
             interval_seconds=0.01,
         )
     )
-
-    async def wait_for_started_counter() -> None:
-        """
-        Wait until the fake OTEL started counter receives a record.
-        """
-        while not meter.counters["omnigent.server.http.requests.started"].records:
-            await asyncio.sleep(0.01)
+    counter = meter.counters["omnigent.server.http.requests.started"]
 
     try:
-        await asyncio.wait_for(wait_for_started_counter(), timeout=1.0)
+        await asyncio.sleep(0)
+        assert delays == [0.01]
+        assert counter.records == []
+
+        tick.set()
+        await asyncio.sleep(0)
+        assert [record.amount for record in counter.records] == [1]
+        assert meter.gauges["omnigent.server.http.requests.in_flight"].records[-1].amount == 1
+        assert delays == [0.01, 0.01]
+
+        metrics.request_started()
+        tick.set()
+        await asyncio.sleep(0)
+        assert [record.amount for record in counter.records] == [1, 1]
+        assert meter.gauges["omnigent.server.http.requests.in_flight"].records[-1].amount == 2
+        assert delays == [0.01, 0.01, 0.01]
     finally:
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)
 
-    assert [
-        record.amount for record in meter.counters["omnigent.server.http.requests.started"].records
-    ] == [1]
-    assert meter.gauges["omnigent.server.http.requests.in_flight"].records[-1].amount == 1
+    assert task.cancelled()
+    tick.set()
+    await asyncio.sleep(0)
+    assert [record.amount for record in counter.records] == [1, 1]
+    assert delays == [0.01, 0.01, 0.01]
 
 
 @pytest.mark.asyncio

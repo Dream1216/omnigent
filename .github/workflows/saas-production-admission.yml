@@ -24,7 +24,15 @@ jobs:
   production-admission:
     environment: production-evidence
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+      packages: read
+      attestations: read
     env:
       EVIDENCE_REVISION: ${{ inputs.evidence_revision }}
       PRODUCT_REVISION: ${{ inputs.product_revision }}
@@ -48,7 +56,21 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --extra saas
+      - name: Set up read-only registry verification
+        if: inputs.receipt_request_json == ''
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Authenticate registry reads
+        if: inputs.receipt_request_json == ''
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - if: inputs.receipt_request_json == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           uv run python -m saas.scripts.run_production_admission
           --product-revision "$PRODUCT_REVISION"

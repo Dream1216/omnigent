@@ -1,0 +1,35 @@
+{
+  "kind": "selected-native-runner-environment-excerpt/v1",
+  "native_run_id": 40103294767,
+  "native_attempt": 1,
+  "native_job_id": 120899670020,
+  "source_raw_sha256": "a14becc37aa7415a470c3ee9b3221892aba785814d74b8383b5f0b0881d9c10d",
+  "source_raw_bytes": 21764,
+  "selected_original_line_ranges": [
+    [
+      151,
+      151
+    ],
+    [
+      185,
+      186
+    ],
+    [
+      188,
+      218
+    ]
+  ],
+  "selection_omits_command_echo_shell_context_and_token_line": true,
+  "not_complete_native_log": true,
+  "N_A_qualification": false,
+  "scope": "Old main-targeting PR185; Resolve succeeded and later gate failed. Parser shape evidence only.",
+  "step": {
+    "name": "Resolve current PR head",
+    "status": "completed",
+    "conclusion": "success",
+    "number": 3,
+    "started_at": "2026-10-24T14:42:59Z",
+    "completed_at": "2026-10-24T14:43:00Z"
+  },
+  "selected_log": "2026-10-24T14:42:59.3542958Z ##[group]Run set -euo pipefail\n2026-10-24T14:42:59.3754936Z shell: /usr/bin/bash -e {0}\n2026-10-24T14:42:59.3755415Z env:\n2026-10-24T14:42:59.3758246Z   REPO: Dream1216/omnigent\n2026-10-24T14:42:59.3758715Z   EVENT_NAME: workflow_run\n2026-10-24T14:42:59.3759208Z   EVENT_PR: \n2026-10-24T14:42:59.3759629Z   EVENT_HEAD_SHA: \n2026-10-24T14:42:59.3760121Z   WORKFLOW_HEAD_SHA: a3020c625fd14c083337329b2031582fd8f14161\n2026-10-24T14:42:59.3761862Z   WORKFLOW_PRS: [\n  {\n    \"base\": {\n      \"ref\": \"main\",\n      \"repo\": {\n        \"id\": 1319241251,\n        \"name\": \"omnigent\",\n        \"url\": \"https://api.github.com/repos/Dream1216/omnigent\"\n      },\n      \"sha\": \"2c5a9a45f1a576439fc9c5aa0a91022d461389ab\"\n    },\n    \"head\": {\n      \"ref\": \"codex/018-security-floor-20261024\",\n      \"repo\": {\n        \"id\": 1319241251,\n        \"name\": \"omnigent\",\n        \"url\": \"https://api.github.com/repos/Dream1216/omnigent\"\n      },\n      \"sha\": \"a3020c625fd14c083337329b2031582fd8f14161\"\n    },\n    \"id\": 4996233862,\n    \"number\": 185,\n    \"url\": \"https://api.github.com/repos/Dream1216/omnigent/pulls/185\"\n  }\n]\n2026-10-24T14:42:59.3763618Z ##[endgroup]\n"
+}
