@@ -9,7 +9,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
+import pytest
 import uvicorn
+from playwright.async_api import async_playwright
 
 from saas.runner_adapter.static_web_preview import create_static_web_preview_app
 
@@ -42,7 +44,8 @@ def _runtime(root: Path):
         assert not worker.is_alive()
 
 
-def test_static_preview_spa_deep_link_refresh_and_missing_asset(page, tmp_path):
+@pytest.mark.asyncio
+async def test_static_preview_spa_deep_link_refresh_and_missing_asset(tmp_path):
     (tmp_path / "index.html").write_text(
         '<html><head><title>Static preview</title><script type="module" src="/app.js">'
         '</script></head><body><main></main><a href="/orders/123">Open order</a></body></html>'
@@ -51,16 +54,28 @@ def test_static_preview_spa_deep_link_refresh_and_missing_asset(page, tmp_path):
         'document.querySelector("main").textContent = "Route: " + location.pathname;'
     )
     with _runtime(tmp_path) as origin:
-        page.goto(origin + "/dashboard")
-        page.get_by_text("Route: /dashboard", exact=True).wait_for()
-        page.get_by_role("link", name="Open order").click()
-        page.get_by_text("Route: /orders/123", exact=True).wait_for()
-        page.reload()
-        page.get_by_text("Route: /orders/123", exact=True).wait_for()
-        assert page.title() == "Static preview"
-        missing = page.request.get(origin + "/missing.js", headers={"Accept": "text/html"})
-        assert missing.status == 404
-        assert page.request.get(origin + "/__omnigent_preview_health").status == 200
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch()
+            try:
+                context = await browser.new_context(record_video_dir=str(tmp_path / "video"))
+                page = await context.new_page()
+                await page.goto(origin + "/dashboard")
+                await page.get_by_text("Route: /dashboard", exact=True).wait_for()
+                await page.get_by_role("link", name="Open order").click()
+                await page.get_by_text("Route: /orders/123", exact=True).wait_for()
+                await page.reload()
+                await page.get_by_text("Route: /orders/123", exact=True).wait_for()
+                assert await page.title() == "Static preview"
+                missing = await page.request.get(
+                    origin + "/missing.js", headers={"Accept": "text/html"}
+                )
+                assert missing.status == 404
+                health = await page.request.get(origin + "/__omnigent_preview_health")
+                assert health.status == 200
+                await page.screenshot(path=str(tmp_path / "static-preview.png"))
+                await context.close()
+            finally:
+                await browser.close()
 
 
 def test_static_preview_empty_publication_is_unhealthy_over_real_http(tmp_path):

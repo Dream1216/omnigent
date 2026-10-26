@@ -28,7 +28,8 @@ public production session or report the generic instance as covering this path.
 
 - `publication-readiness`, `spa-navigation`, `asset-errors`: own environment,
   `tests/saas/test_static_web_preview_browser.py` starts the actual static runtime
-  on a private listener and drives Chromium. Run with `--video=on --screenshot=on`.
+  on a private listener and drives Chromium. Screenshots and video are saved under
+  pytest's temporary directory; use `--basetemp` to retain them outside the checkout.
   This proves runtime navigation, not the authenticated session handoff.
 - `authorization-lifecycle`: `tests/saas/test_production_preview_control.py`
   exercises the owner and tenant HTTP boundaries. For full browser acceptance,
