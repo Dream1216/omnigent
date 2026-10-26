@@ -276,9 +276,13 @@ class DevelopmentPreviewBroker:
             async def chunks() -> AsyncIterator[bytes]:
                 try:
                     async for chunk in upstream.aiter_raw():
-                        await self._authorized(request)
-                        async with self.live(scope):
-                            pass
+                        try:
+                            await self._authorized(request)
+                            async with self.live(scope):
+                                pass
+                        except HTTPException:
+                            # Headers are committed; finish the stream without more app data.
+                            return
                         yield chunk
                 finally:
                     await upstream.aclose()

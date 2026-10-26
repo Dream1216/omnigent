@@ -12,6 +12,8 @@ not required. The existing static preview remains a checkpoint snapshot.
 - `development-link`: open a ready HTTP service through the official Runner
   transport and an isolated HTTPS origin.
 - `hot-update`: forward HTTP assets and WebSocket text/binary frames for HMR.
+- `late-start-and-replacement`: discover a newly healthy service within five seconds
+  while the control is open; reject old links after exit or process replacement.
 - `revocation`: enforce the original login, membership, session owner, endpoint
   identity, expiry, explicit revocation, and release incarnation on access.
 
@@ -45,6 +47,20 @@ redacted network observations are written outside the checkout. Accounts and
 keys are isolated fixtures. The Runner routing seam points to a real private
 listener; official tunnel frame behavior has separate regression coverage.
 This local test is not signed-image or production acceptance.
+
+The same suite also begins with no service, starts a real Vite process only after
+the authenticated control has rendered, and records the healthy-to-link latency.
+It stops the process, puts an unowned HTTP server on the same port, and verifies
+that the old URL remains denied and the unowned listener is not discovered. An
+owned restart receives a new endpoint and grant; the old link remains denied.
+Measurements are retained in `latency-and-port-replacement.json`. Mutation
+acceptance waits for the actual revoke response before checking the next request.
+
+If authorization disappears after HTTP response headers have been sent, the
+existing stream finishes without forwarding any further application bytes. Its
+already-committed status cannot change; subsequent requests receive a denial.
+Focused tests cover revocation before the first body chunk and between chunks,
+including upstream closure and exclusion of platform cookies/authorization.
 
 The generic `verify-env` app can verify official Server-to-Runner discovery from
 a real session terminal. It has no SaaS preview gateway unless that composition

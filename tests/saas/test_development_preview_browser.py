@@ -8,6 +8,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -94,7 +95,7 @@ def _tls(tmp):
 
 
 @pytest.fixture
-def interactive_preview(tmp_path, monkeypatch):
+def interactive_preview(tmp_path, monkeypatch, request):
     root = Path(__file__).resolve().parents[2]
     node, vite = shutil.which("node"), root / "web/node_modules/vite/bin/vite.js"
     if node is None or not vite.is_file():
@@ -151,6 +152,7 @@ def interactive_preview(tmp_path, monkeypatch):
         + "]}}});"
     )
     processes = []
+    owned = []
     clients = []
     service_port, ui_port, runner_port, https_port = [_port() for _ in range(4)]
     primary_origin = f"https://app.localhost:{https_port}"
@@ -176,42 +178,48 @@ def interactive_preview(tmp_path, monkeypatch):
         for m in app.user_middleware
         if m.cls is SaasAuthContextMiddleware
     )
+
+    def start(folder, port):
+        log = (tmp_path / (folder.name + f"-{len(processes)}.log")).open("w")
+        process = subprocess.Popen(
+            [
+                node,
+                str(vite),
+                str(folder),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--strictPort",
+            ],
+            cwd=folder,
+            stdout=log,
+            stderr=log,
+        )
+        processes.append((process, log))
+        if folder == service:
+            owned[:] = [process]
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                if (
+                    httpx.get(f"http://127.0.0.1:{port}", trust_env=False, timeout=1).status_code
+                    == 200
+                ):
+                    break
+            except httpx.HTTPError:
+                pass
+            if process.poll() is not None or time.monotonic() > deadline:
+                raise RuntimeError("Preview fixture service did not become healthy")
+            time.sleep(0.05)
+        return process, time.monotonic()
+
     try:
-        for folder, port in ((service, service_port), (ui, ui_port)):
-            log = (tmp_path / (folder.name + ".log")).open("w")
-            process = subprocess.Popen(
-                [
-                    node,
-                    str(vite),
-                    str(folder),
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    str(port),
-                    "--strictPort",
-                ],
-                cwd=folder,
-                stdout=log,
-                stderr=log,
-            )
-            processes.append((process, log))
-            deadline = time.monotonic() + 60
-            while True:
-                try:
-                    if (
-                        httpx.get(
-                            f"http://127.0.0.1:{port}", trust_env=False, timeout=1
-                        ).status_code
-                        == 200
-                    ):
-                        break
-                except httpx.HTTPError:
-                    pass
-                if process.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError((tmp_path / (folder.name + ".log")).read_text())
-                time.sleep(0.05)
+        if not getattr(request, "param", {}).get("late_service"):
+            start(service, service_port)
+        start(ui, ui_port)
         services = DevelopmentPreviewServices(
-            lambda sid: [processes[0][0].pid] if sid == "aa00bb11cc22dd33ee44ff5566778899" else []
+            lambda sid: [p.pid for p in owned] if sid == "aa00bb11cc22dd33ee44ff5566778899" else []
         )
         runner = FastAPI()
         install_development_preview_routes(runner, services)
@@ -326,7 +334,10 @@ def interactive_preview(tmp_path, monkeypatch):
                     "source": source,
                     "origin": f"https://app.localhost:{https_port}",
                     "broker": broker,
-                    "process": processes[0][0],
+                    "process": owned[0] if owned else None,
+                    "service_port": service_port,
+                    "service_directory": service,
+                    "start_service": lambda: start(service, service_port),
                 }
         finally:
             omnigent.runtime.set_runner_ws_factory(previous)
@@ -344,6 +355,126 @@ def preview_browser_type():
     # End this loop before later synchronous tests call asyncio.run().
     with sync_playwright() as playwright:
         yield playwright.chromium
+
+
+@pytest.mark.parametrize("interactive_preview", [{"late_service": True}], indirect=True)
+def test_live_discovery_latency_and_replaced_port_rejects_old_link(
+    preview_browser_type, interactive_preview, tmp_path
+):
+    fixture = interactive_preview
+    browser = preview_browser_type.launch(
+        args=[
+            "--host-resolver-rules=MAP app.localhost 127.0.0.1,MAP *.preview.localhost 127.0.0.1",
+            "--no-proxy-server",
+            "--ignore-certificate-errors",
+        ]
+    )
+    context = browser.new_context(ignore_https_errors=True)
+    measurements = {}
+    outsider = None
+    try:
+        page = context.new_page()
+        page.goto(fixture["origin"])
+        page.evaluate("""async () => {
+            const response=await fetch('/saas/auth/login',{method:'POST',
+                headers:{'Content-Type':'application/json'},body:JSON.stringify({
+                email:'HTTP@example.com',password:'initial-http-password'})});
+            if(!response.ok)throw new Error('fixture login failed');
+            const login=await response.json();
+            localStorage.setItem('omnigent.saas.csrf',login.csrf_token);
+        }""")
+        page.reload()
+        page.get_by_text("尚未发现服务，请先在当前会话启动开发服务。", exact=True).wait_for()
+        process, healthy_at = fixture["start_service"]()
+        launch = page.get_by_role("button", name="打开开发预览", exact=True)
+        launch.wait_for(state="visible", timeout=5000)
+        assert launch.is_enabled()
+        measurements["first_healthy_to_link_seconds"] = time.monotonic() - healthy_at
+        assert measurements["first_healthy_to_link_seconds"] <= 5
+        with page.expect_popup() as opened:
+            launch.click()
+        preview = opened.value
+        preview.get_by_role("heading", name="Preview version one").wait_for()
+        original_url = preview.url
+
+        process.terminate()
+        process.wait(10)
+        stopped = preview.reload()
+        assert stopped.status == 404
+        page.get_by_role("button", name="撤销预览链接").wait_for(timeout=5000)
+
+        unowned_root = tmp_path / "unowned-replacement"
+        unowned_root.mkdir()
+        (unowned_root / "index.html").write_text("<h1>Unowned replacement process</h1>")
+        outsider = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "http.server",
+                str(fixture["service_port"]),
+                "--bind",
+                "127.0.0.1",
+            ],
+            cwd=unowned_root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                response = httpx.get(
+                    f"http://127.0.0.1:{fixture['service_port']}", trust_env=False, timeout=1
+                )
+                if response.status_code == 200:
+                    assert "Unowned replacement process" in response.text
+                    break
+            except httpx.HTTPError:
+                pass
+            assert outsider.poll() is None and time.monotonic() < deadline
+            time.sleep(0.05)
+        assert preview.reload().status == 404
+        assert "Unowned replacement process" not in preview.locator("body").inner_text()
+        discovered = page.evaluate("""async () => (await (await fetch(
+            '/v1/sessions/aa00bb11cc22dd33ee44ff5566778899/preview-services')).json()).services""")
+        assert discovered == []
+        outsider.terminate()
+        outsider.wait(5)
+        outsider = None
+
+        fixture["source"].write_text('document.querySelector("h1").textContent="Owned restart";')
+        replacement, healthy_at = fixture["start_service"]()
+        assert replacement.pid != process.pid
+        launch.wait_for(state="visible", timeout=5000)
+        assert launch.is_enabled()
+        measurements["restart_healthy_to_link_seconds"] = time.monotonic() - healthy_at
+        assert measurements["restart_healthy_to_link_seconds"] <= 5
+        assert preview.reload().status == 404
+        with page.expect_popup() as reopened:
+            launch.click()
+        restarted = reopened.value
+        restarted.get_by_role("heading", name="Owned restart").wait_for()
+        assert restarted.url != original_url and "token=" not in restarted.url
+        measurements["stopped_link_status"] = stopped.status
+        measurements["replaced_port_old_link_status"] = 404
+        for label in ("撤销预览链接", "停止预览"):
+            with page.expect_response(
+                lambda response: (
+                    response.request.method == "DELETE"
+                    and "/development-previews/" in response.url
+                )
+            ) as revoked:
+                page.get_by_role("button", name=label).click()
+            assert revoked.value.status == 200
+        assert restarted.reload().status == 403
+    finally:
+        if outsider is not None:
+            outsider.terminate()
+            outsider.wait(5)
+        (tmp_path / "latency-and-port-replacement.json").write_text(
+            json.dumps(measurements, indent=2)
+        )
+        context.close()
+        browser.close()
 
 
 def test_real_vite_browser_handoff_hmr_revocation(

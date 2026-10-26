@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -43,7 +44,7 @@ def test_required_browser_acceptance_cannot_skip_missing_vite(monkeypatch, tmp_p
 
     monkeypatch.setenv("OMNIGENT_SAAS_REQUIRE_DEVELOPMENT_PREVIEW_BROWSER", "1")
     monkeypatch.setattr("shutil.which", lambda _: None)
-    fixture = interactive_preview.__wrapped__(tmp_path, monkeypatch)
+    fixture = interactive_preview.__wrapped__(tmp_path, monkeypatch, SimpleNamespace())
     with pytest.raises(pytest.fail.Exception, match="toolchain is missing"):
         next(fixture)
 
@@ -121,6 +122,64 @@ def test_expired_preview_handoff_is_rejected(grants):
     launch = grants.issue(target, int(time.time()) - 1)
     with pytest.raises(HTTPException):
         grants.exchange(launch, target.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_first_chunk", [False, True])
+async def test_revocation_finishes_started_http_stream_without_leaking_later_data(
+    grants, after_first_chunk
+):
+    from saas.production.development_preview import DevelopmentPreviewBroker
+
+    target = scope()
+    seed_scope(grants, target)
+    launch = grants.issue(target, int(time.time()) + 3600)
+    cookie, _ = grants.exchange(launch, target.id)
+    closed = []
+
+    class RevokingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            if after_first_chunk:
+                yield b"authorized-first-chunk"
+            await asyncio.to_thread(grants.revoke, target)
+            yield b"must-not-leak-after-revocation"
+
+        async def aclose(self):
+            closed.append(True)
+
+    def upstream(request):
+        assert "cookie" not in request.headers and "authorization" not in request.headers
+        return httpx.Response(200, stream=RevokingStream())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream), base_url="http://runner"
+    ) as runner:
+
+        @asynccontextmanager
+        async def live(_scope):
+            yield runner
+
+        broker = DevelopmentPreviewBroker(
+            grants=grants,
+            root_domain="preview.example.test",
+            primary_origin="https://app.example.net",
+            release_incarnation="f" * 32,
+            principal=lambda _connection: None,
+            live=live,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=broker.gateway),
+            base_url=broker.origin(target.id),
+            headers={
+                "cookie": f"__Host-omnigent_dev_preview={cookie}; platform-session=never-forward",
+                "authorization": "Bearer never-forward",
+            },
+        ) as browser:
+            response = await browser.get("/")
+            assert response.status_code == 200
+            assert response.content == (b"authorized-first-chunk" if after_first_chunk else b"")
+            assert closed == [True]
+            assert (await browser.get("/")).status_code == 403
 
 
 @pytest.fixture
