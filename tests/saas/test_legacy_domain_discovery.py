@@ -554,6 +554,8 @@ def test_complete_native_pagination_partitions_search_cap_and_rejects_gaps(monke
 def reviewed_source_bytes(root, relative, expected):
     """Restore only exact reviewed corrections before checking original guard bytes."""
     body = (root / relative).read_bytes()
+    if isinstance(expected, str):
+        return body
     correction = expected.get("type_and_context_correction")
     if correction is not None:
         assert hashlib.sha256(body).hexdigest() == correction["corrected_sha256"]
