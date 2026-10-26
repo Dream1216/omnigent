@@ -114,7 +114,7 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 174,
+    "max_direct_upstream_files": 175,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -743,6 +743,20 @@
           }
         }
       }
+    },
+    "modelpin_owned_cleanup_test_budget_followup": {
+      "approval_status": "APPROVED_LIMITED_SCOPE",
+      "proposed_at": "2026-10-26",
+      "previous_max_direct_upstream_files": 174,
+      "max_direct_upstream_files": 175,
+      "scoped_paths": [
+        "tests/e2e/test_run_preserves_spec_model_under_config_harness_default.py"
+      ],
+      "measured_upstream_net_added_loc": 4002,
+      "test_patch_sha256": "b7702ef1eba7c8b653e8edf88dace2355c0a3295fff4bd1ed3f620607d54ac58",
+      "reason": "Single existing upstream test: use existing data-attributed process reaper and retain only its runtime logs. Original model parameters, all three behavior assertions and startup/run timeouts retained. Local two-node mock run did not reproduce the original CI daemon timeout; root cause remains UNKNOWN. No product/workflow/policy/trusted-input change. Preserve4576 LOC,nine patches,.85 isolation and all release gates; every final head needs its own mandatory CI and candidate images.",
+      "approved_at": "2026-10-26",
+      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: 批准仅将 0.19 上限增至 175；其他限制不变"
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

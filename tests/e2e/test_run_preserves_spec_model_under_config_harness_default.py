@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -11,6 +12,8 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
+
+from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -142,13 +145,27 @@ def test_run_preserves_model_under_config_harness_default(
             timeout=_RUN_TIMEOUT_S,
         )
     finally:
-        subprocess.run(
-            [sys.executable, "-m", "omnigent", "stop"],
-            capture_output=True,
-            env=env,
-            cwd=tmp_path,
-            timeout=120,
-        )
+        cleanup_errors: list[str] = []
+        survivors: list[str] = []
+        try:
+            reaped, survivors = reap_leaked_omnigent_processes(data_dir)
+            print(f"model-pin cleanup: reaped={reaped!r}; survivors={survivors!r}")
+        except Exception as exc:
+            cleanup_errors.append(f"reap: {type(exc).__name__}: {exc}")
+            print(f"model-pin cleanup error: {cleanup_errors[-1]}", file=sys.stderr)
+        try:
+            log_root = data_dir / "logs"
+            for log in log_root.rglob("*.log"):
+                if log.is_symlink() or not log.is_file():
+                    continue
+                if not log.resolve().is_relative_to(data_dir.resolve()):
+                    continue
+                destination = tmp_path / ".omnigent" / "logs" / log.relative_to(log_root)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(log, destination)
+        except Exception as exc:
+            cleanup_errors.append(f"capture: {type(exc).__name__}: {exc}")
+            print(f"model-pin capture error: {cleanup_errors[-1]}", file=sys.stderr)
 
     combined = result.stdout + result.stderr
 
@@ -164,3 +181,6 @@ def test_run_preserves_model_under_config_harness_default(
         f"No request carrying model {_MODEL!r} from {model_source} reached the gateway "
         f"(captured request models: {models!r}):\n{combined}"
     )
+
+    assert not cleanup_errors, f"Runtime cleanup/capture failed: {cleanup_errors!r}"
+    assert not survivors, f"Owned runtime processes survived cleanup: {survivors!r}"
