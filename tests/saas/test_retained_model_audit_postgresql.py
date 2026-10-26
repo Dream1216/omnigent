@@ -26,7 +26,7 @@ def test_packaged_audit_contract_is_exact_and_drift_is_rejected_without_repair(
             if _expected_head("saas") == "p0s000000015":
                 assert original == ()
                 return
-            assert _expected_head("saas") == "lm2t00000001"
+            assert _expected_head("saas") == "dp1a00000001"
             assert len(original) == len(set(original)) == 3
             for contract in _CONTRACTS:
                 signature = contract.function + "(uuid,jsonb)"

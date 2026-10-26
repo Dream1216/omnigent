@@ -215,6 +215,16 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "cebcab42ad9123f60ca88c5cda52ecdfcb8b0520f96e124b3b649f10419c50f2",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "83879067293362288ec7c5f3525f4ede2aa77cf30bb6995ff91db0a8ef4d7ab3",
     # Source replay: exact owner-scoped budget settlement without ACL widening.
     (
         16,
@@ -583,6 +593,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "4e69c28ebf61c032f42be19bf33c65237fa4effd1aaa638a2568a78e8de99d31",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "77ba53e049701a185c484a2353aed404ca620e25fa8e2036bc4f4ab9001846db",
+    (
         16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
@@ -947,6 +967,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "e3ff26db9749411f67056955b24de51399779482756ce0370def91208f7127cf",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "5698ad23f0c263344b02586a4f219c25da524d79871bb8809beb670c3b7d35bf",
+    (
         16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
@@ -1281,6 +1311,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "048808d61f670e174481d948ab30c160b2b29a0a25a8360ae9be292736749624",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "0b0e01d132e8863a3486768d703b26a89ca336e76e76fe5f233efe530f5f1f92",
+    (
         16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
@@ -1610,6 +1650,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "fd919294b8826c5df160913b68d8c8593218c17c4ffab146344292824cf375b2",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "39a58d77d32030253c3259da8edb362a15a9e59735e5400db31bc90550da886d",
+    (
         16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
@@ -1913,6 +1963,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "9cf9f0855a08f373da4b5bb38176d3d8a15470e99479fafc4f3943c5b91825c5",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "8634acaac03b2ecf302c15a90fcf758fbf6b33e3d0abc5828596bc30ade9ea3d",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2225,6 +2285,16 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "6c5a0c9bcf15f631cbfa756b427859bbf39f6271aba3412f8ea604102e8090d1",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "8db52faa9d35469982ff4b7e2cf9a05d31fb0d72a1e28984c6123a9748112bfb",
+    (
         16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
@@ -2500,6 +2570,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "d2f8e3d6a7768943c51dc398a645fc92531cdf3cb1e1a3d990617c26fcb31df1",
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "dp1a00000001",
+    ): "d385af87f24c7742076269944222a0b0e589f2f14f11c632991a27d739f1ce31",
     (
         16,
         "mm1a2b3c4d5e",
@@ -4116,6 +4196,7 @@ def _runtime_saas_head(requested: object) -> str:
         "lm2r00000001": ("lm2r00000001", "lm2s00000001", "lm2t00000001"),
         "lm2s00000001": ("lm2s00000001", "lm2t00000001"),
         "lm2t00000001": ("lm2t00000001",),
+        "dp1a00000001": ("lm2t00000001", "dp1a00000001"),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")
@@ -4960,6 +5041,28 @@ def _verify_object_ownership(
     saas_owner: str,
     saas_head: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
+    ownership = _object_ownership_projection(
+        official_connection,
+        saas_connection,
+        official_owner=official_owner,
+        saas_owner=saas_owner,
+    )
+    _verify_public_schema_inventory(
+        official_connection,
+        official_owner=official_owner,
+        saas_owner=saas_owner,
+        saas_head=saas_head,
+    )
+    return ownership
+
+
+def _object_ownership_projection(
+    official_connection: Connection,
+    saas_connection: Connection,
+    *,
+    official_owner: str,
+    saas_owner: str,
+) -> tuple[tuple[str, str], ...]:
     official_names = _official_table_names()
     official_rows = official_connection.execute(
         sa.text(
@@ -5026,12 +5129,6 @@ def _verify_object_ownership(
         for table, owner in foreign_saas_owners
     ):
         raise PostgreSqlMigrationError("saas_object_ownership_drifted", "verification")
-    _verify_public_schema_inventory(
-        official_connection,
-        official_owner=official_owner,
-        saas_owner=saas_owner,
-        saas_head=saas_head,
-    )
     return tuple((str(table), str(owner)) for table, owner in (*official_rows, *saas_rows))
 
 

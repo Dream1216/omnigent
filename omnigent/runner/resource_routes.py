@@ -142,7 +142,10 @@ def register_resource_routes(
 
     The keyword arguments are the runner app's shared session state and helpers.
     """
+    from omnigent.runner.development_preview import register_development_preview_routes
     from omnigent.runtime.filesystem_registry import detect_git_root
+
+    register_development_preview_routes(app, resource_registry.owned_process_roots)
 
     async def _resolve_conversation_id(response_id: str) -> str | None:
         return _resp_to_conv.get(response_id)

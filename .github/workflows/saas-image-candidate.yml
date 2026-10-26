@@ -272,7 +272,13 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm ci --no-audit --no-fund && npm run build && npm run format:check
+      - name: Set up development preview browser toolchain
+        uses: ./.github/actions/setup-pnpm
+      - name: Install locked development preview browser dependencies
+        run: pnpm install --frozen-lockfile --filter web
       - name: Run current-revision OSS and SaaS regressions
+        env:
+          OMNIGENT_SAAS_REQUIRE_DEVELOPMENT_PREVIEW_BROWSER: "1"
         run: >-
           uv run pytest
           tests/db/test_workspace_scope.py

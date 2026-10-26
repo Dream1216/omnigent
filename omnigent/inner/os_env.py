@@ -9,6 +9,7 @@ import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -81,6 +82,7 @@ EditEntry: TypeAlias = dict[str, str]
 
 class _PopenKwargs(TypedDict, total=False):
     pass_fds: tuple[int, ...]
+    start_new_session: bool
 
 
 # Environment variables every helper subprocess inherits unconditionally.
@@ -358,6 +360,10 @@ class OSEnvironment(ABC):
     def copy_on_write_environment(self) -> CopyOnWriteEnvironment | None:
         return None
 
+    def owned_process_roots(self) -> tuple[int, ...]:
+        """Return existing local process roots without materializing an environment."""
+        return ()
+
     def close(self) -> None:  # noqa: B027 — optional override hook; default is a no-op
         """Release any process or file resources held by the environment.
 
@@ -614,6 +620,8 @@ class _HelperProcessClient:
         # argv arg. On Windows the config came via ``--config-file`` instead,
         # so there is no fd to inherit.
         popen_kwargs: _PopenKwargs = {}
+        if not IS_WINDOWS:
+            popen_kwargs["start_new_session"] = True
         if r_fd is not None:
             popen_kwargs["pass_fds"] = (r_fd,)
         try:
@@ -671,6 +679,10 @@ class _HelperProcessClient:
         try:
             if proc is None:
                 return
+            if not IS_WINDOWS:
+                with contextlib.suppress(OSError):
+                    if os.getsid(proc.pid) == proc.pid:
+                        os.killpg(proc.pid, signal.SIGTERM)
             try:
                 if proc.stdin is not None:
                     proc.stdin.close()
@@ -861,6 +873,11 @@ class CallerProcessOSEnvironment(OSEnvironment):
 
     _copy_on_write_environment: CopyOnWriteEnvironment | None = None
     _owns_copy_on_write: bool = False
+
+    def owned_process_roots(self) -> tuple[int, ...]:
+        # The helper lock stays held during shell commands; discovery must not wait for them.
+        process = self._helper._proc
+        return (process.pid,) if process is not None and process.poll() is None else ()
 
     @property
     def copy_on_write_environment(self) -> CopyOnWriteEnvironment | None:

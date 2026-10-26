@@ -178,6 +178,15 @@ def register_resources_routes(
 ) -> None:
     """Register the resources routes on router."""
 
+    from omnigent.server.routes.development_preview import register_development_preview_routes
+
+    register_development_preview_routes(
+        router,
+        conversation_store=conversation_store,
+        auth_provider=auth_provider,
+        permission_store=permission_store,
+    )
+
     async def _require_filesystem_attachment_support(
         request: Request, conv: Conversation, filename: str
     ) -> None:

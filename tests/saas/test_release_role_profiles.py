@@ -43,11 +43,17 @@ _PROFILES = (
 
 
 @pytest.fixture(autouse=True)
-def legacy_packaged_schema(monkeypatch):
+def legacy_packaged_schema(monkeypatch, request):
     original = migration._expected_head
+    case = getattr(request.node, "callspec", None)
+    packaged = (
+        "dp1a00000001"
+        if case is not None and case.params.get("head") == "dp1a00000001"
+        else "p0s000000015"
+    )
 
     def head(kind):
-        return "p0s000000015" if kind == "saas" else original(kind)
+        return packaged if kind == "saas" else original(kind)
 
     monkeypatch.setattr(migration, "_expected_head", head)
     monkeypatch.setattr(renderer, "_expected_head", head)
@@ -93,6 +99,9 @@ def _render(tmp_path, **kwargs):
         (15, "lm2t00000001"),
         (18, "lm2t00000001"),
         (19, "lm2t00000001"),
+        (15, "dp1a00000001"),
+        (18, "dp1a00000001"),
+        (19, "dp1a00000001"),
     ],
 )
 @pytest.mark.parametrize("mode", ["stage", "final"])

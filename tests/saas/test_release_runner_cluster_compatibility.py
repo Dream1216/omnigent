@@ -6,7 +6,7 @@ from pathlib import Path
 _SQL = (
     Path(__file__).resolve().parents[2] / "saas/control_plane/postgresql_runner_agent_cluster.sql"
 ).read_text()
-_MODEL_HEADS = ("lm2r00000001", "lm2s00000001", "lm2t00000001")
+_MODEL_HEADS = ("lm2r00000001", "lm2s00000001", "lm2t00000001", "dp1a00000001")
 
 
 def _heads(pattern: str) -> tuple[str, ...]:
@@ -15,7 +15,7 @@ def _heads(pattern: str) -> tuple[str, ...]:
     return tuple(re.findall(r"'([^']+)'", match.group(1)))
 
 
-def test_cluster_bootstrap_accepts_only_exact_p0_r_s_t_heads():
+def test_cluster_bootstrap_accepts_only_exact_p0_and_model_successor_heads():
     accepted = _heads(r"IF schema_head NOT IN \(([^)]+)\) THEN")
     assert accepted == ("p0s000000015", *_MODEL_HEADS)
     assert all(head not in accepted for head in ("", "lm2u00000001", "lm2t00000001-extra"))

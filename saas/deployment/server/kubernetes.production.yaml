@@ -158,6 +158,9 @@ items:
                   install -m 0400 /source/keys/idempotency-hmac-key /runtime/idempotency-hmac-key
                   install -m 0400 /source/keys/context-snapshot-key /runtime/context-snapshot-key
                   install -m 0400 /source/keys/preview-exchange-hmac-key /runtime/preview-exchange-hmac-key
+                  if [ -f /source/keys/development-preview-key ]; then
+                    install -m 0400 /source/keys/development-preview-key /runtime/development-preview-key
+                  fi
                   install -m 0400 /source/artifact-credentials/credentials /runtime/artifact-credentials
                   install -m 0400 /source/bindings/service-role-bindings.json /runtime/service-role-bindings.json
                   install -m 0400 /source/runner-control-ca/ca.crt /runtime/runner-control-ca.crt

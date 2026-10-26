@@ -182,6 +182,7 @@ class ProductionServerSecrets:
     context_snapshot_key: bytes = field(repr=False)
     preview_exchange_hmac_key: bytes | None = field(repr=False)
     artifact_credentials: ProductionS3Credentials = field(repr=False)
+    development_preview_key: bytes | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +224,7 @@ class ProductionServerConfig:
     secrets: ProductionServerSecrets = field(repr=False)
     preview_root_domain: str | None = None
     preview_lease_seconds: int = 300
+    development_preview_root_domain: str | None = None
     delivery_config: DeliveryConfig | None = field(default=None, repr=False)
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
@@ -1038,6 +1040,20 @@ def load_production_server_config(
             raise ProductionServerConfigError(
                 f"{service} database URL login does not match service-role bindings"
             )
+    development_root = source.get("OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_ROOT_DOMAIN")
+    development_key_file = source.get("OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_KEY_FILE")
+    if bool(development_root) != bool(development_key_file):
+        raise ProductionServerConfigError(
+            "development preview requires both domain and signing key"
+        )
+    if development_root and (
+        _HOSTNAME.fullmatch(development_root) is None
+        or development_root != development_root.lower()
+        or "runner" not in capabilities
+    ):
+        raise ProductionServerConfigError(
+            "development preview requires a canonical domain and runner"
+        )
     secrets = ProductionServerSecrets(
         database_urls=database_urls,
         api_credential_pepper=_secret_bytes(source, "OMNIGENT_SAAS_API_CREDENTIAL_PEPPER_FILE"),
@@ -1050,6 +1066,11 @@ def load_production_server_config(
             else None
         ),
         artifact_credentials=artifact_config.credentials,
+        development_preview_key=(
+            _secret_bytes(source, "OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_KEY_FILE")
+            if development_root
+            else None
+        ),
     )
     cookie_name = source.get("OMNIGENT_SAAS_COOKIE_NAME", "__Host-omnigent_saas_session")
     if not cookie_name.startswith("__Host-") or not _REVISION.fullmatch(cookie_name[7:]):
@@ -1166,6 +1187,7 @@ def load_production_server_config(
         secrets=secrets,
         preview_root_domain=preview_root_domain,
         preview_lease_seconds=preview_lease_seconds,
+        development_preview_root_domain=development_root,
         delivery_config=delivery_config,
     )
 

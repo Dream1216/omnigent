@@ -102,6 +102,8 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
 
 - [Static session previews](../saas/docs/static-preview.md) covers snapshot readiness, SPA
   navigation, refresh, asset errors, and the SaaS authentication evidence boundary.
+- [Development previews](../saas/docs/development-preview.md) covers owned listening ports,
+  isolated links, hot updates, revocation, and deployment prerequisites.
 
 ## Seed scope
 

@@ -68,6 +68,7 @@ def _build_fastapi_app(
     database_url: str | None = None,
     *,
     with_platform_support_access: bool = False,
+    cookie_config: SaasCookieConfig | None = None,
 ) -> tuple[FastAPI, dict[str, str]]:
     database = database_url or (
         f"sqlite+pysqlite:///file:omnigent-http-{uuid4().hex}?mode=memory&cache=shared&uri=true"
@@ -298,7 +299,7 @@ def _build_fastapi_app(
     resolver = SqlAlchemyContextResolver(sessions, policy, project_authorizer=project_authorizer)
     project_admin = ProjectAdministrationService(sessions, project_authorizer)
     runtime_bindings = RuntimeBindingService(sessions, project_authorizer, policy)
-    cookie = SaasCookieConfig(
+    cookie = cookie_config or SaasCookieConfig(
         name="saas_session",
         secure=False,
         trusted_origins=frozenset({trusted_origin}),

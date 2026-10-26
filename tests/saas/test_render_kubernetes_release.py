@@ -880,3 +880,36 @@ def test_failed_render_does_not_modify_source_templates(tmp_path: Path) -> None:
         render_kubernetes_release(spec_file, source, tmp_path / "rendered")
 
     assert {name: (source / name).read_bytes() for name in MANIFEST_NAMES} == before
+
+
+def test_development_preview_is_explicit_and_requires_its_migration(tmp_path):
+    source = _copy_sources(tmp_path)
+    document = _spec_document()
+    document["development_preview_root_domain"] = "dev-preview.release.example.com"
+    document["control_plane_schema_revision"] = "dp1a00000001"
+    spec_file = tmp_path / "development-release.json"
+    spec_file.write_bytes(_canonical_json(document))
+    spec_file.chmod(0o600)
+    output = tmp_path / "rendered"
+    render_kubernetes_release(spec_file, source, output)
+    production = _document(output / "kubernetes.production.yaml")
+    release = _resource(production, kind="ConfigMap", data_key="OMNIGENT_SAAS_PRODUCT_REVISION")
+    assert release["data"]["OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_ROOT_DOMAIN"] == (
+        "dev-preview.release.example.com"
+    )
+    assert release["data"]["OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_KEY_FILE"] == (
+        "/runtime/development-preview-key"
+    )
+    deployment = _resource(production, kind="Deployment", name="omnigent-saas-server")
+    script = deployment["spec"]["template"]["spec"]["initContainers"][0]["args"][0]
+    assert "install -m 0400 /source/keys/development-preview-key" in script
+    document["control_plane_schema_revision"] = "lm2t00000001"
+    spec_file.write_bytes(_canonical_json(document))
+    with pytest.raises(ReleaseRenderError, match="requires its schema"):
+        load_public_release_spec(spec_file)
+
+
+def test_default_release_keeps_development_preview_disabled(tmp_path):
+    spec_file = _write_spec(tmp_path)
+    spec = load_public_release_spec(spec_file)
+    assert spec.development_preview_root_domain is None

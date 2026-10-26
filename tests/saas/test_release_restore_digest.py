@@ -14,6 +14,7 @@ _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
 _T = "lm2t00000001"
+_D = "dp1a00000001"
 _R_TABLES = {
     "saas_model_connections",
     "saas_model_credential_versions",
@@ -61,17 +62,19 @@ def _populate(connection, head):
         )
 
 
-@pytest.mark.parametrize("head", [_R, _S, _T])
+@pytest.mark.parametrize("head", [_R, _S, _T, _D])
 def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope(head):
     old = restore._digest_tables_for_schema(_P0)
     new = restore._digest_tables_for_schema(head)
     assert old == restore._SELECTED_HASH_TABLES
     assert new[: len(old)] == old
-    assert set(new) - set(old) == _R_TABLES
-    assert len(new) == len(set(new)) == len(old) + 15
+    assert set(new) - set(old) == _R_TABLES | (
+        {"saas_development_preview_grants"} if head == _D else set()
+    )
+    assert len(new) == len(set(new)) == len(old) + 15 + (head == _D)
 
 
-@pytest.mark.parametrize("head", [_P0, _R, _S, _T])
+@pytest.mark.parametrize("head", [_P0, _R, _S, _T, _D])
 def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_connection, head):
     _populate(digest_connection, head)
     digest, counts = restore._digest_on_connection(digest_connection)
@@ -89,7 +92,7 @@ def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_c
     assert set(counts) == set(canonical)
 
 
-@pytest.mark.parametrize("head", [_R, _S, _T])
+@pytest.mark.parametrize("head", [_R, _S, _T, _D])
 def test_r_evidence_change_changes_the_digest_even_if_legacy_rows_do_not_change(
     digest_connection, head
 ):
@@ -97,6 +100,16 @@ def test_r_evidence_change_changes_the_digest_even_if_legacy_rows_do_not_change(
     before, counts = restore._digest_on_connection(digest_connection)
     digest_connection.exec_driver_sql(
         "UPDATE public.saas_model_gateway_evidence SET value='changed'"
+    )
+    after, after_counts = restore._digest_on_connection(digest_connection)
+    assert before != after and counts == after_counts
+
+
+def test_development_preview_revocation_changes_the_restore_digest(digest_connection):
+    _populate(digest_connection, _D)
+    before, counts = restore._digest_on_connection(digest_connection)
+    digest_connection.exec_driver_sql(
+        "UPDATE public.saas_development_preview_grants SET value='revoked'"
     )
     after, after_counts = restore._digest_on_connection(digest_connection)
     assert before != after and counts == after_counts
@@ -117,7 +130,7 @@ def test_unknown_or_ambiguous_schema_is_rejected_before_other_table_reads(
         restore._digest_on_connection(digest_connection)
 
 
-@pytest.mark.parametrize("head", [_R, _S, _T])
+@pytest.mark.parametrize("head", [_R, _S, _T, _D])
 def test_fixture_limit_is_not_a_silent_truncation(digest_connection, head):
     _populate(digest_connection, head)
     digest_connection.execute(
@@ -131,7 +144,7 @@ def test_fixture_limit_is_not_a_silent_truncation(digest_connection, head):
         restore._digest_on_connection(digest_connection)
 
 
-@pytest.mark.parametrize("head", [_R, _S, _T])
+@pytest.mark.parametrize("head", [_R, _S, _T, _D])
 def test_missing_r_table_is_not_treated_as_an_empty_restored_table(digest_connection, head):
     _populate(digest_connection, head)
     digest_connection.exec_driver_sql("DROP TABLE public.saas_model_gateway_evidence")

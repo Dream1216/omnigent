@@ -16,6 +16,7 @@ _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
 _T = "lm2t00000001"
+_D = "dp1a00000001"
 _OFFICIAL = "mm1a2b3c4d5e"
 
 
@@ -80,6 +81,8 @@ def _receipt(tmp_path, monkeypatch, *, installed, requested, verify_only=True):
         (_R, _T),
         (_S, _T),
         (_T, _T),
+        (_D, _T),
+        (_D, _D),
     ],
 )
 def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
@@ -100,6 +103,13 @@ def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
         (_T, _P0),
         (_T, _R),
         (_T, _S),
+        (_D, _P0),
+        (_D, _R),
+        (_D, _S),
+        (_P0, _D),
+        (_R, _D),
+        (_S, _D),
+        (_T, _D),
         (_P0, "lm2q00000001"),
         (_P0, "future"),
         ("future", "future"),

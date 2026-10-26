@@ -84,7 +84,10 @@ class WrongReplicaWSError(RuntimeError):
 # ``session_id`` and ``conversation_id`` are the same identifier by
 # construction, so the captured value feeds
 # ``router.client_for_existing_conversation()``.
-_RUNNER_PATH_RE = re.compile(r"^/v1/sessions/(?P<conv>[^/?]+)/resources/terminals/[^/?]+/attach")
+_RUNNER_PATH_RE = re.compile(
+    r"^/v1/sessions/(?P<conv>[^/?]+)/resources/"
+    r"(?:terminals/[^/?]+/attach|development-preview/[0-9a-f]{32}/ws/)"
+)
 
 
 @dataclass(frozen=True)
