@@ -12,8 +12,10 @@ import hashlib
 import json
 import os
 import re
+import select
 import subprocess
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -191,24 +193,83 @@ def verify_run_pull_request(run: dict[str, Any], profile: dict[str, Any], number
     )
 
 
+def _write_log_diagnostic(destination: Path, diagnostic: dict[str, Any]) -> None:
+    # Diagnostics are advisory and must not replace a download or cleanup failure.
+    try:
+        descriptor = os.open(
+            destination.with_name(destination.name + ".native-download.json"),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(descriptor, "w") as output:
+            json.dump(diagnostic, output, sort_keys=True)
+            output.write("\n")
+    except OSError:
+        pass
+
+
 def download_job_log(job_id: int, destination: Path) -> None:
     """Fetch a bounded native log directly; never follow an artifact-provided URL."""
     require(type(job_id) is int and job_id > 0, "invalid native job ID")
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    argv = ["gh", "api", f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs"]
+    started = time.monotonic()
     try:
         process = subprocess.Popen(
-            ["gh", "api", f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs"],
+            argv,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
-    except OSError:
+    except OSError as error:
         os.close(descriptor)
+        _write_log_diagnostic(
+            destination,
+            {"argv": argv, "spawn_errno": error.errno, "returncode": None},
+        )
         raise
-    timer = threading.Timer(45, process.kill)
+    stderr_digest = hashlib.sha256()
+    stderr_bytes = 0
+    stderr_sample = bytearray()
+    stderr_complete = False
+    stop_stderr = threading.Event()
+
+    def drain_stderr() -> None:
+        nonlocal stderr_bytes, stderr_complete
+        assert process.stderr is not None
+        try:
+            descriptor = process.stderr.fileno()
+            os.set_blocking(descriptor, False)
+            while not stop_stderr.is_set():
+                if not select.select([descriptor], [], [], 0.1)[0]:
+                    continue
+                try:
+                    chunk = os.read(descriptor, 65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    stderr_complete = True
+                    return
+                stderr_digest.update(chunk)
+                stderr_bytes += len(chunk)
+                stderr_sample.extend(chunk[: max(0, 65536 - len(stderr_sample))])
+        except OSError:
+            pass
+
+    reader = threading.Thread(target=drain_stderr, name=f"native-job-log-stderr-{job_id}")
+    reader.start()
+    deadline = threading.Event()
+
+    def expire() -> None:
+        deadline.set()
+        if process.poll() is None:
+            process.kill()
+
+    timer = threading.Timer(45, expire)
+    timer.name = f"native-job-log-deadline-{job_id}"
     timer.start()
+    total = 0
     try:
         assert process.stdout is not None
-        total = 0
         with os.fdopen(descriptor, "wb") as output:
             while chunk := process.stdout.read(65536):
                 total += len(chunk)
@@ -220,11 +281,48 @@ def download_job_log(job_id: int, destination: Path) -> None:
         require(process.wait(timeout=5) == 0, "native job log download failed or timed out")
     finally:
         timer.cancel()
+        timer.join()
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
         if process.stdout is not None:
             process.stdout.close()
+        reader.join(timeout=5)
+        stop_stderr.set()
+        # The only wait is select(0.1); os.read is nonblocking. Freeze stats before return.
+        reader.join()
+        if process.stderr is not None:
+            process.stderr.close()
+        # Never persist arbitrary stderr: it may contain credentials or signed URLs.
+        sample = bytes(stderr_sample).lower()
+        _write_log_diagnostic(
+            destination,
+            {
+                "argv": argv,
+                "returncode": process.returncode,
+                "deadline_seconds": 45,
+                "deadline_expired": deadline.is_set(),
+                "elapsed_seconds": round(time.monotonic() - started, 6),
+                "stdout_bytes": total,
+                "stderr_bytes": stderr_bytes,
+                "stderr_sha256": stderr_digest.hexdigest(),
+                "stderr_complete": stderr_complete,
+                "stderr_sample_limit": 65536,
+                "http_statuses": sorted(
+                    {int(match) for match in re.findall(rb"\(http ([1-5][0-9]{2})\)", sample)}
+                ),
+                "transport_indicators": [
+                    name
+                    for name, phrase in (
+                        ("tls-handshake-timeout", b"tls handshake timeout"),
+                        ("unexpected-eof", b"unexpected eof"),
+                        ("deadline-exceeded", b"context deadline exceeded"),
+                        ("connection-reset", b"connection reset"),
+                    )
+                    if phrase in sample
+                ],
+            },
+        )
 
 
 def _job_pages(run_id: int, attempt: int) -> list[dict[str, Any]]:

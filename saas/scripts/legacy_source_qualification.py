@@ -113,7 +113,13 @@ def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[st
     policy = store["profiles"].get(profile["component"])
     require(
         isinstance(policy, dict)
-        and set(policy) - {"domain_non_execution", "domain_infrastructure_cancellation"}
+        and set(policy)
+        - {
+            "domain_non_execution",
+            "domain_infrastructure_cancellation",
+            "domain_unattributed_zero_execution",
+            "domain_unattributed_bootstrap_cancellation",
+        }
         == {
             "component",
             "product_revision",
