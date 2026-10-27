@@ -615,6 +615,12 @@ already uploaded or registered an agent. The response is the full
     ordinary error or relaunch path.
     Up to 100 pending inputs are accepted per session; excess sends are refused.
 
+    On a connected external host, native-terminal input without startup state
+    also uses this durable queue, including cold terminal bootstrap. Follow-ups
+    join it while saved input is pending; ready startup state with no pending
+    input uses ordinary dispatch. Queued acknowledges saved input, not terminal
+    readiness or model completion. Delivery rechecks the sender's access/policy.
+
     Pending messages use the existing conversation items and status fields.
     SDK dispatch activates them into ordinary history; native transcript echoes
     replace their pending rows. The normal SDK history recovery is unchanged.

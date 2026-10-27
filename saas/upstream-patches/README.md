@@ -1,5 +1,26 @@
 # Upstream patch queue
 
+## Approved native cold-input durability scope (2026-10-28)
+
+Extend the existing `0010-next-agent-session-reliability.patch`, retaining nine
+patches, for the connected external Host's native input queue. The server factory
+registers the existing durable service for Host-enabled servers; admission and
+recovery reuse its original workspace keys, one delivery worker, sender/policy
+checks, generation-aware initializer and incomplete-submission no-replay rule.
+New upstream production paths are `omnigent/server/startup_inputs.py` and its
+existing API documentation; `omnigent/server/app.py` was already patched.
+Owner: Root formal writer, B preparation. Upstream issue/PR: not opened; local
+review is the exact 127ea6e96fd14602dbdb643d936d40077911019f894216f5c76be91d1432bc7d
+runtime/test proposal. First replay target is daily20 `3db749d`; last replay is
+recorded in the separate native checker receipt. Tests remain in the existing
+managed startup module, initializer module and harness-readiness module. Remove
+this extension when upstream supplies equivalent durable cold-input admission.
+The user approved only the file limit increase from 175 to 178 for this scope
+on 2026-10-28 (call_0a584b434c2d4a48bc9e0893c3825158). The 4576-line limit,
+nine patches, .85 isolation floor, test funding and all release gates remain.
+Each new head requires its own CI, OCI and applicable P4/P5 qualification.
+
+
 
 ## Current replay target: daily20 (2026-10-20)
 

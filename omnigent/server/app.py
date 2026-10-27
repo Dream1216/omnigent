@@ -1889,11 +1889,11 @@ def create_app(
     app.state.host_registry = host_registry
     from omnigent.server.startup_inputs import ManagedStartupInputs
 
-    # Only managed creates accept a durable first input, and only managed hosts
-    # need their startup recovered on the replica holding the tunnel.
+    # Managed creates and host-bound native input share durable delivery.
     startup_inputs = (
         ManagedStartupInputs(conversation_store, host_registry)
-        if sandbox_config is not None and sandbox_config.managed_launch_supported
+        if host_store is not None
+        or (sandbox_config is not None and sandbox_config.managed_launch_supported)
         else None
     )
     app.state.startup_inputs = startup_inputs

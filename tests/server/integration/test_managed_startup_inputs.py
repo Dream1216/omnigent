@@ -978,3 +978,197 @@ async def test_waking_a_host_worker_sets_its_event(startup_env: _Env) -> None:
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.parametrize("cancel_before_ack", [False, True])
+async def test_external_native_cold_inputs_ack_before_shared_bootstrap(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch, cancel_before_ack: bool
+) -> None:
+    """Two cold inputs are durable before a deliberately blocked real initializer."""
+    from omnigent.errors import ErrorCode
+    from omnigent.server.runner_session_init import RunnerSessionInitializer
+    from tests.budgets import budget
+    from tests.server.test_runner_session_init import _Registry
+
+    env = startup_env
+    agent = await create_test_agent(env.client, name=CODEX_NATIVE_CODING_AGENT.agent_name)
+    created = await env.client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    assert created.status_code == 201, created.text
+    session_id, host_id = created.json()["id"], uuid4().hex
+    env.conv_store.set_host_id(session_id, host_id, "/tmp/external-workspace")
+    env.conv_store.set_runner_id(session_id, "runner_init")
+    env.app.state.host_registry.register(
+        host_id,
+        AsyncMock(),
+        HostHelloFrame(version="test", frame_protocol_version=1, name="external", runners=[]),
+        owner=None,
+        registered_with_managed_token=False,
+    )
+    entered, release, forwarded = asyncio.Event(), asyncio.Event(), asyncio.Queue()
+    init_calls: list[dict[str, Any]] = []
+    requests_seen: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def transport(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content) if request.content else {}
+        requests_seen.append((request.method, request.url.path, payload))
+        if request.method == "POST" and request.url.path == "/v1/sessions":
+            init_calls.append(payload)
+            entered.set()
+            await release.wait()
+            return httpx.Response(
+                201, json={"session_init_protocol_version": 2, "terminal_ready": True}
+            )
+        if request.method == "POST" and request.url.path == f"/v1/sessions/{session_id}/events":
+            await forwarded.put(payload)
+        return httpx.Response(202, json={"queued": True})
+
+    runner = httpx.AsyncClient(transport=httpx.MockTransport(transport), base_url="http://runner")
+    initializer = RunnerSessionInitializer(_Registry(), server_version="test")  # type: ignore[arg-type]
+    env.app.state.runner_session_initializer = initializer
+
+    async def get_runner(*_: Any, **__: Any) -> httpx.AsyncClient:
+        return runner
+
+    monkeypatch.setattr("omnigent.server.routes.sessions._get_runner_client", get_runner)
+    events = [
+        {
+            "type": "message",
+            "data": {
+                "role": "user",
+                "stable_id": uuid4().hex,
+                "content": [{"type": "input_text", "text": text}],
+            },
+        }
+        for text in ("cold first", "cold second")
+    ]
+    saved_before_ack, allow_ack = asyncio.Event(), asyncio.Event()
+    enqueue = env.app.state.startup_inputs.enqueue
+
+    async def hold_first_ack(*args: Any, **kwargs: Any):
+        saved = await enqueue(*args, **kwargs)
+        if cancel_before_ack and args[1].data["stable_id"] == events[0]["data"]["stable_id"]:
+            saved_before_ack.set()
+            await allow_ack.wait()
+        return saved
+
+    monkeypatch.setattr(env.app.state.startup_inputs, "enqueue", hold_first_ack)
+    requests = [
+        asyncio.create_task(env.client.post(f"/v1/sessions/{session_id}/events", json=event))
+        for event in events
+    ]
+    try:
+        if cancel_before_ack:
+            await asyncio.wait_for(saved_before_ack.wait(), timeout=budget(2))
+            await asyncio.wait_for(entered.wait(), timeout=budget(2))
+            requests[0].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await requests[0]
+            replies = [await asyncio.wait_for(requests[1], timeout=budget(2))]
+            assert all(not task.cancelled() for task in initializer._tasks.values())
+        else:
+            replies = await asyncio.wait_for(asyncio.gather(*requests), timeout=budget(2))
+        assert all(reply.status_code == 202 and reply.json()["pending_id"] for reply in replies)
+        await asyncio.wait_for(entered.wait(), timeout=budget(2))
+        assert len(init_calls) == 1 and forwarded.empty() and not release.is_set()
+        saved = env.conv_store.list_pending_inputs(session_id)
+        assert len(saved) == 2 and all(item.status == "in_progress" for item in saved)
+        texts = [item.data.content[0]["text"] for item in saved]
+        assert set(texts) == {"cold first", "cold second"}
+        assert init_calls[0]["session_init"]["suppress_recovery_turn"] is True
+        retry = await env.client.post(f"/v1/sessions/{session_id}/events", json=events[1])
+        assert (
+            retry.status_code == 202
+            and retry.json()["pending_id"] == replies[-1].json()["pending_id"]
+        )
+        changed = {
+            **events[1],
+            "data": {
+                **events[1]["data"],
+                "content": [{"type": "input_text", "text": "edited cold second"}],
+            },
+        }
+        conflict = await env.client.post(f"/v1/sessions/{session_id}/events", json=changed)
+        assert (
+            conflict.status_code == 409 and conflict.json()["error"]["code"] == ErrorCode.CONFLICT
+        )
+        after_retry = env.conv_store.list_pending_inputs(session_id)
+        assert [item.id for item in after_retry] == [item.id for item in saved]
+        assert [item.data.content for item in after_retry] == [item.data.content for item in saved]
+        assert len(after_retry) == 2 and len(init_calls) == 1 and forwarded.empty()
+        assert not release.is_set()
+        release.set()
+        for text in texts:
+            body = await asyncio.wait_for(forwarded.get(), timeout=budget(2))
+            assert body["type"] == "message" and body["content"][0]["text"] == text
+            await _simulate_transcript_forwarder_echo(env.client, session_id, text)
+        assert len(init_calls) == 1 and forwarded.empty()
+        assert env.conv_store.list_pending_inputs(session_id) == []
+    finally:
+        allow_ack.set()
+        release.set()
+        for request in requests:
+            if not request.done():
+                request.cancel()
+        await asyncio.gather(*requests, return_exceptions=True)
+        await env.app.state.startup_inputs.shutdown()
+        await runner.aclose()
+
+
+async def test_external_native_queue_and_workers_stay_workspace_scoped(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An external host in another workspace cannot admit or own this queue."""
+    from omnigent._wrapper_labels import CODEX_NATIVE_WRAPPER_VALUE, WRAPPER_LABEL_KEY
+    from omnigent.db.db_models import workspace_scope
+    from omnigent.entities import Conversation
+
+    env = startup_env
+    startup = env.app.state.startup_inputs
+    host_id = uuid4().hex
+    conv = Conversation(
+        id="native-cold",
+        created_at=1,
+        updated_at=1,
+        root_conversation_id="native-cold",
+        host_id=host_id,
+        labels={WRAPPER_LABEL_KEY: CODEX_NATIVE_WRAPPER_VALUE},
+    )
+    monkeypatch.setattr(env.conv_store, "list_host_conversation_ids", lambda *_a, **_k: [])
+    try:
+        for workspace in (111, 222):
+            with workspace_scope(workspace):
+                env.app.state.host_registry.register(
+                    host_id,
+                    AsyncMock(),
+                    HostHelloFrame(
+                        version="test", frame_protocol_version=1, name="external", runners=[]
+                    ),
+                    owner=None,
+                    registered_with_managed_token=False,
+                )
+                assert await startup.accepts(conv, env.app)
+                startup.host_changed(env.app, host_id)
+        assert set(startup._workers) == {(111, host_id), (222, host_id)}
+        with workspace_scope(333):
+            assert not await startup.accepts(conv, env.app)
+            startup.host_changed(env.app, host_id)
+        assert set(startup._workers) == {(111, host_id), (222, host_id)}
+    finally:
+        await startup.shutdown()
+
+
+async def test_external_host_queue_is_available_without_managed_provider(
+    db_uri: str, tmp_path: Path, runtime_init: None
+) -> None:
+    """External native inputs do not require a sandbox provisioning configuration."""
+    artifacts = LocalArtifactStore(str(tmp_path / "external-artifacts"))
+    app = create_app(
+        agent_store=SqlAlchemyAgentStore(db_uri),
+        file_store=SqlAlchemyFileStore(db_uri),
+        conversation_store=SqlAlchemyConversationStore(db_uri),
+        artifact_store=artifacts,
+        agent_cache=AgentCache(artifact_store=artifacts, cache_dir=tmp_path / "external-cache"),
+        host_store=HostStore(db_uri),
+    )
+    assert isinstance(app.state.startup_inputs, ManagedStartupInputs)
+    await app.state.startup_inputs.shutdown()

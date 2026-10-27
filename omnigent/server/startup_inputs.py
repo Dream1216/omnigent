@@ -231,7 +231,13 @@ class ManagedStartupInputs:
         """Whether a new message must wait behind the session's startup."""
         state = conv.labels.get(STARTUP_LABEL)
         if state not in ("pending", "ready"):
-            return False
+            # Native input must outlive a slow terminal bootstrap and its sender.
+            # Keep follow-ups in the same queue to avoid racing the first admission.
+            if state is not None or conv.host_id is None or self.hosts.get(conv.host_id) is None:
+                return False
+            from omnigent.server.routes.sessions import _is_native_terminal_session
+
+            return _is_native_terminal_session(conv)
         # A failed launch can't deliver anything; the message path reports why.
         # The tracker knows on the launching replica, the label everywhere.
         tracker = getattr(app.state, "managed_launches", None)
@@ -282,7 +288,7 @@ class ManagedStartupInputs:
                 wake.set()
                 return
             worker.cancel()
-        if connection is None or not connection.registered_with_managed_token:
+        if connection is None:
             return
         wake = asyncio.Event()
 
