@@ -131,10 +131,29 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 174
+    assert budget["max_direct_upstream_files"] == 184
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    preview_followup = revision["reviewed_development_preview_file_budget_followup"]
+    assert preview_followup["approved_at"] == "2026-10-27"
+    assert (
+        preview_followup["reviewed_product_revision"] == "642db1136823450060eedf2beb4b27cf2c29f152"
+    )
+    assert preview_followup["previous_max_direct_upstream_files"] == 174
+    assert preview_followup["max_direct_upstream_files"] == 184
+    assert preview_followup["scoped_paths"] == [
+        "omnigent/inner/os_env.py",
+        "omnigent/runner/development_preview.py",
+        "omnigent/runner/resource_registry.py",
+        "omnigent/runner/resource_routes.py",
+        "omnigent/server/_runner_ws_tunnel.py",
+        "omnigent/server/routes/development_preview.py",
+        "omnigent/server/routes/sessions/routes_resources.py",
+        "tests/runner/test_resource_registry.py",
+        "web/src/components/DevelopmentPreviewControl.tsx",
+        "web/src/components/DevelopmentPreviewControl.test.tsx",
+    ]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153
