@@ -14,18 +14,26 @@ from tests.saas.test_render_kubernetes_release import (
 
 
 @pytest.fixture(autouse=True)
-def legacy_packaged_schema(monkeypatch):
+def legacy_packaged_schema(monkeypatch, request):
     original = migration._expected_head
+    case = getattr(request.node, "callspec", None)
+    packaged = (
+        "dp1a00000001"
+        if case is not None and case.params.get("head") == "dp1a00000001"
+        else "p0s000000015"
+    )
 
     def head(kind):
-        return "p0s000000015" if kind == "saas" else original(kind)
+        return packaged if kind == "saas" else original(kind)
 
     monkeypatch.setattr(migration, "_expected_head", head)
     monkeypatch.setattr(renderer, "_expected_head", head)
 
 
 @pytest.mark.parametrize("mode", ["stage", "final"])
-@pytest.mark.parametrize("head", ["p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"])
+@pytest.mark.parametrize(
+    "head", ["p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001", "dp1a00000001"]
+)
 def test_release_binds_the_actual_database_head_and_exact_migration_mode(tmp_path, mode, head):
     document = _spec_document(mode=mode)
     document["control_plane_schema_revision"] = head

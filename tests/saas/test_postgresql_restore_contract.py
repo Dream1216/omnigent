@@ -195,8 +195,8 @@ def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
     }.issubset(_SELECTED_HASH_TABLES)
 
 
-def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_thirty_one_tables() -> None:
-    assert len(CONTROL_PLANE_RLS_TABLES) == 131
+def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_thirty_two_tables() -> None:
+    assert len(CONTROL_PLANE_RLS_TABLES) == 132
     assert "saas_email_provider_configurations" in CONTROL_PLANE_RLS_TABLES
     assert "saas_email_provider_configuration_receipts" in CONTROL_PLANE_RLS_TABLES
     assert "saas_model_provider_configurations" in CONTROL_PLANE_RLS_TABLES

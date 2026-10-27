@@ -952,6 +952,22 @@ class SessionResourceRegistry:
 
         raise ValueError(f"Environment {environment_id!r} not found for session {session_id!r}")
 
+    def owned_process_roots(self, session_id: str) -> tuple[int, ...]:
+        """Collect only already-running resources owned by this session."""
+        with self._lock:
+            environment = self._primary_envs.get(session_id)
+        roots = set(environment.owned_process_roots() if environment is not None else ())
+        if self._terminal_registry is not None:
+            for entry in self._terminal_registry.list_for_conversation(session_id):
+                if not entry.instance.running:
+                    continue
+                pid = entry.instance.pane_pid_sync()
+                if pid is not None:
+                    roots.add(pid)
+                if entry.instance.os_env is not None:
+                    roots.update(entry.instance.os_env.owned_process_roots())
+        return tuple(roots)
+
     def uses_copy_on_write(self, session_id: str) -> bool:
         """Preserve disposable semantics if a later spec lookup is unavailable."""
         with self._lock:

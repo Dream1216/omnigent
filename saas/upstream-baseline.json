@@ -114,11 +114,30 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 174,
+    "max_direct_upstream_files": 184,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "reviewed_development_preview_file_budget_followup": {
+      "approved_at": "2026-10-27",
+      "reviewed_product_revision": "642db1136823450060eedf2beb4b27cf2c29f152",
+      "previous_max_direct_upstream_files": 174,
+      "max_direct_upstream_files": 184,
+      "scoped_paths": [
+        "omnigent/inner/os_env.py",
+        "omnigent/runner/development_preview.py",
+        "omnigent/runner/resource_registry.py",
+        "omnigent/runner/resource_routes.py",
+        "omnigent/server/_runner_ws_tunnel.py",
+        "omnigent/server/routes/development_preview.py",
+        "omnigent/server/routes/sessions/routes_resources.py",
+        "tests/runner/test_resource_registry.py",
+        "web/src/components/DevelopmentPreviewControl.tsx",
+        "web/src/components/DevelopmentPreviewControl.test.tsx"
+      ],
+      "reason": "Requester explicitly approved the 174-to184 file ceiling for these ten reviewed development-preview paths. Preserve the 4576 net LOC ceiling, nine patches, .85 isolation floor and every test, image-scan and release gate. This is only a bounded file-budget authorization, not approval of additional LOC, new paths, merge, signing or production admission. Each new SHA requires its own complete gate evidence."
+    },
     "reviewed_complete_security_budget_followup": {
       "approved_at": "2026-10-25",
       "previous_max_direct_upstream_files": 158,

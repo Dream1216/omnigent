@@ -2070,3 +2070,13 @@ async def test_non_claude_terminal_never_acknowledges_billing_notice(
         on_tick()
 
     acknowledge.assert_not_called()
+
+
+def test_owned_process_roots_do_not_create_other_session_environments(tmp_path):
+    registry = SessionResourceRegistry()
+    environment = _FakeOSEnvironment(spec=OSEnvSpec(type="caller_process"), cwd=tmp_path)
+    environment.owned_process_roots = lambda: (1234,)
+    registry._primary_envs["owner"] = environment
+    assert registry.owned_process_roots("owner") == (1234,)
+    assert registry.owned_process_roots("other") == ()
+    assert "other" not in registry._primary_envs

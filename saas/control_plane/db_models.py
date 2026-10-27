@@ -147,6 +147,40 @@ class IdentityConnection(SaasBase):
     )
 
 
+class DevelopmentPreviewGrantRecord(SaasBase):
+    """One-use handoff and revocable cookie for an interactive development service."""
+
+    __tablename__ = "saas_development_preview_grants"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    actor_id: Mapped[UUID] = mapped_column(sa.ForeignKey("saas_global_users.id"), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(sa.ForeignKey("saas_tenants.id"), nullable=False)
+    space_id: Mapped[UUID] = mapped_column(sa.ForeignKey("saas_spaces.id"), nullable=False)
+    context_json: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    launch_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    session_hash: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    redeemed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint("length(launch_hash) = 64", name="ck_dev_preview_launch_hash"),
+        sa.CheckConstraint(
+            "session_hash IS NULL OR length(session_hash) = 64", name="ck_dev_preview_session_hash"
+        ),
+        sa.CheckConstraint(
+            "(session_hash IS NULL) = (redeemed_at IS NULL)", name="ck_dev_preview_redemption"
+        ),
+        sa.CheckConstraint(
+            "length(context_json) BETWEEN 1 AND 4096", name="ck_dev_preview_context_bound"
+        ),
+        sa.Index("ix_dev_preview_actor_expiry", "actor_id", "expires_at"),
+    )
+
+
 class AuthSessionRecord(SaasBase):
     """Revocable authentication session storing only a bearer-token digest."""
 

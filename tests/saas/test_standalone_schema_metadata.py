@@ -19,7 +19,7 @@ from tests.saas.test_control_plane_migration import _migration_config
 from tests.saas.test_execution_control_plane import _admitted_run, _execution_fixture
 
 _R = "lm2r00000001"
-_T = "lm2t00000001"
+_D = "dp1a00000001"
 _PRICE_KEYS = {"fk_session_customer_pricing", "fk_run_customer_pricing"}
 
 
@@ -96,7 +96,7 @@ def test_fresh_schema_matches_the_ordinary_unfiltered_alembic_check(schema_datab
         command.check(_migration_config(connection))
         assert (
             connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-            == _T
+            == _D
         )
     assert _foreign_keys(schema_database) == set()
 
@@ -111,6 +111,37 @@ def test_complete_application_metadata_is_not_overridden_or_hidden(schema_databa
             connection, opts={"version_table": "saas_alembic_version", "compare_type": True}
         )
         assert compare_metadata(context, control_plane_migration_metadata(application))
+
+
+def test_preview_schema_downgrade_retains_issued_access_history(schema_database):
+    import time
+
+    from sqlalchemy.orm import sessionmaker
+
+    from saas.control_plane.development_preview import DevelopmentPreviewGrants
+    from tests.saas.test_development_preview import scope, seed_scope
+
+    _upgrade(schema_database)
+    grants = DevelopmentPreviewGrants(
+        sessionmaker(schema_database), b"preview-history-test-key-0000001"
+    )
+    target = scope()
+    seed_scope(grants, target)
+    grants.issue(target, int(time.time()) + 3600)
+    with pytest.raises(RuntimeError, match="access history must be retained"):
+        with schema_database.begin() as connection:
+            command.downgrade(_migration_config(connection), "lm2t00000001")
+    with schema_database.connect() as connection:
+        assert (
+            connection.exec_driver_sql(
+                "SELECT count(*) FROM saas_development_preview_grants"
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
+            == _D
+        )
 
 
 def test_nonempty_p0_execution_survives_schema_upgrade_with_foreign_keys_enabled(
@@ -184,7 +215,7 @@ def test_schema_downgrade_refuses_retained_execution_without_erasing_data(schema
     with schema_database.connect() as connection:
         assert (
             connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-            == _T
+            == _D
         )
 
 

@@ -1517,6 +1517,15 @@ def build_production_server(
     app.state.production_saas_readiness = services.readiness
     app.state.production_saas_version = dict(config.version_document)
     app.state.production_saas_services = services
+    from saas.production.development_preview_composition import install_development_previews
+
+    install_development_previews(
+        app,
+        config=config,
+        sessions=sessions,
+        official=official_dependencies,
+        integration=services.integration,
+    )
     return BuiltProductionServer(
         app=app,
         host=config.host,

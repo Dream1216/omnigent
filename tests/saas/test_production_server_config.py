@@ -739,3 +739,24 @@ def test_artifact_admission_receipt_is_read_only_and_exactly_bound(tmp_path: Pat
     receipt.chmod(0o400)
     with pytest.raises(ProductionServerConfigError, match="does not match the receipt file"):
         load_production_server_config(tampered)
+
+
+def test_development_preview_configuration_requires_explicit_paired_authority(tmp_path):
+    environment = _environment(tmp_path)
+    environment["OMNIGENT_SAAS_CAPABILITIES"] = "tenant,run,runner"
+    environment["OMNIGENT_SAAS_RUNNER_ADAPTER_FACTORY"] = "deployment.runner:factory"
+    key = tmp_path / "development-preview-key"
+    key.write_bytes(b"dedicated-development-preview-key-0001")
+    key.chmod(0o400)
+    name = "OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_ROOT_DOMAIN"
+    environment[name] = "preview.example.test"
+    with pytest.raises(ProductionServerConfigError, match="both domain and signing key"):
+        load_production_server_config(environment)
+    environment["OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_KEY_FILE"] = str(key)
+    config = load_production_server_config(environment)
+    assert config.development_preview_root_domain == "preview.example.test"
+    assert config.secrets.development_preview_key == key.read_bytes()
+    assert key.read_text() not in repr(config)
+    environment[name] = "https://preview.example.test/path"
+    with pytest.raises(ProductionServerConfigError, match="canonical domain"):
+        load_production_server_config(environment)

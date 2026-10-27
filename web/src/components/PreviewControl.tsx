@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, LoaderCircleIcon, MonitorPlayIcon, SquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authenticatedFetch } from "@/lib/identity";
+import { DevelopmentPreviewControl } from "@/components/DevelopmentPreviewControl";
 
 interface SourceRun {
   id: string;
@@ -20,6 +21,8 @@ interface PreviewState {
   status: string;
   url?: string;
   expires_at: string;
+  source_run_id?: string;
+  failure_code?: string;
 }
 
 async function read<T>(path: string, init?: RequestInit): Promise<T> {
@@ -104,11 +107,25 @@ export function PreviewControl({ sessionId, enabled }: { sessionId: string; enab
           aria-label="会话预览"
           className="absolute bottom-full right-0 z-40 mb-2 w-72 space-y-3 rounded-lg border border-border bg-popover p-4 text-sm shadow-lg"
         >
-          <p className="font-medium">当前会话预览</p>
+          <DevelopmentPreviewControl key={sessionId} sessionId={sessionId} />
+          <p className="font-medium">静态快照预览</p>
           <p className="text-xs text-muted-foreground">从已完成运行的检查点打开独立预览。</p>
           {error && <p role="alert">{error.message}</p>}
           {!run && !source.isLoading && <p>当前会话还没有可预览的已完成运行。</p>}
           {state && <p role="status">{ready ? "已就绪" : state.status}</p>}
+          {state?.source_run_id && (
+            <p className="text-xs text-muted-foreground">
+              来源运行：{state.source_run_id.slice(0, 8)}
+            </p>
+          )}
+          {state?.failure_code && (
+            <p role="alert">预览启动失败：{state.failure_code}。请检查构建产物和运行日志。</p>
+          )}
+          {ready && state && (
+            <p className="text-xs text-muted-foreground">
+              有效至 {new Date(state.expires_at).toLocaleTimeString()}
+            </p>
+          )}
           {ready && state.url && (
             <a
               href={state.url}

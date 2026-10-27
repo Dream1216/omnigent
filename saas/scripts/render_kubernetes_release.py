@@ -244,6 +244,7 @@ class KubernetesReleaseSpec:
     runner_fleet: RunnerFleetReleaseSpec
     service_logins: Mapping[str, str]
     source_sha256: str
+    development_preview_root_domain: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -846,6 +847,8 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         "runner_fleet",
         "service_logins",
     }
+    if "development_preview_root_domain" in document:
+        fields.add("development_preview_root_domain")
     _mapping(document, name="release spec", fields=fields)
     if document.get("schema_version") != 1:
         raise ReleaseRenderError("release spec schema_version must equal 1")
@@ -868,6 +871,22 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
     artifact = _parse_artifact(document.get("artifact"), mode=mode)
     preview = _parse_preview(document.get("preview"))
     control_plane_schema_revision = _string(document, "control_plane_schema_revision")
+    development_root = None
+    if "development_preview_root_domain" in document:
+        development_root = _dns_name(
+            _string(document, "development_preview_root_domain"),
+            name="development_preview_root_domain",
+        )
+        primary = urlsplit(_string(document, "public_origin")).hostname or ""
+        if (
+            control_plane_schema_revision != "dp1a00000001"
+            or development_root == preview.root_domain
+            or primary == development_root
+            or primary.endswith("." + development_root)
+        ):
+            raise ReleaseRenderError(
+                "development preview requires its schema and an isolated domain"
+            )
     try:
         _runtime_saas_head(control_plane_schema_revision)
     except PostgreSqlMigrationError:
@@ -947,6 +966,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
+        "dp1a00000001",
     }:
         raise ReleaseRenderError("model projection profile requires the R, S or T schema")
     service_logins = {
@@ -1004,6 +1024,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         runner_fleet=runner_fleet,
         service_logins=service_logins,
         source_sha256=_sha256(raw),
+        development_preview_root_domain=development_root,
     )
 
 
@@ -1274,6 +1295,15 @@ def _migration_args(spec: KubernetesReleaseSpec) -> list[str]:
     ]
 
 
+def _development_preview_environment(spec: KubernetesReleaseSpec) -> dict[str, str]:
+    if spec.development_preview_root_domain is None:
+        return {}
+    return {
+        "OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_ROOT_DOMAIN": spec.development_preview_root_domain,
+        "OMNIGENT_SAAS_DEVELOPMENT_PREVIEW_KEY_FILE": "/runtime/development-preview-key",
+    }
+
+
 def _render_release_documents(
     sources: Mapping[str, _SourceManifest], spec: KubernetesReleaseSpec
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
@@ -1451,6 +1481,10 @@ def _render_release_documents(
     }
     for field, (rendered, expected) in production_values.items():
         _set_exact(production_data, field, rendered, expected=expected, name=field)
+    development = _development_preview_environment(spec)
+    if set(development) & set(production_data):
+        raise ReleaseRenderError("development preview source configuration is already populated")
+    production_data.update(development)
 
     bindings_text = _service_bindings_text(spec)
     template_bindings_text = _template_service_bindings_text()
@@ -2321,6 +2355,8 @@ def _authorized_release_change(
                     spec,
                     "/authority" if manifest_name == "kubernetes.migration.yaml" else "/runtime",
                 )
+                if manifest_name == "kubernetes.production.yaml":
+                    additions.update(_development_preview_environment(spec))
             return field in additions and after == additions[field]
         receipt_value = _ZERO_DIGEST if spec.mode == "stage" else spec.artifact.receipt_revision
         data_pairs = {
@@ -3021,6 +3057,7 @@ def _audit_projection(
         "OMNIGENT_SAAS_PREVIEW_RELAY_ALLOWED_CIDRS": spec.preview.pod_cidr,
         "OMNIGENT_SAAS_PREVIEW_READINESS_ALLOWED_CIDRS": spec.preview.service_cidr,
     }
+    expected_release_values.update(_development_preview_environment(spec))
     if any(data.get(key) != value for key, value in expected_release_values.items()):
         raise ReleaseRenderError("production release facts are not bound consistently")
 
