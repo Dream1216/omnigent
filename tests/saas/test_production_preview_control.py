@@ -103,6 +103,7 @@ class _Previews:
             expires_at=NOW + timedelta(hours=1),
             replayed=replayed,
             exchange_url=url,
+            source_sha="a" * 40,
         )
 
     def request_preview(self, request: RequestContext, **values) -> PreviewExecutionState:
@@ -161,6 +162,8 @@ def test_browser_body_is_closed_non_secret_and_ready_url_is_one_use_exchange() -
 
     ready = client.get(f"{_path()}/{PREVIEW_ID}")
     assert ready.status_code == 200
+    assert ready.json()["source_run_id"] == str(RUN_ID)
+    assert ready.json()["source_sha"] == "a" * 40
     parsed = urlsplit(ready.json()["url"])
     assert parsed.path == "/__omnigent/bootstrap"
     assert parsed.query == ""
@@ -175,6 +178,19 @@ def test_browser_body_is_closed_non_secret_and_ready_url_is_one_use_exchange() -
     request_schema = schema["components"]["schemas"]["PreviewOpenBody"]
     assert request_schema["additionalProperties"] is False
     assert set(request_schema["properties"]) == {"run_id", "preview_kind"}
+
+
+def test_failed_entry_has_a_distinct_non_secret_recovery_hint() -> None:
+    client, _app, _authorizer, previews = _client()
+    previews.get_preview = lambda *_args, **_kwargs: replace(
+        previews._state(status="failed", replayed=False),
+        failure_code="preview_entry_unavailable",
+    )
+    response = client.get(f"{_path()}/{PREVIEW_ID}")
+    assert response.status_code == 202
+    assert response.json()["failure_code"] == "preview_entry_unavailable"
+    assert "dist/index.html" in response.json()["failure_message"]
+    assert "url" not in response.json()
 
 
 class _BootstrapAuthority:

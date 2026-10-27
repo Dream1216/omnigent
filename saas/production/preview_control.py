@@ -21,6 +21,7 @@ from starlette.requests import HTTPConnection
 from saas.compatibility import RequestContext
 from saas.control_plane.authorization import ProjectAuthorizationError, ProjectAuthorizer
 from saas.control_plane.http_auth import SaasAuthProvider, SaasPrincipal
+from saas.control_plane.preview_diagnostics import preview_diagnostic
 from saas.control_plane.preview_execution import (
     PreviewExecutionControlPlane,
     PreviewExecutionControlPlaneError,
@@ -179,7 +180,10 @@ def _project_context(
     except (ControlPlaneResolutionError, ProjectAuthorizationError) as error:
         raise HTTPException(
             status_code=404,
-            detail={"code": "preview_scope_unavailable", "message": "Preview is unavailable"},
+            detail={
+                "code": "preview_scope_unavailable",
+                "message": preview_diagnostic("preview_scope_unavailable"),
+            },
         ) from error
 
 
@@ -193,11 +197,13 @@ def _response(state: PreviewExecutionState, response: Response) -> dict[str, obj
         "status": state.status,
         "expires_at": state.expires_at.isoformat(),
         "replayed": state.replayed,
+        "source_sha": state.source_sha,
     }
     if state.exchange_url is not None:
         payload["url"] = state.exchange_url
     if state.failure_code is not None:
         payload["failure_code"] = state.failure_code
+        payload["failure_message"] = preview_diagnostic(state.failure_code)
     return payload
 
 
@@ -214,7 +220,7 @@ def _denied(error: PreviewExecutionControlPlaneError) -> HTTPException:
     )
     return HTTPException(
         status_code=status_code,
-        detail={"code": error.code, "message": "Preview is unavailable"},
+        detail={"code": error.code, "message": preview_diagnostic(error.code)},
     )
 
 

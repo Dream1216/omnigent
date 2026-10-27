@@ -50,7 +50,10 @@ from saas.control_plane.worktrees import (
     WorktreeControlPlaneError,
     WorktreeLease,
 )
-from saas.production.preview_execution import static_web_preview_execution
+from saas.production.preview_execution import (
+    PreviewExecutionContractError,
+    static_web_preview_execution,
+)
 from saas.production.repository_mirror import (
     RepositoryMirrorError,
     load_and_verify_repository_bindings,
@@ -73,7 +76,10 @@ from saas.runner_adapter.platform_models import (
     PlatformManagedModelRuntimeProjection,
     load_platform_managed_model_projection,
 )
-from saas.runner_adapter.preview_supervisor import RunnerPreviewProcessSupervisor
+from saas.runner_adapter.preview_supervisor import (
+    PreviewProcessSupervisorError,
+    RunnerPreviewProcessSupervisor,
+)
 from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore
 
 _PREVIEW_EXECUTION_KIND = "omnigent.preview.v1"
@@ -2703,18 +2709,37 @@ class ProductionHostIsolationExecutor:
                 cancelled.cancel()
                 stop_command.cancel()
                 await asyncio.gather(cancelled, stop_command, return_exceptions=True)
-        except Exception:
+        except Exception as error:
+            was_started = active.preview_started
             await self._stop_preview_process(active)
             if not active.lease_lost:
                 with contextlib.suppress(PreviewExecutionControlPlaneError):
-                    await asyncio.to_thread(
-                        self._preview_commands.abort_runtime,
-                        claim,
-                        runner_id=envelope.runner_id,
-                        connection_generation=self._config.connection_generation,
-                        run_fence_token=envelope.fence_token,
-                        cancelled=False,
-                    )
+                    if not was_started:
+                        failure = "preview_start_failed"
+                        if isinstance(error, PreviewExecutionContractError):
+                            failure = "preview_artifact_unavailable"
+                        elif isinstance(error, PreviewProcessSupervisorError) and error.code in {
+                            "preview_entry_unavailable",
+                            "preview_supervisor_health_failed",
+                        }:
+                            failure = error.code
+                        await asyncio.to_thread(
+                            self._preview_commands.fail_start,
+                            claim,
+                            runner_id=envelope.runner_id,
+                            connection_generation=self._config.connection_generation,
+                            run_fence_token=envelope.fence_token,
+                            failure_code=failure,
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            self._preview_commands.abort_runtime,
+                            claim,
+                            runner_id=envelope.runner_id,
+                            connection_generation=self._config.connection_generation,
+                            run_fence_token=envelope.fence_token,
+                            cancelled=False,
+                        )
             raise
 
     async def execute(

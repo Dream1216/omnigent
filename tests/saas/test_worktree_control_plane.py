@@ -1509,6 +1509,24 @@ def test_preview_child_run_saga_derives_committed_checkpoint_and_replays(
         now=now + timedelta(seconds=8),
     )
     assert created.status == "queued" and created.replayed is False
+    assert created.source_sha == replayed.source_sha == "a" * 40
+    with fixture.factory.begin() as db:
+        changed = db.get(ChangeSetRecord, change_set_id)
+        assert changed is not None
+        changed.head_revision = "b" * 40
+    assert (
+        previews.get_preview(
+            fixture.request,
+            project_id=fixture.project_id,
+            preview_execution_id=created.preview_execution_id,
+            now=now + timedelta(seconds=9),
+        ).source_sha
+        == "a" * 40
+    )
+    with fixture.factory.begin() as db:
+        changed = db.get(ChangeSetRecord, change_set_id)
+        assert changed is not None
+        changed.head_revision = "a" * 40
     assert created.preview_host.startswith("app-")
     assert created.preview_host.endswith(".jxhh.com")
     assert len(created.preview_host.removeprefix("app-").removesuffix(".jxhh.com")) == 24
@@ -1606,6 +1624,22 @@ def test_preview_child_run_saga_derives_committed_checkpoint_and_replays(
         assert execution is not None and execution.status == "starting"
         assert command is not None and command.attempt_count == 2
         assert command.run_fence_token == 12
+    runner_commands.fail_start(
+        recovered_claim,
+        runner_id=source_run.runner_id,
+        connection_generation=source_run.runner_generation,
+        run_fence_token=12,
+        failure_code="preview_entry_unavailable",
+        now=now + timedelta(seconds=14),
+    )
+    failure = previews.get_preview(
+        fixture.request,
+        project_id=fixture.project_id,
+        preview_execution_id=created.preview_execution_id,
+        now=now + timedelta(seconds=15),
+    )
+    assert failure.status == "failed" and failure.failure_code == "preview_entry_unavailable"
+    assert failure.source_sha == "a" * 40 and failure.exchange_url is None
 
 
 def test_expired_dirty_checkpoint_rebuilds_on_new_run_fence(

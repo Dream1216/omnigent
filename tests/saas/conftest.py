@@ -55,6 +55,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     browser_items = [item for item in items if item.path.name.endswith("_browser.py")]
     if not browser_items or _chromium_is_installed():
         return
+    if os.environ.get("OMNIGENT_SAAS_REQUIRE_STATIC_PREVIEW_BROWSER") == "1":
+        raise pytest.UsageError("required static preview Chromium runtime is missing")
     missing_browser = pytest.mark.skip(
         reason="Chromium is not installed in this generic test lane; SaaS compatibility runs it"
     )

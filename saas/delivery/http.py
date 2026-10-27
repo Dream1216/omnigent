@@ -19,12 +19,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.execution_models import RunRecord
 from saas.control_plane.http_auth import SaasAuthProvider
+from saas.control_plane.preview_diagnostics import preview_diagnostic
 from saas.control_plane.preview_models import PreviewExecutionRecord
 from saas.control_plane.resolver import SqlAlchemyContextResolver
 from saas.control_plane.rls import RlsContext, apply_rls_context
 from saas.delivery.access import DeliveryAccess
 from saas.delivery.client import DeliveryClient
-from saas.delivery.sessions import session_runs
+from saas.delivery.sessions import select_session_runs
 
 Key = Annotated[
     str,
@@ -96,11 +97,16 @@ def create_delivery_router(
         if auth.get_principal(request) is None:
             raise HTTPException(401, detail={"code": "authentication_required"})
         response.headers["Cache-Control"] = "no-store"
-        runs = session_runs(access, request, session_id)
+        selection = select_session_runs(access, request, session_id)
+        runs = selection.runs
         result: dict[str, Any] = {
             "runs": runs,
             "preview_enabled": preview_enabled,
             "preview": None,
+            "diagnostic_code": selection.diagnostic_code,
+            "diagnostic_message": preview_diagnostic(selection.diagnostic_code)
+            if selection.diagnostic_code
+            else None,
         }
         if runs:
             source = runs[0]

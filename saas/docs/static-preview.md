@@ -11,6 +11,10 @@ missing scripts and other assets keep their error status.
 - `spa-navigation`: directly open a route, navigate, and refresh without a 404.
 - `asset-errors`: missing assets stay missing rather than returning HTML.
 - `authorization-lifecycle`: only the owner can start or stop the scoped preview.
+- `source-and-expiry`: show the preview's source Run, frozen checkpoint SHA, and
+  remaining lifetime; remove the open link when its lifetime ends.
+- `recovery-diagnostics`: distinguish project binding, project permission, missing
+  completed runs, absent publication directories, and invalid entry documents.
 
 ## How to get to it (user POV)
 
@@ -18,6 +22,8 @@ missing scripts and other assets keep their error status.
   static preview, and choose **打开预览**.
 - In the opened preview, follow an internal page link or refresh a deep URL.
 - Return to the session preview control to stop the preview.
+- If preview is unavailable, follow the displayed recovery action. Binding and
+  permission errors do not reveal another user's project or Run identifiers.
 
 ## Driving it with the repro environment
 
@@ -35,12 +41,24 @@ public production session or report the generic instance as covering this path.
   exercises the owner and tenant HTTP boundaries. For full browser acceptance,
   open the SaaS session, start and open its preview, follow a page link, refresh,
   stop from the session, and verify the original link is denied.
+- `source-and-expiry`, `recovery-diagnostics`:
+  `tests/saas/test_static_preview_control_browser.py` drives the production React
+  control in Chromium with controlled API replies. It checks full Run/SHA display,
+  countdown, expired-link removal and actionable failure hints. This is a UI
+  contract, not authenticated deployment acceptance.
+  `tests/saas/test_static_preview_session_diagnostics.py` separately exercises real
+  Cookie login, project membership and session mapping, including anonymous and
+  non-owner rejection. Runner supervision tests preserve entry/directory failure
+  codes, and the control-plane test reads the original child Run checkpoint after
+  the mutable workspace head changes.
 
 ## Gotchas
 
 - A TCP listener alone is not readiness; a valid publication entry must exist.
 - A missing JavaScript asset returning the entry HTML hides a broken build.
 - The static preview is a completed checkpoint, not a live development server.
+- The displayed SHA belongs to the child Run's frozen checkpoint. It never follows
+  later workspace edits or newer completed source Runs.
 - Ignored build outputs must be included in the admitted publication checkpoint;
   a local `dist` directory alone does not prove the restored snapshot has it.
 - Browser runtime proof and authenticated deployment proof are separate evidence.

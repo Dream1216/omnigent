@@ -678,6 +678,10 @@ async def _require_healthy(
                 await asyncio.sleep(min(0.02, remaining))
                 continue
             if response.status_code != 200:
+                if response.status_code == 503 and response.content == b"entry unavailable\n":
+                    raise PreviewProcessSupervisorError(
+                        "preview_entry_unavailable", "Static publication entry is unavailable"
+                    )
                 raise PreviewProcessSupervisorError(
                     "preview_supervisor_health_failed", "Preview process health probe failed"
                 )

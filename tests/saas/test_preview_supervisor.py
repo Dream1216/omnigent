@@ -24,6 +24,7 @@ from saas.preview_tunnel import (
     OfficialRunnerPreviewTunnel,
     PreviewRunnerASGI,
 )
+from saas.production.preview_execution import static_web_preview_execution
 from saas.runner_adapter.preview_supervisor import (
     PreviewProcessSpec,
     PreviewProcessSupervisorError,
@@ -39,6 +40,7 @@ from tests.saas.test_preview_tunnel import (
     _NoopWebSocket,
     _route,
 )
+from tests.saas.test_production_preview_execution import _input
 
 
 def _spec(
@@ -307,6 +309,43 @@ async def test_supervisor_health_failure_never_publishes_target() -> None:
         assert targets.resolve(route.opaque_preview_key, _metadata(route)) is None
         assert not any(socket_root.iterdir())
         await supervisor.aclose()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Preview supervision requires POSIX")
+@pytest.mark.parametrize("entry", [None, "", "<h1>valid static publication</h1>"])
+@pytest.mark.asyncio
+async def test_real_static_entry_health_is_preserved_through_supervision(tmp_path, entry):
+    route = _route(opaque_key="pvr_static_entry")
+    root = tmp_path / "worktree"
+    (root / "dist").mkdir(parents=True, mode=0o700)
+    if entry is not None:
+        (root / "dist/index.html").write_text(entry)
+    spec = static_web_preview_execution(_input()).process_spec(root.resolve())
+    with (
+        tempfile.TemporaryDirectory(prefix="preview-static-socket-", dir="/tmp") as sockets,
+        tempfile.TemporaryDirectory(prefix="preview-static-logs-", dir="/tmp") as logs,
+    ):
+        targets = LocalPreviewTargetRegistry()
+        supervisor = RunnerPreviewProcessSupervisor(
+            targets,
+            Path(sockets).resolve(),
+            Path(logs).resolve(),
+            runner_id=route.runner_id,
+            connection_generation=route.runner_connection_generation,
+        )
+        try:
+            if entry:
+                await supervisor.start(route, spec)
+                assert await supervisor.snapshot(route.preview_id) is not None
+                assert targets.resolve(route.opaque_preview_key, _metadata(route)) is not None
+            else:
+                with pytest.raises(PreviewProcessSupervisorError) as failure:
+                    await supervisor.start(route, spec)
+                assert failure.value.code == "preview_entry_unavailable"
+                assert await supervisor.snapshot(route.preview_id) is None
+                assert targets.resolve(route.opaque_preview_key, _metadata(route)) is None
+        finally:
+            await supervisor.aclose()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Preview supervision requires POSIX")
