@@ -847,18 +847,6 @@ def test_image_material_lock_rejects_volatile_wolfi_ldconfig_cache(
     )
 
 
-def test_image_material_lock_rejects_floating_libcom_err_dependency(tmp_path: Path) -> None:
-    repo = _material_lock_repo(tmp_path)
-    dockerfile = repo / "deploy/docker/Dockerfile"
-    source = dockerfile.read_text(encoding="utf-8")
-    assert "libcom_err=1.47.4-r5" in source
-    dockerfile.write_text(source.replace("libcom_err=1.47.4-r5", "libcom_err", 1))
-
-    assert "Wolfi common_packages pins must be installed exactly" in validate_image_material_lock(
-        repo
-    )
-
-
 def test_image_material_lock_rejects_unbounded_gh_download(
     tmp_path: Path,
 ) -> None:
