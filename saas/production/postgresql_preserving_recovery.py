@@ -555,6 +555,67 @@ class PreservingPostgreSqlRecovery:
         self._save("prepared", state)
         return state
 
+    def _remove_project_identity_guard(self) -> dict:
+        """Remove only the exact current guard after complete candidate gold/CAS."""
+
+        def snapshot():
+            routine = self.owner.execute(
+                "SELECT p.oid::bigint,pg_get_functiondef(p.oid),"
+                "pg_get_userbyid(p.proowner),p.proacl::text FROM pg_proc p "
+                "WHERE p.oid=to_regprocedure('public.saas_guard_project_identity_immutable()')"
+            ).fetchone()
+            trigger = self.owner.execute(
+                "SELECT t.oid::bigint,t.tgrelid::bigint,t.tgfoid::bigint,t.tgenabled,"
+                "pg_get_triggerdef(t.oid,true) FROM pg_trigger t "
+                "WHERE t.tgrelid='public.saas_projects'::regclass "
+                "AND t.tgname='trg_saas_projects_identity_immutable'"
+            ).fetchone()
+            columns = self.owner.execute(
+                "SELECT pg_get_userbyid(a.grantee),pg_get_userbyid(a.grantor),"
+                "a.privilege_type,a.is_grantable FROM pg_attribute c "
+                "CROSS JOIN LATERAL aclexplode(c.attacl) a "
+                "WHERE c.attrelid='public.saas_projects'::regclass AND c.attname='id' "
+                "ORDER BY 1,2,3,4"
+            ).fetchall()
+            return routine, trigger, columns
+
+        before = snapshot()
+        projection = _source_projection(self.plan, self.engines)
+        adapter.need(
+            projection["inventory_sha256"] == self.gold["candidate_inventory_sha256"]
+            and projection["security_sha256"] == self.gold["candidate_security_sha256"]
+            and migration._project_identity_guard_inventory_predecessor(projection["inventory"])
+            is not None
+            and migration._source_catalog_project_lock_predecessor(projection["catalog"])
+            is not None,
+            "candidate_project_identity_guard_or_gold_changed",
+        )
+        lock_acl = ("saas_app", self.plan.saas_owner.login, "UPDATE", False)
+        adapter.need(
+            before[0] is not None and before[1] is not None and before[2].count(lock_acl) == 1,
+            "candidate_project_identity_guard_scope_changed",
+        )
+        with self.owner.transaction():
+            self.owner.execute("SET LOCAL lock_timeout='2s'")
+            self.owner.execute("SET LOCAL statement_timeout='60s'")
+            self.owner.execute("LOCK TABLE public.saas_projects IN ACCESS EXCLUSIVE MODE")
+            adapter.need(snapshot() == before, "candidate_project_identity_guard_CAS_failed")
+            self.owner.execute("REVOKE UPDATE (id) ON public.saas_projects FROM saas_app")
+            self.owner.execute(
+                "DROP TRIGGER trg_saas_projects_identity_immutable ON public.saas_projects"
+            )
+            self.owner.execute(
+                "DROP FUNCTION public.saas_guard_project_identity_immutable() RESTRICT"
+            )
+            after = snapshot()
+            adapter.need(
+                after[0] is None
+                and after[1] is None
+                and after[2] == [row for row in before[2] if row != lock_acl],
+                "candidate_project_identity_guard_inverse_mismatch",
+            )
+        return {"routine": before[0], "trigger": before[1], "column_acls": before[2]}
+
     def inverse(self, state: dict) -> dict:
         """Detach original objects, fixed P17 inverse, original P16/nf downgrade."""
         adapter.need(
@@ -579,6 +640,11 @@ class PreservingPostgreSqlRecovery:
         state = {**state, "source_inverse_preflight": preflight}
         self._save("source_inverse_preflight_passed", state)
         self._begin("remove_p18_owner_policies")
+        if _is_explicit_t(self.operation):
+            state = {
+                **state,
+                "project_identity_guard_removed": self._remove_project_identity_guard(),
+            }
         runtime_native.remove_p18_policies(self.owner, state["p18_policy_snapshot"])
         self._save("p18_policies_removed", state)
         self._begin("prepare_archive")
@@ -734,6 +800,8 @@ class PreservingPostgreSqlRecovery:
         self._save("p17_exact_objects_reattached", state)
         self._begin("restore_p18_owner_policies")
         _migrate(self.engines["saas_owner"], "saas", "p0s000000018")
+        if _is_explicit_t(self.operation):
+            migration._apply_control_plane_authority(self.engines["saas_owner"])
         # P18 policies are recreated by their real migration. P17 receipt table
         # OIDs/rows/FKs remain the exact archived originals.
         migration._verify_state(self.plan, dict(self.engines))

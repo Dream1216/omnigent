@@ -1221,10 +1221,33 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
             assert (verified.official_head, verified.saas_head) == ("nf12ab34cd56", "p0s000000018")
             projection = _source_projection(plan, engines)
             key = (identity["server_major"], verified.official_head, verified.saas_head)
-            assert projection["inventory_sha256"] == migration._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
+            inventory_anchor = migration._project_identity_guard_inventory_predecessor(
+                projection["inventory"]
+            )
+            security_anchor = migration._source_catalog_project_lock_predecessor(
+                projection["catalog"]
+            )
+            assert inventory_anchor is not None and security_anchor is not None
             assert (
-                projection["security_sha256"]
+                db.sha(db.canonical(inventory_anchor))
+                == migration._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
+            )
+            assert (
+                db.sha(db.canonical(security_anchor))
                 == migration._source_security_catalog_baselines(plan.service_role_graph)[key]
+            )
+            assert (
+                migration._verify_public_schema_inventory_digest(projection["inventory"], key=key)
+                == projection["inventory_sha256"]
+            )
+            assert (
+                migration._verify_source_security_catalog_digest(
+                    projection["catalog"],
+                    key=key,
+                    role_aliases={},
+                    bindings=plan.service_role_graph,
+                )
+                == projection["security_sha256"]
             )
             database_owner = native.connect_url(plan.database_owner.url)
             try:
