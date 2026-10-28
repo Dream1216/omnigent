@@ -490,6 +490,18 @@ def test_explicit_t_json_dispatches_only_to_t_then_mm(recovery_boundary, monkeyp
         archive=adapter.archive_name(operation.operation_id),
     )
     migrations = []
+    guard_removed = {
+        "routine": (11, "fixture function", "fixture_table_owner", None),
+        "trigger": (12, 13, 11, "O", "fixture trigger"),
+        "column_acls": [("saas_app", "fixture_table_owner", "UPDATE", False)],
+    }
+
+    def remove_guard():
+        assert recovery_boundary.events == []
+        recovery_boundary.events.append("guard_inverse")
+        return guard_removed
+
+    monkeypatch.setattr(control, "_remove_project_identity_guard", remove_guard)
     monkeypatch.setattr(control, "_t_source_gold", lambda: None)
     monkeypatch.setattr(control, "_t_old_catalog", lambda *_args: None)
     monkeypatch.setattr(control, "_t_facts", lambda *_args, **_kwargs: facts)
@@ -513,10 +525,10 @@ def test_explicit_t_json_dispatches_only_to_t_then_mm(recovery_boundary, monkeyp
         ),
     )
     control.engines = {"official_owner": object(), "saas_owner": object()}
-    assert (
-        control.inverse(json.loads(adapter.canonical(state)))["phase"]
-        == "inverse_complete_old_signed_image_verification_required"
-    )
+    result = control.inverse(json.loads(adapter.canonical(state)))
+    assert result["phase"] == "inverse_complete_old_signed_image_verification_required"
+    assert result["project_identity_guard_removed"] == guard_removed
+    assert recovery_boundary.events == ["guard_inverse", "archive"]
     assert migrations == [("saas", "lm2t00000001", True), ("official", "mm1a2b3c4d5e", True)]
 
 
