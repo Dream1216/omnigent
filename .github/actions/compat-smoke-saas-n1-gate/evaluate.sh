@@ -16,8 +16,8 @@ POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
 POSTGRESQL_N1_TRUSTED_INPUTS=(
-  "pyproject.toml|b597e4be6e44533bebaeb8924a6d89a448fec70616a00547fea5e9de27692299,60f744ddfde3ea8269830631c991a87a2c9f108afd3ace8a8c30507794abe471"
-  "uv.lock|ea461ebf87f5aaa2fad7ad89ef8bf31963bbe293770d57f3e3ec824c5db56615,1966ee6220ecf80274e85edad6eb9bae5c3a23751f9fe68f7de27c8419ac0d58"
+  "pyproject.toml|2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9,60f744ddfde3ea8269830631c991a87a2c9f108afd3ace8a8c30507794abe471"
+  "uv.lock|1d44c055d8f64ffababa0675aa6de21a640362e904c56a179e453d3f46eaf739,1966ee6220ecf80274e85edad6eb9bae5c3a23751f9fe68f7de27c8419ac0d58"
   "tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   "tests/_model_pools.py|d25fda757b12bffbaa6a42e468f625f715cc3ee37df7f9b5af4b8d70af781362"
   "tests/_token_usage.py|25dbfbc0caea11edd4be3bb3eb530e2a784e9c98e6e2f652beeddae7b7071fa8"
@@ -25,7 +25,7 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d"
   "tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c"
   "tests/saas/test_n1_compat_patch.py|ef658549e497e6a64c6f686a699926ef9f6ffc79790e745d9d8ad4308ccd1475"
-  "tests/saas/test_image_supply_chain.py|9f2afeea404a87cb30ac7a56b97566750b436258d1648b6a5a274792a5972944,beed03ae797d7a2a969bb57c25f824f22881cb8c6412f908d3095a65543c2bea"
+  "tests/saas/test_image_supply_chain.py|3e55624e9cce309c08d573df46d453a8068fac81af6ec9d5c5708295a6164cfc,beed03ae797d7a2a969bb57c25f824f22881cb8c6412f908d3095a65543c2bea"
   "saas/scripts/build_n1_compat.py|566557b74dfdbcfeaad30f88b172820b88d9e86cc7f7af70b8e92f910f45303d"
   "saas/scripts/compare_oci_rebuilds.py|74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
   "saas/n1_compat/manifest.json|eb74bc6f938da18792a190ade70f3604f247f50f6c1b25f70bb96ac68d56d99f"

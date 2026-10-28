@@ -333,13 +333,18 @@ def test_image_material_lock_rejects_nested_host_node_modules(
     )
 
 
+@pytest.mark.parametrize(
+    ("package", "vulnerable"), [("source-map-js", "1.2.1"), ("next", "16.3.8")]
+)
 def test_image_material_lock_rejects_login_dependency_regression(
     tmp_path: Path,
+    package: str,
+    vulnerable: str,
 ) -> None:
     repo = _material_lock_repo(tmp_path)
     lock_path = repo / "saas/login_web/package-lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock["packages"]["node_modules/source-map-js"]["version"] = "1.2.1"
+    lock["packages"][f"node_modules/{package}"]["version"] = vulnerable
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
 
     assert any(
@@ -888,6 +893,11 @@ def test_image_material_lock_rejects_unbounded_gh_module_download(
     ("target", "replacement", "expected"),
     [
         (
+            "cp -a /usr/local/lib/node_modules/npm/node_modules/undici",
+            "true # bundled pnpm overlay omitted",
+            "host CLI layer must normalize and remove volatile installer state",
+        ),
+        (
             "ARG UV_VERSION=0.12.1",
             "ARG UV_VERSION=0.12.2",
             "production Dockerfile must pin and install uv 0.12.1",
@@ -1211,6 +1221,9 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
     ("target", "replacement"),
     [
         ("'http-cache-semantics@4.3.0'", "'http-cache-semantics@*'"),
+        ("'body-parser@2.4.0'", "'body-parser@*'"),
+        ("'electron@42.11.16'", "'electron@*'"),
+        ("'fast-uri@3.1.9'", "'fast-uri@*'"),
         ("'source-map-js@1.2.2'", "'source-map-js@*'"),
         ("'@modelcontextprotocol/sdk@1.32.0'", "'@modelcontextprotocol/sdk@*'"),
         ("'@moonshot-ai/kimi-code@0.43.1'", "'@moonshot-ai/kimi-code@*'"),
