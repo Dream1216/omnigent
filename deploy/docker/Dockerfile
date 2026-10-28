@@ -286,6 +286,9 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache \
       ca-certificates-bundle=20260909-r3 \
       gdbm=1.26-r7 \
+      libbrotlicommon1=1.2.0-r7 \
+      libbrotlidec1=1.2.0-r7 \
+      libbrotlienc1=1.2.0-r7 \
       libbz2-1=1.0.8-r25 \
       libexpat1=2.9.0-r0 \
       libffi=3.8.0-r2 \
@@ -567,6 +570,12 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && install -d -m 0700 "$XDG_RUNTIME_DIR" \
  && npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global \
       --no-audit --no-fund --allow-scripts=pnpm "pnpm@${PNPM_VERSION}" \
+ && test -d "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && rm -rf "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && cp -a /usr/local/lib/node_modules/npm/node_modules/undici \
+      "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && node -e 'const p=require(process.argv[1]); if(p.version!=="6.29.1") throw Error("pnpm undici overlay version differs")' \
+      "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici/package.json" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
  && mkdir -p .github/ci-deps \
  && printf '%s\n' \
