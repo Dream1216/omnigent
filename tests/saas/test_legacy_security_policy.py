@@ -42,7 +42,7 @@ def _checkout(reader, revision, second=10):
     )
 
 
-def _owner_log(reader):
+def _owner_log(reader, revision):
     lines = [
         "##[group]Run # Before this lands on main the scripts are absent there -- proceed",
         "echo scan=false",
@@ -60,7 +60,7 @@ def _owner_log(reader):
         "scan=false (trusted author (author_association=OWNER))",
     ]
     return (
-        _checkout(reader, policy.MAIN)
+        _checkout(reader, revision)
         + "2026-10-24T13:59:13.100Z Loaded maintainers from MAINTAINER@main: fixture-maintainer\n"
         + "".join(f"2026-10-24T13:59:16.{i:03d}Z {line}\n" for i, line in enumerate(lines))
     ).encode()
@@ -87,10 +87,11 @@ def _persist(data, monkeypatch):
     monkeypatch.setenv("GITHUB_SHA", data["control_sha"])
 
 
-@pytest.fixture
-def owner(scenario, monkeypatch):
+@pytest.fixture(params=(policy.MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe"))
+def owner(scenario, monkeypatch, request):
     # Reuse the owning immutable-Git scenario and substitute only API/log transport.
     data = scenario
+    trusted_checkout = request.param
     fixed_main_sources = owner_main_sources(ROOT)
     reader = sys.modules["saas.scripts.legacy_source_ci"]
     monkeypatch.setitem(
@@ -134,7 +135,7 @@ def owner(scenario, monkeypatch):
             "labels": ["ubuntu-latest"],
             "conclusion": "success",
             "checkouts": [
-                {"number": 2, "name": "Check out scanner from main", "revision": policy.MAIN}
+                {"number": 2, "name": "Check out scanner from main", "revision": trusted_checkout}
             ],
         }
     }
@@ -153,7 +154,7 @@ def owner(scenario, monkeypatch):
         name="Security Scan",
         details_url=f"https://github.com/Dream1216/omnigent/actions/runs/{run['id']}/job/{job['id']}",
     )
-    data["logs"][job["id"]] = _owner_log(reader)
+    data["logs"][job["id"]] = _owner_log(reader, trusted_checkout)
     row = {
         "kind": policy.KIND,
         **{
@@ -162,7 +163,7 @@ def owner(scenario, monkeypatch):
         },
         **{k: data["identity"][k] for k in ("validation_pr", "validation_base_ref")},
         "workflow_sha256": policy.SOURCES[policy.WORKFLOW],
-        "trusted_checkout_revision": policy.MAIN,
+        "trusted_checkout_revision": trusted_checkout,
         "should_scan_sha256": policy.SOURCES[".github/scripts/security-scan/should-scan.sh"],
         "load_maintainers_sha256": policy.SOURCES[
             ".github/scripts/merge-ready/load-maintainers.sh"
@@ -186,14 +187,16 @@ def owner(scenario, monkeypatch):
             "pytest": None,
         }
     }
-    data.update(spec=spec, run=run, job=job, check=check, reader=reader)
+    data.update(
+        spec=spec, run=run, job=job, check=check, reader=reader, trusted_checkout=trusted_checkout
+    )
 
     def api(endpoint):
         if "/contents/" in endpoint:
             path, revision = endpoint.split("/contents/", 1)[1].split("?ref=", 1)
             body = (
                 fixed_main_sources[path]
-                if revision == policy.MAIN
+                if revision == trusted_checkout
                 else (data["product"] / path).read_bytes()
             )
             return {
@@ -281,6 +284,7 @@ def test_actual_reader_qualifier_and_all_app_join_preserve_not_scanned(owner, tm
         "main_domain",
         "other_workflow",
         "policy_hash",
+        "unreviewed_main",
         "extra_field",
         "wrong_event",
         "other_author",
@@ -318,6 +322,10 @@ def test_original_owner_predicate_rejects_inexact_native_evidence(owner, fault):
             "extra_field": ("allow", True),
         }[fault]
         row[key] = value
+    if fault == "unreviewed_main":
+        row["trusted_checkout_revision"] = "a" * 40
+        owner["spec"]["jobs"]["Security Scan"]["checkouts"][0]["revision"] = "a" * 40
+        log = log.replace(owner["trusted_checkout"], "a" * 40)
     if fault == "other_workflow":
         owner["spec"]["path"] = ".github/workflows/lint.yml"
     if fault == "wrong_event":
@@ -337,7 +345,7 @@ def test_original_owner_predicate_rejects_inexact_native_evidence(owner, fault):
             "failure" if fault == "failed_detector" else "success"
         )
     if fault == "wrong_checkout":
-        log = log.replace(policy.MAIN, "a" * 40)
+        log = log.replace(owner["trusted_checkout"], "a" * 40)
     if fault == "wrong_output":
         log = log.replace("scan=false (trusted author", "scan=true (trusted author")
     if fault == "shell_echo":

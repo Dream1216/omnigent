@@ -345,6 +345,7 @@ def _inspect_run(
     bootstrap_policy: dict[str, Any] | None = None,
     unattributed_observations: list[nonexecution.UnattributedObservation] | None = None,
     unattributed_expected: set[tuple[int, int]] | None = None,
+    refusal_cancellation_rules=(),
 ) -> dict[str, Any]:
     numbers = _pr_numbers(run["pull_requests"])
     # PR numbers are stable associations; their mutable head SHA is never a source proof.
@@ -376,7 +377,11 @@ def _inspect_run(
             and observed.get("status") == "completed",
             "domain attempt identity or completion differs",
         )
-        audit_rules = (*non_execution_rules, *infrastructure_cancellation_rules)
+        audit_rules = (
+            *non_execution_rules,
+            *infrastructure_cancellation_rules,
+            *refusal_cancellation_rules,
+        )
         matches = [
             row for row in audit_rules if (row["run_id"], row["attempt"]) == (run["id"], attempt)
         ]
@@ -445,12 +450,15 @@ def _inspect_run(
                 list[
                     nonexecution.ZeroExecutionObservation
                     | nonexecution.InfrastructureCancellationObservation
+                    | nonexecution.RefusalCancellationObservation
                 ],
                 observations,
             ).append(proof)
             field = (
                 "non_execution_observations"
                 if isinstance(proof, nonexecution.ZeroExecutionObservation)
+                else "refusal_cancellation_observations"
+                if isinstance(proof, nonexecution.RefusalCancellationObservation)
                 else "infrastructure_cancellation_observations"
             )
             record.setdefault(field, []).append(proof.receipt)
@@ -550,6 +558,13 @@ def _inspect_run(
             "domain audit execution kinds differ",
         )
         record["classification"] = native_fields[present[0]]
+    elif not record["attempts"] and record.get("refusal_cancellation_observations"):
+        require(
+            not record.get("non_execution_observations")
+            and not record.get("infrastructure_cancellation_observations"),
+            "refusal cancellation cannot mix audit kinds",
+        )
+        record["classification"] = "audited-refusal-cancellation"
     elif not record["attempts"] and record.get("infrastructure_cancellation_observations"):
         require(
             not record.get("non_execution_observations"), "domain audit execution kinds differ"
@@ -616,6 +631,7 @@ def discover_main_domain(
     infrastructure_cancellation_rules=None,
     unattributed_policy: dict[str, Any] | None = None,
     bootstrap_policy: dict[str, Any] | None = None,
+    refusal_cancellation_rules=None,
 ) -> dict[str, Any]:
     """Collect evidence only; complete means enumeration, never gate eligibility."""
     number = identity["validation_pr"]
@@ -630,7 +646,13 @@ def discover_main_domain(
     nonexecution.validate_infrastructure_rules(
         infrastructure_cancellation_rules, profile, identity
     )
-    audit_rules = [*non_execution_rules, *infrastructure_cancellation_rules]
+    refusal_cancellation_rules = refusal_cancellation_rules or []
+    nonexecution.validate_refusal_cancellation_rules(refusal_cancellation_rules, profile, identity)
+    audit_rules = [
+        *non_execution_rules,
+        *infrastructure_cancellation_rules,
+        *refusal_cancellation_rules,
+    ]
     registered_audits = {_key(row) for row in audit_rules}
     require(len(registered_audits) == len(audit_rules), "domain audit coordinate kinds overlap")
     if unattributed_policy is not None:
@@ -669,6 +691,7 @@ def discover_main_domain(
                 bootstrap_policy,
                 unattributed_observations,
                 unattributed_expected,
+                refusal_cancellation_rules,
             )
         except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
             record.update(classification="unassignable", reason=str(error))
@@ -806,6 +829,17 @@ def discover_main_domain(
             for proof in observations
             if isinstance(proof, nonexecution.ZeroExecutionObservation)
         ],
+        **(
+            {
+                "refusal_cancellation_observations": [
+                    proof.receipt
+                    for proof in observations
+                    if isinstance(proof, nonexecution.RefusalCancellationObservation)
+                ]
+            }
+            if refusal_cancellation_rules
+            else {}
+        ),
         "infrastructure_cancellation_observations": [
             proof.receipt
             for proof in observations
@@ -864,6 +898,9 @@ def main() -> int:
                 policy.get("domain_unattributed_zero_execution", {}).get(domain.MAIN_WORKFLOW),
                 policy.get("domain_unattributed_bootstrap_cancellation", {}).get(
                     domain.MAIN_WORKFLOW
+                ),
+                refusal_cancellation_rules=policy.get("domain_refusal_cancellation", {}).get(
+                    domain.MAIN_WORKFLOW, []
                 ),
             )
         except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
