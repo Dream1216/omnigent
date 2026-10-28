@@ -31,6 +31,28 @@ native_digest = native.native_digest
 
 
 def validate_domain_rules(policy: dict[str, Any], identity: dict[str, Any]) -> None:
+    unattributed = policy.get("domain_unattributed_zero_execution", {})
+    require(
+        isinstance(unattributed, dict) and set(unattributed) <= {MAIN_WORKFLOW},
+        "only the reviewed main-domain workflow has an unattributed zero-execution policy",
+    )
+    if unattributed:
+        nonexecution.validate_unattributed_policy(unattributed[MAIN_WORKFLOW], policy, identity)
+        require(
+            bool(policy["domain_not_applicable"]),
+            "unattributed audits cannot create domain eligibility",
+        )
+    bootstrap = policy.get("domain_unattributed_bootstrap_cancellation", {})
+    require(
+        isinstance(bootstrap, dict) and set(bootstrap) <= {MAIN_WORKFLOW},
+        "only the reviewed main-domain workflow has an unattributed bootstrap policy",
+    )
+    if bootstrap:
+        nonexecution.validate_bootstrap_policy(bootstrap[MAIN_WORKFLOW], policy, identity)
+        require(
+            bool(policy["domain_not_applicable"]),
+            "bootstrap audits cannot create domain eligibility",
+        )
     audits = policy.get("domain_non_execution", {})
     require(
         isinstance(audits, dict) and set(audits) <= {MAIN_WORKFLOW},
@@ -330,6 +352,45 @@ def _discovery_binding(result: dict[str, Any]) -> str:
         and result.get("changed_registered_proof_coordinates") == [],
         "native main-domain discovery is incomplete or its registration differs",
     )
+    native_fields = (
+        (
+            "unattributed_zero_execution_observations",
+            nonexecution.UnattributedZeroExecutionObservation,
+        ),
+        ("unattributed_no_job_observations", nonexecution.UnattributedNoJobExecutionObservation),
+        (
+            "unattributed_bootstrap_observations",
+            nonexecution.UnattributedBootstrapCancellationObservation,
+        ),
+    )
+    unattributed = result.get("unattributed_zero_execution_observations", [])
+    no_job = result.get("unattributed_no_job_observations", [])
+    bootstrap = result.get("unattributed_bootstrap_observations", [])
+    if unattributed or no_job or bootstrap or getattr(result, "unattributed_observations", ()):
+        require(
+            isinstance(result, nonexecution.DomainDiscovery)
+            and all(
+                isinstance(
+                    row,
+                    (
+                        nonexecution.UnattributedZeroExecutionObservation,
+                        nonexecution.UnattributedNoJobExecutionObservation,
+                        nonexecution.UnattributedBootstrapCancellationObservation,
+                    ),
+                )
+                for row in result.unattributed_observations
+            )
+            and all(
+                [row.receipt for row in result.unattributed_observations if isinstance(row, cls)]
+                == result.get(field, [])
+                for field, cls in native_fields
+            )
+            and result.get("unattributed_expected_attempts")
+            == result.get("unattributed_verified_attempts")
+            and len(result.unattributed_observations)
+            == len(result.get("unattributed_expected_attempts", [])),
+            "domain discovery has no exact complete typed unattributed audit proof",
+        )
     audited = result.get("non_execution_observations", [])
     infrastructure = result.get("infrastructure_cancellation_observations", [])
     if audited or infrastructure:
@@ -351,6 +412,17 @@ def _discovery_binding(result: dict[str, Any]) -> str:
             "domain discovery has no exact typed in-memory native audit proof",
         )
     for field, rows, classification in (
+        ("unattributed_no_job_observations", no_job, "audited-unattributed-no-job-execution"),
+        (
+            "unattributed_bootstrap_observations",
+            bootstrap,
+            "audited-unattributed-bootstrap-cancellation",
+        ),
+        (
+            "unattributed_zero_execution_observations",
+            unattributed,
+            "audited-unattributed-nonexecution",
+        ),
         ("non_execution_observations", audited, "audited-nonexecution"),
         (
             "infrastructure_cancellation_observations",
@@ -377,6 +449,9 @@ def _discovery_binding(result: dict[str, Any]) -> str:
                 "old-source",
                 "audited-nonexecution",
                 "audited-infrastructure-cancellation",
+                "audited-unattributed-nonexecution",
+                "audited-unattributed-no-job-execution",
+                "audited-unattributed-bootstrap-cancellation",
             },
             "native main-domain source is unassignable",
         )
@@ -409,6 +484,9 @@ def _discovery_binding(result: dict[str, Any]) -> str:
         {
             "native_identity_sha256": result["native_identity_sha256"],
             "authenticated_sources": authenticated,
+            **({"unattributed_zero_execution_audits": unattributed} if unattributed else {}),
+            **({"unattributed_no_job_audits": no_job} if no_job else {}),
+            **({"unattributed_bootstrap_audits": bootstrap} if bootstrap else {}),
             **({"zero_execution_audits": audited} if audited else {}),
             **({"infrastructure_cancellation_audits": infrastructure} if infrastructure else {}),
         }
@@ -424,6 +502,10 @@ def collect_domain_eligibility(
     """Join complete authenticated discovery with every exact original refusal."""
     validate_domain_rules(policy, identity)
     rules = policy["domain_not_applicable"].get(MAIN_WORKFLOW, [])
+    unattributed_policy = policy.get("domain_unattributed_zero_execution", {}).get(MAIN_WORKFLOW)
+    bootstrap_policy = policy.get("domain_unattributed_bootstrap_cancellation", {}).get(
+        MAIN_WORKFLOW
+    )
     audit_rules = policy.get("domain_non_execution", {}).get(MAIN_WORKFLOW, [])
     infrastructure_rules = policy.get("domain_infrastructure_cancellation", {}).get(
         MAIN_WORKFLOW, []
@@ -450,6 +532,17 @@ def collect_domain_eligibility(
     first_path.mkdir(mode=0o700)
     before = (
         discover_main_domain(
+            profile,
+            identity,
+            rules,
+            first_path,
+            audit_rules,
+            infrastructure_rules,
+            unattributed_policy,
+            bootstrap_policy,
+        )
+        if unattributed_policy is not None or bootstrap_policy is not None
+        else discover_main_domain(
             profile, identity, rules, first_path, audit_rules, infrastructure_rules
         )
         if infrastructure_rules
@@ -494,6 +587,17 @@ def collect_domain_eligibility(
     final_path.mkdir(mode=0o700)
     after = (
         discover_main_domain(
+            profile,
+            identity,
+            rules,
+            final_path,
+            audit_rules,
+            infrastructure_rules,
+            unattributed_policy,
+            bootstrap_policy,
+        )
+        if unattributed_policy is not None or bootstrap_policy is not None
+        else discover_main_domain(
             profile, identity, rules, final_path, audit_rules, infrastructure_rules
         )
         if infrastructure_rules
@@ -504,6 +608,14 @@ def collect_domain_eligibility(
     require(
         _discovery_binding(after) == binding,
         "native main-domain discovery changed during exact refusal verification",
+    )
+    unattributed_observations = tuple(getattr(after, "unattributed_observations", ()))
+    require(
+        all(
+            any(nonexecution.matching_refusal(proof.receipt, refusal) for refusal in results)
+            for proof in unattributed_observations
+        ),
+        "unattributed audit lacks an independent same-PR/base/tree/product main guard refusal",
     )
     observations = tuple(getattr(after, "observations", ()))
     require(
@@ -524,6 +636,18 @@ def collect_domain_eligibility(
                 "validation_base_ref": result.validation_base_ref,
                 "discovery_sha256": binding,
                 "refusals": results,
+                **{
+                    field: [
+                        row.receipt
+                        for row in unattributed_observations
+                        if nonexecution.unattributed_field(row) == field
+                    ]
+                    for field in (
+                        "unattributed_zero_execution_observations",
+                        "unattributed_no_job_observations",
+                        "unattributed_bootstrap_observations",
+                    )
+                },
                 "zero_execution_observations": [
                     row.receipt
                     for row in result.observations

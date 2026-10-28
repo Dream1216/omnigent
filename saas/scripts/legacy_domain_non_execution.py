@@ -14,6 +14,7 @@ import subprocess
 import threading
 import zipfile
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,8 @@ from saas.scripts.oci_promotion import require
 
 KIND = "legacy_original_main_domain_zero_execution/v1"
 INFRASTRUCTURE_KIND = "legacy_original_main_domain_infrastructure_cancellation/v1"
+UNATTRIBUTED_KIND = "legacy_original_main_domain_unattributed_zero_execution/v1"
+UNATTRIBUTED_POLICY_KIND = "legacy_original_main_domain_unattributed_zero_execution_policy/v1"
 _UBUNTU26_NOTICE = (
     '"The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. '
     "For more information, see https://github.com/actions/runner-images/issues/14748" + '"'
@@ -84,12 +87,20 @@ class InfrastructureCancellationObservation:
     receipt: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class UnattributedZeroExecutionObservation:
+    """Native absence audit; never a registered source or all-App observation."""
+
+    receipt: dict[str, Any]
+
+
 class DomainDiscovery(dict):
     """Serializable discovery facts with separately retained in-memory proofs."""
 
-    def __init__(self, facts, observations=()):
+    def __init__(self, facts, observations=(), unattributed_observations=()):
         super().__init__(facts)
         self.observations = tuple(observations)
+        self.unattributed_observations = tuple(unattributed_observations)
 
 
 def validate_rules(rows, profile, identity):
@@ -147,9 +158,8 @@ def validate_rules(rows, profile, identity):
         seen.add(key)
 
 
-def verify_zero_execution(profile, identity, rule, run, job, check, annotations, logs):
-    """Authenticate execution absence without assigning an original event source."""
-    validate_rules([rule], profile, identity)
+def _verify_native_zero_execution(identity, rule, run, job, check, annotations, logs):
+    """The unchanged intrinsic native checks shared by both distinct audit contracts."""
     require(
         run.get("id") == rule["run_id"]
         and run.get("run_attempt") == rule["attempt"]
@@ -213,6 +223,12 @@ def verify_zero_execution(profile, identity, rule, run, job, check, annotations,
             "skipped domain audit has another event or native annotations",
         )
     require(logs == _EMPTY_ZIP, "zero-execution original run log ZIP is not exactly empty")
+
+
+def verify_zero_execution(profile, identity, rule, run, job, check, annotations, logs):
+    """Authenticate execution absence without assigning an original event source."""
+    validate_rules([rule], profile, identity)
+    _verify_native_zero_execution(identity, rule, run, job, check, annotations, logs)
     require(
         native.native_digest(run) == rule["run_sha256"]
         and native.native_digest(job) == rule["job_sha256"]
@@ -577,3 +593,528 @@ def typed_observation(proof):
         and proof.receipt.get("kind") == INFRASTRUCTURE_KIND
         and proof.receipt.get("execution") == "native-infrastructure-executed-cancelled"
     )
+
+
+def validate_unattributed_policy(policy, profile, identity):
+    fields = {
+        "kind",
+        "workflow_sha256",
+        "validation_pr",
+        "validation_base_ref",
+        "product_revision",
+        "product_tree",
+    }
+    require(
+        isinstance(policy, dict)
+        and set(policy) == fields
+        and policy["kind"] == UNATTRIBUTED_POLICY_KIND
+        and policy["workflow_sha256"] == native.MAIN_WORKFLOW_SHA256
+        and identity["validation_base_ref"] == VALIDATION_REFS.get(profile["component"])
+        and identity["validation_base_ref"] != "main"
+        and all(identity[key] == profile[key] for key in ("product_revision", "product_tree"))
+        and all(
+            policy[key] == identity[key]
+            for key in ("validation_pr", "validation_base_ref", "product_revision", "product_tree")
+        ),
+        "unattributed zero-execution policy is not the exact frozen legacy domain",
+    )
+
+
+def verify_unattributed_zero_execution(
+    profile, identity, policy, run, job, check, annotations, logs
+):
+    """Verify complete native absence without manufacturing a reviewed registration."""
+    validate_unattributed_policy(policy, profile, identity)
+    require(
+        native._pr_numbers(run.get("pull_requests")) == []
+        and run.get("event") in native._EVENTS
+        and all(
+            type(value) is int and value > 0
+            for value in (run.get("id"), run.get("run_attempt"), job.get("id"), check.get("id"))
+        )
+        and run["run_attempt"] <= 10
+        and isinstance(run.get("head_sha"), str)
+        and re.fullmatch(r"[0-9a-f]{40}", run["head_sha"]) is not None,
+        "unattributed audit has a PR association or malformed native coordinates",
+    )
+    coordinates = {
+        "run_id": run["id"],
+        "attempt": run["run_attempt"],
+        "job_id": job["id"],
+        "check_id": check["id"],
+        "event": run["event"],
+        "attachment_revision": run["head_sha"],
+    }
+    _verify_native_zero_execution(identity, coordinates, run, job, check, annotations, logs)
+    return UnattributedZeroExecutionObservation(
+        {
+            "kind": UNATTRIBUTED_KIND,
+            "workflow": native.MAIN_WORKFLOW,
+            "workflow_sha256": policy["workflow_sha256"],
+            **{
+                key: policy[key]
+                for key in (
+                    "validation_pr",
+                    "validation_base_ref",
+                    "product_revision",
+                    "product_tree",
+                )
+            },
+            **coordinates,
+            "run_sha256": native.native_digest(run),
+            "job_sha256": native.native_digest(job),
+            "check_sha256": native.native_digest(check),
+            "annotations_sha256": native.native_digest(annotations),
+            "run_logs_sha256": hashlib.sha256(logs).hexdigest(),
+            "check_suite_id": run["check_suite_id"],
+            "app_id": 15368,
+            "policy_sha256": native.native_digest(policy),
+            "source_classification": "UNKNOWN",
+            "original_event_source_revision": None,
+            "trusted_checkout_revision": None,
+            "execution": "native-proven-zero",
+            "original_conclusion": run["conclusion"],
+            "source_proof": False,
+            "guard_refusal": False,
+            "technical_gate_waiver": False,
+            "production_admission": False,
+        }
+    )
+
+
+def collect_unattributed_zero_execution(profile, identity, policy, run, jobs, destination):
+    require(len(jobs) == 1, "unattributed zero-execution native job set differs")
+    job = jobs[0]
+    match = re.fullmatch(
+        re.escape(native._REPO_URL) + r"/check-runs/([1-9][0-9]*)", job.get("check_run_url", "")
+    )
+    require(match is not None, "unattributed audit check URL is not native")
+    if match is None:
+        raise ValueError("unattributed audit check URL is not native")
+    check_id = int(match[1])
+    check = api(f"{native._ROOT}/check-runs/{check_id}")
+    annotations = annotations_for(check_id)
+    path = destination / f"unattributed-run-{run['id']}-attempt-{run['run_attempt']}.zip"
+    download_run_logs(run["id"], run["run_attempt"], path)
+    require(
+        hashlib.sha256(native._native_file(native.MAIN_WORKFLOW, run["head_sha"])).hexdigest()
+        == native.MAIN_WORKFLOW_SHA256,
+        "unattributed zero-execution workflow bytes differ from the reviewed original",
+    )
+    return verify_unattributed_zero_execution(
+        profile, identity, policy, run, job, check, annotations, path.read_bytes()
+    )
+
+
+NO_JOB_KIND = "legacy_original_main_domain_unattributed_no_job_execution/v1"
+BOOTSTRAP_KIND = "legacy_original_main_domain_unattributed_bootstrap_cancellation/v1"
+BOOTSTRAP_POLICY_KIND = "legacy_original_main_domain_unattributed_bootstrap_cancellation_policy/v1"
+_BOOTSTRAP_SCHEMAS = {
+    "checkout-before-format": {
+        "shape": "checkout",
+        "operation_annotation_line": 31,
+        "member_sha256": {
+            "0_evaluate.txt": "36fc88f312c62bc740acf0fad3e8e5a366abc9bb537f66284946cada6b149da0",
+            "evaluate/system.txt": (
+                "32abbc9088d65f448a27bf19524d83d1bfa982f0098f6b6d278928541d61e916"
+            ),
+        },
+    },
+    "setup-central": {
+        "shape": "setup",
+        "operation_annotation_line": 35,
+        "member_sha256": {
+            "0_evaluate.txt": "622b96ef522e3a84e761f71f35b813d239dac9d2e3838a193fc552e36b091426",
+            "evaluate/system.txt": (
+                "018e7affa936121673ff71fd483cb6ada11780e4e21a8b4eb22237c28cbd1f00"
+            ),
+        },
+    },
+    "setup-west": {
+        "shape": "setup",
+        "operation_annotation_line": 35,
+        "member_sha256": {
+            "0_evaluate.txt": "3e28e3619af553997c6108880d5bb7e74b8f2a6d52b2ba7fe948827a009625b0",
+            "evaluate/system.txt": (
+                "1531428742bc084bd5625a1575d1f4289003d68f899a4ddb5c25621cd5404199"
+            ),
+        },
+    },
+}
+
+
+@dataclass(frozen=True)
+class UnattributedNoJobExecutionObservation:
+    """Native complete empty job/check sets; never a positive-job audit."""
+
+    receipt: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class UnattributedBootstrapCancellationObservation:
+    """Assigned runner/bootstrap cancellation, never zero execution or source proof."""
+
+    receipt: dict[str, Any]
+
+
+def validate_bootstrap_policy(policy, profile, identity):
+    require(
+        isinstance(policy, dict) and policy.get("kind") == BOOTSTRAP_POLICY_KIND,
+        "bootstrap cancellation policy has no exact reviewed kind",
+    )
+    validate_unattributed_policy({**policy, "kind": UNATTRIBUTED_POLICY_KIND}, profile, identity)
+
+
+def _unattributed_run(run):
+    require(
+        type(run.get("id")) is int
+        and run["id"] > 0
+        and type(run.get("run_attempt")) is int
+        and 0 < run["run_attempt"] <= 10
+        and type(run.get("workflow_id")) is int
+        and run["workflow_id"] > 0
+        and type(run.get("check_suite_id")) is int
+        and run["check_suite_id"] > 0
+        and run.get("path") == native.MAIN_WORKFLOW
+        and run.get("name") == "SaaS N-1 merge gate"
+        and run.get("event") in native._EVENTS
+        and run.get("repository", {}).get("full_name") == "Dream1216/omnigent"
+        and run.get("head_repository", {}).get("full_name") == "Dream1216/omnigent"
+        and isinstance(run.get("head_sha"), str)
+        and re.fullmatch(r"[0-9a-f]{40}", run["head_sha"]) is not None
+        and native._pr_numbers(run.get("pull_requests")) == []
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "cancelled",
+        "unattributed native cancellation run identity or terminal state differs",
+    )
+
+
+def cancelled_job_coordinates(run, job, check):
+    """Strict native assigned-job identity; it gives no source or eligibility credit."""
+    _unattributed_run(run)
+    require(
+        type(job.get("id")) is int
+        and job["id"] > 0
+        and job.get("run_id") == run["id"]
+        and job.get("run_attempt") == run["run_attempt"]
+        and job.get("head_sha") == check.get("head_sha") == run["head_sha"]
+        and job.get("name") == check.get("name") == "evaluate"
+        and job.get("status") == check.get("status") == "completed"
+        and job.get("conclusion") == check.get("conclusion") == "cancelled"
+        and type(job.get("runner_id")) is int
+        and job["runner_id"] > 0
+        and job.get("runner_name") == f"GitHub Actions {job['runner_id']}"
+        and job.get("runner_group_id") == 0
+        and job.get("runner_group_name") == "GitHub Actions"
+        and job.get("labels") == ["ubuntu-latest"]
+        and type(check.get("id")) is int
+        and check["id"] > 0
+        and job.get("check_run_url") == f"{native._REPO_URL}/check-runs/{check['id']}"
+        and check.get("app", {}).get("id") == 15368
+        and check.get("check_suite", {}).get("id") == run["check_suite_id"]
+        and check.get("details_url")
+        == f"https://github.com/Dream1216/omnigent/actions/runs/{run['id']}/job/{job['id']}",
+        "unattributed cancelled job/check/provider/runner identity differs",
+    )
+    return {
+        "run_id": run["id"],
+        "attempt": run["run_attempt"],
+        "job_id": job["id"],
+        "check_id": check["id"],
+    }
+
+
+def _audit_receipt(kind, policy, run):
+    return {
+        "kind": kind,
+        "workflow": native.MAIN_WORKFLOW,
+        **{
+            key: policy[key]
+            for key in (
+                "workflow_sha256",
+                "validation_pr",
+                "validation_base_ref",
+                "product_revision",
+                "product_tree",
+            )
+        },
+        "run_id": run["id"],
+        "attempt": run["run_attempt"],
+        "event": run["event"],
+        "attachment_revision": run["head_sha"],
+        "run_sha256": native.native_digest(run),
+        "check_suite_id": run["check_suite_id"],
+        "policy_sha256": native.native_digest(policy),
+        "source_classification": "UNKNOWN",
+        "original_event_source_revision": None,
+        "trusted_checkout_revision": None,
+        "original_conclusion": run["conclusion"],
+        "source_proof": False,
+        "guard_refusal": False,
+        "technical_gate_waiver": False,
+        "production_admission": False,
+    }
+
+
+def verify_no_job_execution(profile, identity, policy, run, jobs, suite, checks, logs):
+    validate_unattributed_policy(policy, profile, identity)
+    _unattributed_run(run)
+    require(
+        isinstance(jobs, dict)
+        and type(jobs.get("total_count")) is int
+        and jobs["total_count"] == 0
+        and jobs.get("jobs") == []
+        and isinstance(checks, dict)
+        and type(checks.get("total_count")) is int
+        and checks["total_count"] == 0
+        and checks.get("check_runs") == [],
+        "no-job audit lacks complete native zero job/check counts and lists",
+    )
+    require(
+        suite.get("id") == run["check_suite_id"]
+        and suite.get("url") == f"{native._REPO_URL}/check-suites/{run['check_suite_id']}"
+        and suite.get("check_runs_url") == suite["url"] + "/check-runs"
+        and suite.get("repository", {}).get("full_name") == "Dream1216/omnigent"
+        and suite.get("app", {}).get("id") == 15368
+        and suite.get("head_sha") == run["head_sha"]
+        and suite.get("status") == "completed"
+        and suite.get("conclusion") == "cancelled"
+        and native._pr_numbers(suite.get("pull_requests")) == []
+        and type(suite.get("latest_check_runs_count")) is int
+        and suite["latest_check_runs_count"] == 0,
+        "no-job audit native suite/source/provider or complete check count differs",
+    )
+    require(logs == _EMPTY_ZIP, "no-job audit original run ZIP is not exactly empty")
+    return UnattributedNoJobExecutionObservation(
+        {
+            **_audit_receipt(NO_JOB_KIND, policy, run),
+            "execution": "native-no-jobs-no-checks",
+            "job_id": None,
+            "check_id": None,
+            "jobs_response_sha256": native.native_digest(jobs),
+            "suite_sha256": native.native_digest(suite),
+            "checks_response_sha256": native.native_digest(checks),
+            "run_logs_sha256": hashlib.sha256(logs).hexdigest(),
+        }
+    )
+
+
+def _bootstrap_log_schema(run, job, logs, shape):
+    require(0 < len(logs) <= 65536, "bootstrap archive exceeds its bounded schema")
+    require(
+        logs.startswith(b"PK\x03\x04") and logs[-22:-18] == b"PK\x05\x06",
+        "bootstrap archive has a prefix, trailer or non-native ZIP layout",
+    )
+    digests = {}
+    with zipfile.ZipFile(io.BytesIO(logs)) as archive:
+        entries = archive.infolist()
+        require(
+            tuple(entry.filename for entry in entries) == ("0_evaluate.txt", "evaluate/system.txt")
+            and archive.comment == b""
+            and entries[0].header_offset == 0,
+            "bootstrap archive has missing, extra, duplicate or commented members",
+        )
+        for entry in entries:
+            require(
+                entry.compress_type == zipfile.ZIP_DEFLATED
+                and entry.external_attr == 0
+                and entry.extra == entry.comment == b""
+                and entry.file_size <= 16384,
+                "bootstrap member compression, metadata or size differs",
+            )
+            text = archive.read(entry).decode("utf-8")
+            require(
+                "\r" not in text and text.endswith("\n") == (entry.filename == "0_evaluate.txt"),
+                "bootstrap member encoding differs",
+            )
+            normalized = []
+            for index, line in enumerate(text.removesuffix("\n").split("\n")):
+                if index == 0:
+                    line = line.removeprefix("\ufeff")
+                match = re.fullmatch(
+                    r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{1,7}Z) (.*)",
+                    line,
+                )
+                require(match is not None, "bootstrap member has unknown native timestamp framing")
+                if match is None:
+                    raise ValueError("bootstrap member has unknown native timestamp framing")
+                observed, body = native._instant(match[1]), match[2]
+                end = native._instant(job["completed_at"]) + timedelta(seconds=1)
+                lower = (
+                    native._instant(job["started_at"])
+                    if entry.filename == "0_evaluate.txt"
+                    else min(
+                        native._instant(run["created_at"]), native._instant(run["run_started_at"])
+                    )
+                )
+                require(
+                    lower <= observed < end,
+                    "bootstrap log crosses its authenticated native time window",
+                )
+                uuid = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                if body.startswith("Worker ID: "):
+                    require(
+                        re.fullmatch(r"Worker ID: \{" + uuid + r"\}", body) is not None,
+                        "bootstrap worker metadata has an unknown shape",
+                    )
+                    body = "Worker ID: {WORKER_UUID}"
+                if body.startswith("Temporarily overriding HOME="):
+                    pattern = (
+                        r"Temporarily overriding HOME='/home/runner/work/_temp/"
+                        + uuid
+                        + r"' before making global git config changes"
+                    )
+                    require(
+                        re.fullmatch(pattern, body) is not None,
+                        "bootstrap temporary directory has an unknown shape",
+                    )
+                    body = (
+                        "Temporarily overriding HOME='/home/runner/work/_temp/TEMP_UUID' "
+                        "before making global git config changes"
+                    )
+                prefix = "Job is about to start running on the hosted runner: "
+                if body.startswith(prefix):
+                    require(
+                        body == prefix + job["runner_name"],
+                        "bootstrap system log names another runner",
+                    )
+                    body = prefix + "RUNNER_NAME"
+                normalized.append(body)
+            digests[entry.filename] = hashlib.sha256(
+                ("\n".join(normalized) + "\n").encode()
+            ).hexdigest()
+    matches = [
+        name
+        for name, schema in _BOOTSTRAP_SCHEMAS.items()
+        if schema["shape"] == shape and schema["member_sha256"] == digests
+    ]
+    require(
+        len(matches) == 1, "bootstrap archive contains an unreviewed command, output or log schema"
+    )
+    return matches[0]
+
+
+def verify_bootstrap_cancellation(profile, identity, policy, run, job, check, annotations, logs):
+    validate_bootstrap_policy(policy, profile, identity)
+    coordinates = cancelled_job_coordinates(run, job, check)
+    require(
+        isinstance(job.get("steps"), list)
+        and all(s.get("status") == "completed" for s in job["steps"]),
+        "bootstrap cancellation has incomplete native steps",
+    )
+    steps = tuple((s.get("number"), s.get("name"), s.get("conclusion")) for s in job["steps"])
+    require(
+        steps in (((1, "Set up job", "cancelled"),), _INFRASTRUCTURE_STEPS),
+        "bootstrap cancellation executed an unreviewed governance or business step",
+    )
+    shape = "setup" if len(steps) == 1 else "checkout"
+    schema_name = _bootstrap_log_schema(run, job, logs, shape)
+    require(
+        isinstance(annotations, list) and len(annotations) == 3,
+        "bootstrap cancellation complete annotation set differs",
+    )
+    message = annotations[0].get("message", "")
+    require(
+        re.fullmatch(
+            r"Canceling since a higher priority waiting request for "
+            r"saas-n1-merge-gate-[0-9a-f]{40} exists",
+            message,
+        )
+        is not None,
+        "bootstrap cancellation lacks its exact native concurrency annotation",
+    )
+    expected = [
+        _annotation(run, "failure", message),
+        _annotation(
+            run,
+            "failure",
+            "The operation was canceled.",
+            _BOOTSTRAP_SCHEMAS[schema_name]["operation_annotation_line"],
+        ),
+        _annotation(run, "notice", _UBUNTU26_NOTICE),
+    ]
+    output = check.get("output", {})
+    require(
+        annotations == expected
+        and output.get("annotations_count") == 3
+        and output.get("annotations_url")
+        == f"{native._REPO_URL}/check-runs/{check['id']}/annotations"
+        and all(output.get(key) is None for key in ("title", "summary", "text")),
+        "bootstrap cancellation has unknown, missing or reordered annotations",
+    )
+    return UnattributedBootstrapCancellationObservation(
+        {
+            **_audit_receipt(BOOTSTRAP_KIND, policy, run),
+            **coordinates,
+            "execution": "native-bootstrap-only-cancelled",
+            "bootstrap_schema": schema_name,
+            "git_executed": shape == "checkout",
+            "job_sha256": native.native_digest(job),
+            "check_sha256": native.native_digest(check),
+            "annotations_sha256": native.native_digest(annotations),
+            "run_logs_sha256": hashlib.sha256(logs).hexdigest(),
+        }
+    )
+
+
+def collect_unattributed_audit(
+    profile, identity, zero_policy, bootstrap_policy, run, jobs, destination
+):
+    require(
+        hashlib.sha256(native._native_file(native.MAIN_WORKFLOW, run["head_sha"])).hexdigest()
+        == native.MAIN_WORKFLOW_SHA256,
+        "unattributed native audit workflow bytes differ",
+    )
+    if not jobs:
+        require(zero_policy is not None, "no-job native audit policy is disabled")
+        prefix = f"{native._ROOT}/actions/runs/{run['id']}/attempts/{run['run_attempt']}"
+        raw_jobs = api(prefix + "/jobs?per_page=100&page=1")
+        suite = api(f"{native._ROOT}/check-suites/{run['check_suite_id']}")
+        checks = api(
+            f"{native._ROOT}/check-suites/{run['check_suite_id']}/check-runs?filter=all&per_page=100&page=1"
+        )
+        path = destination / f"no-job-run-{run['id']}-attempt-{run['run_attempt']}.zip"
+        download_run_logs(run["id"], run["run_attempt"], path)
+        return verify_no_job_execution(
+            profile, identity, zero_policy, run, raw_jobs, suite, checks, path.read_bytes()
+        )
+    require(len(jobs) == 1, "unattributed native audit job set differs")
+    if jobs[0].get("steps") == []:
+        require(zero_policy is not None, "unassigned-job native audit policy is disabled")
+        return collect_unattributed_zero_execution(
+            profile, identity, zero_policy, run, jobs, destination
+        )
+    require(bootstrap_policy is not None, "assigned bootstrap native audit policy is disabled")
+    job = jobs[0]
+    match = re.fullmatch(
+        re.escape(native._REPO_URL) + r"/check-runs/([1-9][0-9]*)", job.get("check_run_url", "")
+    )
+    require(match is not None, "bootstrap native check URL differs")
+    if match is None:
+        raise ValueError("bootstrap native check URL differs")
+    check_id = int(match[1])
+    check = api(f"{native._ROOT}/check-runs/{check_id}")
+    annotations = annotations_for(check_id)
+    path = destination / f"bootstrap-run-{run['id']}-attempt-{run['run_attempt']}.zip"
+    download_infrastructure_run_logs(run["id"], run["run_attempt"], path)
+    return verify_bootstrap_cancellation(
+        profile, identity, bootstrap_policy, run, job, check, annotations, path.read_bytes()
+    )
+
+
+UnattributedObservation = (
+    UnattributedZeroExecutionObservation
+    | UnattributedNoJobExecutionObservation
+    | UnattributedBootstrapCancellationObservation
+)
+
+
+def unattributed_field(proof):
+    for cls, field in (
+        (UnattributedZeroExecutionObservation, "unattributed_zero_execution_observations"),
+        (UnattributedNoJobExecutionObservation, "unattributed_no_job_observations"),
+        (UnattributedBootstrapCancellationObservation, "unattributed_bootstrap_observations"),
+    ):
+        if isinstance(proof, cls):
+            return field
+    raise ValueError("unattributed audit has no native typed observation")

@@ -22,6 +22,25 @@
             "validation_base_ref": "codex/legacy-validation-core-dc1e9a97",
             "validation_pr": 189,
             "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3"
+          },
+          {
+            "kind": "legacy_original_main_domain_zero_execution/v1",
+            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+            "validation_pr": 189,
+            "validation_base_ref": "codex/legacy-validation-core-dc1e9a97",
+            "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+            "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e",
+            "event": "pull_request_target",
+            "attachment_revision": "6dbd98ee7c8bef73133bbd3028cc905cbb088dd1",
+            "run_id": 40218085097,
+            "attempt": 1,
+            "job_id": 121243486493,
+            "check_id": 121243486493,
+            "run_sha256": "14e67ecc23ee242b0a84e994426a69591d52d2331cc9dd9667f0b0f5e2a32851",
+            "job_sha256": "9872af608e987026d3721be79b013fa840874c900b09712fa50abc0c2039607d",
+            "check_sha256": "50966f776fd6ac761808e008ced051fda4680202850379a42218eb42fda23cb9",
+            "annotations_sha256": "719ef9a8b7e0d91164d7b637e2065ea00de8239af397307adf754870e3669a0e",
+            "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
           }
         ]
       },
@@ -5944,6 +5963,26 @@
           "disposition": "required-technical",
           "reason": "PROPOSED_NOT_APPROVED: exact existing mandatory16 native workflow contract; retains full successful own-source matrix/checkout/execution/test evidence. No source or result is inherited.",
           "sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
+        }
+      },
+      "domain_unattributed_zero_execution": {
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_zero_execution_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 189,
+          "validation_base_ref": "codex/legacy-validation-core-dc1e9a97",
+          "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+          "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e"
+        }
+      },
+      "domain_unattributed_bootstrap_cancellation": {
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_bootstrap_cancellation_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 189,
+          "validation_base_ref": "codex/legacy-validation-core-dc1e9a97",
+          "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
+          "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e"
         }
       }
     },
@@ -11876,6 +11915,26 @@
           "disposition": "required-technical",
           "reason": "PROPOSED_NOT_APPROVED: exact existing mandatory16 native workflow contract; retains full successful own-source matrix/checkout/execution/test evidence. No source or result is inherited.",
           "sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
+        }
+      },
+      "domain_unattributed_zero_execution": {
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_zero_execution_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 190,
+          "validation_base_ref": "codex/legacy-validation-gateway-3319b59a",
+          "product_revision": "073c73be7970e6593546e5cd339aa8f4e800cdc7",
+          "product_tree": "4760166d4ee3890a388485bea703ca0d205071cc"
+        }
+      },
+      "domain_unattributed_bootstrap_cancellation": {
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_bootstrap_cancellation_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 190,
+          "validation_base_ref": "codex/legacy-validation-gateway-3319b59a",
+          "product_revision": "073c73be7970e6593546e5cd339aa8f4e800cdc7",
+          "product_tree": "4760166d4ee3890a388485bea703ca0d205071cc"
         }
       }
     },
@@ -17812,6 +17871,26 @@
           "disposition": "required-technical",
           "reason": "PROPOSED_NOT_APPROVED: exact existing mandatory16 native workflow contract; retains full successful own-source matrix/checkout/execution/test evidence. No source or result is inherited.",
           "sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
+        }
+      },
+      "domain_unattributed_zero_execution": {
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_zero_execution_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 191,
+          "validation_base_ref": "codex/legacy-validation-model-7cea0940",
+          "product_revision": "710ad7256deb1d65ab1830c43b852807b589ddcb",
+          "product_tree": "5a47b5847a6a6dc5a9bc0b73a2dd248713b64d55"
+        }
+      },
+      "domain_unattributed_bootstrap_cancellation": {
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_bootstrap_cancellation_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 191,
+          "validation_base_ref": "codex/legacy-validation-model-7cea0940",
+          "product_revision": "710ad7256deb1d65ab1830c43b852807b589ddcb",
+          "product_tree": "5a47b5847a6a6dc5a9bc0b73a2dd248713b64d55"
         }
       }
     }

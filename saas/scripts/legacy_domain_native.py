@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from saas.scripts.legacy_native_evidence import api
@@ -233,6 +233,31 @@ def _latest_matches_attempt(latest: dict[str, Any], attempt: dict[str, Any]) -> 
             "native domain run endpoint URLs differ",
         )
     excluded = {"jobs_url", "logs_url"}
+    metadata = {"created_at", "updated_at"}
+    if any(latest.get(field) != attempt.get(field) for field in metadata):
+        now = datetime.now(UTC)
+        for row in (latest, attempt):
+            times = {}
+            for field in ("created_at", "updated_at", "run_started_at"):
+                if field == "run_started_at" and field not in row:
+                    continue
+                value = row.get(field)
+                require(
+                    isinstance(value, str)
+                    and re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}){2}T(?:[0-9]{2}:){2}[0-9]{2}Z", value)
+                    is not None,
+                    "native endpoint metadata is not a UTC timestamp",
+                )
+                times[field] = _instant(value)
+            require(
+                times["created_at"] <= times["updated_at"] <= now
+                and times.get("run_started_at", times["created_at"]) <= times["updated_at"],
+                "native endpoint metadata chronology differs",
+            )
+        excluded.update(metadata)
+    # Endpoint dates are retained verbatim; they are not run/source identity or digest aliases.
+    if latest.keys() != attempt.keys():
+        return False
     return {key: value for key, value in latest.items() if key not in excluded} == {
         key: value for key, value in attempt.items() if key not in excluded
     }
