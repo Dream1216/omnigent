@@ -1758,3 +1758,77 @@ def test_runtime_verify_only_binds_receipt_and_enabled_service_logins(
         )
         for service, base_role in expected_service_roles.items()
     ]
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "old",
+        "exact",
+        "column",
+        "role",
+        "grantor",
+        "grantable",
+        "integer_false",
+        "missing_field",
+        "duplicate",
+        "extra_acl",
+        "other_catalog",
+        "missing_base",
+        "unknown_head",
+    ],
+)
+def test_project_lock_acl_preserves_complete_original_catalog_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str,
+) -> None:
+    key = (18, "nf12ab34cd56", "p0s000000018")
+    original = {"control_plane_security": {"column_acls": [], "roles": [["original"]]}}
+    anchor = migration.hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_SOURCE_SECURITY_CATALOG_SHA256", {key: anchor})
+    catalog = json.loads(json.dumps(original))
+    row = ["saas_projects", "id", "saas_app", "authority:saas_owner", "UPDATE", False]
+    rows = catalog["control_plane_security"]["column_acls"]
+    if variant != "old":
+        rows.append(row)
+    if variant == "column":
+        row[1] = "status"
+    if variant == "role":
+        row[2] = "saas_executor"
+    if variant == "grantor":
+        row[3] = "authority:bootstrap"
+    if variant == "grantable":
+        row[5] = True
+    if variant == "integer_false":
+        row[5] = 0
+    if variant == "missing_field":
+        row.pop()
+    if variant == "duplicate":
+        rows.append(list(row))
+    if variant == "extra_acl":
+        rows.append(["saas_projects", "name", *row[2:]])
+    if variant == "other_catalog":
+        catalog["unexpected"] = []
+    if variant == "missing_base":
+        del catalog["control_plane_security"]["roles"]
+    if variant == "unknown_head":
+        key = (18, "nf12ab34cd56", "unknown")
+    before = json.dumps(catalog, sort_keys=True)
+    if variant in {"old", "exact"}:
+        actual = migration._verify_source_security_catalog_digest(
+            catalog,
+            key=key,
+            role_aliases={},
+        )
+        expected = migration.hashlib.sha256(
+            json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        assert actual == expected
+        assert (actual == anchor) is (variant == "old")
+    else:
+        with pytest.raises(migration.PostgreSqlMigrationError) as error:
+            migration._verify_source_security_catalog_digest(catalog, key=key, role_aliases={})
+        assert error.value.code == "source_security_catalog_drifted"
+    assert json.dumps(catalog, sort_keys=True) == before

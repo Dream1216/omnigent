@@ -153,6 +153,7 @@ from omnigent.server.routes._sessions.common import (
     _INTERRUPT_TYPE,
     _MCP_ELICITATION_TYPE,
     _RETRY_SESSION_TYPE,
+    _RUNNER_SESSION_INIT_TIMEOUT_S,
     _SLASH_COMMAND_TYPE,
     _SNAPSHOT_RUNNER_TIMEOUT_S,
     _STOP_SESSION_TYPE,
@@ -311,6 +312,9 @@ from omnigent.util.session_lifecycle import (
     CLOSED_LABEL_VALUE,
     is_session_closed,
 )
+
+# A caller may leave a shared native bootstrap running after this total wait.
+_NATIVE_BOOTSTRAP_CALLER_WAIT_S = _RUNNER_SESSION_INIT_TIMEOUT_S
 
 # custom-lint: disable-next=workspace-scoped-cache -- lock; collision only serializes
 _retry_recovery_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
@@ -1263,7 +1267,7 @@ def register_events_routes(
             and await startup.accepts(conv, request.app)
         ):
             saved = await startup.enqueue(
-                session_id, body, user_id=created_by, headers=request.headers, first=False
+                session_id, body, user_id=user_id, headers=request.headers, first=False
             )
             if conv.host_id is not None:
                 startup.host_changed(request.app, conv.host_id)
@@ -2581,6 +2585,7 @@ def register_events_routes(
                     runner_router,
                     created_by=created_by,
                     host_error_code=refusal_code,
+                    startup_input=request if isinstance(request, StartupInputContext) else None,
                 )
                 return {"queued": True, "item_id": item_id}
             if runner_client is not None:
@@ -2720,7 +2725,9 @@ def register_events_routes(
                         # of reflecting arbitrary host-provided text.
                         host_error = _workspace_missing_message(conv.workspace)
                     if host_error_code is not None:
-                        if isinstance(request, StartupInputContext):
+                        if isinstance(
+                            request, StartupInputContext
+                        ) and not _is_native_terminal_session(conv):
                             raise OmnigentError(
                                 host_error or "The host refused to launch the session",
                                 code=ErrorCode.RUNNER_UNAVAILABLE,
@@ -2738,6 +2745,9 @@ def register_events_routes(
                             runner_router,
                             created_by=created_by,
                             host_error_code=host_error_code,
+                            startup_input=request
+                            if isinstance(request, StartupInputContext)
+                            else None,
                         )
                         return {"queued": True, "item_id": item_id}
                     relaunched_runner_id = launch_attempt.runner_id
@@ -2913,6 +2923,7 @@ def register_events_routes(
                     offline_error,
                     runner_router,
                     created_by=created_by,
+                    startup_input=request if isinstance(request, StartupInputContext) else None,
                 )
                 return {"queued": True, "item_id": item_id}
             # Raise so the Omnigent server doesn't persist an item the
@@ -3054,14 +3065,43 @@ def register_events_routes(
             # Idle reconnects defer initialization until the next interaction.
             # The initializer coalesces completed handshakes for this generation.
             # Input is already persisted; only this forward should start its turn.
-            native_terminal_ready = await _ensure_runner_session_initialized(
-                session_id,
-                conv,
-                runner_client,
-                conversation_store,
-                initializer=initializer,
-                suppress_recovery_turn=True,
+            cold_input = (
+                not isinstance(request, (StartupInputContext, _RunnerEventContext))
+                and startup is not None
+                and initializer is not None
+                and body.type == "message"
+                and body.data.get("role") == "user"
+                and _is_native_terminal_session(conv)
+                and conv.host_id is not None
+                and startup.hosts.get(conv.host_id) is not None
             )
+            caller_wait = asyncio.timeout(_NATIVE_BOOTSTRAP_CALLER_WAIT_S if cold_input else None)
+            try:
+                async with caller_wait:
+                    native_terminal_ready = await _ensure_runner_session_initialized(
+                        session_id,
+                        conv,
+                        runner_client,
+                        conversation_store,
+                        initializer=initializer,
+                        suppress_recovery_turn=True,
+                    )
+            except TimeoutError:
+                if not caller_wait.expired():
+                    raise
+                assert startup is not None and conv.host_id is not None
+                if startup.hosts.get(conv.host_id) is None:
+                    raise OmnigentError(
+                        "The host disconnected during startup", code=ErrorCode.RUNNER_UNAVAILABLE
+                    ) from None
+                saved = await startup.enqueue(
+                    session_id, body, user_id=user_id, headers=request.headers, first=False
+                )
+                startup.host_changed(request.app, conv.host_id)
+                return {
+                    "queued": True,
+                    "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
+                }
         await _ensure_runner_relay_ready(
             session_id,
             conv.runner_id,

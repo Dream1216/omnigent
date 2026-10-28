@@ -114,7 +114,7 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 178,
+    "max_direct_upstream_files": 179,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -780,6 +780,16 @@
       "approved_at": "2026-10-28",
       "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: \u6279\u51c6\u4ec5\u5c06 0.19 \u4e0a\u9650\u589e\u81f3 178\uff1b\u5176\u4ed6\u9650\u5236\u4e0d\u53d8",
       "review_packet_sha256": "9af45de3b002a4eac541e1337e3bfeaabc153a9291ed7df4afb8ca468cacd015"
+    },
+    "native_cold_input_regression_correction_proposal": {
+      "approval_status": "PENDING_EXPLICIT_HUMAN_REVIEW_NOT_AUTHORIZED",
+      "previous_max_direct_upstream_files": 178,
+      "max_direct_upstream_files": 179,
+      "new_official_paths": [
+        "omnigent/server/routes/sessions/routes_events.py"
+      ],
+      "reason": "Restore original Host and fast-init admission, bounded caller wait over the unchanged shielded initializer, preserve authenticated actor separately from display attribution, terminate known native failures once and retain transient/submitted-unknown distinctions. The original 302 CI failures and local counterexamples remain. No source may be adopted under this pending proposal without Root review and the explicit file-budget approval. Keep4576LOC/9patch/.85 and fresh ownCI/OCI/all applicableP4/P5.",
+      "original_178_approval_retained": true
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

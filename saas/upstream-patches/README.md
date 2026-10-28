@@ -1,5 +1,23 @@
 # Upstream patch queue
 
+## Pending cold-input regression correction (not approved)
+
+Extend only `0010-next-agent-session-reliability.patch` with the original
+Sessions event boundary. The proposed 178-to-179 file ceiling adds
+`omnigent/server/routes/sessions/routes_events.py`; the approved 178 record
+below remains historical and does not authorize this additional path.
+Restore synchronous Host classification and fast initialization; after a new
+ten-second caller wait, retain cold native input in the existing queue while
+the original shielded initializer continues. Save the authenticated principal,
+then apply the existing display attribution separately. Known native failures
+claim and replace their pending item once; transient routing refusals before
+submission remain recoverable, and unknown submitted input is not replayed.
+Tests extend the existing managed startup module; the original Host-launch
+assertions are unchanged. Replay target remains `3db749d`, nine patches remain,
+and the 4576-line limit/.85 isolation floor and fresh CI/OCI/P4/P5 gates remain.
+Root must obtain explicit approval of the concrete 179-file proposal before
+formal adoption. No upstream issue/PR has been opened for this correction.
+
 ## Approved native cold-input durability scope (2026-10-28)
 
 Extend the existing `0010-next-agent-session-reliability.patch`, retaining nine

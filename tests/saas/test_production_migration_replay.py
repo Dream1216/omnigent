@@ -665,12 +665,18 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             print(f"CLEAN_REPLAY_PREVIEW_SECURITY_PG{major}={digest}")
+            predecessor = migration._source_catalog_project_lock_predecessor(normalized)
+            assert predecessor is not None
+            anchor_digest = hashlib.sha256(
+                json.dumps(predecessor, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            assert anchor_digest != digest
             expected_security = (
                 migration._PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
                 if plan.model_projection_service_role_bindings is not None
                 else migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
             )
-            assert digest == expected_security.get(key)
+            assert anchor_digest == expected_security.get(key)
             return key, digest
     finally:
         engine.dispose()

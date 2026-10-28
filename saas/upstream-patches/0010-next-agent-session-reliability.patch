@@ -53,13 +53,20 @@ diff --git a/omnigent/runtime/pending_inputs.py b/omnigent/runtime/pending_input
 diff --git a/omnigent/server/API.md b/omnigent/server/API.md
 --- a/omnigent/server/API.md
 +++ b/omnigent/server/API.md
-@@ -616,0 +617,6 @@
+@@ -617,0 +618,10 @@
++    On a connected external host, native-terminal input first uses ordinary
++    host checks and shared initialization. If initialization exceeds a new
++    ten-second caller wait, the input is saved into this durable queue while
++    the shared bootstrap continues. Follow-ups join it while saved input is
++    pending; ready startup state with no pending input uses ordinary dispatch.
++    Queued acknowledges saved input, not terminal readiness or model completion.
++    Delivery rechecks the sender's access/policy. A definitive native startup
++    failure consumes the saved input into its typed failure turn; a temporary
++    unavailable or wrong-replica refusal before submission leaves it recoverable.
 +
-+    On a connected external host, native-terminal input without startup state
-+    also uses this durable queue, including cold terminal bootstrap. Follow-ups
-+    join it while saved input is pending; ready startup state with no pending
-+    input uses ordinary dispatch. Queued acknowledges saved input, not terminal
-+    readiness or model completion. Delivery rechecks the sender's access/policy.
+@@ -621 +631 @@
+-    A failure before submission retains the saved input for `retry_session`.
++    Other failures before submission retain the saved input for `retry_session`.
 diff --git a/omnigent/server/app.py b/omnigent/server/app.py
 --- a/omnigent/server/app.py
 +++ b/omnigent/server/app.py
@@ -159,12 +166,58 @@ diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server
 @@ -3105,0 +3108,2 @@
 +        if skipped.stable_id is not None:
 +            pending_inputs.remember_committed(session_id, skipped.stable_id, persisted_user.id)
-@@ -6795,0 +6800,4 @@
+@@ -5834,0 +5839 @@
++    startup_input: StartupInputContext | None = None,
+@@ -5867,0 +5873,2 @@
++    if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
++        return startup_input.input_id
+@@ -5869 +5876,5 @@
+-    user_item = _build_new_item(body, turn_id, created_by=created_by)
++    user_item = _build_new_item(
++        body, turn_id, created_by=created_by, adopt_stable_id=startup_input is not None
++    )
++    if startup_input is not None:
++        user_item = user_item.model_copy(update={"replaces_pending_id": startup_input.input_id})
+@@ -5890 +5901,9 @@
+-    _publish_input_consumed(session_id, consumed)
++    _publish_input_consumed(
++        session_id,
++        consumed,
++        cleared_pending_id=(
++            pending_inputs.make_pending_id(session_id, startup_input.input_id)
++            if startup_input is not None
++            else None
++        ),
++    )
+@@ -5922,0 +5942 @@
++    startup_input: StartupInputContext | None = None,
+@@ -5969,0 +5990,2 @@
++    if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
++        return startup_input.input_id
+@@ -5971 +5993,5 @@
+-    user_item = _build_new_item(body, turn_id, created_by=created_by)
++    user_item = _build_new_item(
++        body, turn_id, created_by=created_by, adopt_stable_id=startup_input is not None
++    )
++    if startup_input is not None:
++        user_item = user_item.model_copy(update={"replaces_pending_id": startup_input.input_id})
+@@ -5984 +6010,9 @@
+-    _publish_input_consumed(session_id, consumed)
++    _publish_input_consumed(
++        session_id,
++        consumed,
++        cleared_pending_id=(
++            pending_inputs.make_pending_id(session_id, startup_input.input_id)
++            if startup_input is not None
++            else None
++        ),
++    )
+@@ -6795,0 +6830,4 @@
 +    elif item.stable_id is not None and persisted_items[0].deduplicated:
 +        # The same logical web submission already reached this persist-before-
 +        # forward boundary. Re-dispatching it would execute the turn twice.
 +        return persisted_items[0].id
-@@ -7715,0 +7724,21 @@
+@@ -7715,0 +7754,21 @@
 +        raw_stable_id = body.data.get("stable_id")
 +        web_stable_id = (
 +            raw_stable_id
@@ -186,17 +239,22 @@ diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server
 +                    attributes=pending_inputs.delivery_attributes_for(session_id, live_pending_id),
 +                )
 +                return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
-@@ -7753,6 +7781,0 @@
+@@ -7727,2 +7785,0 @@
+-            if startup_input is not None:
+-                raise OmnigentError(str(ensure_outcome.error), code=ErrorCode.RUNNER_UNAVAILABLE)
+@@ -7737,0 +7795 @@
++                startup_input=startup_input,
+@@ -7753,6 +7810,0 @@
 -        raw_stable_id = body.data.get("stable_id")
 -        web_stable_id = (
 -            raw_stable_id
 -            if isinstance(raw_stable_id, str) and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
 -            else None
 -        )
-@@ -10613 +10636 @@
+@@ -10613 +10665 @@
 -    body: SessionCreateInput,
 +    body: SessionCreateInput | SessionCreateMetadata,
-@@ -10673,0 +10697,56 @@
+@@ -10673,0 +10726,56 @@
 +
 +
 +def _reported_harness_failure(host: Host, harness: str) -> str | None:
@@ -253,7 +311,7 @@ diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server
 +        failure = _reported_harness_failure(host, harness)
 +        if failure is not None:
 +            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
-@@ -10959,0 +11039,13 @@
+@@ -10959,0 +11068,13 @@
 +
 +
 +_CLIENT_CREATE_TOKEN_LABEL = "omnigent.client_create_token"
@@ -267,7 +325,7 @@ diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server
 +    if isinstance(token, str) and re.fullmatch(r"[0-9a-f]{32}", token):
 +        return token
 +    return None
-@@ -11376,8 +11468,16 @@
+@@ -11376,8 +11497,16 @@
 -        canonical_workspace = await _validate_session_workspace(
 -            user_id=user_id,
 -            host_id=body.host_id,
@@ -292,9 +350,9 @@ diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server
 +                    code=ErrorCode.INVALID_INPUT,
 +                ) from exc
 +            raise
-@@ -11413,0 +11514 @@
+@@ -11413,0 +11543 @@
 +    await _reject_unavailable_harness_for_create(body, request, user_id, selected_harness)
-@@ -11623,0 +11725 @@
+@@ -11623,0 +11754 @@
 +                conversation_id=_client_create_token(body),
 diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
 --- a/omnigent/server/routes/sessions/routes_core.py
@@ -390,18 +448,111 @@ diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/ro
 +
 +        await _reject_unavailable_harness_for_create(
 +            parsed_metadata, request, user_id, spec_harness(spec)
+diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
+--- a/omnigent/server/routes/sessions/routes_events.py
++++ b/omnigent/server/routes/sessions/routes_events.py
+@@ -155,0 +156 @@
++    _RUNNER_SESSION_INIT_TIMEOUT_S,
+@@ -314,0 +316,3 @@
++# A caller may leave a shared native bootstrap running after this total wait.
++_NATIVE_BOOTSTRAP_CALLER_WAIT_S = _RUNNER_SESSION_INIT_TIMEOUT_S
++
+@@ -1266 +1270 @@
+-                session_id, body, user_id=created_by, headers=request.headers, first=False
++                session_id, body, user_id=user_id, headers=request.headers, first=False
+@@ -2583,0 +2588 @@
++                    startup_input=request if isinstance(request, StartupInputContext) else None,
+@@ -2723 +2728,3 @@
+-                        if isinstance(request, StartupInputContext):
++                        if isinstance(
++                            request, StartupInputContext
++                        ) and not _is_native_terminal_session(conv):
+@@ -2740,0 +2748,3 @@
++                            startup_input=request
++                            if isinstance(request, StartupInputContext)
++                            else None,
+@@ -2915,0 +2926 @@
++                    startup_input=request if isinstance(request, StartupInputContext) else None,
+@@ -3057,8 +3068,37 @@
+-            native_terminal_ready = await _ensure_runner_session_initialized(
+-                session_id,
+-                conv,
+-                runner_client,
+-                conversation_store,
+-                initializer=initializer,
+-                suppress_recovery_turn=True,
+-            )
++            cold_input = (
++                not isinstance(request, (StartupInputContext, _RunnerEventContext))
++                and startup is not None
++                and initializer is not None
++                and body.type == "message"
++                and body.data.get("role") == "user"
++                and _is_native_terminal_session(conv)
++                and conv.host_id is not None
++                and startup.hosts.get(conv.host_id) is not None
++            )
++            caller_wait = asyncio.timeout(_NATIVE_BOOTSTRAP_CALLER_WAIT_S if cold_input else None)
++            try:
++                async with caller_wait:
++                    native_terminal_ready = await _ensure_runner_session_initialized(
++                        session_id,
++                        conv,
++                        runner_client,
++                        conversation_store,
++                        initializer=initializer,
++                        suppress_recovery_turn=True,
++                    )
++            except TimeoutError:
++                if not caller_wait.expired():
++                    raise
++                assert startup is not None and conv.host_id is not None
++                if startup.hosts.get(conv.host_id) is None:
++                    raise OmnigentError(
++                        "The host disconnected during startup", code=ErrorCode.RUNNER_UNAVAILABLE
++                    ) from None
++                saved = await startup.enqueue(
++                    session_id, body, user_id=user_id, headers=request.headers, first=False
++                )
++                startup.host_changed(request.app, conv.host_id)
++                return {
++                    "queued": True,
++                    "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
++                }
 diff --git a/omnigent/server/startup_inputs.py b/omnigent/server/startup_inputs.py
 --- a/omnigent/server/startup_inputs.py
 +++ b/omnigent/server/startup_inputs.py
-@@ -234 +234,7 @@
--            return False
-+            # Native input must outlive a slow terminal bootstrap and its sender.
-+            # Keep follow-ups in the same queue to avoid racing the first admission.
-+            if state is not None or conv.host_id is None or self.hosts.get(conv.host_id) is None:
-+                return False
-+            from omnigent.server.routes.sessions import _is_native_terminal_session
-+
-+            return _is_native_terminal_session(conv)
-@@ -285 +291 @@
+@@ -29,0 +30 @@
++from omnigent.server.routes._auth_helpers import attribution_user
+@@ -269 +270,5 @@
+-                **({"created_by": item.created_by} if item.created_by else {}),
++                **(
++                    {"created_by": attribution_user(item.created_by)}
++                    if attribution_user(item.created_by)
++                    else {}
++                ),
+@@ -285 +290 @@
 -        if connection is None or not connection.registered_with_managed_token:
 +        if connection is None:
+@@ -388,0 +394 @@
++        conv: Conversation | None = None
+@@ -435 +441 @@
+-                        event, "startup_command", created_by=item.created_by
++                        event, "startup_command", created_by=attribution_user(item.created_by)
+@@ -450,0 +457,16 @@
++            from omnigent.server.routes.sessions import _is_native_terminal_session
++
++            if (
++                conv is not None
++                and _is_native_terminal_session(conv)
++                and not (context and context.submitted)
++                and isinstance(exc, OmnigentError)
++                and exc.code
++                in (
++                    ErrorCode.WRONG_REPLICA,
++                    ErrorCode.RUNNER_UNAVAILABLE,
++                    ErrorCode.HOST_OFFLINE,
++                )
++            ):
++                # No submission occurred; the host worker can try after reconnect.
++                return

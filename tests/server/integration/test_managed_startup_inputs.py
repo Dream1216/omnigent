@@ -990,6 +990,9 @@ async def test_external_native_cold_inputs_ack_before_shared_bootstrap(
     from tests.budgets import budget
     from tests.server.test_runner_session_init import _Registry
 
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.routes_events._NATIVE_BOOTSTRAP_CALLER_WAIT_S", 0.01
+    )
     env = startup_env
     agent = await create_test_agent(env.client, name=CODEX_NATIVE_CODING_AGENT.agent_name)
     created = await env.client.post("/v1/sessions", json={"agent_id": agent["id"]})
@@ -1126,17 +1129,18 @@ async def test_external_native_queue_and_workers_stay_workspace_scoped(
     startup = env.app.state.startup_inputs
     host_id = uuid4().hex
     conv = Conversation(
-        id="native-cold",
+        id=uuid4().hex,
         created_at=1,
         updated_at=1,
-        root_conversation_id="native-cold",
+        root_conversation_id=uuid4().hex,
         host_id=host_id,
-        labels={WRAPPER_LABEL_KEY: CODEX_NATIVE_WRAPPER_VALUE},
+        labels={WRAPPER_LABEL_KEY: CODEX_NATIVE_WRAPPER_VALUE, STARTUP_LABEL: "pending"},
     )
     monkeypatch.setattr(env.conv_store, "list_host_conversation_ids", lambda *_a, **_k: [])
     try:
         for workspace in (111, 222):
             with workspace_scope(workspace):
+                env.app.state.host_store.upsert_on_connect(host_id, "external", "alice")
                 env.app.state.host_registry.register(
                     host_id,
                     AsyncMock(),
@@ -1172,3 +1176,164 @@ async def test_external_host_queue_is_available_without_managed_provider(
     )
     assert isinstance(app.state.startup_inputs, ManagedStartupInputs)
     await app.state.startup_inputs.shutdown()
+
+
+@pytest.mark.parametrize("failure", ["workspace_missing", "runner_failed_to_start"])
+async def test_saved_native_failure_consumes_pending_once(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    env = startup_env
+    session_id = await _create(env, name=CODEX_NATIVE_CODING_AGENT.agent_name)
+    saved = _bind(env, session_id)
+    conv = env.conv_store.get_conversation(session_id)
+    _connect_host(env, conv.host_id)
+    launch = _stub_launch(
+        env,
+        monkeypatch,
+        error_code="workspace_missing" if failure == "workspace_missing" else None,
+        error="Workspace path does not exist"
+        if failure == "workspace_missing"
+        else "spawn failed",
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions._get_runner_client", AsyncMock(return_value=None)
+    )
+    startup = env.app.state.startup_inputs
+    await startup._deliver(env.app, session_id, saved)
+    await startup._deliver(env.app, session_id, saved)
+    assert launch.await_count == 1
+    assert env.conv_store.list_pending_inputs(session_id) == []
+    items = env.conv_store.list_items(session_id).data
+    [message] = [item for item in items if item.type == "message"]
+    [error] = [item for item in items if item.type == "error"]
+    assert message.id == saved.id and message.data.content == _INPUT["data"]["content"]
+    assert isinstance(error.data, ErrorData) and error.data.code == failure
+
+
+@pytest.mark.parametrize("code", ["WRONG_REPLICA", "RUNNER_UNAVAILABLE"])
+async def test_saved_native_transient_refusal_keeps_input_recoverable(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    from omnigent.errors import ErrorCode, OmnigentError
+
+    env = startup_env
+    session_id = await _create(env, name=CODEX_NATIVE_CODING_AGENT.agent_name)
+    saved = _bind(env, session_id)
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions._get_runner_client",
+        AsyncMock(
+            side_effect=OmnigentError("temporarily unavailable", code=getattr(ErrorCode, code))
+        ),
+    )
+    startup = env.app.state.startup_inputs
+    await startup._deliver(env.app, session_id, saved)
+    [pending] = env.conv_store.list_pending_inputs(session_id)
+    assert pending.id == saved.id and pending.status == "in_progress"
+    assert env.conv_store.list_items(session_id).data == []
+    forwarded: list[dict[str, Any]] = []
+    runner = _stub_runner(monkeypatch, forwarded)
+    try:
+        await startup._deliver(env.app, session_id, saved)
+        await startup._deliver(env.app, session_id, saved)
+        assert len([event for event in forwarded if event.get("type") == "message"]) == 1
+        await _simulate_transcript_forwarder_echo(env.client, session_id, _TEXT)
+        assert env.conv_store.list_pending_inputs(session_id) == []
+    finally:
+        await runner.aclose()
+
+
+async def test_saved_input_preserves_authenticated_local_principal(
+    auth_app: FastAPI, auth_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omnigent.server.auth import UnifiedAuthProvider
+
+    provider = auth_app.state.mcp_registry_auth
+    assert isinstance(provider, UnifiedAuthProvider) and provider._source == "header"
+    monkeypatch.setattr(provider, "_local_single_user", True)
+    agent = await create_test_agent(auth_client, name=CODEX_NATIVE_CODING_AGENT.agent_name)
+    created = await auth_client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    startup = auth_app.state.startup_inputs
+    startup.conversations.set_labels(session_id, {STARTUP_LABEL: "pending"})
+    forwarded: list[dict[str, Any]] = []
+    runner = _stub_runner(monkeypatch, forwarded)
+    try:
+        accepted = await auth_client.post(f"/v1/sessions/{session_id}/events", json=_INPUT)
+        assert accepted.status_code == 202, accepted.text
+        [saved] = startup.conversations.list_pending_inputs(session_id)
+        await startup._deliver(auth_app, session_id, saved)
+        assert len([event for event in forwarded if event.get("type") == "message"]) == 1
+        snapshot = (await auth_client.get(f"/v1/sessions/{session_id}")).json()
+        assert not [item for item in snapshot["items"] if item["type"] == "error"]
+        assert all(item.get("created_by") != "local" for item in snapshot["pending_inputs"])
+        await _simulate_transcript_forwarder_echo(auth_client, session_id, _TEXT)
+        messages = [
+            item
+            for item in startup.conversations.list_items(session_id).data
+            if item.type == "message"
+        ]
+        assert len(messages) == 1 and messages[0].created_by is None
+    finally:
+        await startup.shutdown()
+        await runner.aclose()
+
+
+async def test_saved_input_missing_principal_fails_closed_in_multi_user_mode(
+    auth_app: FastAPI, auth_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(auth_app.state.mcp_registry_auth, "_local_single_user", False)
+    agent = await create_test_agent(auth_client, user="alice")
+    created = await auth_client.post(
+        "/v1/sessions", json={"agent_id": agent["id"]}, headers={"X-Forwarded-Email": "alice"}
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    startup = auth_app.state.startup_inputs
+    saved = await startup.enqueue(
+        session_id, SessionEventInput.model_validate(_INPUT), user_id=None, headers=Headers()
+    )
+    forwarded: list[dict[str, Any]] = []
+    runner = _stub_runner(monkeypatch, forwarded)
+    try:
+        await startup._deliver(auth_app, session_id, saved)
+        assert forwarded == []
+        [pending] = startup.conversations.list_pending_inputs(session_id)
+        assert pending.status == "failed"
+        [error] = startup.conversations.list_items(session_id).data
+        assert (
+            isinstance(error.data, ErrorData) and "Authentication required" in error.data.message
+        )
+    finally:
+        await startup.shutdown()
+        await runner.aclose()
+
+
+async def test_saved_native_terminal_refusal_consumes_pending_once(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = startup_env
+    session_id = await _create(env, name=CODEX_NATIVE_CODING_AGENT.agent_name)
+    saved = _bind(env, session_id)
+    paths: list[str] = []
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(
+            503, json={"error": {"code": "native_start_refused", "message": "Native CLI missing"}}
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(refuse), base_url="http://runner"
+    ) as runner:
+        monkeypatch.setattr(
+            "omnigent.server.routes.sessions._get_runner_client", AsyncMock(return_value=runner)
+        )
+        startup = env.app.state.startup_inputs
+        await startup._deliver(env.app, session_id, saved)
+        await startup._deliver(env.app, session_id, saved)
+    assert paths == [f"/v1/sessions/{session_id}/resources/terminals"]
+    assert env.conv_store.list_pending_inputs(session_id) == []
+    [message, error] = env.conv_store.list_items(session_id).data
+    assert message.id == saved.id and message.type == "message"
+    assert isinstance(error.data, ErrorData) and error.data.code == "native_start_refused"

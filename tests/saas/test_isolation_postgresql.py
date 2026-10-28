@@ -611,6 +611,27 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
         with engine.begin() as connection:
             connection.exec_driver_sql("SET LOCAL ROLE saas_app")
             _set_scope(connection, tenant_id=scope["tenant"], space_id=scope["space"])
+            project_ids = (
+                connection.execute(sa.text("SELECT id FROM saas_projects FOR UPDATE"))
+                .scalars()
+                .all()
+            )
+            assert project_ids == [scope["project"]]
+            assert connection.exec_driver_sql(
+                "SELECT has_table_privilege('saas_app', 'saas_projects', 'UPDATE'), "
+                "has_column_privilege('saas_app', 'saas_projects', 'id', 'UPDATE'), "
+                "has_column_privilege('saas_app', 'saas_projects', 'name', 'UPDATE'), "
+                "has_column_privilege('saas_app', 'saas_projects', 'status', 'UPDATE')"
+            ).one() == (False, True, False, False)
+            with engine.begin() as governance:
+                governance.exec_driver_sql("SET LOCAL ROLE saas_governance")
+                _set_scope(governance, tenant_id=scope["tenant"], space_id=scope["space"])
+                with pytest.raises(DBAPIError) as locked:
+                    governance.execute(
+                        sa.text("SELECT id FROM saas_projects WHERE id = :id FOR UPDATE NOWAIT"),
+                        {"id": scope["project"]},
+                    )
+                assert locked.value.orig.sqlstate == "55P03"
             expected_rows = {
                 "saas_egress_policies": 2,
                 "saas_execution_profiles": 2,

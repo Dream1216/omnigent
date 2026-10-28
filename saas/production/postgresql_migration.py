@@ -5151,8 +5151,39 @@ def _verify_source_security_catalog_digest(
                 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256.get(key)
             )
     if digest not in accepted_digests:
-        raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
+        predecessor = _source_catalog_project_lock_predecessor(normalized)
+        predecessor_digest = hashlib.sha256(
+            json.dumps(predecessor, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if predecessor is None or predecessor_digest not in accepted_digests:
+            raise PostgreSqlMigrationError("source_security_catalog_drifted", "verification")
     return digest
+
+
+def _source_catalog_project_lock_predecessor(catalog: object) -> object | None:
+    """Match only the lock ACL addition against the complete original anchor."""
+
+    if not isinstance(catalog, dict):
+        return None
+    security = catalog.get("control_plane_security")
+    if not isinstance(security, dict) or not isinstance(security.get("column_acls"), list):
+        return None
+    rows = security["column_acls"]
+    identity = ["saas_projects", "id", "saas_app", "authority:saas_owner", "UPDATE"]
+    matches = [
+        index
+        for index, row in enumerate(rows)
+        if isinstance(row, list) and len(row) == 6 and row[:5] == identity and row[5] is False
+    ]
+    if len(matches) != 1:
+        return None
+    return {
+        **catalog,
+        "control_plane_security": {
+            **security,
+            "column_acls": [row for index, row in enumerate(rows) if index != matches[0]],
+        },
+    }
 
 
 def _source_catalog_without_dormant_projection_role(catalog: object, *, saas_head: str) -> object:

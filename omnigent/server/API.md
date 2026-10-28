@@ -615,16 +615,20 @@ already uploaded or registered an agent. The response is the full
     ordinary error or relaunch path.
     Up to 100 pending inputs are accepted per session; excess sends are refused.
 
-    On a connected external host, native-terminal input without startup state
-    also uses this durable queue, including cold terminal bootstrap. Follow-ups
-    join it while saved input is pending; ready startup state with no pending
-    input uses ordinary dispatch. Queued acknowledges saved input, not terminal
-    readiness or model completion. Delivery rechecks the sender's access/policy.
+    On a connected external host, native-terminal input first uses ordinary
+    host checks and shared initialization. If initialization exceeds a new
+    ten-second caller wait, the input is saved into this durable queue while
+    the shared bootstrap continues. Follow-ups join it while saved input is
+    pending; ready startup state with no pending input uses ordinary dispatch.
+    Queued acknowledges saved input, not terminal readiness or model completion.
+    Delivery rechecks the sender's access/policy. A definitive native startup
+    failure consumes the saved input into its typed failure turn; a temporary
+    unavailable or wrong-replica refusal before submission leaves it recoverable.
 
     Pending messages use the existing conversation items and status fields.
     SDK dispatch activates them into ordinary history; native transcript echoes
     replace their pending rows. The normal SDK history recovery is unchanged.
-    A failure before submission retains the saved input for `retry_session`.
+    Other failures before submission retain the saved input for `retry_session`.
     After native submission, recovery restores receipt matching without resending
     the prompt: a missing acknowledgement cannot prove it was not executed.
     `interrupt` and `stop_session` cancel inputs that have not been submitted,

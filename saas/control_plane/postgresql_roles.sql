@@ -3251,6 +3251,9 @@ GRANT SELECT ON
     saas_preview_leases
 TO saas_app;
 
+-- Row locking needs key UPDATE privilege; other project columns stay governance-owned.
+GRANT UPDATE (id) ON saas_projects TO saas_app;
+
 GRANT INSERT, UPDATE ON
     saas_enterprise_groups,
     saas_enterprise_group_memberships,

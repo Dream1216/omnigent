@@ -5836,6 +5836,7 @@ async def _persist_native_terminal_failure(
     *,
     created_by: str | None,
     failure_context: FailureContext | None = None,
+    startup_input: StartupInputContext | None = None,
 ) -> str:
     """
     Persist a consumed user message and terminal-start error.
@@ -5869,8 +5870,14 @@ async def _persist_native_terminal_failure(
     :param failure_context: Normalized cause metadata from the runner's ensure response.
     :returns: Store-assigned id of the consumed user message item.
     """
+    if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
+        return startup_input.input_id
     turn_id = generate_task_id()
-    user_item = _build_new_item(body, turn_id, created_by=created_by)
+    user_item = _build_new_item(
+        body, turn_id, created_by=created_by, adopt_stable_id=startup_input is not None
+    )
+    if startup_input is not None:
+        user_item = user_item.model_copy(update={"replaces_pending_id": startup_input.input_id})
     persisted_items = await asyncio.to_thread(
         conversation_store.append,
         session_id,
@@ -5891,7 +5898,15 @@ async def _persist_native_terminal_failure(
         ),
     )
     consumed = persisted_items[0]
-    _publish_input_consumed(session_id, consumed)
+    _publish_input_consumed(
+        session_id,
+        consumed,
+        cleared_pending_id=(
+            pending_inputs.make_pending_id(session_id, startup_input.input_id)
+            if startup_input is not None
+            else None
+        ),
+    )
     if error_persist_result == "persisted":
         _publish_error_event(session_id, error)
     _publish_terminal_pending(session_id, False)
@@ -5924,6 +5939,7 @@ async def _persist_host_launch_failure_turn(
     *,
     created_by: str | None,
     host_error_code: str,
+    startup_input: StartupInputContext | None = None,
 ) -> str:
     """
     Persist a consumed user message and a host-launch failure error.
@@ -5971,8 +5987,14 @@ async def _persist_host_launch_failure_turn(
         code=host_error_code,
         message=host_error if host_error else fallback_message,
     )
+    if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
+        return startup_input.input_id
     turn_id = generate_task_id()
-    user_item = _build_new_item(body, turn_id, created_by=created_by)
+    user_item = _build_new_item(
+        body, turn_id, created_by=created_by, adopt_stable_id=startup_input is not None
+    )
+    if startup_input is not None:
+        user_item = user_item.model_copy(update={"replaces_pending_id": startup_input.input_id})
     persisted_items = await asyncio.to_thread(
         conversation_store.append,
         session_id,
@@ -5985,7 +6007,15 @@ async def _persist_host_launch_failure_turn(
         NewConversationItem(type="error", response_id=turn_id, data=error),
     )
     consumed = persisted_items[0]
-    _publish_input_consumed(session_id, consumed)
+    _publish_input_consumed(
+        session_id,
+        consumed,
+        cleared_pending_id=(
+            pending_inputs.make_pending_id(session_id, startup_input.input_id)
+            if startup_input is not None
+            else None
+        ),
+    )
     if error_persist_result == "persisted":
         _publish_error_event(session_id, error)
     _publish_terminal_pending(session_id, False)
@@ -7753,8 +7783,6 @@ async def _dispatch_session_event_to_runner_impl(
             )
         )
         if ensure_outcome.error is not None:
-            if startup_input is not None:
-                raise OmnigentError(str(ensure_outcome.error), code=ErrorCode.RUNNER_UNAVAILABLE)
             item_id = await _persist_native_terminal_failure(
                 session_id,
                 conv,
@@ -7764,6 +7792,7 @@ async def _dispatch_session_event_to_runner_impl(
                 runner_router,
                 created_by=created_by,
                 failure_context=ensure_outcome.failure_context,
+                startup_input=startup_input,
             )
             return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
         if ensure_outcome.policy_notice is not None:

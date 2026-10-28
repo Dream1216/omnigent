@@ -27,6 +27,7 @@ from omnigent.entities.conversation import (
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runtime import pending_inputs
 from omnigent.server.host_registry import HostConnection, HostRegistry
+from omnigent.server.routes._auth_helpers import attribution_user
 from omnigent.server.schemas import SessionEventInput, SessionStartupInput
 from omnigent.stores.conversation_store import (
     PENDING_INPUT_RESPONSE_ID,
@@ -231,13 +232,7 @@ class ManagedStartupInputs:
         """Whether a new message must wait behind the session's startup."""
         state = conv.labels.get(STARTUP_LABEL)
         if state not in ("pending", "ready"):
-            # Native input must outlive a slow terminal bootstrap and its sender.
-            # Keep follow-ups in the same queue to avoid racing the first admission.
-            if state is not None or conv.host_id is None or self.hosts.get(conv.host_id) is None:
-                return False
-            from omnigent.server.routes.sessions import _is_native_terminal_session
-
-            return _is_native_terminal_session(conv)
+            return False
         # A failed launch can't deliver anything; the message path reports why.
         # The tracker knows on the launching replica, the label everywhere.
         tracker = getattr(app.state, "managed_launches", None)
@@ -272,7 +267,11 @@ class ManagedStartupInputs:
             {
                 "pending_id": pending_inputs.make_pending_id(session_id, item.id),
                 "content": input_content(item),
-                **({"created_by": item.created_by} if item.created_by else {}),
+                **(
+                    {"created_by": attribution_user(item.created_by)}
+                    if attribution_user(item.created_by)
+                    else {}
+                ),
             }
             for item in await asyncio.to_thread(self.conversations.list_pending_inputs, session_id)
             if item.status != "failed"
@@ -392,6 +391,7 @@ class ManagedStartupInputs:
             return
         self._deliveries[key] = task
         context: StartupInputContext | None = None
+        conv: Conversation | None = None
         try:
             conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
             current = await asyncio.to_thread(self.conversations.get_item, session_id, item.id)
@@ -438,7 +438,7 @@ class ManagedStartupInputs:
                     )
 
                     receipt = _build_new_item(
-                        event, "startup_command", created_by=item.created_by
+                        event, "startup_command", created_by=attribution_user(item.created_by)
                     ).model_copy(update={"stable_id": item.id, "replaces_pending_id": item.id})
                     [saved] = await asyncio.to_thread(
                         self.conversations.append, session_id, [receipt]
@@ -454,6 +454,22 @@ class ManagedStartupInputs:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            from omnigent.server.routes.sessions import _is_native_terminal_session
+
+            if (
+                conv is not None
+                and _is_native_terminal_session(conv)
+                and not (context and context.submitted)
+                and isinstance(exc, OmnigentError)
+                and exc.code
+                in (
+                    ErrorCode.WRONG_REPLICA,
+                    ErrorCode.RUNNER_UNAVAILABLE,
+                    ErrorCode.HOST_OFFLINE,
+                )
+            ):
+                # No submission occurred; the host worker can try after reconnect.
+                return
             _logger.exception("Unable to deliver saved message for session %s", session_id)
             if context is None or not context.submitted:
                 await asyncio.to_thread(
