@@ -5047,8 +5047,32 @@ def _verify_public_schema_inventory_digest(
         if item is not None
     }
     if digest not in accepted_digests:
-        raise PostgreSqlMigrationError("public_schema_inventory_drifted", "verification")
+        predecessor = _project_identity_guard_inventory_predecessor(inventory)
+        predecessor_digest = hashlib.sha256(
+            json.dumps(predecessor, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if predecessor is None or predecessor_digest not in accepted_digests:
+            raise PostgreSqlMigrationError("public_schema_inventory_drifted", "verification")
     return digest
+
+
+def _project_identity_guard_inventory_predecessor(
+    inventory: list[list[str]],
+) -> list[list[str]] | None:
+    """The new invoker routine and its one exact Project trigger are explicit."""
+
+    expected = [
+        ["routine", "f:saas_guard_project_identity_immutable()", "saas_owner"],
+        [
+            "trigger",
+            "saas_projects:trg_saas_projects_identity_immutable:"
+            "saas_guard_project_identity_immutable():saas_owner",
+            "saas_owner",
+        ],
+    ]
+    if any(inventory.count(row) != 1 for row in expected):
+        return None
+    return [row for row in inventory if row not in expected]
 
 
 def _source_catalog_role_aliases(
@@ -5160,8 +5184,16 @@ def _verify_source_security_catalog_digest(
     return digest
 
 
+_PROJECT_IDENTITY_GUARD_BODY = """BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id THEN
+        RAISE EXCEPTION 'Project identity is immutable';
+    END IF;
+    RETURN NEW;
+END"""
+
+
 def _source_catalog_project_lock_predecessor(catalog: object) -> object | None:
-    """Match only the lock ACL addition against the complete original anchor."""
+    """Compare only the complete exact Project lock/identity addition to its anchor."""
 
     if not isinstance(catalog, dict):
         return None
@@ -5177,13 +5209,68 @@ def _source_catalog_project_lock_predecessor(catalog: object) -> object | None:
     ]
     if len(matches) != 1:
         return None
-    return {
+    result = {
         **catalog,
         "control_plane_security": {
             **security,
             "column_acls": [row for index, row in enumerate(rows) if index != matches[0]],
         },
     }
+    if "project_identity_guard" not in security:
+        return None
+    expected_guard = [
+        [
+            "saas_guard_project_identity_immutable",
+            "",
+            "trigger",
+            "plpgsql",
+            False,
+            False,
+            False,
+            "v",
+            ["search_path=pg_catalog"],
+            _PROJECT_IDENTITY_GUARD_BODY,
+        ]
+    ]
+    if json.dumps(security["project_identity_guard"], sort_keys=True) != json.dumps(
+        expected_guard, sort_keys=True
+    ):
+        return None
+    expected = {
+        "ownership": ["routine:saas_guard_project_identity_immutable()", "authority:saas_owner"],
+        "routines": [
+            "saas_guard_project_identity_immutable",
+            "",
+            "authority:saas_owner",
+            "authority:saas_owner",
+            "authority:saas_owner",
+            "EXECUTE",
+            False,
+            False,
+        ],
+        "triggers": [
+            "saas_projects",
+            "trg_saas_projects_identity_immutable",
+            "O",
+            "CREATE TRIGGER trg_saas_projects_identity_immutable BEFORE UPDATE OF id ON "
+            "saas_projects FOR EACH ROW EXECUTE FUNCTION saas_guard_project_identity_immutable()",
+        ],
+    }
+    for field, row in expected.items():
+        values = catalog.get(field) if field == "ownership" else security.get(field)
+        if not isinstance(values, list):
+            return None
+        matches = [
+            index
+            for index, value in enumerate(values)
+            if json.dumps(value, sort_keys=True) == json.dumps(row, sort_keys=True)
+        ]
+        if len(matches) != 1:
+            return None
+        target = result if field == "ownership" else result["control_plane_security"]
+        target[field] = [value for index, value in enumerate(values) if index != matches[0]]
+    del result["control_plane_security"]["project_identity_guard"]
+    return result
 
 
 def _source_catalog_without_dormant_projection_role(catalog: object, *, saas_head: str) -> object:
@@ -6132,7 +6219,7 @@ def _control_plane_security_catalog(
     role_name = "CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantee) END"
     grantor_name = "CASE WHEN acl.grantor = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(acl.grantor) END"
     parameters = {"owner": saas_owner}
-    return {
+    catalog = {
         "roles": rows(
             "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
             "rolreplication, rolbypassrls, rolinherit, rolconnlimit, "
@@ -6264,6 +6351,20 @@ def _control_plane_security_catalog(
             parameters,
         ),
     }
+
+    guard = rows(
+        "SELECT routine.proname, pg_get_function_identity_arguments(routine.oid), "
+        "pg_get_function_result(routine.oid), language.lanname, routine.prosecdef, "
+        "routine.proleakproof, routine.proisstrict, routine.provolatile, routine.proconfig, "
+        "btrim(routine.prosrc, E' \n\r\t') FROM pg_proc routine "
+        "JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace "
+        "JOIN pg_language language ON language.oid=routine.prolang "
+        "WHERE namespace.nspname='public' AND routine.proname="
+        "'saas_guard_project_identity_immutable' AND routine.pronargs=0"
+    )
+    if guard:
+        catalog["project_identity_guard"] = guard
+    return catalog
 
 
 def _verify_state(

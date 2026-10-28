@@ -1816,7 +1816,7 @@ def test_project_lock_acl_preserves_complete_original_catalog_anchor(
     if variant == "unknown_head":
         key = (18, "nf12ab34cd56", "unknown")
     before = json.dumps(catalog, sort_keys=True)
-    if variant in {"old", "exact"}:
+    if variant == "old":
         actual = migration._verify_source_security_catalog_digest(
             catalog,
             key=key,
@@ -1832,3 +1832,145 @@ def test_project_lock_acl_preserves_complete_original_catalog_anchor(
             migration._verify_source_security_catalog_digest(catalog, key=key, role_aliases={})
         assert error.value.code == "source_security_catalog_drifted"
     assert json.dumps(catalog, sort_keys=True) == before
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "exact",
+        "body",
+        "definer",
+        "search_path",
+        "trigger_disabled",
+        "integer_bool",
+        "trigger_binding",
+        "routine_acl",
+        "owner",
+        "missing",
+        "extra",
+    ],
+)
+def test_project_identity_guard_exact_catalog_variant(monkeypatch, variant):
+    key = (18, "nf12ab34cd56", "p0s000000018")
+    original = {
+        "ownership": [],
+        "control_plane_security": {"column_acls": [], "routines": [], "triggers": []},
+    }
+    anchor = migration.hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_SOURCE_SECURITY_CATALOG_SHA256", {key: anchor})
+    catalog = json.loads(json.dumps(original))
+    security = catalog["control_plane_security"]
+    security["column_acls"] = [
+        ["saas_projects", "id", "saas_app", "authority:saas_owner", "UPDATE", False]
+    ]
+    security["project_identity_guard"] = [
+        [
+            "saas_guard_project_identity_immutable",
+            "",
+            "trigger",
+            "plpgsql",
+            False,
+            False,
+            False,
+            "v",
+            ["search_path=pg_catalog"],
+            migration._PROJECT_IDENTITY_GUARD_BODY,
+        ]
+    ]
+    security["routines"] = [
+        [
+            "saas_guard_project_identity_immutable",
+            "",
+            "authority:saas_owner",
+            "authority:saas_owner",
+            "authority:saas_owner",
+            "EXECUTE",
+            False,
+            False,
+        ]
+    ]
+    security["triggers"] = [
+        [
+            "saas_projects",
+            "trg_saas_projects_identity_immutable",
+            "O",
+            (
+                "CREATE TRIGGER trg_saas_projects_identity_immutable BEFORE UPDATE OF id ON "
+                "saas_projects FOR EACH ROW EXECUTE FUNCTION "
+                "saas_guard_project_identity_immutable()"
+            ),
+        ]
+    ]
+    catalog["ownership"] = [
+        ["routine:saas_guard_project_identity_immutable()", "authority:saas_owner"]
+    ]
+    if variant == "body":
+        security["project_identity_guard"][0][-1] = "BEGIN RETURN NEW; END"
+    if variant == "definer":
+        security["project_identity_guard"][0][4] = True
+    if variant == "search_path":
+        security["project_identity_guard"][0][8] = ["search_path=public"]
+    if variant == "integer_bool":
+        security["project_identity_guard"][0][4] = 0
+    if variant == "trigger_disabled":
+        security["triggers"][0][2] = "D"
+    if variant == "trigger_binding":
+        security["triggers"][0][3] += " invalid"
+    if variant == "routine_acl":
+        security["routines"][0][3] = "saas_app"
+    if variant == "owner":
+        catalog["ownership"][0][1] = "authority:bootstrap"
+    if variant == "missing":
+        del security["project_identity_guard"]
+    if variant == "extra":
+        security["routines"].append(list(security["routines"][0]))
+    before = json.dumps(catalog, sort_keys=True)
+    if variant == "exact":
+        digest = migration._verify_source_security_catalog_digest(
+            catalog, key=key, role_aliases={}
+        )
+        assert (
+            digest
+            == migration.hashlib.sha256(
+                json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        )
+        assert digest != anchor
+    else:
+        with pytest.raises(migration.PostgreSqlMigrationError) as failure:
+            migration._verify_source_security_catalog_digest(catalog, key=key, role_aliases={})
+        assert failure.value.code == "source_security_catalog_drifted"
+    assert json.dumps(catalog, sort_keys=True) == before
+
+
+@pytest.mark.parametrize("variant", ["exact", "missing", "owner", "extra"])
+def test_project_identity_guard_exact_inventory_variant(monkeypatch, variant):
+    key = (18, "nf12ab34cd56", "p0s000000018")
+    original = [["namespace", "public", "database_owner"]]
+    anchor = migration.hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_PUBLIC_SCHEMA_INVENTORY_SHA256", {key: anchor})
+    inventory = [
+        *original,
+        ["routine", "f:saas_guard_project_identity_immutable()", "saas_owner"],
+        [
+            "trigger",
+            "saas_projects:trg_saas_projects_identity_immutable:saas_guard_project_identity_immutable():saas_owner",
+            "saas_owner",
+        ],
+    ]
+    if variant == "missing":
+        inventory.pop()
+    if variant == "owner":
+        inventory[-1][-1] = "official_owner"
+    if variant == "extra":
+        inventory.append(["routine", "f:unexpected()", "saas_owner"])
+    if variant == "exact":
+        assert migration._verify_public_schema_inventory_digest(inventory, key=key) != anchor
+    else:
+        with pytest.raises(migration.PostgreSqlMigrationError) as failure:
+            migration._verify_public_schema_inventory_digest(inventory, key=key)
+        assert failure.value.code == "public_schema_inventory_drifted"

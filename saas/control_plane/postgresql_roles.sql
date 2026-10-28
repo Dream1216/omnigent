@@ -3251,6 +3251,22 @@ GRANT SELECT ON
     saas_preview_leases
 TO saas_app;
 
+-- Reuse the Repository identity-guard pattern without privileged execution.
+CREATE OR REPLACE FUNCTION public.saas_guard_project_identity_immutable()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id THEN
+        RAISE EXCEPTION 'Project identity is immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION public.saas_guard_project_identity_immutable() FROM PUBLIC;
+DROP TRIGGER IF EXISTS trg_saas_projects_identity_immutable ON public.saas_projects;
+CREATE TRIGGER trg_saas_projects_identity_immutable
+BEFORE UPDATE OF id ON public.saas_projects FOR EACH ROW
+EXECUTE FUNCTION public.saas_guard_project_identity_immutable();
+
 -- Row locking needs key UPDATE privilege; other project columns stay governance-owned.
 GRANT UPDATE (id) ON saas_projects TO saas_app;
 

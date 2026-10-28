@@ -626,10 +626,17 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             print(f"CLEAN_REPLAY_PREVIEW_INVENTORY_PG{major}={inventory_digest}")
-            assert (
-                inventory_digest
-                == migration._PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
+            inventory_predecessor = migration._project_identity_guard_inventory_predecessor(
+                inventory
             )
+            assert inventory_predecessor is not None
+            assert (
+                migration._verify_public_schema_inventory_digest(inventory, key=key)
+                == inventory_digest
+            )
+            assert hashlib.sha256(
+                json.dumps(inventory_predecessor, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest() == migration._PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
             catalog = {
                 "official_head": key[1],
                 "saas_head": key[2],
