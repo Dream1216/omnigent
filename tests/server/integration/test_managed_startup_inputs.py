@@ -964,20 +964,65 @@ async def test_native_receipt_wakes_the_host_worker(
     assert conv is not None and woken == [conv.host_id]
 
 
-async def test_waking_a_host_worker_sets_its_event(startup_env: _Env) -> None:
-    env = startup_env
+@pytest.mark.parametrize(
+    "count,busy", [(32, None), (33, None), (64, None), (33, 0), (33, 32), (33, "wake")]
+)
+async def test_waking_a_host_worker_sets_its_event(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch, count: int, busy: int | str | None
+) -> None:
+    from types import SimpleNamespace
+
+    import omnigent.server.startup_inputs as module
+
+    startup = startup_env.app.state.startup_inputs
     host_id = uuid4().hex
-    _connect_host(env, host_id)
-    startup = env.app.state.startup_inputs
-    startup.host_changed(env.app, host_id)
+    _connect_host(startup_env, host_id)
+    ids = [f"{index:032x}" for index in range(count)]
+    pages = count // 32 + 1
+    endings = [0.5, 1, 2, 4, 8, 16, 30] if busy is None else [0.25] * 7
+    if busy == "wake":
+        endings = [0.5, 1, 2, 0.5, 1, 2, 4]
+    expected = [delay for ending in endings for delay in [0.25] * (pages - 1) + [ending]]
+    waits: list[float] = []
+    cursors: list[str | None] = []
+
+    def page(_host, *, after=None):
+        cursors.append(after)
+        offset = int(after, 16) + 1 if after is not None else 0
+        return ids[offset : offset + 32]
+
+    recover = AsyncMock(
+        side_effect=lambda _app, session, _connection: (
+            isinstance(busy, int) and session == ids[busy]
+        )
+    )
+
+    async def wait(pending, *, timeout):
+        waits.append(timeout)
+        if len(waits) == len(expected):
+            pending.close()
+            raise asyncio.CancelledError
+        if busy == "wake" and len(waits) == pages * 3:
+            wake.clear()
+            wake_startup_worker(host_id)
+            assert wake.is_set()
+            return await pending
+        pending.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(startup_env.conv_store, "list_host_conversation_ids", page)
+    monkeypatch.setattr(startup, "_recover_session", recover)
+    monkeypatch.setattr(module, "asyncio", SimpleNamespace(**{**vars(asyncio), "wait_for": wait}))
+    startup.host_changed(startup_env.app, host_id)
     [(_, worker, wake)] = startup._workers.values()
     try:
-        wake.clear()
-        wake_startup_worker(host_id)
-        assert wake.is_set()
+        await asyncio.gather(worker, return_exceptions=True)
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
+    assert waits == expected
+    assert recover.await_count == count * len(endings)
+    assert cursors == [None, *ids[31::32]] * len(endings)
 
 
 @pytest.mark.parametrize("cancel_before_ack", [False, True])

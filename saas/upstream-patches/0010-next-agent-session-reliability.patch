@@ -534,12 +534,30 @@ diff --git a/omnigent/server/startup_inputs.py b/omnigent/server/startup_inputs.
 @@ -285 +290 @@
 -        if connection is None or not connection.registered_with_managed_token:
 +        if connection is None:
-@@ -388,0 +394 @@
+@@ -291,0 +297 @@
++            sweep_busy = False
+@@ -293 +298,0 @@
+-                busy = False
+@@ -301 +306 @@
+-                        busy |= await self._recover_session(app, session_id, connection)
++                        sweep_busy |= await self._recover_session(app, session_id, connection)
+@@ -303 +308,3 @@
+-                    delay = 0.25 if busy or after else min(delay * 2, 30.0)
++                    if after is None:
++                        delay = 0.25 if sweep_busy else min(delay * 2, 30.0)
++                        sweep_busy = False
+@@ -306,0 +314 @@
++                    sweep_busy = False
+@@ -308 +316,2 @@
+-                    await asyncio.wait_for(wake.wait(), timeout=delay)
++                    await asyncio.wait_for(wake.wait(), timeout=0.25 if after else delay)
++                    delay = 0.25
+@@ -388,0 +398 @@
 +        conv: Conversation | None = None
-@@ -435 +441 @@
+@@ -435 +445 @@
 -                        event, "startup_command", created_by=item.created_by
 +                        event, "startup_command", created_by=attribution_user(item.created_by)
-@@ -450,0 +457,16 @@
+@@ -450,0 +461,16 @@
 +            from omnigent.server.routes.sessions import _is_native_terminal_session
 +
 +            if (

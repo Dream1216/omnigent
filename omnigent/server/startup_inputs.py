@@ -294,8 +294,8 @@ class ManagedStartupInputs:
         async def serve() -> None:
             after = None
             delay = 0.25
+            sweep_busy = False
             while self.hosts.get(host_id) is connection:
-                busy = False
                 try:
                     ids = await asyncio.to_thread(
                         self.conversations.list_host_conversation_ids, host_id, after=after
@@ -303,14 +303,18 @@ class ManagedStartupInputs:
                     for session_id in ids:
                         if self.hosts.get(host_id) is not connection:
                             return
-                        busy |= await self._recover_session(app, session_id, connection)
+                        sweep_busy |= await self._recover_session(app, session_id, connection)
                     after = ids[-1] if len(ids) == 32 else None
-                    delay = 0.25 if busy or after else min(delay * 2, 30.0)
+                    if after is None:
+                        delay = 0.25 if sweep_busy else min(delay * 2, 30.0)
+                        sweep_busy = False
                 except Exception:
                     _logger.exception("Unable to recover startup messages on host %s", host_id)
                     after = None
+                    sweep_busy = False
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(wake.wait(), timeout=delay)
+                    await asyncio.wait_for(wake.wait(), timeout=0.25 if after else delay)
+                    delay = 0.25
                 wake.clear()
 
         task = asyncio.create_task(serve(), name=f"startup-inputs-{host_id}")
