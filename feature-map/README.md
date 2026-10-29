@@ -100,6 +100,9 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
 - [Sessions](./sessions.md) covers the sidebar, whole-session and message forks,
   custom-agent targets, fork access checks, archive, reconnect, and resume.
 
+- [Static session previews](../saas/docs/static-preview.md) covers snapshot readiness, SPA
+  navigation, refresh, asset errors, and the SaaS authentication evidence boundary.
+
 ## Seed scope
 
 The five recipes above are the seed set. Completing this set means checking

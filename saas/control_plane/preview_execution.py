@@ -123,6 +123,7 @@ class PreviewExecutionState:
     expires_at: datetime
     replayed: bool
     exchange_url: str | None = None
+    failure_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -675,6 +676,7 @@ class PreviewExecutionControlPlane:
             expires_at=execution.expires_at,
             replayed=replayed,
             exchange_url=exchange_url,
+            failure_code=execution.failure_code,
         )
 
 
