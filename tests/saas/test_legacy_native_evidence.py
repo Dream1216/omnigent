@@ -242,14 +242,16 @@ def test_new_source_responses_still_obey_all_original_evidence_bounds(
         "per-response": "response exceeds bound",
         "total-bytes": "total exceeds bound",
     }[bound]
-    with capture.preserve_native_evidence(tmp_path / "api") as evidence:
-        if bound == "records":
-            evidence.records.extend({} for _ in range(2048))
-        if bound == "total-bytes":
-            evidence.total_bytes = 512 * 1024 * 1024
-        with pytest.raises(ValueError, match=message):
-            capture.api(endpoint)
-        assert evidence._immutable_sources == evidence._immutable_source_reuses == {}
+    # Capacity/persistence failure is now sticky fatal, including when a caller catches it.
+    with pytest.raises(capture.NativeEvidenceFailure, match=message):
+        with capture.preserve_native_evidence(tmp_path / "api") as evidence:
+            if bound == "records":
+                evidence.records.extend({} for _ in range(16384))
+            if bound == "total-bytes":
+                evidence.total_bytes = 512 * 1024 * 1024
+            with pytest.raises(capture.NativeEvidenceFailure, match=message):
+                capture.api(endpoint)
+            assert evidence._immutable_sources == evidence._immutable_source_reuses == {}
 
 
 def test_different_commit_or_contents_path_cannot_share_source_response(tmp_path, monkeypatch):
@@ -275,3 +277,154 @@ def test_different_commit_or_contents_path_cannot_share_source_response(tmp_path
     receipt = json.loads((tmp_path / "api/receipt.json").read_text())
     assert len(receipt["records"]) == len(receipt["immutable_source_reuses"]) == 3
     assert [row["reuse_count"] for row in receipt["immutable_source_reuses"]] == [1, 1, 1]
+
+
+def test_four_worker_context_preserves_every_mutable_response_and_own_record(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    from saas.scripts import legacy_domain_discovery as discovery
+
+    barrier = threading.Barrier(4)
+    lock = threading.Lock()
+    calls = []
+
+    def native(endpoint):
+        with lock:
+            calls.append(endpoint)
+            first_four = len(calls) <= 4
+        if first_four:
+            barrier.wait(timeout=5)
+        return {"endpoint": endpoint}
+
+    monkeypatch.setattr(capture, "_native_api", native)
+    with capture.preserve_native_evidence(tmp_path / "api") as evidence:
+        values = discovery._ordered_parallel(
+            lambda n: capture.api(f"mutable-{n}"), list(range(12))
+        )
+        assert values == [{"endpoint": f"mutable-{n}"} for n in range(12)]
+        # Each later checkpoint must actually read the same mutable endpoints again.
+        for _ in range(3):
+            discovery._ordered_parallel(lambda n: capture.api(f"mutable-{n}"), list(range(4)))
+        assert evidence.requests_started == 24
+        assert len(evidence.records) == 24
+        assert evidence.total_bytes == sum(row["bytes"] for row in evidence.records)
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    assert receipt["native_requests_started"] == len(receipt["records"]) == 24
+    assert receipt["capture_failed"] is receipt["invocation_raised"] is False
+    assert len({r["path"] for r in receipt["records"]}) == 24
+    assert len(calls) == 24
+    assert not any(t.name.startswith("legacy-domain-native") for t in threading.enumerate())
+    for row in receipt["records"]:
+        path = tmp_path / "api" / row["path"]
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == row["sha256"]
+        body = json.loads(path.read_text())
+        assert body["response"]["endpoint"] == body["endpoint"]
+
+
+def test_immutable_single_flight_deepcopies_and_provenance_is_own_write(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from contextvars import copy_context
+
+    endpoint = "repos/Dream1216/omnigent/contents/workflow.yml?ref=" + "d" * 40
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def native(path):
+        calls.append(path)
+        if path == endpoint:
+            entered.set()
+            assert release.wait(5)
+        return {"path": path, "nested": {"original": True}}
+
+    real_write = capture.NativeEvidence.write
+
+    def interleaved_write(self, path, payload):
+        own_record = real_write(self, path, payload)
+        if path == endpoint:
+            # Force the exact former records[-1] race after this write, before caching.
+            capture.api("mutable-after-owned-write")
+        return own_record
+
+    monkeypatch.setattr(capture.NativeEvidence, "write", interleaved_write)
+    monkeypatch.setattr(capture, "_native_api", native)
+    with capture.preserve_native_evidence(tmp_path / "api") as evidence:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(copy_context().run, capture.api, endpoint) for _ in range(4)]
+            assert entered.wait(5)
+            # Interleave another record while the immutable request is in flight.
+            capture.api("mutable")
+            release.set()
+            values = [f.result(timeout=5) for f in futures]
+        values[0]["nested"]["original"] = False
+        assert all(v["nested"]["original"] for v in values[1:])
+        assert capture.api(endpoint)["nested"]["original"] is True
+        assert evidence.requests_started == 3
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    reuse = receipt["immutable_source_reuses"][0]
+    assert reuse["reuse_count"] == 4
+    assert calls.count(endpoint) == 1 and calls.count("mutable") == 1
+    assert calls.count("mutable-after-owned-write") == 1
+    original = json.loads((tmp_path / "api" / reuse["source_record"]).read_text())
+    assert original["endpoint"] == endpoint
+    assert original["response"]["nested"]["original"] is True
+
+
+def test_parallel_limit_reservation_stops_extra_GET_and_stays_fatal(tmp_path, monkeypatch):
+    import threading
+
+    from saas.scripts import legacy_domain_discovery as discovery
+
+    assert capture._MAX_RESPONSES == 16384
+    monkeypatch.setattr(capture, "_MAX_RESPONSES", 3)
+    calls = []
+    lock = threading.Lock()
+
+    def native(endpoint):
+        with lock:
+            calls.append(endpoint)
+        return {"endpoint": endpoint}
+
+    monkeypatch.setattr(capture, "_native_api", native)
+    with pytest.raises(capture.NativeEvidenceFailure, match="response limit exceeded"):
+        with capture.preserve_native_evidence(tmp_path / "api") as evidence:
+            with pytest.raises(capture.NativeEvidenceFailure):
+                discovery._ordered_parallel(lambda n: capture.api(f"mutable-{n}"), list(range(20)))
+            assert len(calls) == evidence.requests_started == 3
+            with pytest.raises(capture.NativeEvidenceFailure):
+                capture.api("must-not-start")
+            assert len(calls) == 3
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    assert receipt["capture_failed"] and receipt["invocation_raised"]
+    assert receipt["exception_type"] == "NativeEvidenceFailure"
+    assert receipt["native_requests_started"] == 3
+    assert len(receipt["records"]) <= 3
+    assert not any(t.name.startswith("legacy-domain-native") for t in threading.enumerate())
+
+
+def test_persistence_error_cannot_be_swallowed_to_start_another_GET(tmp_path, monkeypatch):
+    calls = []
+    real_write = capture._write
+
+    def write(path, body):
+        if path.name.startswith("response-"):
+            raise OSError("owned fixture disk failure")
+        real_write(path, body)
+
+    monkeypatch.setattr(capture, "_write", write)
+    monkeypatch.setattr(
+        capture, "_native_api", lambda endpoint: calls.append(endpoint) or {"id": 1}
+    )
+    with pytest.raises(capture.NativeEvidenceFailure, match="cannot be preserved"):
+        with capture.preserve_native_evidence(tmp_path / "api"):
+            with pytest.raises(capture.NativeEvidenceFailure):
+                capture.api("first")
+            with pytest.raises(capture.NativeEvidenceFailure):
+                capture.api("second")
+    assert calls == ["first"]
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    assert receipt["capture_failed"] and receipt["invocation_raised"]
+    assert receipt["native_requests_started"] == 1
+    assert receipt["records"] == []
