@@ -13,6 +13,7 @@ from saas.scripts.oci_promotion import require
 
 WORKFLOW = ".github/workflows/security-scan.yml"
 MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+_REVIEWED_MAIN_CHECKOUTS = {MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe"}
 KIND = "legacy_original_OWNER_security_policy_decision/v1"
 SOURCES = {
     WORKFLOW: "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
@@ -114,7 +115,7 @@ def validate_registration(profile, identity, specification):
         specification["path"] == WORKFLOW
         and specification["name"] == "Security Scan"
         and specification["source_sha256"] == row["workflow_sha256"] == SOURCES[WORKFLOW]
-        and row["trusted_checkout_revision"] == MAIN
+        and row["trusted_checkout_revision"] in _REVIEWED_MAIN_CHECKOUTS
         and row["should_scan_sha256"] == SOURCES[".github/scripts/security-scan/should-scan.sh"]
         and row["load_maintainers_sha256"]
         == SOURCES[".github/scripts/merge-ready/load-maintainers.sh"]
@@ -125,7 +126,9 @@ def validate_registration(profile, identity, specification):
             "Security Scan": {
                 "labels": ["ubuntu-latest"],
                 "conclusion": "success",
-                "checkouts": [{"number": 2, "name": _NAMES[2], "revision": MAIN}],
+                "checkouts": [
+                    {"number": 2, "name": _NAMES[2], "revision": row["trusted_checkout_revision"]}
+                ],
             }
         },
         "only the original fixed-main OWNER security workflow has this binding",
@@ -253,7 +256,8 @@ def verify_policy_decision(
     require(len(raw_log) <= 32 * 1024 * 1024, "original OWNER log exceeds bound")
     log = raw_log.decode("utf-8")
     require(
-        source.checkout_commit(log, lookup[2]) == MAIN, "original OWNER scanner checkout differs"
+        source.checkout_commit(log, lookup[2]) == row["trusted_checkout_revision"],
+        "original OWNER scanner checkout differs",
     )
     values = _trust_output(log, lookup[4])
     require(
@@ -309,7 +313,7 @@ def verify_policy_decision(
                 "check_sha256",
             )
         },
-        "trusted_checkout_revision": MAIN,
+        "trusted_checkout_revision": row["trusted_checkout_revision"],
         "registration_sha256": digest(row),
         "policy_result": "trusted-author-OWNER-not-scanned",
         "product_input_fetched": False,
@@ -331,7 +335,10 @@ def collect_policy_decision(
     row = validate_registration(profile, identity, specification)
     for path, expected in SOURCES.items():
         require(
-            hashlib.sha256(_native_file(path, MAIN, read=api)).hexdigest() == expected,
+            hashlib.sha256(
+                _native_file(path, row["trusted_checkout_revision"], read=api)
+            ).hexdigest()
+            == expected,
             "original OWNER trusted workflow or policy bytes changed",
         )
     check_endpoint = f"{ROOT}/check-runs/{row['check_id']}"
