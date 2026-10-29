@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -24,6 +26,8 @@ class NativeEvidence:
         self.stage = "configuration"
         self.records: list[dict[str, Any]] = []
         self.total_bytes = 0
+        self._immutable_sources: dict[str, dict[str, Any]] = {}
+        self._immutable_source_reuses: dict[str, dict[str, Any]] = {}
 
     def write(self, endpoint: str, payload: dict[str, Any]) -> None:
         require(len(self.records) < 2048, "native evidence response limit exceeded")
@@ -86,6 +90,7 @@ class NativeEvidence:
                     "source_ci_admission": False,
                     "scope": "Native API response objects; evidence capture only.",
                     "records": self.records,
+                    "immutable_source_reuses": list(self._immutable_source_reuses.values()),
                     "files": files,
                     "pin_errors": pin_errors,
                 },
@@ -133,6 +138,19 @@ def preserve_native_evidence(root: Path, *, evidence_root: Path | None = None):
 
 def api(endpoint: str) -> dict[str, Any]:
     recorder = _ACTIVE.get()
+    # A full commit SHA fixes contents; mutable native observations always refresh.
+    source = re.fullmatch(
+        r"repos/Dream1216/omnigent/contents/([A-Za-z0-9_./-]+)\?ref=[0-9a-f]{40}",
+        endpoint,
+    )
+    immutable_source = (
+        recorder is not None
+        and source is not None
+        and all(part not in {"", ".", ".."} for part in source[1].split("/"))
+    )
+    if recorder is not None and immutable_source and endpoint in recorder._immutable_sources:
+        recorder._immutable_source_reuses[endpoint]["reuse_count"] += 1
+        return copy.deepcopy(recorder._immutable_sources[endpoint])
     try:
         value = _native_api(endpoint)
     except BaseException as error:
@@ -146,4 +164,11 @@ def api(endpoint: str) -> dict[str, Any]:
         raise
     if recorder is not None:
         recorder.write(endpoint, {"response": value})
+        if immutable_source:
+            recorder._immutable_sources[endpoint] = copy.deepcopy(value)
+            recorder._immutable_source_reuses[endpoint] = {
+                "endpoint": endpoint,
+                "source_record": recorder.records[-1]["path"],
+                "reuse_count": 0,
+            }
     return value
