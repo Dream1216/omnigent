@@ -34,6 +34,8 @@
 17. 新增显式杭州 Endpoint、私有文件凭据、有界生命周期和租户/工作区 metadata 核对的 SaaS 云 transport。33 项测试通过；真实云端 8 项创建、命令、文件、重连、续期、拒绝跨租户终止和清理检查通过。验证使用合成租户身份，尚未接入真实 SaaS 请求或放行生产配置。
 18. Host 模型通道需要服务端签发并续期的会话凭据。现有 SaaS middleware 只允许 Host 机器凭据访问 tunnel；新增模型通道必须保留精确路由、Host 与会话归属验证，不能简单放宽全体 `/v1/`。
 
+19. 已推送实施分支，CI `41126141094` 的代码验证通过；双构建在开始前因 Docker exporter 不支持含 attestation 的 manifest list 而失败。修复保留 OCI/SBOM/provenance，改用隔离 CI runner 的 containerd image store 加载原始 OCI 并核对 index digest 与 rootfs；待新提交重跑验证。
+
 ## 当前必须解决的差异
 
 | 差异 | 权威来源 | 所需工作 |

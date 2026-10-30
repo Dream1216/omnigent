@@ -1,0 +1,16 @@
+{
+  "observed_at": "2026-10-30T20:54:51.939065+00:00",
+  "run_id": 41126141094,
+  "url": "https://github.com/Dream1216/omnigent/actions/runs/41126141094",
+  "source_revision": "a46d7f454f6106460c5b0ba6d1f2af8246d87146",
+  "conclusion": "failure",
+  "verify_job": "success",
+  "build_jobs": {
+    "124305508116": "failure",
+    "124305508023": "failure"
+  },
+  "actual_error": "docker exporter does not support exporting manifest lists, use the oci exporter instead",
+  "root_cause": "combined OCI+Docker export cannot preserve the attestation manifest index with the Docker exporter",
+  "repair": "keep the OCI artifact and attestations; enable containerd image store on isolated CI runners and load that exact OCI archive",
+  "production_acceptance": false
+}
