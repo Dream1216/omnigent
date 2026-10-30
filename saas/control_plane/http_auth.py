@@ -151,6 +151,7 @@ class SaasHttpIntegration:
     onboarding_ui_router: APIRouter | None = None
     runtime_router: APIRouter | None = None
     runtime_initializer: RuntimeInitializer | None = None
+    host_model_broker_enabled: bool = False
 
     @property
     def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
@@ -184,6 +185,7 @@ class SaasHttpIntegration:
             availability_gate=self.availability_gate,
             degraded_read_paths=self.degraded_read_paths,
             runtime_initializer=self.runtime_initializer,
+            host_model_broker_enabled=self.host_model_broker_enabled,
         )
 
 
@@ -357,6 +359,7 @@ class SaasAuthContextMiddleware:
         availability_gate: ControlPlaneAvailabilityGate | None = None,
         degraded_read_paths: frozenset[str] = frozenset(),
         runtime_initializer: RuntimeInitializer | None = None,
+        host_model_broker_enabled: bool = False,
     ) -> None:
         self._app = app
         self._auth = auth_provider
@@ -370,6 +373,9 @@ class SaasAuthContextMiddleware:
         self._availability = availability_gate or ControlPlaneAvailabilityGate()
         self._degraded_read_paths = degraded_read_paths
         self._runtime_initializer = runtime_initializer
+        if type(host_model_broker_enabled) is not bool:
+            raise ValueError("Host model broker enablement must be boolean")
+        self._host_model_broker_enabled = host_model_broker_enabled
         if degraded_read_paths and context_snapshots is None:
             raise ValueError("degraded read paths require a Context Snapshot service")
 
@@ -521,11 +527,22 @@ class SaasAuthContextMiddleware:
         """Route one Host capability to its workspace before token validation."""
 
         path = connection.url.path
-        if (
-            scope["type"] != "websocket"
-            or not re.fullmatch(r"/v1/hosts/[^/]+/tunnel", path)
-            or token is not None
-        ):
+        tunnel = (
+            scope["type"] == "websocket"
+            and re.fullmatch(r"/v1/hosts/[^/]+/tunnel", path) is not None
+        )
+        model_broker = (
+            self._host_model_broker_enabled
+            and scope["type"] == "http"
+            and scope.get("method") == "POST"
+            and re.fullmatch(
+                r"/v1/hosts/[A-Za-z0-9_-]{1,128}/sessions/"
+                r"(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/model-token",
+                path,
+            )
+            is not None
+        )
+        if not (tunnel or model_broker) or token is not None:
             await self._reject(
                 scope,
                 receive,
@@ -533,7 +550,7 @@ class SaasAuthContextMiddleware:
                 status=403,
                 error=LifecycleError(
                     "host_machine_route_forbidden",
-                    "Host machine credentials are accepted only by the Host tunnel",
+                    "Host machine credentials are accepted only by reviewed Host routes",
                 ),
             )
             return

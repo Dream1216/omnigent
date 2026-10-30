@@ -46,10 +46,18 @@ jobs:
       - run: uv sync --frozen --extra all --extra saas --extra e2b --group dev
       - name: Check scoped transport and existing production boundaries
         run: |
-          uv run pyrefly check saas/production/aliyun_sandbox.py
+          uv run pyrefly check saas/production/aliyun_sandbox.py \
+            saas/production/aliyun_model_lease.py saas/production/aliyun_model_broker.py \
+            saas/production/aliyun_model_client.py saas/production/platform_model_host.py \
+            saas/production/platform_model_relay.py saas/control_plane/resolver.py \
+            saas/control_plane/http_auth.py saas/runner_adapter/platform_model_gateway.py
           uv run pytest tests/saas/test_aliyun_sandbox.py tests/saas/test_aliyun_sandbox_probe.py \
             tests/saas/test_tenant_sandbox.py tests/saas/test_image_supply_chain.py \
-            tests/saas/test_scan_oci_candidates.py -q
+            tests/saas/test_scan_oci_candidates.py tests/saas/test_aliyun_model_lease.py \
+            tests/saas/test_aliyun_model_broker.py tests/saas/test_aliyun_model_client.py \
+            tests/saas/test_control_plane_resolver.py tests/saas/test_http_cookie_auth.py \
+            tests/saas/test_platform_model_relay.py tests/saas/test_platform_model_runtime.py \
+            tests/saas/test_platform_model_gateway.py -q
 
   build:
     needs: verify

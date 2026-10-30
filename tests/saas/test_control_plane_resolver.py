@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -54,7 +55,7 @@ class SeededScope:
 
 
 @pytest.fixture
-def control_plane() -> tuple[sessionmaker[Session], SeededScope]:
+def control_plane() -> Iterator[tuple[sessionmaker[Session], SeededScope]]:
     engine = sa.create_engine(
         "sqlite://",
         poolclass=StaticPool,
@@ -537,3 +538,76 @@ def test_only_one_active_binding_exists_for_a_saas_resource(control_plane) -> No
             )
         )
         session.flush()
+
+
+def _host_model_runtime(resolver, scope):
+    request = resolver.resolve_request_context(
+        actor_id=scope.actor_id,
+        tenant_id=scope.tenant_id,
+        space_id=scope.space_id,
+        trace_id="host-model-renewal-test",
+    )
+    return resolver.resolve_space_allocation(request)
+
+
+def test_host_model_scope_can_be_revalidated_on_another_replica(control_plane) -> None:
+    resolver, factory, scope = _resolver(control_plane)
+    runtime = _host_model_runtime(resolver, scope)
+    restarted = SqlAlchemyContextResolver(factory, COMPATIBILITY_POLICY)
+    assert restarted.revalidate_host_model_scope(runtime) == runtime
+
+
+@pytest.mark.parametrize("change", ["security", "membership", "placement", "identity"])
+def test_host_model_renewal_rechecks_live_control_plane_facts(control_plane, change) -> None:
+    resolver, factory, scope = _resolver(control_plane)
+    runtime = _host_model_runtime(resolver, scope)
+    with factory.begin() as session:
+        if change == "security":
+            user = session.get(GlobalUser, scope.actor_id)
+            assert user is not None
+            user.security_version += 1
+        elif change == "membership":
+            membership = session.get(
+                SpaceMembership, (scope.tenant_id, scope.space_id, scope.actor_id)
+            )
+            assert membership is not None
+            membership.status = "suspended"
+        elif change == "placement":
+            placement = session.get(RuntimePlacementRecord, scope.placement_id)
+            assert placement is not None
+            placement.status = "quarantined"
+        else:
+            alias = session.get(RuntimeIdentityAliasRecord, (scope.partition_id, scope.actor_id))
+            assert alias is not None
+            alias.runtime_user_key = "rebound-user"
+    with pytest.raises(ControlPlaneResolutionError):
+        resolver.revalidate_host_model_scope(runtime)
+
+
+@pytest.mark.parametrize("field", ["physical_workspace_id", "placement_generation"])
+def test_host_model_lease_cannot_route_to_a_reassigned_runtime(control_plane, field) -> None:
+    resolver, _factory, scope = _resolver(control_plane)
+    runtime = _host_model_runtime(resolver, scope)
+    with pytest.raises(ControlPlaneResolutionError) as error:
+        resolver.revalidate_host_model_scope(
+            replace(runtime, **{field: getattr(runtime, field) + 1})
+        )
+    assert error.value.code == "host_model_identity_changed"
+
+
+def test_project_scoped_host_model_lease_requires_current_project_admission(control_plane) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    resolver, factory, scope = _resolver(control_plane)
+    runtime = replace(_host_model_runtime(resolver, scope), project_id=uuid4())
+    with pytest.raises(ControlPlaneResolutionError) as missing:
+        resolver.revalidate_host_model_scope(runtime)
+    assert missing.value.code == "project_authorization_required"
+    project_authorizer = Mock()
+    project_authorizer.evaluate.return_value = SimpleNamespace(allowed=False)
+    resolver = SqlAlchemyContextResolver(factory, COMPATIBILITY_POLICY, project_authorizer)
+    with pytest.raises(ControlPlaneResolutionError) as denied:
+        resolver.revalidate_host_model_scope(runtime)
+    assert denied.value.code == "host_model_project_denied"
+    assert project_authorizer.evaluate.call_args.kwargs["action"] == "run.create"
