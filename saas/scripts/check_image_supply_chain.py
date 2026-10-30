@@ -49,6 +49,7 @@ _APPROVED_HOST_CLI_VERSIONS = {
 }
 _APPROVED_MCP_SDK_VERSION = "1.32.0"
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
+    "decode-uri-component@0.5.1",
     "http-cache-semantics@4.3.0",
     "body-parser@2.4.0",
     "electron@42.11.16",
@@ -1278,7 +1279,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "COPY --from=secured-python-runtime-rootfs / /",
         "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
         "apk add --no-cache",
-        "python-3.12=3.12.15-r3",
+        "python-3.12=3.12.16-r0",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3.12",

@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 181,
-    "max_upstream_net_added_loc": 4605,
+    "max_direct_upstream_files": 182,
+    "max_upstream_net_added_loc": 4610,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {

@@ -4111,7 +4111,11 @@ def test_native_token_helper_reaps_its_process_group(
     if outcome in ("timeout", "shell_parent"):
         monkeypatch.setattr(auth_command, "AUTH_TIMEOUT_MS", 2_000)
     pid_file = tmp_path / "descendant.pid"
-    helper = "import os,sys,time; open(sys.argv[1],'w').write(str(os.getpid())); time.sleep(30)"
+    helper = (
+        "import os,sys,time; from pathlib import Path; "
+        "path = Path(sys.argv[1]); temporary = path.with_suffix('.tmp'); "
+        "temporary.write_text(str(os.getpid())); temporary.replace(path); time.sleep(30)"
+    )
     if outcome == "output_limit":
         helper = helper.replace(
             "time.sleep(30)",

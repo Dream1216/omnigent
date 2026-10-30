@@ -305,9 +305,9 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       mpdecimal=4.0.1-r4 \
       ncurses=6.6.20260926-r0 \
       ncurses-terminfo-base=6.6.20260926-r0 \
-      py3-pip-wheel=26.2.1-r3 \
-      python-3.12=3.12.15-r3 \
-      python-3.12-base=3.12.15-r3 \
+      py3-pip-wheel=26.2.2-r1 \
+      python-3.12=3.12.16-r0 \
+      python-3.12-base=3.12.16-r0 \
       readline=8.3-r3 \
       sqlite-libs=3.53.4-r2 \
       xz=5.8.4-r0 \
