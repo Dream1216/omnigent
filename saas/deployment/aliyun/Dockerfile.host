@@ -6,8 +6,10 @@ FROM ${NODE_IMAGE} AS node-runtime
 
 FROM ${ALIYUN_BASE_IMAGE} AS runtime-base
 USER root
+ARG SOURCE_DATE_EPOCH
 COPY saas/deployment/aliyun/debian.sources /etc/apt/sources.list.d/debian.sources
-RUN apt-get update \
+RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac \
+ && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       systemd-sysv openssh-server sudo chrony fuse3 iptables \
       tmux bubblewrap procps lsof \
@@ -15,7 +17,11 @@ RUN apt-get update \
  && test -x /sbin/init \
  && test -x /usr/sbin/sshd \
  && test -x /usr/sbin/chronyd \
- && test -x /usr/sbin/iptables
+ && test -x /usr/sbin/iptables \
+ && rm -f /etc/ssh/ssh_host_* /var/lib/systemd/random-seed \
+      /var/cache/ldconfig/aux-cache \
+ && : > /etc/machine-id \
+ && find /var/log -type f -delete
 
 FROM runtime-base AS builder
 USER root
@@ -45,7 +51,9 @@ RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml \
       --no-dev --no-default-groups --no-editable --no-cache --extra saas \
  && /opt/venv/bin/python -B -I /build/saas/scripts/bind_runtime_build_revision.py \
       --source-revision "${SOURCE_REVISION}" \
-      --source-date-epoch "${SOURCE_DATE_EPOCH}"
+      --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+ && /opt/venv/bin/python -B -I /build/saas/scripts/normalize_host_cli_tree.py \
+      --root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"
 
 FROM runtime-base AS host
 USER root

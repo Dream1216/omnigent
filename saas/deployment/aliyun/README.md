@@ -22,11 +22,13 @@ files are never copied into the image.
 Build from the repository root, after the candidate source is committed:
 
 ```bash
+build_output_root=$(mktemp -d /tmp/omnigent-aliyun-host.XXXXXX)
 docker buildx build --platform linux/amd64 \
   -f saas/deployment/aliyun/Dockerfile.host \
   --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
   --build-arg SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
-  -t omnigent-aliyun-host:candidate --load .
+  -t omnigent-aliyun-host:candidate \
+  --output "type=oci,dest=${build_output_root}/host.oci.tar,rewrite-timestamp=true" .
 ```
 
 Use a bounded builder, retain its actual process/job handle, and record the image
@@ -43,11 +45,21 @@ Remaining qualification:
 - Create a new Host template; preserve the already-tested Base template.
 - Complete SaaS provider/tenant/model-channel integration before production use.
 
+Package installation generates SSH host keys and a machine identity. The
+Dockerfile removes those keys and resets the identity in the installation layer;
+it also clears package logs and normalizes the installed Python tree. The initial
+service-complete `98910699b` artifact predates those changes and cannot be
+published as the qualified template. Rebuild the frozen repaired source and
+compare independent rebuilds with timestamp rewriting enabled.
+
 No production configuration or existing deployment is changed by these files.
 
 The initial `b2a5b3167` build and constrained local runtime checks are recorded
 under `saas/acceptance/aliyun/2026-10-31/`. Those checks do not qualify MicroVM
-boot or bubblewrap: namespace creation was refused by the constrained local
-Docker kernel. The temporary template created through the generic E2B Template
+boot or full Host isolation. Namespace creation was refused by the constrained
+local Docker kernel, but a separate prerequisite probe using the same bwrap
+binary passed under UID 1000 in the original generation-2 Base MicroVM. That
+probe's sandbox was terminated and absence confirmed. The temporary template
+created through the generic E2B Template
 SDK used generation 1 and has been deleted. An explicitly verified generation-2
 template is still required.

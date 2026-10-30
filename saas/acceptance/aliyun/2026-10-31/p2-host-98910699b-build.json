@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-30T20:22:01.859514+00:00",
+  "source_revision": "98910699b9030509400d0977aa9d5c3474422a96",
+  "build_exit_code": 0,
+  "archive_bytes": 501834240,
+  "archive_sha256": "c782ad4dc4111ff7045a26a7dc525659e7716780c61ace8195fd65bcbce3c067",
+  "verified_oci_blobs": 15,
+  "oci_index_digest": "sha256:a8a058125eaa6b5699fc2bfc22ec36ee071474b6c37a9bed214be9ed987d8724",
+  "image_config_digest": "sha256:c3b87b00f770382b945a010eb4b07d4c144363726c107b28f88f8b610a662e34",
+  "microvm_service_path_entries": [
+    "usr/sbin/chronyd",
+    "usr/sbin/init",
+    "usr/sbin/iptables",
+    "usr/sbin/sshd"
+  ],
+  "generated_ssh_host_key_files_present": 6,
+  "package_snapshot": "20261030T000000Z",
+  "qualification_gaps": [
+    "generated SSH host key removal and machine identity reset added in subsequent source; rebuild required",
+    "normalized Python tree and timestamp rewrite added for reproducibility; rebuild comparison pending",
+    "qualified Host template and actual Host/harness test",
+    "SBOM, vulnerability/license scan and signature"
+  ],
+  "production_acceptance": false
+}

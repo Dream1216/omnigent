@@ -27,6 +27,8 @@
 11. `b2a5b3167` 候选构建成功，OCI 的 14 个内容块校验通过；受限 Docker 中 UID 1000 下 Omnigent、Python、Node 22.23.4、tmux、bubblewrap 和 Git 的命令自检通过。实际命令、digest 和未通过项记录在 `2026-10-31/p2-host-b2a5b3167-build-and-local-probe.json`。
 12. 本地镜像缺少 sshd、chronyd 和 iptables，不能将云端已注入的系统服务推断为镜像已包含。Dockerfile 已补齐必需包并切换到固定日期的 Debian 签名快照；修复后的新候选待重新构建。
 13. 通用 E2B Template SDK 创建出的临时模板实测为一代，且代际不可编辑；临时模板已删除并在列表确认。正式 Host 模板需显式验证二代；原始 Base 模板已通过控制台 GetTemplate 响应确认 generation=2。受限 Docker 的 bubblewrap namespace 探针被内核拒绝，真实 MicroVM 隔离验收仍未通过。
+14. 原始二代 Base MicroVM 中，以 UID 1000 使用候选镜像中的相同 bwrap 二进制，用户、进程和网络 namespace 前提探针通过；测试实例已终止并确认不存在。此结果只证明命名空间前提，不替代完整 Host、文件屏蔽、seccomp、凭据和网络验收。
+15. 固定 Debian 签名快照并补齐系统服务的 `98910699b` 候选已构建成功。发现包安装会产生 SSH 主机密钥及机器身份，Dockerfile 已补充同层删除/重置、包日志清理和 Python 文件树规范化；须从修复后的冻结提交重新构建，不发布旧中间产物。
 
 ## 当前必须解决的差异
 
