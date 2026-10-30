@@ -27,7 +27,7 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert len(runtime["manifest_digest"]) == 71
     assert runtime["runtime_contract"]["architectures"] == ["amd64", "arm64"]
     assert runtime["runtime_contract"]["venv_builder_image"] == "python:3.12-slim"
-    assert runtime["runtime_contract"]["common_packages"]["python-3.12"] == "3.12.15-r3"
+    assert runtime["runtime_contract"]["common_packages"]["python-3.12"] == "3.12.16-r0"
     assert runtime["runtime_contract"]["common_packages"]["zlib"] == ("1.3.2.1_rc20260917-r0")
     assert runtime["runtime_contract"]["server_packages"] == {
         "cyrus-sasl-heimdal-libs": "2.1.28-r58",

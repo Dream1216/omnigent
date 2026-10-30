@@ -14,6 +14,7 @@ minimumReleaseAge: 10080
 # fleet update. Keep the exception version-scoped so later releases still wait
 # for the full cooldown; remove entries after their seven-day window has elapsed.
 minimumReleaseAgeExclude:
+  - 'decode-uri-component@0.5.1'
   # Security-only exception: supersedes the vulnerable <=4.2.0 line. The
   # exact artifact remains integrity-locked and policy-verified.
   - 'http-cache-semantics@4.3.0'
