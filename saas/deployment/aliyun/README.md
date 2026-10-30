@@ -15,6 +15,8 @@ It copies Node from a pinned amd64 Node 22 image to meet the Node 22.13 floor.
 The old npm tree is removed before copying the pinned npm tree. Overlaying the
 two versions left stale modules and made npm's install command fail, even while
 `npm --version` still worked. The shared Node stage checks the install module.
+That build-only npm check disables Node's compilation cache; V8 cache bytes
+otherwise persisted in the shared base and differed between independent builds.
 
 The Host CLI stage reuses the repository's existing `.github/ci-deps` importer
 and complete pnpm lock. It installs the reviewed CLI graph and checks Pi and

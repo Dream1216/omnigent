@@ -1,0 +1,23 @@
+{
+  "different_rootfs_layer_ordinals": [
+    7
+  ],
+  "exact_archive_non_root_host_tools": "passed",
+  "independent_builds": {
+    "1": "passed",
+    "2": "passed"
+  },
+  "layer_7_instruction": "node-base: create npm/npx links; load npm install module; npm --version",
+  "production_deployed": false,
+  "rebuild_comparison": "failed",
+  "registry_published": false,
+  "remediation": "disable Node compilation cache for this build-only npm guard; retain exact rootfs comparison",
+  "schema_version": 1,
+  "second_layer_7_inventory": "npm/npx symlinks plus /tmp/node-compile-cache; first archive still downloading for entry-level comparison",
+  "slsa_v1_and_spdx": "validated by archive inspector",
+  "source_revision": "2531af26a54f7802bb7c9f6df1414cf759754e7c",
+  "unit_and_boundary_tests": "passed",
+  "vulnerability_scan": "not run because compare gate failed",
+  "workflow_run_id": 41128855482,
+  "workflow_url": "https://github.com/Dream1216/omnigent/actions/runs/41128855482"
+}
