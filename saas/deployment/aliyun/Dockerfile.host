@@ -23,16 +23,27 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac \
  && : > /etc/machine-id \
  && find /var/log -type f -delete
 
+FROM runtime-base AS npm-security
+ARG NPM_VERSION=12.2.0
+ARG NPM_INTEGRITY=sha512-ZsJjKpTnlmSXOLLXiU1xDCzC4Wlok4IwZmh/aw2KUuXytU7q6qMv/cUT7MoeSf95Slwuw/lRXYefGzGCspHPNQ==
+COPY saas/scripts/materialize_npm_release.py /opt/npm-build/materialize_npm_release.py
+COPY saas/supply_chain/npm-122-security-lock.json /opt/npm-build/security-lock.json
+RUN python3 -B -I /opt/npm-build/materialize_npm_release.py \
+      --version "${NPM_VERSION}" --integrity "${NPM_INTEGRITY}" \
+      --security-lock /opt/npm-build/security-lock.json --destination /opt/npm-export
+
 FROM runtime-base AS node-base
+ARG NPM_VERSION=12.2.0
 RUN rm -rf /usr/local/lib/node_modules/npm \
  && rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
-COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=npm-security /opt/npm-export/package /usr/local/lib/node_modules/npm
 RUN export NODE_DISABLE_COMPILE_CACHE=1 \
  && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && node -e 'require("/usr/local/lib/node_modules/npm/lib/commands/install.js")' \
- && npm --version
+ && test "$(npm --version)" = "${NPM_VERSION}" \
+ && node -e 'const v=process.versions.node.split(".").map(Number);if(v[0]!==22||v[1]<22||(v[1]===22&&v[2]<2))process.exit(1)'
 
 FROM node-base AS builder
 USER root
@@ -84,7 +95,7 @@ RUN export HOME=/tmp/omnigent-cli-state/home \
     mkdir -p "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" \
       "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$CODEX_HOME" "$PI_CODING_AGENT_DIR" \
  && npm install --prefix /tmp/omnigent-cli-state/pnpm-prefix --global \
-      --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
+      --no-audit --no-fund --allow-scripts=pnpm "pnpm@${PNPM_VERSION}" \
  && export PATH="/tmp/omnigent-cli-state/pnpm-prefix/bin:${PATH}" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
  && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \

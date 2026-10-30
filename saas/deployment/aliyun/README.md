@@ -17,6 +17,9 @@ two versions left stale modules and made npm's install command fail, even while
 `npm --version` still worked. The shared Node stage checks the install module.
 That build-only npm check disables Node's compilation cache; V8 cache bytes
 otherwise persisted in the shared base and differed between independent builds.
+The candidate now reuses the production image's npm 12.2.0 materializer and
+SHA-512-locked security overlays. The bundled npm 10 graph from the Node image
+was reported vulnerable in the first complete scan.
 
 The Host CLI stage reuses the repository's existing `.github/ci-deps` importer
 and complete pnpm lock. It installs the reviewed CLI graph and checks Pi and
@@ -47,7 +50,11 @@ because its observation call timed out.
 
 Remaining qualification:
 
-- Build and verify the repaired candidate with the pinned Debian snapshot inputs.
+- Repair the raw vulnerability findings in the inherited base, Python runtime
+  and locked CLI/application dependencies. CI run 41132988920 passed independent
+  rebuild comparison but reported 24 Critical and 240 High matches plus built-in
+  ignored Linux-header findings; the raw zero-High/zero-Critical and no-ignored
+  gates remain unchanged. npm replacement alone does not qualify the image.
 - Run real Host and bubblewrap checks in an Aliyun MicroVM.
 - Check all linked libraries and the target harness under the non-root identity.
 - Produce the required SBOM, scan, source provenance and repeat-build evidence.
