@@ -1,0 +1,66 @@
+# Candidate MicroVM Host; production admission is a separate release gate.
+ARG ALIYUN_BASE_IMAGE=fc-e2b-registry.cn-hangzhou.cr.aliyuncs.com/runtime-v2/base@sha256:1ff61a87eeef4ebcc1285741465a434973c70c814fa20a55bfd6915022150cf6
+ARG NODE_IMAGE=node:22-slim@sha256:9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2
+
+FROM ${NODE_IMAGE} AS node-runtime
+
+FROM ${ALIYUN_BASE_IMAGE} AS builder
+USER root
+ARG UV_VERSION=0.12.1
+ARG SOURCE_REVISION
+ARG SOURCE_DATE_EPOCH
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    OMNIGENT_SKIP_WEB_UI=true \
+    UV_NO_INSTALLER_METADATA=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential \
+ && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/build-tools \
+ && /opt/build-tools/bin/pip install --no-cache-dir "uv==${UV_VERSION}"
+WORKDIR /build
+COPY pyproject.toml setup.py uv.lock LICENSE NOTICE ./
+COPY sdks/ ./sdks/
+COPY omnigent/ ./omnigent/
+COPY saas/ ./saas/
+COPY integrations/slack/ ./integrations/slack/
+COPY examples/ ./examples/
+RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml \
+ && /opt/build-tools/bin/uv sync --frozen --package omnigent \
+      --no-dev --no-default-groups --no-editable --no-cache --extra saas \
+ && /opt/venv/bin/python -B -I /build/saas/scripts/bind_runtime_build_revision.py \
+      --source-revision "${SOURCE_REVISION}" \
+      --source-date-epoch "${SOURCE_DATE_EPOCH}"
+
+FROM ${ALIYUN_BASE_IMAGE} AS host
+USER root
+ARG SOURCE_REVISION
+ARG SOURCE_DATE_EPOCH
+LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
+      ai.omnigent.saas.qualification=candidate \
+      ai.omnigent.saas.sandbox-runtime=aliyun-microvm
+ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/home/user
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tmux bubblewrap procps lsof \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=builder /opt/venv /opt/venv
+RUN printf '%s\n' 'export PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"' \
+      > /etc/profile.d/omnigent-venv.sh \
+ && test -x /bin/bash \
+ && /opt/venv/bin/python -B -I -c \
+      'import sys; from omnigent import _build_info; assert _build_info.COMMIT_SHA == sys.argv[1]' \
+      "${SOURCE_REVISION}" \
+ && node -e 'const v=process.versions.node.split(".").map(Number);if(v[0]<22||(v[0]===22&&v[1]<13))process.exit(1)' \
+ && dpkg-query -W -f='${Package}\t${Version}\n' > /usr/local/share/omnigent-aliyun-packages.tsv
+
+USER user
+WORKDIR /home/user
+CMD ["sleep", "infinity"]
