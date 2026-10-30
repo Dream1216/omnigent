@@ -3,11 +3,15 @@
 This directory starts the P2 Host image work for the Aliyun sandbox integration.
 It is a candidate build input, not a production admission or an activated provider.
 
-The pinned Aliyun base was inspected in a real MicroVM and an isolated Docker
-probe: Debian 13.4, Python 3.13.13, non-root UID 1000, Node 20.20.2. It contains
-the MicroVM system services and ossfs2, but no Omnigent, tmux or bubblewrap. Node
-20 also falls below Omnigent's Node 22.13 floor. The candidate retains the base,
-adds the missing tools and copies Node from a pinned amd64 Node 22 image.
+The pinned Aliyun base was inspected in a real cloud sandbox and an isolated
+Docker probe. The original Base template is generation 2, verified through the
+console GetTemplate response. Its inventory is Debian 13.4, Python
+3.13.13, non-root UID 1000, Node 20.20.2 and ossfs2. The image lacks Omnigent,
+tmux and bubblewrap. The initial candidate also lacked sshd, chronyd and iptables,
+although the cloud sandbox exposed additional system services. The Dockerfile
+now installs the required MicroVM packages explicitly, uses signed Debian
+snapshot indexes dated 2026-10-30, and checks their executables at build time.
+It copies Node from a pinned amd64 Node 22 image to meet the Node 22.13 floor.
 
 The application is installed non-editably from the repository's frozen lock.
 The source revision must be a real frozen candidate commit; the existing build
@@ -31,12 +35,19 @@ because its observation call timed out.
 
 Remaining qualification:
 
-- Resolve and freeze the Debian package/snapshot inputs after the initial build.
+- Build and verify the repaired candidate with the pinned Debian snapshot inputs.
 - Run real Host and bubblewrap checks in an Aliyun MicroVM.
 - Check all linked libraries and the target harness under the non-root identity.
 - Produce the required SBOM, scan, source provenance and repeat-build evidence.
-- Publish to a reachable, appropriately scoped ACR repository and verify digest.
+- Publish to a reachable, appropriately scoped registry and verify digest.
 - Create a new Host template; preserve the already-tested Base template.
 - Complete SaaS provider/tenant/model-channel integration before production use.
 
 No production configuration or existing deployment is changed by these files.
+
+The initial `b2a5b3167` build and constrained local runtime checks are recorded
+under `saas/acceptance/aliyun/2026-10-31/`. Those checks do not qualify MicroVM
+boot or bubblewrap: namespace creation was refused by the constrained local
+Docker kernel. The temporary template created through the generic E2B Template
+SDK used generation 1 and has been deleted. An explicitly verified generation-2
+template is still required.

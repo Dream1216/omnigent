@@ -4,7 +4,20 @@ ARG NODE_IMAGE=node:22-slim@sha256:9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb77
 
 FROM ${NODE_IMAGE} AS node-runtime
 
-FROM ${ALIYUN_BASE_IMAGE} AS builder
+FROM ${ALIYUN_BASE_IMAGE} AS runtime-base
+USER root
+COPY saas/deployment/aliyun/debian.sources /etc/apt/sources.list.d/debian.sources
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      systemd-sysv openssh-server sudo chrony fuse3 iptables \
+      tmux bubblewrap procps lsof \
+ && rm -rf /var/lib/apt/lists/* \
+ && test -x /sbin/init \
+ && test -x /usr/sbin/sshd \
+ && test -x /usr/sbin/chronyd \
+ && test -x /usr/sbin/iptables
+
+FROM runtime-base AS builder
 USER root
 ARG UV_VERSION=0.12.1
 ARG SOURCE_REVISION
@@ -34,25 +47,22 @@ RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml \
       --source-revision "${SOURCE_REVISION}" \
       --source-date-epoch "${SOURCE_DATE_EPOCH}"
 
-FROM ${ALIYUN_BASE_IMAGE} AS host
+FROM runtime-base AS host
 USER root
 ARG SOURCE_REVISION
 ARG SOURCE_DATE_EPOCH
 LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
       ai.omnigent.saas.qualification=candidate \
       ai.omnigent.saas.sandbox-runtime=aliyun-microvm
-ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin" \
+ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/home/user
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends tmux bubblewrap procps lsof \
- && rm -rf /var/lib/apt/lists/*
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 COPY --from=builder /opt/venv /opt/venv
-RUN printf '%s\n' 'export PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"' \
+RUN printf '%s\n' 'export PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"' \
       > /etc/profile.d/omnigent-venv.sh \
  && test -x /bin/bash \
  && /opt/venv/bin/python -B -I -c \

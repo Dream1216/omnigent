@@ -1,0 +1,25 @@
+{
+  "observed_at": "2026-10-30T20:17:50.051089+00:00",
+  "source": "logged-in Aliyun console GetTemplate response observed during template details navigation",
+  "template_id": "0mipsyhtqfvkegns0jbw",
+  "name": "omnigent-poc-base",
+  "evidence": {
+    "fields": [
+      {
+        "path": ".data.runtimeConfig.sandboxConfig.generation",
+        "value": 2
+      },
+      {
+        "path": ".data.runtimeConfig.sandboxConfig.image",
+        "value": "fc-e2b-registry.cn-hangzhou.cr.aliyuncs.com/runtime-v2/base:v0.1.3"
+      },
+      {
+        "path": ".data.status.state",
+        "value": "ready"
+      }
+    ],
+    "operation": "GetTemplate"
+  },
+  "scope": "original public Base template only; new Host template not created",
+  "production_acceptance": false
+}

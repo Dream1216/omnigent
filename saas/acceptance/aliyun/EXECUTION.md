@@ -23,7 +23,10 @@
 7. 90 项定向回归通过，包括 15 项探针凭据检查、原租户沙箱身份和 E2B launcher 回归。初始 Ruff 报告的宽泛异常捕获和格式问题已修复，后续 Ruff、格式、Pyrefly 检查通过。
 8. 核对官方 Base Runtime 的 manifest digest；在 exec-a 的 Docker 缓存中按该 digest 拉取基础镜像，未修改生产工作负载。
 9. 103 项现有 SaaS 生产装配/配置回归通过。探针补充 Node 版本校验后，19 项相关测试通过；真实云端确认 Node 为 20.20.2，低于应用的 22.13 要求。
-10. 新增使用已核对基础镜像、固定 Node 镜像和冻结应用依赖的候选 Host Dockerfile。尚未完成构建、系统包输入冻结、扫描或模板验收。
+10. 新增使用已核对基础镜像、固定 Node 镜像和冻结应用依赖的候选 Host Dockerfile。已完成候选构建与 OCI 内容校验；系统包输入冻结、扫描和模板验收仍待完成。
+11. `b2a5b3167` 候选构建成功，OCI 的 14 个内容块校验通过；受限 Docker 中 UID 1000 下 Omnigent、Python、Node 22.23.4、tmux、bubblewrap 和 Git 的命令自检通过。实际命令、digest 和未通过项记录在 `2026-10-31/p2-host-b2a5b3167-build-and-local-probe.json`。
+12. 本地镜像缺少 sshd、chronyd 和 iptables，不能将云端已注入的系统服务推断为镜像已包含。Dockerfile 已补齐必需包并切换到固定日期的 Debian 签名快照；修复后的新候选待重新构建。
+13. 通用 E2B Template SDK 创建出的临时模板实测为一代，且代际不可编辑；临时模板已删除并在列表确认。正式 Host 模板需显式验证二代；原始 Base 模板已通过控制台 GetTemplate 响应确认 generation=2。受限 Docker 的 bubblewrap namespace 探针被内核拒绝，真实 MicroVM 隔离验收仍未通过。
 
 ## 当前必须解决的差异
 
@@ -48,7 +51,7 @@
 ## 复核命令
 
 ```bash
-uv sync --frozen --extra saas --extra e2b --group dev --no-default-groups
+uv sync --frozen --extra all --extra saas --extra e2b --group dev --no-default-groups
 uv lock --check
 .venv/bin/python -m pytest tests/saas/test_aliyun_sandbox_probe.py \
   tests/saas/test_tenant_sandbox.py tests/onboarding/sandboxes/test_e2b.py -q

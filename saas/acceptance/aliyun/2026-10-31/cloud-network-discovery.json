@@ -1,0 +1,26 @@
+{
+  "started_at": "2026-10-30T19:57:14.394240+00:00",
+  "purpose": "registry-and-callback-path-discovery",
+  "checks": {
+    "ghcr": {
+      "url": "https://ghcr.io/v2/",
+      "exit_code": 0,
+      "http_status": "401",
+      "error": ""
+    },
+    "existing_harbor": {
+      "url": "https://harbor-stage3.jxhh.com:8443/v2/",
+      "error_type": "CommandExitException",
+      "error": "Command exited with code 28 and error:\ncurl: (28) Connection timed out after 10001 milliseconds\n"
+    },
+    "server_version": {
+      "url": "https://next.jxhh.com/saas/version",
+      "exit_code": 0,
+      "http_status": "200",
+      "error": ""
+    }
+  },
+  "sandbox_id": "sbx-c32d1e61-2be4-4381-b6d7-2d136271a574",
+  "kill_requested": true,
+  "finished_at": "2026-10-30T19:57:26.449763+00:00"
+}
