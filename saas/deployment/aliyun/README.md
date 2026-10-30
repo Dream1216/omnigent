@@ -12,6 +12,9 @@ although the cloud sandbox exposed additional system services. The Dockerfile
 now installs the required MicroVM packages explicitly, uses signed Debian
 snapshot indexes dated 2026-10-30, and checks their executables at build time.
 It copies Node from a pinned amd64 Node 22 image to meet the Node 22.13 floor.
+The old npm tree is removed before copying the pinned npm tree. Overlaying the
+two versions left stale modules and made npm's install command fail, even while
+`npm --version` still worked. The shared Node stage checks the install module.
 
 The Host CLI stage reuses the repository's existing `.github/ci-deps` importer
 and complete pnpm lock. It installs the reviewed CLI graph and checks Pi and

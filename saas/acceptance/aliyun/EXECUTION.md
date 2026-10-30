@@ -36,6 +36,8 @@
 
 19. 已推送实施分支，CI `41126141094` 的代码验证通过；双构建在开始前因 Docker exporter 不支持含 attestation 的 manifest list 而失败。修复保留 OCI/SBOM/provenance，改用隔离 CI runner 的 containerd image store 加载原始 OCI 并核对 index digest 与 rootfs；待新提交重跑验证。
 
+20. CI `41127064896` 的代码验证再次通过，OCI 导出配置已修复；构建进入 CLI 安装后失败。离线复现定位到 npm 目录覆盖混入旧依赖，引发 minizlib 的 Class extends TypeError。新增共享 Node stage，先清空旧 npm 树再复制固定版本；实际 node-base 构建、安装模块加载及 npm 10.9.9 自检通过，完整新候选待 CI 验证。
+
 ## 当前必须解决的差异
 
 | 差异 | 权威来源 | 所需工作 |

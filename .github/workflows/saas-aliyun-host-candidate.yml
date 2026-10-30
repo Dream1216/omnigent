@@ -7,7 +7,10 @@ on:
       - .github/workflows/saas-aliyun-host-candidate.yml
       - .github/ci-deps/package.json
       - saas/deployment/aliyun/**
-      - saas/production/aliyun_sandbox.py
+      - saas/production/**
+      - saas/runner_adapter/**
+      - saas/compatibility/**
+      - saas/control_plane/*.py
       - saas/scripts/compare_oci_rebuilds.py
       - saas/scripts/scan_oci_candidates.py
       - omnigent/**
