@@ -41,6 +41,13 @@ _N1_LABELS = _EXECUTABLE_LABELS | frozenset(
 _LABEL_PROFILES = {
     "executable": _EXECUTABLE_LABELS,
     "n1": _N1_LABELS,
+    "aliyun-host-minimal": frozenset(
+        {
+            "org.opencontainers.image.revision",
+            "ai.omnigent.saas.qualification",
+            "ai.omnigent.saas.sandbox-runtime",
+        }
+    ),
     "aliyun-host": frozenset(
         {
             "org.opencontainers.image.revision",
@@ -56,6 +63,7 @@ _PLATFORM_PROFILES = {
     "executable": {"linux/amd64", "linux/arm64"},
     "n1": {"linux/amd64", "linux/arm64"},
     "aliyun-host": {"linux/amd64"},
+    "aliyun-host-minimal": {"linux/amd64"},
 }
 
 _SAFE_DIAGNOSTIC_POLICY = {

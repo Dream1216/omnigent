@@ -118,11 +118,11 @@ _APPROVED_NPM_SECURITY_OVERLAYS = {
         },
         {
             "name": "undici",
-            "version": "6.28.1",
-            "tarball": "https://registry.npmjs.org/undici/-/undici-6.28.1.tgz",
+            "version": "6.29.1",
+            "tarball": "https://registry.npmjs.org/undici/-/undici-6.29.1.tgz",
             "integrity": (
-                "sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5Co"
-                "DcO53J4Pu5uXp7lNfjc6DRA=="
+                "sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTF"
+                "HhTr2XOZjKkYgueD12ZmGA=="
             ),
         },
     ],

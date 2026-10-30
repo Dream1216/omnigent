@@ -2,6 +2,7 @@
 !pyproject.toml
 !setup.py
 !uv.lock
+!uv.toml
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml

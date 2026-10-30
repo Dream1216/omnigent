@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import secrets
 import shlex
@@ -9,6 +10,7 @@ import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -38,16 +40,26 @@ from saas.production.aliyun_host import (
 )
 from saas.production.aliyun_model_client import validated_server_origin
 from saas.production.aliyun_model_lease import HostModelLeaseAuthority
+from saas.production.aliyun_sdk import (
+    attach_running_sandbox,
+    read_sandbox_details,
+    require_qualified_sdk,
+)
 from saas.production.platform_model_relay import validated_model_gateway_url
 from saas.production.tenant_model_keys import _read_file
 
 if TYPE_CHECKING:
     from e2b import Sandbox
-    from e2b.sandbox.sandbox_api import SandboxInfo
+    from e2b.api.client.models import SandboxDetail
 
 ALIYUN_API_URL = "https://api.cn-hangzhou.sandbox.aliyuncs.com"
 ALIYUN_DOMAIN = "cn-hangzhou.sandbox.aliyuncs.com"
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+_LIFETIME_METADATA = "omnigent-lifetime-seconds"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -272,11 +284,11 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             "api_url": ALIYUN_API_URL,
             "domain": ALIYUN_DOMAIN,
             "request_timeout": 45,
+            "debug": False,
         }
 
     def prepare(self) -> None:
-        from e2b import Sandbox  # noqa: F401 - optional dependency preflight
-
+        require_qualified_sdk()
         self._sdk_options()
 
     def _resolve_sandbox_env(self) -> dict[str, str]:
@@ -297,7 +309,11 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             handle = Sandbox.create(
                 template=self._resolved_template(),
                 timeout=self.lifetime_s,
-                metadata={**self.scope.metadata(), "omnigent-name": name},
+                metadata={
+                    **self.scope.metadata(),
+                    "omnigent-name": name,
+                    _LIFETIME_METADATA: str(self.lifetime_s),
+                },
                 envs=env,
                 **self._sdk_options(),
             )
@@ -307,19 +323,15 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         self._sandboxes[sandbox_id] = handle
         return sandbox_id
 
-    def _scoped_handle(self, sandbox_id: str, *, missing_ok: bool = False) -> Sandbox | None:
-        from e2b import Sandbox
+    def _scoped_info(self, sandbox_id: str, *, missing_ok: bool = False) -> SandboxDetail | None:
         from e2b.exceptions import AuthenticationException, NotFoundException, SandboxException
 
         self.scope.check_context()
         if not isinstance(sandbox_id, str) or _IDENTIFIER.fullmatch(sandbox_id) is None:
             raise ValueError("Aliyun sandbox identifier is invalid")
-        options = self._sdk_options()
         try:
-            handle = self._sandboxes.get(sandbox_id)
-            if handle is None:
-                handle = Sandbox.connect(sandbox_id, **options)
-            info: SandboxInfo = handle.get_info(**options)
+            # Connecting can resume a VM, so ownership must use the read-only API first.
+            info = read_sandbox_details(sandbox_id, self._sdk_options())
         except NotFoundException:
             self._sandboxes.pop(sandbox_id, None)
             if missing_ok:
@@ -327,33 +339,59 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             raise click.ClickException("Aliyun sandbox is no longer available") from None
         except (AuthenticationException, SandboxException, httpx.HTTPError):
             raise click.ClickException("Aliyun sandbox ownership lookup failed") from None
-        if any((info.metadata or {}).get(k) != v for k, v in self.scope.metadata().items()):
+        metadata = info.metadata if isinstance(info.metadata, dict) else {}
+        if info.sandbox_id != sandbox_id or any(
+            metadata.get(k) != v for k, v in self.scope.metadata().items()
+        ):
             raise ValueError("Aliyun sandbox ownership does not match")
-        self._sandboxes[sandbox_id] = handle
-        return handle
+        return info
+
+    def _remaining_lifetime(self, info: SandboxDetail) -> int:
+        metadata = info.metadata if isinstance(info.metadata, dict) else {}
+        raw = metadata.get(_LIFETIME_METADATA)
+        if (
+            not isinstance(raw, str)
+            or re.fullmatch(r"[1-9][0-9]{1,3}", raw) is None
+            or not 60 <= int(raw) <= 3600
+            or not isinstance(info.started_at, datetime)
+            or info.started_at.tzinfo is None
+            or info.started_at.utcoffset() is None
+        ):
+            raise ValueError("Aliyun sandbox lifetime evidence is invalid")
+        elapsed = (_now() - info.started_at).total_seconds()
+        if elapsed < -30:
+            raise ValueError("Aliyun sandbox start time is invalid")
+        remaining = math.floor(min(self.lifetime_s, int(raw)) - max(0, elapsed))
+        if remaining <= 0:
+            raise click.ClickException("Aliyun sandbox absolute lifetime has expired")
+        if info.state != "running":
+            raise click.ClickException("Aliyun sandbox is not running")
+        return remaining
 
     def _resolve(self, sandbox_id: str) -> Sandbox:
-        handle = self._scoped_handle(sandbox_id)
-        assert handle is not None
+        info = self._scoped_info(sandbox_id)
+        assert info is not None
+        self._remaining_lifetime(info)
+        handle = self._sandboxes.get(sandbox_id)
+        if handle is None:
+            handle = attach_running_sandbox(info, self._sdk_options())
+            self._sandboxes[sandbox_id] = handle
         return handle
 
     def keep_alive(self, sandbox_id: str) -> None:
-        from e2b.exceptions import AuthenticationException, SandboxException
-
-        handle = self._resolve(sandbox_id)
-        try:
-            handle.set_timeout(self.lifetime_s, **self._sdk_options())
-        except (AuthenticationException, SandboxException, httpx.HTTPError):
-            raise click.ClickException("Aliyun sandbox lifetime renewal failed") from None
+        # Heartbeats verify availability without extending the cloud creation timeout.
+        info = self._scoped_info(sandbox_id)
+        assert info is not None
+        self._remaining_lifetime(info)
 
     def terminate(self, sandbox_id: str) -> None:
+        from e2b import Sandbox
         from e2b.exceptions import AuthenticationException, NotFoundException, SandboxException
 
-        handle = self._scoped_handle(sandbox_id, missing_ok=True)
-        if handle is None:
+        if self._scoped_info(sandbox_id, missing_ok=True) is None:
             return
         try:
-            handle.kill(**self._sdk_options())
+            Sandbox.kill(sandbox_id, **self._sdk_options())
         except NotFoundException:
             pass
         except (AuthenticationException, SandboxException, httpx.HTTPError):

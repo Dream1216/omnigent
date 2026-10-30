@@ -1,19 +1,40 @@
 # Candidate MicroVM Host; production admission is a separate release gate.
-ARG ALIYUN_BASE_IMAGE=fc-e2b-registry.cn-hangzhou.cr.aliyuncs.com/runtime-v2/base@sha256:1ff61a87eeef4ebcc1285741465a434973c70c814fa20a55bfd6915022150cf6
+ARG DEBIAN_IMAGE=debian:sid-slim@sha256:10e9e0d7aa4ed47205c7053f117199e6b06a9b17ac3eeb7f7bb1a818b963a803
+ARG PYTHON_IMAGE=python:3.13.18-slim@sha256:aaf08c5490d52cd92bc27142a5215b1e47355a5eaf9adfad2a0fbc022d0b5490
 ARG NODE_IMAGE=node:22-slim@sha256:9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2
 
 FROM ${NODE_IMAGE} AS node-runtime
+FROM ${PYTHON_IMAGE} AS python-runtime
+FROM ${DEBIAN_IMAGE} AS debian-runtime
 
-FROM ${ALIYUN_BASE_IMAGE} AS runtime-base
+FROM scratch AS ossfs-material
+ADD --checksum=sha256:72e864b8087d6f889c5017339c625154619f626bbc13c9afcb70403544ad9b70 \
+    https://github.com/aliyun/ossfs/releases/download/v2.0.10/ossfs2_2.0.10_linux_x86_64.deb /ossfs2_2.0.10_linux_x86_64.deb
+
+FROM debian-runtime AS runtime-os
 USER root
 ARG SOURCE_DATE_EPOCH
-COPY saas/deployment/aliyun/debian.sources /etc/apt/sources.list.d/debian.sources
+COPY saas/deployment/aliyun/debian-minimal.sources /etc/apt/sources.list.d/debian.sources
+COPY --from=python-runtime /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=ossfs-material /ossfs2_2.0.10_linux_x86_64.deb /tmp/ossfs2.deb
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac \
- && apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+ && apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt -o APT::Update::Error-Mode=any update \
+ && echo '23fab9795bb10ed4d7c39a32d04400600d1f68a151692ac1c23ec2629a243fc0  /var/lib/apt/lists/snapshot.debian.org_archive_debian_20261030T000000Z_dists_sid_InRelease' | sha256sum -c - \
+ && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt upgrade -y --no-install-recommends \
+ && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt install -y --no-install-recommends \
       systemd-sysv openssh-server sudo chrony fuse3 iptables \
-      tmux bubblewrap procps lsof \
- && rm -rf /var/lib/apt/lists/* \
+      bash ca-certificates curl git tmux bubblewrap procps lsof \
+      libbz2-1.0 libexpat1 libffi8 libgdbm6t64 liblzma5 libncursesw6 \
+      libreadline8t64 libsqlite3-0 libssl3t64 libuuid1 zlib1g libstdc++6 \
+ && echo '72e864b8087d6f889c5017339c625154619f626bbc13c9afcb70403544ad9b70  /tmp/ossfs2.deb' | sha256sum -c - \
+ && dpkg -i /tmp/ossfs2.deb \
+ && rm -f /tmp/ossfs2.deb \
+ && groupadd --gid 1000 user \
+ && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash user \
+ && awk -F: -v epoch="${SOURCE_DATE_EPOCH}" 'BEGIN {OFS=":"} {if ($2 !~ /^[!*]/) exit 1; $3=int(epoch/86400); print}' /etc/shadow > /etc/shadow.normalized \
+ && cat /etc/shadow.normalized > /etc/shadow \
+ && rm -f /etc/shadow.normalized \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
  && test -x /sbin/init \
  && test -x /usr/sbin/sshd \
  && test -x /usr/sbin/chronyd \
@@ -22,6 +43,22 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac \
       /var/cache/ldconfig/aux-cache \
  && : > /etc/machine-id \
  && find /var/log -type f -delete
+
+# Retain Debian's real package identity and remove inherited OCI configuration.
+FROM scratch AS runtime-base
+COPY --from=runtime-os / /
+COPY --from=python-runtime /usr/local/bin/python3.13 /usr/local/bin/python3.13
+COPY --from=python-runtime /usr/local/lib/libpython3.13.so.1.0 /usr/local/lib/libpython3.13.so.1.0
+COPY --from=python-runtime /usr/local/lib/python3.13 /usr/local/lib/python3.13
+ENV PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+RUN ln -s python3.13 /usr/local/bin/python3 \
+ && ln -s python3.13 /usr/local/bin/python \
+ && ln -s libpython3.13.so.1.0 /usr/local/lib/libpython3.13.so \
+ && ldconfig \
+ && python3 -B -I -c 'import bz2,ctypes,dbm.gnu,lzma,pyexpat,readline,sqlite3,ssl,uuid,zlib,sys;assert sys.version_info[:3]==(3,13,18)' \
+ && ossfs2 --version \
+ && rm -f /var/cache/ldconfig/aux-cache
 
 FROM runtime-base AS npm-security
 ARG NPM_VERSION=12.2.0
@@ -62,7 +99,7 @@ RUN apt-get update \
 RUN python3 -m venv /opt/build-tools \
  && /opt/build-tools/bin/pip install --no-cache-dir "uv==${UV_VERSION}"
 WORKDIR /build
-COPY pyproject.toml setup.py uv.lock LICENSE NOTICE ./
+COPY pyproject.toml setup.py uv.lock uv.toml LICENSE NOTICE ./
 COPY sdks/ ./sdks/
 COPY omnigent/ ./omnigent/
 COPY saas/ ./saas/

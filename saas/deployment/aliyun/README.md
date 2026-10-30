@@ -3,23 +3,29 @@
 This directory starts the P2 Host image work for the Aliyun sandbox integration.
 It is a candidate build input, not a production admission or an activated provider.
 
-The pinned Aliyun base was inspected in a real cloud sandbox and an isolated
-Docker probe. The original Base template is generation 2, verified through the
-console GetTemplate response. Its inventory is Debian 13.4, Python
-3.13.13, non-root UID 1000, Node 20.20.2 and ossfs2. The image lacks Omnigent,
-tmux and bubblewrap. The initial candidate also lacked sshd, chronyd and iptables,
-although the cloud sandbox exposed additional system services. The Dockerfile
-now installs the required MicroVM packages explicitly, uses signed Debian
-snapshot indexes dated 2026-10-30, and checks their executables at build time.
-It copies Node from a pinned amd64 Node 22 image to meet the Node 22.13 floor.
+The candidate uses a digest-pinned Debian sid rootfs with a hash-checked, signed
+snapshot index dated 2026-10-30. It installs the required systemd, sshd, sudo,
+chronyd, FUSE and iptables components, plus Git, tmux and bubblewrap. Python
+3.13.18 and Node 22.23.4 come from digest-pinned official runtime images.
+The official ossfs2 2.0.10 Debian artifact is SHA-256 pinned. Compiler and
+development headers are confined to the builder rather than inherited by the
+runtime. Debian's package database and real OS identity remain intact.
+
+The original Aliyun Base template remains available as prerequisite evidence:
+its generation-2 runtime, UID 1000 and namespace support were verified in cloud.
+The new minimal candidate has only passed an isolated Docker runtime probe;
+its MicroVM boot, storage mount and complete Host behavior remain unverified.
+The original vendor-base candidates failed the raw vulnerability gate.
+
 The old npm tree is removed before copying the pinned npm tree. Overlaying the
 two versions left stale modules and made npm's install command fail, even while
 `npm --version` still worked. The shared Node stage checks the install module.
 That build-only npm check disables Node's compilation cache; V8 cache bytes
 otherwise persisted in the shared base and differed between independent builds.
-The candidate now reuses the production image's npm 12.2.0 materializer and
-SHA-512-locked security overlays. The bundled npm 10 graph from the Node image
-was reported vulnerable in the first complete scan.
+The candidate reuses the npm 12.2.0 materializer and SHA-512-locked security
+overlays, including undici 6.29.1. The npm 10 graph from the Node image is not
+retained. Python and CLI dependency repairs preserve the existing dependency
+cooldown and frozen-lock checks.
 
 The Host CLI stage reuses the repository's existing `.github/ci-deps` importer
 and complete pnpm lock. It installs the reviewed CLI graph and checks Pi and
@@ -50,11 +56,14 @@ because its observation call timed out.
 
 Remaining qualification:
 
-- Repair the raw vulnerability findings in the inherited base, Python runtime
-  and locked CLI/application dependencies. CI run 41132988920 passed independent
-  rebuild comparison but reported 24 Critical and 240 High matches plus built-in
-  ignored Linux-header findings; the raw zero-High/zero-Critical and no-ignored
-  gates remain unchanged. npm replacement alone does not qualify the image.
+- Repair the raw vulnerability findings. CI run 41137386035 passed independent
+  rebuild comparison but reported 24 Critical and 233 High matches plus 929
+  ignored Linux-header matches in the preceding vendor-base image. The minimal
+  `runtime-base` diagnostic reports 10 High, zero Critical and zero ignored
+  matches; it excludes the application, Node and harness layers and does not
+  qualify the complete Host. The remaining Debian Perl, Expat and Kerberos
+  findings have no fixed version in that scan. The raw zero-High/zero-Critical
+  and no-ignored gates remain unchanged.
 - Run real Host and bubblewrap checks in an Aliyun MicroVM.
 - Check all linked libraries and the target harness under the non-root identity.
 - Produce the required SBOM, scan, source provenance and repeat-build evidence.
@@ -66,7 +75,9 @@ Remaining qualification:
 archives, checks non-root runtime against their exact OCI config/rootfs, requires
 SLSA v1 plus SPDX, compares executable manifests/configs, and scans the exact
 archive with a fresh vulnerability database. The Aliyun profile is separate
-from the existing dual-architecture Server/Host profiles. The workflow has no
+from the existing dual-architecture Server/Host profiles. The minimal profile
+requires exactly three first-party labels and Linux amd64; it does not accept
+the vendor base's inherited labels. The workflow has no
 registry write or production deployment permissions.
 
 Package installation generates SSH host keys and a machine identity. The

@@ -30,6 +30,18 @@ and Host credentials, other HTTP methods and unrelated paths. A workspace
 header is a routing hint, not authorization; the signed lease and live stores
 must independently admit that workspace and session.
 
+The launcher records the admitted lifetime in cloud metadata. Availability
+checks use the cloud creation timestamp and that original lifetime; increasing
+Server settings or restarting the Server does not renew an existing launch.
+Heartbeats do not call `set_timeout`. A read-only lookup checks ownership and
+expiry before attaching; paused or expired VMs are not resumed. Attachment uses
+the qualified SDK's GET response and local transport constructor, without its
+mutating connect endpoint. Live measurements showed that connect changed the
+reported expiry even when requesting a one-second timeout. Cleanup uses
+the read-only ownership check followed by direct deletion, including after
+expiry, without a connection or resume. Real cloud expiry remains an acceptance
+check, and longer tasks require a new admitted launch.
+
 Remaining integration and acceptance:
 
 - Wire the broker and explicit profile into production Server composition.
@@ -38,8 +50,11 @@ Remaining integration and acceptance:
   real MicroVM. The scoped launcher now stages these files through the SDK,
   launches `saas.production.aliyun_host`, and removes its private directory on
   startup failure. Its commands and process arguments contain file references.
-- Complete absolute-lifetime and lease-expiry behavior; a rolling SDK timeout
-  must not keep a Host alive beyond its admitted model/launch credential lifetime.
+- Base-template transport checks passed for immutable expiry across three fresh
+  launcher attachments, heartbeats, cross-tenant denial and expired cleanup.
+  The command channel rejected post-expiry access, and control-plane absence
+  was confirmed about 4.3 seconds after expiry. An actual Server restart with
+  a running Host/Runner and end-to-end model lease expiry still need acceptance.
 - Configure public TLS callback and model gateway ingress without broadening
   ordinary SaaS authentication or exposing the gateway signing authority.
 - Exercise a real Host, isolated Runner, model request, renewal, revocation and
@@ -51,6 +66,7 @@ Local verification from the repository root:
 
 ```bash
 .venv/bin/pytest tests/saas/test_aliyun_model_lease.py \
+  tests/saas/test_aliyun_sdk.py tests/saas/test_aliyun_sandbox.py \
   tests/saas/test_aliyun_host.py tests/saas/test_aliyun_host_launcher.py \
   tests/saas/test_aliyun_tenant_sandbox.py \
   tests/saas/test_aliyun_model_broker.py tests/saas/test_aliyun_model_client.py \

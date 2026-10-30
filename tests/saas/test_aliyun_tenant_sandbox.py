@@ -84,7 +84,8 @@ def test_persisted_cleanup_workspace_selects_only_its_configured_tenant(cloud):
         launcher = parsed.for_provider("e2b").launcher_factory()
         assert launcher.scope == cloud.scope
         launcher.terminate("sbx-test-1234")
-    cloud.handle.kill.assert_called_once()
+    cloud.sdk.kill.assert_called_once()
+    cloud.sdk.connect.assert_not_called()
 
 
 def test_wrong_tenant_sandbox_metadata_is_rejected_even_in_a_valid_cleanup_workspace(cloud):
@@ -95,7 +96,7 @@ def test_wrong_tenant_sandbox_metadata_is_rejected_even_in_a_valid_cleanup_works
         assert launcher.scope == other
         with pytest.raises(ValueError, match="ownership"):
             launcher.terminate("sbx-test-1234")
-    cloud.handle.kill.assert_not_called()
+    cloud.sdk.kill.assert_not_called()
 
 
 def test_cleanup_scope_never_admits_creation_without_runtime_context(cloud):

@@ -1790,15 +1790,14 @@ def _write_oci(
                 "ai.omnigent.saas.n1.contract-version": "contract-v1",
             }
         )
-    elif label_profile == "aliyun-host":
+    elif label_profile in {"aliyun-host", "aliyun-host-minimal"}:
         labels = {
             "org.opencontainers.image.revision": revision,
             "ai.omnigent.saas.qualification": "candidate",
             "ai.omnigent.saas.sandbox-runtime": "aliyun-microvm",
-            "description": "Aliyun base runtime",
-            "layer": "base",
-            "maintainer": "Aliyun",
         }
+        if label_profile == "aliyun-host":
+            labels.update(description="Aliyun base runtime", layer="base", maintainer="Aliyun")
     elif label_profile != "executable":
         raise ValueError(f"unsupported test label profile: {label_profile}")
     if missing_label is not None:
@@ -1807,7 +1806,9 @@ def _write_oci(
         labels[extra_label] = "unexpected"
     descriptors = []
     if architectures is None:
-        architectures = ("amd64",) if label_profile == "aliyun-host" else ("amd64", "arm64")
+        architectures = (
+            ("amd64",) if label_profile.startswith("aliyun-host") else ("amd64", "arm64")
+        )
     for architecture in architectures:
         config = json.dumps(
             {
@@ -1985,7 +1986,9 @@ def test_oci_rebuild_comparison_ignores_attestation_time_but_not_image_drift(
     )
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1", "aliyun-host"])
+@pytest.mark.parametrize(
+    "label_profile", ["executable", "n1", "aliyun-host", "aliyun-host-minimal"]
+)
 def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     tmp_path: Path, label_profile: str
 ) -> None:
@@ -2006,6 +2009,7 @@ def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
         ("executable", "ai.omnigent.saas.adapter-contract-version"),
         ("n1", "ai.omnigent.saas.n1.contract-version"),
         ("aliyun-host", "ai.omnigent.saas.sandbox-runtime"),
+        ("aliyun-host-minimal", "ai.omnigent.saas.sandbox-runtime"),
     ],
 )
 def test_oci_rebuild_rejects_a_missing_profile_label(
@@ -2025,7 +2029,9 @@ def test_oci_rebuild_rejects_a_missing_profile_label(
         compare_archives(first, second, label_profile=label_profile)
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1", "aliyun-host"])
+@pytest.mark.parametrize(
+    "label_profile", ["executable", "n1", "aliyun-host", "aliyun-host-minimal"]
+)
 def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profile: str) -> None:
     first = tmp_path / f"first-extra-{label_profile}.tar"
     second = tmp_path / f"second-extra-{label_profile}.tar"
@@ -2048,6 +2054,9 @@ def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profil
         ("n1", "executable"),
         ("aliyun-host", "executable"),
         ("executable", "aliyun-host"),
+        ("aliyun-host", "aliyun-host-minimal"),
+        ("aliyun-host-minimal", "aliyun-host"),
+        ("aliyun-host-minimal", "executable"),
     ],
 )
 def test_oci_rebuild_rejects_cross_profile_label_contracts(
@@ -2067,6 +2076,8 @@ def test_oci_rebuild_rejects_cross_profile_label_contracts(
     [
         ("aliyun-host", ("arm64",)),
         ("aliyun-host", ("amd64", "arm64")),
+        ("aliyun-host-minimal", ("arm64",)),
+        ("aliyun-host-minimal", ("amd64", "arm64")),
         ("executable", ("amd64",)),
         ("n1", ("amd64",)),
     ],
