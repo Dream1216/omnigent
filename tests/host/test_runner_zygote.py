@@ -1080,6 +1080,10 @@ def test_fork_refused_after_source_change_with_stale_build_info(
         sources=_source_file_stamps([source]),
     )
     source.write_text("new = True\n")
+    assert graph_stamp.sources is not None
+    stamp = graph_stamp.sources[0]
+    os.utime(source, ns=(source.stat().st_atime_ns, stamp.modified_ns + 1_000_000_000))
+    assert source.stat().st_mtime_ns != stamp.modified_ns
 
     daemon, daemon_peer = socket.socketpair()
     conn, peer = socket.socketpair()

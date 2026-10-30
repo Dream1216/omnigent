@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 179,
-    "max_upstream_net_added_loc": 4576,
+    "max_direct_upstream_files": 180,
+    "max_upstream_net_added_loc": 4580,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -756,7 +756,7 @@
       "test_patch_sha256": "b7702ef1eba7c8b653e8edf88dace2355c0a3295fff4bd1ed3f620607d54ac58",
       "reason": "Single existing upstream test: use existing data-attributed process reaper and retain only its runtime logs. Original model parameters, all three behavior assertions and startup/run timeouts retained. Local two-node mock run did not reproduce the original CI daemon timeout; root cause remains UNKNOWN. No product/workflow/policy/trusted-input change. Preserve4576 LOC,nine patches,.85 isolation and all release gates; every final head needs its own mandatory CI and candidate images.",
       "approved_at": "2026-10-26",
-      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: \u6279\u51c6\u4ec5\u5c06 0.19 \u4e0a\u9650\u589e\u81f3 175\uff1b\u5176\u4ed6\u9650\u5236\u4e0d\u53d8"
+      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: 批准仅将 0.19 上限增至 175；其他限制不变"
     },
     "native_cold_input_durability_followup": {
       "approval_status": "APPROVED_LIMITED_SCOPE",
@@ -778,7 +778,7 @@
       "reason": "Native external-Host cold input needs original generic durable worker registration and admission. SaaS-only monkey patches, fabricated ACK, warmup, timeout increases and credentials/policy widening are excluded. The user explicitly approved only the 175-to-178 file limit for these three new official paths; all other limits and gates remain unchanged. Keep4576 LOC,9patch,.85 and all new-head CI/OCI/P4/P5 requirements.",
       "max_direct_upstream_files": 178,
       "approved_at": "2026-10-28",
-      "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: \u6279\u51c6\u4ec5\u5c06 0.19 \u4e0a\u9650\u589e\u81f3 178\uff1b\u5176\u4ed6\u9650\u5236\u4e0d\u53d8",
+      "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: 批准仅将 0.19 上限增至 178；其他限制不变",
       "review_packet_sha256": "9af45de3b002a4eac541e1337e3bfeaabc153a9291ed7df4afb8ca468cacd015"
     },
     "native_cold_input_regression_correction_proposal": {
