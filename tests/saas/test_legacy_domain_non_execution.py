@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,255 @@ from tests.saas.test_legacy_domain_eligibility import native_domain as native_do
 from tests.saas.test_legacy_domain_integration import current_refusal
 from tests.saas.test_legacy_source_qualification import invoke, qualifier
 from tests.saas.test_legacy_source_qualification import scenario as scenario
+
+
+@pytest.fixture
+def refusal_cancel_native():
+    data = json.loads(
+        (Path(__file__).parent / "resources/legacy_core_refusal_cancel_native.json").read_text()
+    )
+    data["logs"] = base64.b64decode(data.pop("logs_base64"), validate=True)
+    return data
+
+
+def _refusal_cancel_proof(data):
+    return audit.verify_refusal_cancellation(
+        *(
+            data[key]
+            for key in (
+                "profile",
+                "identity",
+                "rule",
+                "run",
+                "job",
+                "check",
+                "annotations",
+                "logs",
+            )
+        )
+    )
+
+
+def test_exact_resolve_failure_then_cancel_retains_four_false(refusal_cancel_native):
+    proof = _refusal_cancel_proof(refusal_cancel_native)
+    assert audit.typed_observation(proof)
+    assert proof.receipt["source_classification"] == "UNKNOWN"
+    assert proof.receipt["original_conclusion"] == "cancelled"
+    assert all(
+        proof.receipt[key] is False
+        for key in (
+            "source_proof",
+            "guard_refusal",
+            "technical_gate_waiver",
+            "production_admission",
+        )
+    )
+    with pytest.raises(ValueError):
+        audit.verify_zero_execution(
+            *(
+                refusal_cancel_native[key]
+                for key in (
+                    "profile",
+                    "identity",
+                    "rule",
+                    "run",
+                    "job",
+                    "check",
+                    "annotations",
+                    "logs",
+                )
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "run",
+        "job",
+        "check",
+        "annotations",
+        "logs",
+        "PR",
+        "base",
+        "source",
+        "tree",
+        "kind",
+        "coordinate",
+        "registration_hash",
+        "extra_field",
+    ],
+)
+def test_refusal_cancel_rejects_any_unreviewed_tuple(refusal_cancel_native, fault):
+    data = refusal_cancel_native
+    if fault in {"run", "job", "check"}:
+        data[fault]["conclusion"] = "success"
+    elif fault == "annotations":
+        data["annotations"].pop()
+    elif fault == "logs":
+        data["logs"] += b"changed"
+    elif fault in {"PR", "base", "source", "tree"}:
+        key, value = {
+            "PR": ("validation_pr", 190),
+            "base": ("validation_base_ref", "main"),
+            "source": ("product_revision", "a" * 40),
+            "tree": ("product_tree", "a" * 40),
+        }[fault]
+        data["identity"][key] = value
+    elif fault == "kind":
+        data["rule"]["kind"] = audit.INFRASTRUCTURE_KIND
+    elif fault == "coordinate":
+        data["rule"]["run_id"] += 1
+    elif fault == "registration_hash":
+        data["rule"]["run_sha256"] = "a" * 64
+    else:
+        data["rule"]["allow"] = True
+    with pytest.raises(ValueError):
+        _refusal_cancel_proof(data)
+
+
+@pytest.mark.parametrize("fault", [None, "workflow_bytes", "gate_bytes", "changed_check"])
+def test_refusal_cancel_native_collector_and_discovery_dispatch(
+    refusal_cancel_native, monkeypatch, tmp_path, fault
+):
+    data = refusal_cancel_native
+
+    def api(endpoint):
+        if "/annotations?" in endpoint:
+            return copy.deepcopy(data["annotations"])
+        if "/check-runs/" in endpoint:
+            result = copy.deepcopy(data["check"])
+            if fault == "changed_check":
+                result["conclusion"] = "success"
+            return result
+        if "/actions/runs/" in endpoint:
+            return copy.deepcopy(data["run"] if "/attempts/" in endpoint else data["latest_run"])
+        raise AssertionError(endpoint)
+
+    def native_file(path, revision):
+        if path == domain.MAIN_WORKFLOW:
+            assert revision == data["profile"]["product_revision"]
+            return b"changed" if fault == "workflow_bytes" else data["workflow_text"].encode()
+        assert path == audit.native._GATE
+        assert revision == audit._REFUSAL_CANCELLATION_CONTROL
+        return b"changed" if fault == "gate_bytes" else data["gate_text"].encode()
+
+    def download(run, attempt, path, bound):
+        assert (run, attempt, bound) == (data["run"]["id"], 1, 8192)
+        path.write_bytes(data["logs"])
+
+    monkeypatch.setattr(audit, "api", api)
+    monkeypatch.setattr(discovery, "api", api)
+    monkeypatch.setattr(audit.native, "_native_file", native_file)
+    monkeypatch.setattr(audit, "_download_run_logs", download)
+    monkeypatch.setattr(discovery, "_job_pages", lambda run, attempt: [data["job"]])
+    observations = []
+
+    def inspect():
+        return discovery._inspect_run(
+            data["latest_run"],
+            data["profile"],
+            data["identity"]["validation_pr"],
+            tmp_path,
+            {"attempts": []},
+            data["identity"],
+            observations=observations,
+            refusal_cancellation_rules=[data["rule"]],
+        )
+
+    if fault:
+        expected = {
+            "workflow_bytes": "domain workflow bytes",
+            "gate_bytes": "workflow/gate source bytes",
+            "changed_check": "raw native tuple",
+        }[fault]
+        with pytest.raises(ValueError, match=expected):
+            inspect()
+    else:
+        result = inspect()
+        assert result["classification"] == "audited-refusal-cancellation"
+        assert result["attempts"] == []
+        assert result["refusal_cancellation_observations"] == [observations[0].receipt]
+        assert observations == [_refusal_cancel_proof(data)]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing_refusal",
+        "wrong_base",
+        "wrong_tree",
+        "untyped",
+        "authority",
+        "missing_check",
+        "new_check",
+    ],
+)
+def test_refusal_cancel_all_app_requires_independent_exact_refusal(refusal_cancel_native, fault):
+    data = refusal_cancel_native
+    proof = _refusal_cancel_proof(data)
+    refusal = {
+        "kind": "legacy_main_domain_not_applicable/v2",
+        "check_id": 122766184991,
+        "original_conclusion": "failure",
+        **{
+            key: data["identity"][key]
+            for key in ("validation_pr", "validation_base_ref", "product_tree")
+        },
+        "source_head": data["profile"]["product_revision"],
+        "original_event_source_revision": data["profile"]["product_revision"],
+        "technical_gate_waiver": False,
+        "production_admission": False,
+    }
+    snapshots = {
+        "head": {
+            "revision": data["profile"]["product_revision"],
+            "runs": [data["run"]],
+            "checks": [data["check"]],
+            "statuses": [],
+        }
+    }
+    rule = {
+        "role": "head",
+        "app_id": 15368,
+        "suite_id": data["run"]["check_suite_id"],
+        "name": "evaluate",
+        "scope": "original-domain-refusal-cancellation",
+        "expected_conclusion": None,
+        "reason": "Exact native cancel remains UNKNOWN",
+    }
+    policy = {
+        "other_checks": [rule],
+        "statuses": [],
+        "workflow_catalog": {
+            domain.MAIN_WORKFLOW: {"disposition": "original-domain-not-applicable"}
+        },
+    }
+    refusals, proofs = [refusal], (proof,)
+    if fault == "missing_refusal":
+        refusals = []
+    elif fault == "wrong_base":
+        refusal["validation_base_ref"] = "main"
+    elif fault == "wrong_tree":
+        refusal["product_tree"] = "a" * 40
+    elif fault == "untyped":
+        proofs = (dict(proof.receipt),)
+    elif fault == "authority":
+        proof.receipt["source_proof"] = True
+    elif fault == "missing_check":
+        snapshots["head"]["checks"] = []
+    elif fault == "new_check":
+        extra = copy.deepcopy(data["check"])
+        extra.update(id=1, name="unknown")
+        snapshots["head"]["checks"].append(extra)
+    if fault:
+        with pytest.raises(ValueError):
+            qualifier.assess_all_app_policy(snapshots, [], policy, refusals, proofs)
+    else:
+        result = qualifier.assess_all_app_policy(snapshots, [], policy, refusals, proofs)
+        assert result["original_refusal_cancellations"][0]["conclusion"] == "cancelled"
+        assert result["verified_main_domain_refusal_cancellations"] == [proof.receipt]
 
 
 def register(scenario, run, job, check, annotations, logs):

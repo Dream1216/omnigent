@@ -564,6 +564,8 @@ def collect_infrastructure_cancellation(profile, identity, rule, run, jobs, dest
 def collect_observation(profile, identity, rule, run, jobs, destination):
     if rule["kind"] == KIND:
         return collect_zero_execution(profile, identity, rule, run, jobs, destination)
+    if rule["kind"] == REFUSAL_CANCELLATION_KIND:
+        return collect_refusal_cancellation(profile, identity, rule, run, jobs, destination)
     require(rule["kind"] == INFRASTRUCTURE_KIND, "unknown domain observation kind")
     return collect_infrastructure_cancellation(profile, identity, rule, run, jobs, destination)
 
@@ -585,13 +587,21 @@ def matching_refusal(proof, refusal):
 
 def typed_observation(proof):
     return (
-        isinstance(proof, ZeroExecutionObservation)
-        and proof.receipt.get("kind") == KIND
-        and proof.receipt.get("execution") == "native-proven-zero"
-    ) or (
-        isinstance(proof, InfrastructureCancellationObservation)
-        and proof.receipt.get("kind") == INFRASTRUCTURE_KIND
-        and proof.receipt.get("execution") == "native-infrastructure-executed-cancelled"
+        (
+            isinstance(proof, RefusalCancellationObservation)
+            and proof.receipt.get("kind") == REFUSAL_CANCELLATION_KIND
+            and proof.receipt.get("execution") == "native-refusal-then-cancelled"
+        )
+        or (
+            isinstance(proof, ZeroExecutionObservation)
+            and proof.receipt.get("kind") == KIND
+            and proof.receipt.get("execution") == "native-proven-zero"
+        )
+        or (
+            isinstance(proof, InfrastructureCancellationObservation)
+            and proof.receipt.get("kind") == INFRASTRUCTURE_KIND
+            and proof.receipt.get("execution") == "native-infrastructure-executed-cancelled"
+        )
     )
 
 
@@ -1118,3 +1128,179 @@ def unattributed_field(proof):
         if isinstance(proof, cls):
             return field
     raise ValueError("unattributed audit has no native typed observation")
+
+
+REFUSAL_CANCELLATION_KIND = "legacy_original_main_domain_refusal_then_cancellation/v1"
+_REFUSAL_CANCELLATION_PINS = {
+    "run_sha256": "9d8f5e5904b17bb7cd3d605a8d2ad31a62e6e4654a4196d1d72cdf483e5258f6",
+    "job_sha256": "1e47f092f7a1dea83eb3c9aaefa9dd29371434de5a6dd6ce686a3e0d19a8ed4a",
+    "check_sha256": "cd50adc209080bff2ff724ef3456150a34378986a2b5b4a93f713f43812d550d",
+    "annotations_sha256": "e567b2d9ced88d0730a90d811e074a9acf0993981164c0109d9f8dde85be2877",
+    "run_logs_sha256": "00543dac8eb32b6b4eb4325b9fc84fb0f5b8192cb6f5c47b7aa7c1f6cba91274",
+}
+_REFUSAL_CANCELLATION_CONTROL = "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe"
+_REFUSAL_CANCELLATION_GATE_SHA256 = (
+    "a3d115ddfaa911d74de290a6030ec74112edf5ace4270267ab1486d15a55bed5"
+)
+_REFUSAL_CANCELLATION_STEPS = (
+    (1, "Set up job", "success"),
+    (2, "Check out trusted gate", "success"),
+    (3, "Resolve current PR head", "failure"),
+    (4, "Evaluate exact PostgreSQL N-1 authority", "skipped"),
+    (5, "Mark non-completed N-1 run pending", "skipped"),
+    (6, "Post exact-head gate status", "skipped"),
+    (12, "Post Check out trusted gate", "success"),
+    (13, "Complete job", "success"),
+)
+
+
+@dataclass(frozen=True)
+class RefusalCancellationObservation:
+    """Exact cancelled audit; the independent failed-run refusal remains required."""
+
+    receipt: dict[str, Any]
+
+
+def validate_refusal_cancellation_rules(rows, profile, identity):
+    require(isinstance(rows, list) and len(rows) <= 1, "refusal cancellation scope differs")
+    for row in rows:
+        require(
+            isinstance(row, dict)
+            and row.get("kind") == REFUSAL_CANCELLATION_KIND
+            and profile["component"] == "Core"
+            and profile["product_revision"] == "62b5598cdba624987921cd7c865152564b3e59f4"
+            and profile["product_tree"] == "84bae20062a79a874c3755e6cf75728029c1f6fc"
+            and (row.get("run_id"), row.get("attempt"), row.get("job_id"), row.get("check_id"))
+            == (40673555905, 1, 122766118278, 122766118278)
+            and row.get("event") == "pull_request_target"
+            and row.get("attachment_revision") == profile["product_revision"]
+            and all(row.get(key) == value for key, value in _REFUSAL_CANCELLATION_PINS.items()),
+            "refusal cancellation is not the exact reviewed Core native tuple",
+        )
+    validate_rules([{**row, "kind": KIND} for row in rows], profile, identity)
+
+
+def verify_refusal_cancellation(profile, identity, rule, run, job, check, annotations, logs):
+    from saas.scripts.legacy_source_ci import checkout_commit, completed_step_lines
+
+    validate_refusal_cancellation_rules([rule], profile, identity)
+    require(
+        all(
+            native.native_digest(value) == rule[key]
+            for key, value in (
+                ("run_sha256", run),
+                ("job_sha256", job),
+                ("check_sha256", check),
+                ("annotations_sha256", annotations),
+            )
+        )
+        and len(logs) == 4894
+        and hashlib.sha256(logs).hexdigest() == rule["run_logs_sha256"],
+        "refusal cancellation raw native tuple differs",
+    )
+    require(
+        run.get("id") == rule["run_id"]
+        and run.get("run_attempt") == rule["attempt"]
+        and run.get("event") == rule["event"]
+        and run.get("path") == native.MAIN_WORKFLOW
+        and run.get("repository", {}).get("full_name") == "Dream1216/omnigent"
+        and run.get("head_repository", {}).get("full_name") == "Dream1216/omnigent"
+        and run.get("head_sha")
+        == job.get("head_sha")
+        == check.get("head_sha")
+        == profile["product_revision"]
+        and native._pr_numbers(run.get("pull_requests")) in ([], [identity["validation_pr"]])
+        and run.get("status") == job.get("status") == check.get("status") == "completed"
+        and run.get("conclusion")
+        == job.get("conclusion")
+        == check.get("conclusion")
+        == "cancelled"
+        and job.get("id") == check.get("id") == rule["job_id"]
+        and job.get("run_id") == rule["run_id"]
+        and job.get("run_attempt") == rule["attempt"]
+        and job.get("name") == check.get("name") == "evaluate"
+        and job.get("labels") == ["ubuntu-latest"]
+        and job.get("check_run_url") == f"{native._REPO_URL}/check-runs/{check['id']}"
+        and check.get("app", {}).get("id") == 15368
+        and check.get("check_suite", {}).get("id") == run.get("check_suite_id"),
+        "refusal cancellation native identity/provider/outcome differs",
+    )
+    steps = job.get("steps", [])
+    require(
+        tuple((s.get("number"), s.get("name"), s.get("conclusion")) for s in steps)
+        == _REFUSAL_CANCELLATION_STEPS
+        and all(s.get("status") == "completed" for s in steps),
+        "refusal cancellation executed a different native step",
+    )
+    prior, end = native._instant(job.get("started_at")), native._instant(job.get("completed_at"))
+    for step in steps:
+        start, finish = (
+            native._instant(step.get("started_at")),
+            native._instant(step.get("completed_at")),
+        )
+        require(prior <= start <= finish <= end, "refusal cancellation chronology differs")
+        prior = finish
+    with zipfile.ZipFile(io.BytesIO(logs)) as archive:
+        require(
+            archive.namelist() == ["0_evaluate.txt", "evaluate/system.txt"]
+            and archive.testzip() is None,
+            "refusal cancellation archive inventory differs",
+        )
+        log = archive.read("0_evaluate.txt").decode("utf-8")
+    require(
+        checkout_commit(log, steps[1]) == _REFUSAL_CANCELLATION_CONTROL,
+        "refusal cancellation checkout differs",
+    )
+    lines = completed_step_lines(log, steps[2])
+    require(
+        [line for line in lines if line.startswith("##[error]")]
+        == [native._ERROR, "##[error]Process completed with exit code 1."],
+        "refusal cancellation did not execute the original main-only refusal",
+    )
+    number, source = native.trigger_identity(
+        native.trigger_environment(log, steps[2]), run["event"]
+    )
+    require(
+        number == identity["validation_pr"] and source == profile["product_revision"],
+        "refusal cancellation original event differs",
+    )
+    return RefusalCancellationObservation(
+        {
+            **rule,
+            "workflow": native.MAIN_WORKFLOW,
+            "check_revision": check["head_sha"],
+            "check_suite_id": run["check_suite_id"],
+            "app_id": 15368,
+            "source_classification": "UNKNOWN",
+            "original_event_source_revision": source,
+            "trusted_checkout_revision": _REFUSAL_CANCELLATION_CONTROL,
+            "execution": "native-refusal-then-cancelled",
+            "original_conclusion": "cancelled",
+            "source_proof": False,
+            "guard_refusal": False,
+            "technical_gate_waiver": False,
+            "production_admission": False,
+            "registration_sha256": native.native_digest(rule),
+        }
+    )
+
+
+def collect_refusal_cancellation(profile, identity, rule, run, jobs, destination):
+    validate_refusal_cancellation_rules([rule], profile, identity)
+    require(len(jobs) == 1, "refusal cancellation native job set differs")
+    check = api(f"{native._ROOT}/check-runs/{rule['check_id']}")
+    annotations = annotations_for(rule["check_id"])
+    path = destination / f"refusal-cancelled-run-{run['id']}-attempt-{run['run_attempt']}.zip"
+    _download_run_logs(run["id"], run["run_attempt"], path, 8192)
+    require(
+        hashlib.sha256(native._native_file(native.MAIN_WORKFLOW, run["head_sha"])).hexdigest()
+        == native.MAIN_WORKFLOW_SHA256
+        and hashlib.sha256(
+            native._native_file(native._GATE, _REFUSAL_CANCELLATION_CONTROL)
+        ).hexdigest()
+        == _REFUSAL_CANCELLATION_GATE_SHA256,
+        "refusal cancellation workflow/gate source bytes differ",
+    )
+    return verify_refusal_cancellation(
+        profile, identity, rule, run, jobs[0], check, annotations, path.read_bytes()
+    )

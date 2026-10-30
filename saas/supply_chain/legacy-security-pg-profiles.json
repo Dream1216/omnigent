@@ -2,8 +2,8 @@
   "profiles": {
     "Core": {
       "component": "Core",
-      "product_revision": "3f9399c0fc6ad8f7468c6bb71c9c9588f6ac1185",
-      "product_tree": "91cfcc567c4e777c0e24563ad83f6ccf5982266e",
+      "product_revision": "62b5598cdba624987921cd7c865152564b3e59f4",
+      "product_tree": "84bae20062a79a874c3755e6cf75728029c1f6fc",
       "trusted_inputs": {
         "pyproject.toml": "2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9",
         "saas/n1_compat/Dockerfile": "df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed",
@@ -25,13 +25,13 @@
         "tests/saas/test_n1_merge_gate_candidate.py": "ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365",
         "tests/saas/test_n1_outbox_admission.py": "517908aeb18a3e8baabe5c8575f754e99ff9f8148c7af6a2c4ed1d708af991e8",
         "tests/saas/test_production_runner_postgresql.py": "521fb35797bdf7d58c2511813adb9ec0b32e5f3abd8c76b42b6ca94ad9a275db",
-        "uv.lock": "4cf2c0b2762fa8be4b589c9edec845c327dbff1df3af2ce168c7d70cba610073"
+        "uv.lock": "1d44c055d8f64ffababa0675aa6de21a640362e904c56a179e453d3f46eaf739"
       }
     },
     "Gateway": {
       "component": "Gateway",
-      "product_revision": "073c73be7970e6593546e5cd339aa8f4e800cdc7",
-      "product_tree": "4760166d4ee3890a388485bea703ca0d205071cc",
+      "product_revision": "b6363d1b99fa9f190589471a21c89f89057e6b88",
+      "product_tree": "e4db6f65c725d5cb7131e4774da3c39082553043",
       "trusted_inputs": {
         "pyproject.toml": "2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9",
         "saas/n1_compat/Dockerfile": "df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed",
@@ -53,13 +53,13 @@
         "tests/saas/test_n1_merge_gate_candidate.py": "ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365",
         "tests/saas/test_n1_outbox_admission.py": "d5db6f7cc3feb7a8a9de64da88bab036ba7b6e57be4043e36c29736d462811c1",
         "tests/saas/test_production_runner_postgresql.py": "3212366d4d615971b1a386831abb47280d2d94332c1876b7552a371dbfc34ee2",
-        "uv.lock": "4cf2c0b2762fa8be4b589c9edec845c327dbff1df3af2ce168c7d70cba610073"
+        "uv.lock": "1d44c055d8f64ffababa0675aa6de21a640362e904c56a179e453d3f46eaf739"
       }
     },
     "Model": {
       "component": "Model",
-      "product_revision": "710ad7256deb1d65ab1830c43b852807b589ddcb",
-      "product_tree": "5a47b5847a6a6dc5a9bc0b73a2dd248713b64d55",
+      "product_revision": "538eacfab39402307d0b477ba5efc0eddc8007b1",
+      "product_tree": "931eded80ed4a253f6e43311479567109568430a",
       "trusted_inputs": {
         "pyproject.toml": "2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9",
         "saas/n1_compat/Dockerfile": "df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed",
@@ -81,7 +81,7 @@
         "tests/saas/test_n1_merge_gate_candidate.py": "ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365",
         "tests/saas/test_n1_outbox_admission.py": "517908aeb18a3e8baabe5c8575f754e99ff9f8148c7af6a2c4ed1d708af991e8",
         "tests/saas/test_production_runner_postgresql.py": "521fb35797bdf7d58c2511813adb9ec0b32e5f3abd8c76b42b6ca94ad9a275db",
-        "uv.lock": "4cf2c0b2762fa8be4b589c9edec845c327dbff1df3af2ce168c7d70cba610073"
+        "uv.lock": "1d44c055d8f64ffababa0675aa6de21a640362e904c56a179e453d3f46eaf739"
       }
     }
   },

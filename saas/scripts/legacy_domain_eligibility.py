@@ -63,7 +63,19 @@ def validate_domain_rules(policy: dict[str, Any], identity: dict[str, Any]) -> N
         isinstance(infrastructure, dict) and set(infrastructure) <= {MAIN_WORKFLOW},
         "only the reviewed main-domain workflow has an infrastructure cancellation audit",
     )
+    refusal_cancellations = policy.get("domain_refusal_cancellation", {})
+    require(
+        isinstance(refusal_cancellations, dict) and set(refusal_cancellations) <= {MAIN_WORKFLOW},
+        "refusal cancellation policy has an unknown workflow",
+    )
+    nonexecution.validate_refusal_cancellation_rules(
+        refusal_cancellations.get(MAIN_WORKFLOW, []), policy, identity
+    )
     rules = policy["domain_not_applicable"]
+    require(
+        not refusal_cancellations or bool(rules),
+        "refusal cancellation cannot create domain eligibility",
+    )
     require(
         not infrastructure or bool(rules),
         "infrastructure cancellation alone cannot create domain eligibility",
@@ -336,7 +348,9 @@ class DomainEligibility:
     refusals: tuple[dict[str, Any], ...]
     discovery_sha256: str | None
     observations: tuple[
-        nonexecution.ZeroExecutionObservation | nonexecution.InfrastructureCancellationObservation,
+        nonexecution.ZeroExecutionObservation
+        | nonexecution.InfrastructureCancellationObservation
+        | nonexecution.RefusalCancellationObservation,
         ...,
     ] = ()
 
@@ -393,7 +407,8 @@ def _discovery_binding(result: dict[str, Any]) -> str:
         )
     audited = result.get("non_execution_observations", [])
     infrastructure = result.get("infrastructure_cancellation_observations", [])
-    if audited or infrastructure:
+    cancelled_refusals = result.get("refusal_cancellation_observations", [])
+    if audited or infrastructure or cancelled_refusals:
         require(
             isinstance(result, nonexecution.DomainDiscovery)
             and all(nonexecution.typed_observation(row) for row in result.observations)
@@ -408,7 +423,13 @@ def _discovery_binding(result: dict[str, Any]) -> str:
                 for row in result.observations
                 if isinstance(row, nonexecution.InfrastructureCancellationObservation)
             ]
-            == infrastructure,
+            == infrastructure
+            and [
+                row.receipt
+                for row in result.observations
+                if isinstance(row, nonexecution.RefusalCancellationObservation)
+            ]
+            == cancelled_refusals,
             "domain discovery has no exact typed in-memory native audit proof",
         )
     for field, rows, classification in (
@@ -424,6 +445,7 @@ def _discovery_binding(result: dict[str, Any]) -> str:
             "audited-unattributed-nonexecution",
         ),
         ("non_execution_observations", audited, "audited-nonexecution"),
+        ("refusal_cancellation_observations", cancelled_refusals, "audited-refusal-cancellation"),
         (
             "infrastructure_cancellation_observations",
             infrastructure,
@@ -449,6 +471,7 @@ def _discovery_binding(result: dict[str, Any]) -> str:
                 "old-source",
                 "audited-nonexecution",
                 "audited-infrastructure-cancellation",
+                "audited-refusal-cancellation",
                 "audited-unattributed-nonexecution",
                 "audited-unattributed-no-job-execution",
                 "audited-unattributed-bootstrap-cancellation",
@@ -488,6 +511,7 @@ def _discovery_binding(result: dict[str, Any]) -> str:
             **({"unattributed_no_job_audits": no_job} if no_job else {}),
             **({"unattributed_bootstrap_audits": bootstrap} if bootstrap else {}),
             **({"zero_execution_audits": audited} if audited else {}),
+            **({"refusal_cancellation_audits": cancelled_refusals} if cancelled_refusals else {}),
             **({"infrastructure_cancellation_audits": infrastructure} if infrastructure else {}),
         }
     )
@@ -515,6 +539,10 @@ def collect_domain_eligibility(
         "infrastructure audits cannot replace current-product refusal",
     )
     nonexecution.validate_infrastructure_rules(infrastructure_rules, profile, identity)
+    refusal_cancellation_rules = policy.get("domain_refusal_cancellation", {}).get(
+        MAIN_WORKFLOW, []
+    )
+    nonexecution.validate_refusal_cancellation_rules(refusal_cancellation_rules, profile, identity)
     require(
         not audit_rules or rules, "zero-execution audits cannot replace current-product refusal"
     )
@@ -540,8 +568,15 @@ def collect_domain_eligibility(
             infrastructure_rules,
             unattributed_policy,
             bootstrap_policy,
+            **(
+                {"refusal_cancellation_rules": refusal_cancellation_rules}
+                if refusal_cancellation_rules
+                else {}
+            ),
         )
-        if unattributed_policy is not None or bootstrap_policy is not None
+        if unattributed_policy is not None
+        or bootstrap_policy is not None
+        or refusal_cancellation_rules
         else discover_main_domain(
             profile, identity, rules, first_path, audit_rules, infrastructure_rules
         )
@@ -595,8 +630,15 @@ def collect_domain_eligibility(
             infrastructure_rules,
             unattributed_policy,
             bootstrap_policy,
+            **(
+                {"refusal_cancellation_rules": refusal_cancellation_rules}
+                if refusal_cancellation_rules
+                else {}
+            ),
         )
-        if unattributed_policy is not None or bootstrap_policy is not None
+        if unattributed_policy is not None
+        or bootstrap_policy is not None
+        or refusal_cancellation_rules
         else discover_main_domain(
             profile, identity, rules, final_path, audit_rules, infrastructure_rules
         )

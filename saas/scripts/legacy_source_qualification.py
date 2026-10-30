@@ -117,6 +117,7 @@ def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[st
         - {
             "domain_non_execution",
             "domain_infrastructure_cancellation",
+            "domain_refusal_cancellation",
             "domain_unattributed_zero_execution",
             "domain_unattributed_bootstrap_cancellation",
         }
@@ -398,7 +399,9 @@ def assess_all_app_policy(
     policy: dict[str, Any],
     domain_receipts: list[dict[str, Any]] | None = None,
     domain_observations: tuple[
-        nonexecution.ZeroExecutionObservation | nonexecution.InfrastructureCancellationObservation,
+        nonexecution.ZeroExecutionObservation
+        | nonexecution.InfrastructureCancellationObservation
+        | nonexecution.RefusalCancellationObservation,
         ...,
     ] = (),
 ) -> dict[str, Any]:
@@ -459,6 +462,7 @@ def assess_all_app_policy(
                 "original-domain-not-applicable",
                 "original-domain-zero-execution",
                 "original-domain-infrastructure-cancellation",
+                "original-domain-refusal-cancellation",
             }
             and isinstance(row["reason"], str)
             and bool(row["reason"].strip()),
@@ -488,6 +492,7 @@ def assess_all_app_policy(
                         in {
                             "original-domain-zero-execution",
                             "original-domain-infrastructure-cancellation",
+                            "original-domain-refusal-cancellation",
                         }
                         and declared_workflow["disposition"] == "original-domain-not-applicable"
                     ),
@@ -514,6 +519,7 @@ def assess_all_app_policy(
             if row["scope"] in {
                 "original-domain-zero-execution",
                 "original-domain-infrastructure-cancellation",
+                "original-domain-refusal-cancellation",
             }:
                 proof = audit_checks.get(actual_checks.get(key, {}).get("id"))
                 require(
@@ -535,13 +541,17 @@ def assess_all_app_policy(
                     is False
                     and proof["kind"]
                     == (
-                        nonexecution.KIND
+                        nonexecution.REFUSAL_CANCELLATION_KIND
+                        if row["scope"] == "original-domain-refusal-cancellation"
+                        else nonexecution.KIND
                         if row["scope"] == "original-domain-zero-execution"
                         else nonexecution.INFRASTRUCTURE_KIND
                     )
                     and proof["execution"]
                     == (
-                        "native-proven-zero"
+                        "native-refusal-then-cancelled"
+                        if row["scope"] == "original-domain-refusal-cancellation"
+                        else "native-proven-zero"
                         if row["scope"] == "original-domain-zero-execution"
                         else "native-infrastructure-executed-cancelled"
                     )
@@ -571,6 +581,7 @@ def assess_all_app_policy(
                     "original-domain-not-applicable",
                     "original-domain-zero-execution",
                     "original-domain-infrastructure-cancellation",
+                    "original-domain-refusal-cancellation",
                 },
                 "a domain refusal cannot be demoted to generic information or governance",
             )
@@ -593,6 +604,7 @@ def assess_all_app_policy(
                     "original-domain-not-applicable",
                     "original-domain-zero-execution",
                     "original-domain-infrastructure-cancellation",
+                    "original-domain-refusal-cancellation",
                 },
                 "external provider cannot supply an original governance exception",
             )
@@ -604,6 +616,7 @@ def assess_all_app_policy(
     governance = []
     informational = []
     infrastructure_cancellations = []
+    refusal_cancellations = []
     for key, rule in expected.items():
         check = actual_checks[key]
         require(check["status"] == "completed", "all-App check is not terminal")
@@ -622,6 +635,23 @@ def assess_all_app_policy(
                         "reason": rule["reason"],
                     }
                 )
+        elif rule["scope"] == "original-domain-refusal-cancellation":
+            require(
+                rule["expected_conclusion"] is None and check["conclusion"] == "cancelled",
+                "refusal cancellation must retain cancelled outcome",
+            )
+            refusal_cancellations.append(
+                {
+                    "check_id": check["id"],
+                    "conclusion": "cancelled",
+                    "reason": rule["reason"],
+                    "scope": rule["scope"],
+                    "source_proof": False,
+                    "guard_refusal": False,
+                    "technical_gate_waiver": False,
+                    "production_admission": False,
+                }
+            )
         elif rule["scope"] == "original-domain-infrastructure-cancellation":
             require(
                 rule["expected_conclusion"] is None and check["conclusion"] == "cancelled",
@@ -704,6 +734,18 @@ def assess_all_app_policy(
         "original_informational_checks": informational,
         "original_infrastructure_cancellations": infrastructure_cancellations,
         "all_original_governance_clear": not governance,
+        **(
+            {
+                "verified_main_domain_refusal_cancellations": [
+                    row.receipt
+                    for row in domain_observations
+                    if isinstance(row, nonexecution.RefusalCancellationObservation)
+                ],
+                "original_refusal_cancellations": refusal_cancellations,
+            }
+            if refusal_cancellations
+            else {}
+        ),
         "verified_main_domain_refusals": domain_receipts or [],
         "verified_main_domain_zero_execution": [
             row.receipt
