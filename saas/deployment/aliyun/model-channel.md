@@ -1,7 +1,7 @@
 # Aliyun Host model admission candidate
 
-This is P3 implementation work. It does not enable the provider or admit a
-production release. Registry selection does not change this model channel.
+This is P3 implementation work. It does not enable the production provider or
+admit a release. Registry selection does not change this model channel.
 
 The cloud Host must receive only its own launch token and a server-signed model
 lease. The lease binds the Host ID, launch-token digest and authorized Runtime
@@ -33,8 +33,13 @@ must independently admit that workspace and session.
 Remaining integration and acceptance:
 
 - Wire the broker and explicit profile into production Server composition.
-- Stage owner-only Host/lease files and use a dedicated cloud Host entrypoint.
-- Connect the scoped launcher to the production tenant factory and bounded TTLs.
+- Admit the opt-in tenant factory through the production release profile.
+- Verify the dedicated cloud Host entrypoint and owner-only file delivery in a
+  real MicroVM. The scoped launcher now stages these files through the SDK,
+  launches `saas.production.aliyun_host`, and removes its private directory on
+  startup failure. Its commands and process arguments contain file references.
+- Complete absolute-lifetime and lease-expiry behavior; a rolling SDK timeout
+  must not keep a Host alive beyond its admitted model/launch credential lifetime.
 - Configure public TLS callback and model gateway ingress without broadening
   ordinary SaaS authentication or exposing the gateway signing authority.
 - Exercise a real Host, isolated Runner, model request, renewal, revocation and
@@ -46,6 +51,8 @@ Local verification from the repository root:
 
 ```bash
 .venv/bin/pytest tests/saas/test_aliyun_model_lease.py \
+  tests/saas/test_aliyun_host.py tests/saas/test_aliyun_host_launcher.py \
+  tests/saas/test_aliyun_tenant_sandbox.py \
   tests/saas/test_aliyun_model_broker.py tests/saas/test_aliyun_model_client.py \
   tests/saas/test_control_plane_resolver.py tests/saas/test_http_cookie_auth.py \
   tests/saas/test_platform_model_relay.py tests/saas/test_platform_model_runtime.py \

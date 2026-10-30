@@ -1,0 +1,405 @@
+{
+  "adapter_contract_version": "0.2.0",
+  "candidate_evidence_version": 3,
+  "diagnostic_policy": {
+    "config_environment": "omitted",
+    "history_created_by": "equality-and-ordinal-drift-only",
+    "layer_contents": "omitted"
+  },
+  "images": {
+    "host": {
+      "first": {
+        "attestation_descriptor_count": 1,
+        "attestations": {
+          "linux/amd64": {
+            "slsa_provenance": true,
+            "spdx_sbom": true
+          }
+        },
+        "platforms": {
+          "linux/amd64": {
+            "config_created": "2026-10-30T21:42:09Z",
+            "config_digest": "sha256:39d7a0bbf80223db27b92ab68a0a255ee0a3b392411cce881bbe5422e02a04fa",
+            "history": [
+              {
+                "created": "2026-10-29T08:13:09.261282142Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-29T08:13:10.448625067Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              }
+            ],
+            "labels": {
+              "ai.omnigent.saas.qualification": "candidate",
+              "ai.omnigent.saas.sandbox-runtime": "aliyun-microvm",
+              "description": "Base runtime: Python/Node.js\u3001\u5e38\u7528\u5f00\u53d1\u5de5\u5177\u4e0e\u5b58\u50a8\u5ba2\u6237\u7aef\u57fa\u7840\u73af\u5883",
+              "layer": "base",
+              "maintainer": "Aliyun FC Sandbox Team",
+              "org.opencontainers.image.revision": "b432c1d0d81ab45b61979343951a3e065b6b434c"
+            },
+            "layers": [
+              {
+                "digest": "sha256:f7f5ce683f98980e531eb1518ac648764489e2266a961d65cea7c4a247745b35",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 295541423
+              },
+              {
+                "digest": "sha256:9450771f01749acf48a97e2f2b37ba39b9c832d71150ea04f280121d070fbc12",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 239
+              },
+              {
+                "digest": "sha256:a8cecdf9bc33539ff10dfaba7af62ed690b8e67665582dd79a662258f4e53e6f",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 350
+              },
+              {
+                "digest": "sha256:36cae8acaff055374157313b78183a119b5394b2e98bdbc4da1d99cf48aff263",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 5575395
+              },
+              {
+                "digest": "sha256:d431a7bf19e4132254187dc50cd479a0defa447467a1caf2985268cab5fea144",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 246
+              },
+              {
+                "digest": "sha256:499ebd77f9b6d8993867f61f7715c1282cfc539f35702d14a140603bf31e79bb",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 45255140
+              },
+              {
+                "digest": "sha256:fc19046c6f082ff5d7ace464abc1dc37710c19d4983f28a111aec3a301680962",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 2760998
+              },
+              {
+                "digest": "sha256:a911c8021e1f988beb40853ff18c9bc84f7dcf19a50f36deb5b6b7e327b5ee52",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 211
+              },
+              {
+                "digest": "sha256:5c29a0567863e3c7a1f49d4a0b7c65b84642a360227371445b75c2eb428a0c1a",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 153115750
+              },
+              {
+                "digest": "sha256:3588390788790e7d92c8ea643fca23143182ce65c8bcebc9027d1c7e1a7c6ddb",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 578257205
+              },
+              {
+                "digest": "sha256:d5ab0bdcd5f96699bc7e1747e265862b8a2df04851a3d60748440655c3db0ee8",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 2444
+              },
+              {
+                "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 32
+              }
+            ],
+            "manifest_digest": "sha256:dd488ff14449cad584909cd5524d79e624a44b86d4c840c0043662608a0ed246",
+            "rootfs_diff_ids": [
+              "sha256:eb075e2e548a8f53231effe3ce1521cd15bf6b2f797a87b0dab0c33f058086d2",
+              "sha256:597cab32b9f9af14c28841d5fba7233a886ea03df51916b562904037abb06444",
+              "sha256:3c153bc8ee30d0430011f88af885bde38c273fea9af413be8c4789c3aba70f8c",
+              "sha256:f61b52c16f976f136ac9fa450c232c3956054349872e3c75debc83aa1dd9d3fc",
+              "sha256:82a8ddd00c5d532eae2fded638008588f608f01f8ef0127d003a54a8556eae69",
+              "sha256:d5f4f4e21bed9a590899c4965904aa76b1719974c1bf68f9c1dbae613a6b186e",
+              "sha256:32538f60a454a6fc8fc7fa48e7468e1e96dd75f859b750310264bb4e556f4c78",
+              "sha256:c00a98b0e2cb2dd65594ee26cedbc4134e4ab9d998e700b9f15a291debac4846",
+              "sha256:2da48427784ebb3d1c1cf8c9f95e974cb4dd8936d5b52c7cf903eac4b2d194cb",
+              "sha256:10a2af949b63a6da0005bc3552dd9426d36491d707d99d8161181ba67c9238af",
+              "sha256:3fd6a755f31dda583d5fe0bde8520c646fde0fb0f0d6e6bd9ce0973c7c15eefd",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ]
+          }
+        }
+      },
+      "history_created_by_drift_ordinals": {
+        "linux/amd64": []
+      },
+      "history_created_by_equal": true,
+      "label_profile": "aliyun-host",
+      "matching_platform_manifest_and_config": true,
+      "second": {
+        "attestation_descriptor_count": 1,
+        "attestations": {
+          "linux/amd64": {
+            "slsa_provenance": true,
+            "spdx_sbom": true
+          }
+        },
+        "platforms": {
+          "linux/amd64": {
+            "config_created": "2026-10-30T21:42:09Z",
+            "config_digest": "sha256:39d7a0bbf80223db27b92ab68a0a255ee0a3b392411cce881bbe5422e02a04fa",
+            "history": [
+              {
+                "created": "2026-10-29T08:13:09.261282142Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-29T08:13:10.448625067Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": false
+              },
+              {
+                "created": "2026-10-30T21:42:09Z",
+                "empty_layer": true
+              }
+            ],
+            "labels": {
+              "ai.omnigent.saas.qualification": "candidate",
+              "ai.omnigent.saas.sandbox-runtime": "aliyun-microvm",
+              "description": "Base runtime: Python/Node.js\u3001\u5e38\u7528\u5f00\u53d1\u5de5\u5177\u4e0e\u5b58\u50a8\u5ba2\u6237\u7aef\u57fa\u7840\u73af\u5883",
+              "layer": "base",
+              "maintainer": "Aliyun FC Sandbox Team",
+              "org.opencontainers.image.revision": "b432c1d0d81ab45b61979343951a3e065b6b434c"
+            },
+            "layers": [
+              {
+                "digest": "sha256:f7f5ce683f98980e531eb1518ac648764489e2266a961d65cea7c4a247745b35",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 295541423
+              },
+              {
+                "digest": "sha256:9450771f01749acf48a97e2f2b37ba39b9c832d71150ea04f280121d070fbc12",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 239
+              },
+              {
+                "digest": "sha256:a8cecdf9bc33539ff10dfaba7af62ed690b8e67665582dd79a662258f4e53e6f",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 350
+              },
+              {
+                "digest": "sha256:36cae8acaff055374157313b78183a119b5394b2e98bdbc4da1d99cf48aff263",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 5575395
+              },
+              {
+                "digest": "sha256:d431a7bf19e4132254187dc50cd479a0defa447467a1caf2985268cab5fea144",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 246
+              },
+              {
+                "digest": "sha256:499ebd77f9b6d8993867f61f7715c1282cfc539f35702d14a140603bf31e79bb",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 45255140
+              },
+              {
+                "digest": "sha256:fc19046c6f082ff5d7ace464abc1dc37710c19d4983f28a111aec3a301680962",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 2760998
+              },
+              {
+                "digest": "sha256:a911c8021e1f988beb40853ff18c9bc84f7dcf19a50f36deb5b6b7e327b5ee52",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 211
+              },
+              {
+                "digest": "sha256:5c29a0567863e3c7a1f49d4a0b7c65b84642a360227371445b75c2eb428a0c1a",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 153115750
+              },
+              {
+                "digest": "sha256:3588390788790e7d92c8ea643fca23143182ce65c8bcebc9027d1c7e1a7c6ddb",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 578257205
+              },
+              {
+                "digest": "sha256:d5ab0bdcd5f96699bc7e1747e265862b8a2df04851a3d60748440655c3db0ee8",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 2444
+              },
+              {
+                "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+                "media_type": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "size": 32
+              }
+            ],
+            "manifest_digest": "sha256:dd488ff14449cad584909cd5524d79e624a44b86d4c840c0043662608a0ed246",
+            "rootfs_diff_ids": [
+              "sha256:eb075e2e548a8f53231effe3ce1521cd15bf6b2f797a87b0dab0c33f058086d2",
+              "sha256:597cab32b9f9af14c28841d5fba7233a886ea03df51916b562904037abb06444",
+              "sha256:3c153bc8ee30d0430011f88af885bde38c273fea9af413be8c4789c3aba70f8c",
+              "sha256:f61b52c16f976f136ac9fa450c232c3956054349872e3c75debc83aa1dd9d3fc",
+              "sha256:82a8ddd00c5d532eae2fded638008588f608f01f8ef0127d003a54a8556eae69",
+              "sha256:d5f4f4e21bed9a590899c4965904aa76b1719974c1bf68f9c1dbae613a6b186e",
+              "sha256:32538f60a454a6fc8fc7fa48e7468e1e96dd75f859b750310264bb4e556f4c78",
+              "sha256:c00a98b0e2cb2dd65594ee26cedbc4134e4ab9d998e700b9f15a291debac4846",
+              "sha256:2da48427784ebb3d1c1cf8c9f95e974cb4dd8936d5b52c7cf903eac4b2d194cb",
+              "sha256:10a2af949b63a6da0005bc3552dd9426d36491d707d99d8161181ba67c9238af",
+              "sha256:3fd6a755f31dda583d5fe0bde8520c646fde0fb0f0d6e6bd9ce0973c7c15eefd",
+              "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "label_profile": "aliyun-host",
+  "product_revision": "b432c1d0d81ab45b61979343951a3e065b6b434c",
+  "production_blockers": [
+    "candidate archives are not registry-published immutable digests",
+    "keyless signatures have not been verified",
+    "protected production workflow identity has not been verified",
+    "vulnerability and license admission evidence is not attached",
+    "digest-pinned canary and N-1 rollback have not been exercised"
+  ],
+  "production_ready": false,
+  "source_date_epoch": 1793396529,
+  "status": "pass",
+  "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
+  "violations": []
+}

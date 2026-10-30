@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import secrets
+import shlex
+import threading
+from collections.abc import Callable, Sequence
+from contextlib import suppress
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -12,8 +17,28 @@ import click
 import httpx
 
 from omnigent.db.db_models import current_workspace_id
+from omnigent.host.identity import (
+    HOST_ID_ENV_VAR,
+    HOST_NAME_ENV_VAR,
+    HOST_TOKEN_FILE_ENV_VAR,
+    HOST_WORKSPACE_ID_ENV_VAR,
+)
+from omnigent.onboarding.sandboxes.base import (
+    RemoteCommandResult,
+    render_host_config_write_command,
+)
 from omnigent.onboarding.sandboxes.e2b import E2BSandboxLauncher
+from omnigent.onboarding.sandboxes.types import RepoWorkspace, SandboxCapabilities, clone_dir_names
 from saas.compatibility.runtime_partition import current_runtime_context
+from saas.production.aliyun_host import (
+    MODEL_GATEWAY_URL_ENV,
+    MODEL_LEASE_FILE_ENV,
+    MODEL_TENANT_ENV,
+    SERVER_URL_ENV,
+)
+from saas.production.aliyun_model_client import validated_server_origin
+from saas.production.aliyun_model_lease import HostModelLeaseAuthority
+from saas.production.platform_model_relay import validated_model_gateway_url
 from saas.production.tenant_model_keys import _read_file
 
 if TYPE_CHECKING:
@@ -78,8 +103,10 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         *,
         template: str,
         credential_file: Path,
-        scope: AliyunSandboxScope,
+        scope: AliyunSandboxScope | Callable[[], AliyunSandboxScope],
         lifetime_s: int = 1800,
+        model_leases: HostModelLeaseAuthority | None = None,
+        model_gateway_url: str | None = None,
     ) -> None:
         if (
             not isinstance(template, str)
@@ -87,13 +114,150 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             or _IDENTIFIER.fullmatch(template) is None
             or type(lifetime_s) is not int
             or not 60 <= lifetime_s <= 3600
-            or not isinstance(scope, AliyunSandboxScope)
+            or not (isinstance(scope, AliyunSandboxScope) or callable(scope))
         ):
             raise ValueError("Aliyun sandbox configuration is invalid")
         super().__init__(template=template, env=())
         self._credential_file = credential_file
-        self.scope = scope
+        self._scope_source = scope
+        self._scope_lock = threading.Lock()
+        self._launch_scope: AliyunSandboxScope | None = (
+            scope if isinstance(scope, AliyunSandboxScope) else None
+        )
         self.lifetime_s = lifetime_s
+        if (model_leases is None) != (model_gateway_url is None) or (
+            model_leases is not None and not isinstance(model_leases, HostModelLeaseAuthority)
+        ):
+            raise ValueError("Aliyun Host model configuration is incomplete")
+        if model_gateway_url is not None:
+            model_gateway_url = validated_model_gateway_url(model_gateway_url)
+            if not model_gateway_url.startswith("https://"):
+                raise ValueError("Aliyun Host model gateway requires TLS")
+        self._model_leases = model_leases
+        self._model_gateway_url = model_gateway_url
+
+    @property
+    def scope(self) -> AliyunSandboxScope:
+        """Resolve once from the launch or persisted cleanup workspace; then freeze."""
+
+        with self._scope_lock:
+            if self._launch_scope is None:
+                source = self._scope_source
+                resolved = source() if callable(source) else source
+                if not isinstance(resolved, AliyunSandboxScope):
+                    raise ValueError("Aliyun sandbox scope resolver is invalid")
+                self._launch_scope = resolved
+            return self._launch_scope
+
+    @property
+    def capabilities(self) -> SandboxCapabilities:
+        return replace(super().capabilities, multi_repo=True, git_clone_options=True)
+
+    @property
+    def token_ttl_s(self) -> int:
+        return self.lifetime_s + 3600
+
+    def run(self, sandbox_id: str, command: str, *, check: bool = True) -> RemoteCommandResult:
+        try:
+            return super().run(sandbox_id, command, check=check)
+        except click.ClickException:
+            raise click.ClickException("Aliyun sandbox command failed") from None
+
+    def start_host(
+        self,
+        sandbox_id: str,
+        *,
+        token: str,
+        host_id: str,
+        host_name: str,
+        server_url: str,
+        repos: Sequence[RepoWorkspace] = (),
+        host_config: dict[str, object] | None = None,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> str:
+        """Keep workspace transport, but launch the file-authenticated cloud Host."""
+
+        self.scope.check_context(required=True)
+        if self._model_leases is None or self._model_gateway_url is None:
+            raise ValueError("Aliyun Host model authority is unavailable")
+        server_url = validated_server_origin(server_url)
+        if (
+            UUID(host_id).int == 0
+            or UUID(host_id).hex != host_id
+            or not host_name
+            or host_name != host_name.strip()
+            or len(host_name) > 128
+        ):
+            raise ValueError("Aliyun Host identity is invalid")
+        if any(ord(c) < 32 or ord(c) == 127 for c in host_name):
+            raise ValueError("Aliyun Host name is invalid")
+        lease = self._model_leases.issue(
+            host_id=host_id,
+            launch_token=token,
+            runtime=current_runtime_context(),
+            ttl_seconds=self.token_ttl_s,
+        )
+        home = self.run(sandbox_id, 'printf %s "$HOME"').stdout.strip()
+        if home != "/home/user":
+            raise ValueError("Aliyun Host image HOME is not the qualified path")
+        workspace = f"{home}/workspace"
+        self.run(sandbox_id, f"mkdir -p -- {shlex.quote(workspace)}")
+        if repos:
+            if on_stage is not None:
+                on_stage("cloning")
+            checkouts = [
+                self.materialize_workspace(
+                    sandbox_id,
+                    workspace=workspace,
+                    repo_url=repo.url,
+                    repo_branch=repo.branch,
+                    repo_name=directory,
+                    git_clone=repo.git_clone,
+                )
+                for repo, directory in zip(repos, clone_dir_names(repos), strict=True)
+            ]
+            workspace = checkouts[0] if len(checkouts) == 1 else workspace
+        if host_config is not None:
+            self.run(sandbox_id, render_host_config_write_command(host_config))
+        private = f"{home}/.omnigent/runtime/aliyun-host-{host_id}-{secrets.token_hex(12)}"
+        prepare = (
+            "import sys; from pathlib import Path; "
+            "from saas.production.aliyun_host import prepare_aliyun_host_directory; "
+            "prepare_aliyun_host_directory(Path(sys.argv[1]))"
+        )
+        self.run(sandbox_id, shlex.join(["/opt/venv/bin/python", "-I", "-c", prepare, private]))
+        token_path, lease_path = f"{private}/host-token", f"{private}/model-lease"
+        try:
+            handle = self._resolve(sandbox_id)
+            try:
+                handle.files.write(token_path, token, user="user", request_timeout=45)
+                handle.files.write(lease_path, lease, user="user", request_timeout=45)
+            except Exception:  # noqa: BLE001 - SDK errors must not echo credential payloads.
+                raise click.ClickException("Aliyun Host credential delivery failed") from None
+            self.run(sandbox_id, shlex.join(["chmod", "0400", "--", token_path, lease_path]))
+            if on_stage is not None:
+                on_stage("starting")
+            environment = {
+                HOST_ID_ENV_VAR: host_id,
+                HOST_NAME_ENV_VAR: host_name,
+                HOST_TOKEN_FILE_ENV_VAR: token_path,
+                HOST_WORKSPACE_ID_ENV_VAR: str(self.scope.workspace_id),
+                SERVER_URL_ENV: server_url,
+                MODEL_LEASE_FILE_ENV: lease_path,
+                MODEL_GATEWAY_URL_ENV: self._model_gateway_url,
+                MODEL_TENANT_ENV: str(self.scope.tenant_id),
+            }
+            command = " ".join(f"{k}={shlex.quote(v)}" for k, v in environment.items())
+            self.run_background(
+                sandbox_id,
+                f"{command} /opt/venv/bin/python -I -m saas.production.aliyun_host",
+                log_path=f"{private}/host.log",
+            )
+        except BaseException:
+            with suppress(Exception):
+                self.run(sandbox_id, shlex.join(["rm", "-rf", "--", private]), check=False)
+            raise
+        return workspace
 
     def _sdk_options(self) -> dict[str, Any]:
         raw = _read_file(self._credential_file, private=True, maximum=512)

@@ -46,12 +46,15 @@ jobs:
       - run: uv sync --frozen --extra all --extra saas --extra e2b --group dev
       - name: Check scoped transport and existing production boundaries
         run: |
-          uv run pyrefly check saas/production/aliyun_sandbox.py \
+          uv run pyrefly check saas/production/aliyun_sandbox.py saas/production/aliyun_host.py \
+            saas/production/aliyun_tenant_sandbox.py saas/production/tenant_sandbox.py \
             saas/production/aliyun_model_lease.py saas/production/aliyun_model_broker.py \
             saas/production/aliyun_model_client.py saas/production/platform_model_host.py \
             saas/production/platform_model_relay.py saas/control_plane/resolver.py \
             saas/control_plane/http_auth.py saas/runner_adapter/platform_model_gateway.py
           uv run pytest tests/saas/test_aliyun_sandbox.py tests/saas/test_aliyun_sandbox_probe.py \
+            tests/saas/test_aliyun_host.py tests/saas/test_aliyun_host_launcher.py \
+            tests/saas/test_aliyun_tenant_sandbox.py \
             tests/saas/test_tenant_sandbox.py tests/saas/test_image_supply_chain.py \
             tests/saas/test_scan_oci_candidates.py tests/saas/test_aliyun_model_lease.py \
             tests/saas/test_aliyun_model_broker.py tests/saas/test_aliyun_model_client.py \
@@ -125,10 +128,10 @@ jobs:
           docker run --rm --pull never --network none --user 1000:1000 \
             --cap-drop ALL --security-opt no-new-privileges:true --read-only \
             --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
-            --tmpfs /home/user:rw,nosuid,nodev,size=128m,uid=1000,gid=1000 \
+            --tmpfs /home/user:rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=0700 \
             --pids-limit 128 --memory 1g --cpus 1 \
             omnigent-aliyun-host:candidate /opt/venv/bin/python -B -I -c \
-            'import glob,os,shutil,sys;from pathlib import Path;from omnigent import _build_info;from omnigent.onboarding.harness_install import harness_cli_installed;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert all(shutil.which(x) for x in ("git","tmux","bwrap","node","sshd","chronyd","iptables","ossfs2"));assert all(harness_cli_installed(x) for x in ("pi","openai"));assert not glob.glob("/etc/ssh/ssh_host_*");assert Path("/etc/machine-id").stat().st_size==0' \
+            'import glob,os,shutil,sys;from pathlib import Path;from omnigent import _build_info;from omnigent.onboarding.harness_install import harness_cli_installed;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert all(shutil.which(x) for x in ("git","tmux","bwrap","node","sshd","chronyd","iptables","ossfs2"));assert all(harness_cli_installed(x) for x in ("pi","openai"));assert not glob.glob("/etc/ssh/ssh_host_*");assert Path("/etc/machine-id").stat().st_size==0;from saas.production import aliyun_host;assert Path(aliyun_host.__file__).resolve().is_relative_to(Path("/opt/venv"));private=Path.home()/".omnigent"/"runtime"/("aliyun-host-"+"a"*32+"-"+"b"*24);aliyun_host.prepare_aliyun_host_directory(private);assert private.stat().st_mode&0o777==0o700;assert private.stat().st_uid==1000' \
             "$GITHUB_SHA"
       - name: Retain exact OCI bytes for comparison
         if: always()
