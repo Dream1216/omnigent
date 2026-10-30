@@ -8,6 +8,7 @@ import yaml
 
 from saas.scripts.scan_oci_candidates import (
     parse_database_status,
+    scan_platforms,
     scan_report,
     validate_image_scope,
 )
@@ -57,6 +58,17 @@ def test_preflight_scope_cannot_replace_complete_four_report_scan() -> None:
         validate_image_scope({"server": server}, "complete")
     with pytest.raises(ValueError, match="requires exactly: server"):
         validate_image_scope({"server": server, "host": host}, "server-preflight")
+
+
+def test_aliyun_scan_is_explicitly_host_only_and_does_not_reduce_existing_scopes() -> None:
+    validate_image_scope({"host": Path("aliyun.tar")}, "aliyun-host")
+    assert scan_platforms("aliyun-host") == ("linux/amd64",)
+    for scope in ("complete", "server-preflight"):
+        assert scan_platforms(scope) == ("linux/amd64", "linux/arm64")
+    with pytest.raises(ValueError, match="requires exactly: host"):
+        validate_image_scope({"server": Path("server.tar")}, "aliyun-host")
+    with pytest.raises(ValueError, match="Unsupported"):
+        scan_platforms("unknown")
 
 
 def test_preflight_blocks_rebuilds_but_keeps_final_scan() -> None:

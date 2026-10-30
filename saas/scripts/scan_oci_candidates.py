@@ -17,7 +17,17 @@ GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 SEVERITIES = ("Critical", "High")
-SCAN_SCOPES = {"complete": {"server", "host"}, "server-preflight": {"server"}}
+SCAN_SCOPES = {
+    "complete": {"server", "host"},
+    "server-preflight": {"server"},
+    "aliyun-host": {"host"},
+}
+
+
+def scan_platforms(scope: str) -> tuple[str, ...]:
+    if scope not in SCAN_SCOPES:
+        raise ValueError("Unsupported scan scope")
+    return ("linux/amd64",) if scope == "aliyun-host" else PLATFORMS
 
 
 class ScanReport(TypedDict):
@@ -146,7 +156,7 @@ def main() -> int:
         blocked = False
         for name, archive in sorted(images.items()):
             archive_digest = file_sha256(archive)
-            for platform in PLATFORMS:
+            for platform in scan_platforms(args.scope):
                 output = args.output / f"{name}-{platform.split('/')[-1]}-grype.json"
                 result = subprocess.run(
                     [
@@ -182,16 +192,17 @@ def main() -> int:
                     }
                 )
     receipt = {
+        "scope": args.scope,
         "scanner": f"grype {GRYPE_VERSION}",
         "database_built_at": database_built_at,
         "exceptions": [],
         "images": summaries,
     }
-    summary_name = (
-        "server-preflight-scan-summary.json"
-        if args.scope == "server-preflight"
-        else "candidate-scan-summary.json"
-    )
+    summary_name = {
+        "complete": "candidate-scan-summary.json",
+        "server-preflight": "server-preflight-scan-summary.json",
+        "aliyun-host": "aliyun-host-scan-summary.json",
+    }[args.scope]
     (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return 2 if blocked else 0
 

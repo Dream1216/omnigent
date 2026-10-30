@@ -55,6 +55,39 @@ RUN sed -i '/^\[tool\.uv\.workspace\]$/,/^$/d' pyproject.toml \
  && /opt/venv/bin/python -B -I /build/saas/scripts/normalize_host_cli_tree.py \
       --root /opt/venv --source-date-epoch "${SOURCE_DATE_EPOCH}"
 
+FROM builder AS host-cli
+ARG PNPM_VERSION=12.10.1
+ARG SOURCE_DATE_EPOCH
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+WORKDIR /opt/omnigent-host-cli
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY .github/ci-deps/package.json .github/ci-deps/package.json
+RUN export HOME=/tmp/omnigent-cli-state/home \
+      TMPDIR=/tmp/omnigent-cli-state/tmp \
+      XDG_CACHE_HOME=/tmp/omnigent-cli-state/cache \
+      XDG_CONFIG_HOME=/tmp/omnigent-cli-state/config \
+      XDG_DATA_HOME=/tmp/omnigent-cli-state/data \
+      XDG_STATE_HOME=/tmp/omnigent-cli-state/state \
+      CODEX_HOME=/tmp/omnigent-cli-state/codex \
+      PI_CODING_AGENT_DIR=/tmp/omnigent-cli-state/pi \
+      npm_config_cache=/tmp/omnigent-cli-state/npm-cache; \
+    mkdir -p "$HOME" "$TMPDIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" \
+      "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$CODEX_HOME" "$PI_CODING_AGENT_DIR" \
+ && npm install --prefix /tmp/omnigent-cli-state/pnpm-prefix --global \
+      --no-audit --no-fund "pnpm@${PNPM_VERSION}" \
+ && export PATH="/tmp/omnigent-cli-state/pnpm-prefix/bin:${PATH}" \
+ && test "$(pnpm --version)" = "${PNPM_VERSION}" \
+ && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
+      --store-dir /tmp/omnigent-cli-state/store --package-import-method=copy \
+      --network-concurrency=4 \
+ && /opt/venv/bin/python -B -c 'import email.utils,json,os; from pathlib import Path; p=Path("node_modules/.modules.yaml"); d=json.loads(p.read_text()); assert isinstance(d.get("prunedAt"),str); d["prunedAt"]=email.utils.formatdate(int(os.environ["SOURCE_DATE_EPOCH"]),usegmt=True); p.write_text(json.dumps(d,ensure_ascii=False,indent=2,sort_keys=True)+"\n"); Path("node_modules/.pnpm-workspace-state-v1.json").unlink(missing_ok=True)' \
+ && .github/ci-deps/node_modules/.bin/pi --version \
+ && .github/ci-deps/node_modules/.bin/codex --version \
+ && /opt/venv/bin/python -B -I /build/saas/scripts/normalize_host_cli_tree.py \
+      --root /opt/omnigent-host-cli --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+ && rm -rf /tmp/omnigent-cli-state
+
 FROM runtime-base AS host
 USER root
 ARG SOURCE_REVISION
@@ -62,7 +95,7 @@ ARG SOURCE_DATE_EPOCH
 LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
       ai.omnigent.saas.qualification=candidate \
       ai.omnigent.saas.sandbox-runtime=aliyun-microvm
-ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+ENV PATH="/opt/venv/bin:/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/home/user
@@ -70,13 +103,20 @@ ENV PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 COPY --from=builder /opt/venv /opt/venv
-RUN printf '%s\n' 'export PATH="/opt/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"' \
+COPY --from=host-cli /opt/omnigent-host-cli /opt/omnigent-host-cli
+RUN printf '%s\n' 'export PATH="/opt/venv/bin:/opt/omnigent-host-cli/.github/ci-deps/node_modules/.bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"' \
       > /etc/profile.d/omnigent-venv.sh \
  && test -x /bin/bash \
  && /opt/venv/bin/python -B -I -c \
       'import sys; from omnigent import _build_info; assert _build_info.COMMIT_SHA == sys.argv[1]' \
       "${SOURCE_REVISION}" \
  && node -e 'const v=process.versions.node.split(".").map(Number);if(v[0]<22||(v[0]===22&&v[1]<13))process.exit(1)' \
+ && mkdir -p /tmp/omnigent-host-readiness \
+ && HOME=/tmp/omnigent-host-readiness \
+      CODEX_HOME=/tmp/omnigent-host-readiness/codex \
+      PI_CODING_AGENT_DIR=/tmp/omnigent-host-readiness/pi \
+      /opt/venv/bin/python -B -I -c 'from omnigent.onboarding.harness_install import harness_cli_installed; assert all(harness_cli_installed(x) for x in ("pi","openai"))' \
+ && rm -rf /tmp/omnigent-host-readiness \
  && dpkg-query -W -f='${Package}\t${Version}\n' > /usr/local/share/omnigent-aliyun-packages.tsv
 
 USER user

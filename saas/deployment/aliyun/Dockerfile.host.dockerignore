@@ -2,6 +2,12 @@
 !pyproject.toml
 !setup.py
 !uv.lock
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!.github/
+!.github/ci-deps/
+!.github/ci-deps/package.json
 !LICENSE
 !NOTICE
 !sdks/

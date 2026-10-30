@@ -1765,6 +1765,7 @@ def _write_oci(
     header_only_attestation: bool = False,
     buildkit_image_attestation_config: bool = False,
     statement_type: str = "https://in-toto.io/Statement/v0.1",
+    architectures: tuple[str, ...] | None = None,
 ) -> None:
     root = path.parent / f"{path.stem}-layout"
     (root / "blobs/sha256").mkdir(parents=True, exist_ok=True)
@@ -1789,6 +1790,15 @@ def _write_oci(
                 "ai.omnigent.saas.n1.contract-version": "contract-v1",
             }
         )
+    elif label_profile == "aliyun-host":
+        labels = {
+            "org.opencontainers.image.revision": revision,
+            "ai.omnigent.saas.qualification": "candidate",
+            "ai.omnigent.saas.sandbox-runtime": "aliyun-microvm",
+            "description": "Aliyun base runtime",
+            "layer": "base",
+            "maintainer": "Aliyun",
+        }
     elif label_profile != "executable":
         raise ValueError(f"unsupported test label profile: {label_profile}")
     if missing_label is not None:
@@ -1796,7 +1806,9 @@ def _write_oci(
     if extra_label is not None:
         labels[extra_label] = "unexpected"
     descriptors = []
-    for architecture in ("amd64", "arm64"):
+    if architectures is None:
+        architectures = ("amd64",) if label_profile == "aliyun-host" else ("amd64", "arm64")
+    for architecture in architectures:
         config = json.dumps(
             {
                 "architecture": architecture,
@@ -1973,7 +1985,7 @@ def test_oci_rebuild_comparison_ignores_attestation_time_but_not_image_drift(
     )
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize("label_profile", ["executable", "n1", "aliyun-host"])
 def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     tmp_path: Path, label_profile: str
 ) -> None:
@@ -1993,6 +2005,7 @@ def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     [
         ("executable", "ai.omnigent.saas.adapter-contract-version"),
         ("n1", "ai.omnigent.saas.n1.contract-version"),
+        ("aliyun-host", "ai.omnigent.saas.sandbox-runtime"),
     ],
 )
 def test_oci_rebuild_rejects_a_missing_profile_label(
@@ -2012,7 +2025,7 @@ def test_oci_rebuild_rejects_a_missing_profile_label(
         compare_archives(first, second, label_profile=label_profile)
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize("label_profile", ["executable", "n1", "aliyun-host"])
 def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profile: str) -> None:
     first = tmp_path / f"first-extra-{label_profile}.tar"
     second = tmp_path / f"second-extra-{label_profile}.tar"
@@ -2030,7 +2043,12 @@ def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profil
 
 @pytest.mark.parametrize(
     ("archive_profile", "selected_profile"),
-    [("executable", "n1"), ("n1", "executable")],
+    [
+        ("executable", "n1"),
+        ("n1", "executable"),
+        ("aliyun-host", "executable"),
+        ("executable", "aliyun-host"),
+    ],
 )
 def test_oci_rebuild_rejects_cross_profile_label_contracts(
     tmp_path: Path, archive_profile: str, selected_profile: str
@@ -2042,6 +2060,25 @@ def test_oci_rebuild_rejects_cross_profile_label_contracts(
 
     with pytest.raises(ValueError, match=f"approved {selected_profile} image labels"):
         compare_archives(first, second, label_profile=selected_profile)
+
+
+@pytest.mark.parametrize(
+    ("profile", "architectures"),
+    [
+        ("aliyun-host", ("arm64",)),
+        ("aliyun-host", ("amd64", "arm64")),
+        ("executable", ("amd64",)),
+        ("n1", ("amd64",)),
+    ],
+)
+def test_aliyun_amd64_profile_cannot_replace_dual_platform_contract(
+    tmp_path: Path, profile: str, architectures: tuple[str, ...]
+) -> None:
+    first, second = tmp_path / "first.tar", tmp_path / "second.tar"
+    for path in (first, second):
+        _write_oci(path, revision="a" * 40, label_profile=profile, architectures=architectures)
+    with pytest.raises(ValueError, match="exact profile platforms"):
+        compare_archives(first, second, label_profile=profile)
 
 
 def test_oci_rebuild_comparison_descends_buildkit_nested_index(tmp_path: Path) -> None:

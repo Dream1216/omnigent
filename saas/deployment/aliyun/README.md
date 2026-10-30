@@ -13,6 +13,11 @@ now installs the required MicroVM packages explicitly, uses signed Debian
 snapshot indexes dated 2026-10-30, and checks their executables at build time.
 It copies Node from a pinned amd64 Node 22 image to meet the Node 22.13 floor.
 
+The Host CLI stage reuses the repository's existing `.github/ci-deps` importer
+and complete pnpm lock. It installs the reviewed CLI graph and checks Pi and
+Codex readiness instead of downloading an unpinned harness at runtime. Their
+presence does not constitute business acceptance for every installed harness.
+
 The application is installed non-editably from the repository's frozen lock.
 The source revision must be a real frozen candidate commit; the existing build
 revision binder is used rather than claiming that a dirty context is production.
@@ -44,6 +49,13 @@ Remaining qualification:
 - Publish to a reachable, appropriately scoped registry and verify digest.
 - Create a new Host template; preserve the already-tested Base template.
 - Complete SaaS provider/tenant/model-channel integration before production use.
+
+`.github/workflows/saas-aliyun-host-candidate.yml` builds two independent amd64
+archives, checks non-root runtime against their exact OCI config/rootfs, requires
+SLSA v1 plus SPDX, compares executable manifests/configs, and scans the exact
+archive with a fresh vulnerability database. The Aliyun profile is separate
+from the existing dual-architecture Server/Host profiles. The workflow has no
+registry write or production deployment permissions.
 
 Package installation generates SSH host keys and a machine identity. The
 Dockerfile removes those keys and resets the identity in the installation layer;
