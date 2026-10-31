@@ -39,6 +39,7 @@ from saas.control_plane.onboarding_models import (
     RegistrationRateLimitRecord,
     SelfServiceEventRecord,
     SelfServiceRegistrationRecord,
+    TenantCreationIntentRecord,
     TenantOnboardingRecord,
 )
 from saas.control_plane.outbox import OutboxPublisher, OutboxPublishError
@@ -47,8 +48,10 @@ from saas.control_plane.privacy_models import PrivacyIdentityTombstoneRecord
 from saas.control_plane.rls import (
     OnboardingRlsContext,
     RegistrationRlsContext,
+    RlsContext,
     apply_onboarding_rls_context,
     apply_registration_rls_context,
+    apply_rls_context,
 )
 from saas.onboarding_email import EmailVerificationDeliveryError
 
@@ -177,8 +180,14 @@ class OnboardingPolicy:
     home_regions: frozenset[str]
     reserved_slugs: frozenset[str] = frozenset()
     verification_ttl: timedelta = timedelta(minutes=30)
+    workspace_creation_limit_per_day: int = 5
 
     def __post_init__(self) -> None:
+        if (
+            type(self.workspace_creation_limit_per_day) is not int
+            or not 1 <= self.workspace_creation_limit_per_day <= 100
+        ):
+            raise ValueError("workspace creation limit must be between 1 and 100")
         keys = [plan.key for plan in self.plans]
         if not keys or len(keys) != len(set(keys)):
             raise ValueError("onboarding plans must be non-empty and unique")
@@ -730,13 +739,14 @@ class OnboardingRequested:
 @dataclass(frozen=True, slots=True)
 class TenantOnboardingStarted:
     onboarding_id: UUID
-    registration_id: UUID
+    registration_id: UUID | None
     user_id: UUID
     tenant_id: UUID
     space_id: UUID
     default_project_id: UUID
     status: str
     replayed: bool
+    creation_intent_id: UUID | None = None
 
 
 class VerificationEnvelopeKeyring:
@@ -938,6 +948,11 @@ class SelfServiceOnboardingService:
         """Return the deployment policy's allowlisted anonymous catalog projection."""
 
         return self._policy.public_catalog()
+
+    def workspace_creation_service(
+        self, session_factory: sessionmaker[Session]
+    ) -> TenantCreationIntentService:
+        return TenantCreationIntentService(session_factory, policy=self._policy)
 
     def request_registration(
         self,
@@ -1429,6 +1444,7 @@ class SelfServiceOnboardingService:
                                 failed_attempts=0,
                             )
                         )
+                        db.add(_legacy_creation_intent(record))
                         event_payload: dict[str, object] = {
                             "registration_id": str(record.id),
                             "onboarding_id": str(record.onboarding_id),
@@ -1749,6 +1765,208 @@ class SelfServiceOnboardingService:
         )
 
 
+_CREATION_INTENT_COPY_FIELDS = (
+    "user_id",
+    "tenant_name",
+    "tenant_slug",
+    "default_space_name",
+    "default_space_slug",
+    "plan_key",
+    "plan_policy_revision",
+    "home_region",
+    "plan_snapshot",
+    "plan_snapshot_hash",
+    "tenant_id",
+    "space_id",
+    "subscription_id",
+    "pricing_snapshot_id",
+    "entitlement_id",
+    "runtime_partition_id",
+    "default_project_id",
+    "runtime_binding_id",
+    "onboarding_id",
+    "idempotency_key",
+    "request_hash",
+    "created_at",
+)
+
+
+def _legacy_creation_intent(record: SelfServiceRegistrationRecord) -> TenantCreationIntentRecord:
+    return TenantCreationIntentRecord(
+        id=record.id,
+        registration_id=record.id,
+        source="registration",
+        status="ready" if record.status == "verified" else "revoked",
+        **{name: getattr(record, name) for name in _CREATION_INTENT_COPY_FIELDS},
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceCreationAccepted:
+    intent_id: UUID
+    onboarding_id: UUID
+    created_at: datetime
+    replayed: bool
+    tenant_name: str
+
+
+class TenantCreationIntentService:
+    """Accept authenticated workspace requests without worker database authority."""
+
+    def __init__(
+        self, session_factory: sessionmaker[Session], *, policy: OnboardingPolicy
+    ) -> None:
+        self._sessions = session_factory
+        self._policy = policy
+
+    def create(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_name: str,
+        idempotency_key: str,
+        plan_key: str | None = None,
+        home_region: str | None = None,
+        now: datetime | None = None,
+    ) -> WorkspaceCreationAccepted:
+        requested_at = _stored_time(now or _now())
+        name = _text(tenant_name, "tenant_name", 256)
+        key = _idempotency_key("workspace-create", actor_id, idempotency_key)
+        request_hash = _digest(
+            {"tenant_name": name, "plan_key": plan_key, "home_region": home_region}
+        )
+        try:
+            with self._sessions.begin() as db:
+                apply_rls_context(db, RlsContext(actor_id=actor_id))
+                user = db.scalar(
+                    sa.select(GlobalUser).where(GlobalUser.id == actor_id).with_for_update()
+                )
+                if user is None or user.status != "active":
+                    raise OnboardingError("user_inactive", "active account is required")
+                verified = db.scalar(
+                    sa.select(IdentityConnection.id)
+                    .where(
+                        IdentityConnection.user_id == actor_id,
+                        IdentityConnection.status == "active",
+                        IdentityConnection.email_verified.is_(True),
+                        IdentityConnection.email_normalized.is_not(None),
+                    )
+                    .limit(1)
+                )
+                if verified is None:
+                    raise OnboardingError("verified_email_required", "verify your email first")
+                existing = db.scalar(
+                    sa.select(TenantCreationIntentRecord).where(
+                        TenantCreationIntentRecord.idempotency_key == key
+                    )
+                )
+                if existing is not None:
+                    if not hmac.compare_digest(existing.request_hash, request_hash):
+                        raise OnboardingError("idempotency_conflict", "request already exists")
+                    return self._accepted(existing, replayed=True)
+                count = db.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(TenantCreationIntentRecord)
+                    .where(
+                        TenantCreationIntentRecord.user_id == actor_id,
+                        TenantCreationIntentRecord.source == "authenticated",
+                        TenantCreationIntentRecord.created_at > requested_at - timedelta(days=1),
+                    )
+                )
+                if count is not None and count >= self._policy.workspace_creation_limit_per_day:
+                    raise OnboardingError("workspace_creation_limited", "try again later")
+                plan = self._policy.require_plan(
+                    plan_key or min(self._policy.plans, key=lambda item: item.key).key
+                )
+                region = home_region or sorted(self._policy.home_regions)[0]
+                if region not in self._policy.home_regions:
+                    raise OnboardingError("region_unavailable", "selected region is unavailable")
+                intent_id = uuid4()
+                intent = TenantCreationIntentRecord(
+                    id=intent_id,
+                    user_id=actor_id,
+                    source="authenticated",
+                    status="ready",
+                    tenant_name=name,
+                    tenant_slug=f"workspace-{intent_id.hex}",
+                    default_space_name="Default",
+                    default_space_slug="default",
+                    plan_key=plan.key,
+                    plan_policy_revision=plan.policy_revision,
+                    home_region=region,
+                    plan_snapshot=plan.snapshot(),
+                    plan_snapshot_hash=plan.snapshot_hash(),
+                    **{
+                        field: uuid4()
+                        for field in (
+                            "tenant_id",
+                            "space_id",
+                            "subscription_id",
+                            "pricing_snapshot_id",
+                            "entitlement_id",
+                            "runtime_partition_id",
+                            "default_project_id",
+                            "runtime_binding_id",
+                            "onboarding_id",
+                        )
+                    },
+                    idempotency_key=key,
+                    request_hash=request_hash,
+                    created_at=requested_at,
+                )
+                db.add(intent)
+                db.flush()
+                payload: dict[str, object] = {
+                    "creation_intent_id": str(intent.id),
+                    "registration_id": None,
+                    "onboarding_id": str(intent.onboarding_id),
+                    "user_id": str(actor_id),
+                    "tenant_id": str(intent.tenant_id),
+                    "plan_policy_revision": intent.plan_policy_revision,
+                }
+                db.add(
+                    ControlPlaneOutboxEvent(
+                        tenant_id=None,
+                        aggregate_type="tenant_onboarding",
+                        aggregate_key=str(intent.onboarding_id),
+                        event_type=_TENANT_EVENT,
+                        idempotency_key=scoped_idempotency_key(
+                            "creation-intent", intent.id, "tenant-requested"
+                        ),
+                        request_hash=_digest(payload),
+                        payload=payload,
+                        attempt_count=0,
+                    )
+                )
+                return self._accepted(intent, replayed=False)
+        except IntegrityError as error:
+            raise OnboardingError(
+                "workspace_unavailable", "workspace cannot be requested"
+            ) from error
+
+    def list_for_actor(self, actor_id: UUID) -> list[WorkspaceCreationAccepted]:
+        with self._sessions() as db:
+            apply_rls_context(db, RlsContext(actor_id=actor_id))
+            return [
+                self._accepted(row, replayed=True)
+                for row in db.scalars(
+                    sa.select(TenantCreationIntentRecord)
+                    .where(TenantCreationIntentRecord.user_id == actor_id)
+                    .order_by(
+                        TenantCreationIntentRecord.created_at.desc(),
+                        TenantCreationIntentRecord.id.desc(),
+                    )
+                    .limit(20)
+                )
+            ]
+
+    @staticmethod
+    def _accepted(row: TenantCreationIntentRecord, *, replayed: bool) -> WorkspaceCreationAccepted:
+        return WorkspaceCreationAccepted(
+            row.id, row.onboarding_id, _stored_time(row.created_at), replayed, row.tenant_name
+        )
+
+
 class TenantOnboardingCoordinator:
     """Create fail-closed Tenant/Space state and hand Billing to its own role."""
 
@@ -1762,14 +1980,8 @@ class TenantOnboardingCoordinator:
         self._policy = policy
 
     def start(
-        self,
-        *,
-        registration_id: UUID,
-        idempotency_key: str,
-        now: datetime | None = None,
+        self, *, registration_id: UUID, idempotency_key: str, now: datetime | None = None
     ) -> TenantOnboardingStarted:
-        started_at = _stored_time(now or _now())
-        scoped_key = _idempotency_key("tenant-onboarding", registration_id, idempotency_key)
         with self._session_factory.begin() as db:
             apply_onboarding_rls_context(db, OnboardingRlsContext(registration_id=registration_id))
             registration = db.scalar(
@@ -1779,18 +1991,47 @@ class TenantOnboardingCoordinator:
             )
             if registration is None or registration.status != "verified":
                 raise OnboardingError("onboarding_not_ready", "verified registration is required")
+            if db.get(TenantCreationIntentRecord, registration.id) is None:
+                db.add(_legacy_creation_intent(registration))
+        return self.start_intent(
+            creation_intent_id=registration_id, idempotency_key=idempotency_key, now=now
+        )
+
+    def start_intent(
+        self,
+        *,
+        creation_intent_id: UUID,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> TenantOnboardingStarted:
+        started_at = _stored_time(now or _now())
+        scoped_key = _idempotency_key("tenant-onboarding", creation_intent_id, idempotency_key)
+        with self._session_factory.begin() as db:
+            apply_onboarding_rls_context(
+                db, OnboardingRlsContext(creation_intent_id=creation_intent_id)
+            )
+            intent = db.scalar(
+                sa.select(TenantCreationIntentRecord)
+                .where(TenantCreationIntentRecord.id == creation_intent_id)
+                .with_for_update()
+            )
+            if intent is None or intent.status != "ready":
+                raise OnboardingError(
+                    "onboarding_not_ready", "authorized creation intent is required"
+                )
             apply_onboarding_rls_context(
                 db,
                 OnboardingRlsContext(
-                    onboarding_id=registration.onboarding_id,
-                    registration_id=registration.id,
-                    actor_id=registration.user_id,
-                    tenant_id=registration.tenant_id,
+                    onboarding_id=intent.onboarding_id,
+                    registration_id=intent.registration_id,
+                    creation_intent_id=intent.id,
+                    actor_id=intent.user_id,
+                    tenant_id=intent.tenant_id,
                 ),
             )
             existing = db.scalar(
                 sa.select(TenantOnboardingRecord).where(
-                    TenantOnboardingRecord.id == registration.onboarding_id
+                    TenantOnboardingRecord.id == intent.onboarding_id
                 )
             )
             if existing is not None:
@@ -1799,47 +2040,48 @@ class TenantOnboardingCoordinator:
                         "idempotency_conflict", "onboarding request already exists"
                     )
                 return self._started(existing, replayed=True)
-            plan = self._policy.require_plan(
-                registration.plan_key, revision=registration.plan_policy_revision
-            )
+            user = db.get(GlobalUser, intent.user_id)
+            if user is None or user.status != "active":
+                raise OnboardingError("user_inactive", "active account is required")
+            plan = self._policy.require_plan(intent.plan_key, revision=intent.plan_policy_revision)
             expected_plan_snapshot = plan.snapshot()
             expected_plan_hash = plan.snapshot_hash()
             if (
-                registration.plan_snapshot != expected_plan_snapshot
+                intent.plan_snapshot != expected_plan_snapshot
                 or not hmac.compare_digest(
-                    _digest(registration.plan_snapshot), registration.plan_snapshot_hash
+                    _digest(intent.plan_snapshot), intent.plan_snapshot_hash
                 )
-                or not hmac.compare_digest(registration.plan_snapshot_hash, expected_plan_hash)
+                or not hmac.compare_digest(intent.plan_snapshot_hash, expected_plan_hash)
             ):
                 raise OnboardingError(
                     "onboarding_plan_snapshot_invalid",
-                    "registration plan snapshot no longer matches the reviewed policy",
+                    "intent plan snapshot no longer matches the reviewed policy",
                 )
             db.add(
                 Tenant(
-                    id=registration.tenant_id,
-                    slug=registration.tenant_slug,
-                    name=registration.tenant_name,
+                    id=intent.tenant_id,
+                    slug=intent.tenant_slug,
+                    name=intent.tenant_name,
                     status="provisioning",
                     plan=plan.key,
-                    home_region=registration.home_region,
+                    home_region=intent.home_region,
                     lifecycle_version=1,
                 )
             )
             db.flush()
             db.add(
                 Space(
-                    id=registration.space_id,
-                    tenant_id=registration.tenant_id,
-                    slug=registration.default_space_slug,
-                    name=registration.default_space_name,
+                    id=intent.space_id,
+                    tenant_id=intent.tenant_id,
+                    slug=intent.default_space_slug,
+                    name=intent.default_space_name,
                     status="suspended",
                 )
             )
             db.add(
                 TenantMembership(
-                    tenant_id=registration.tenant_id,
-                    user_id=registration.user_id,
+                    tenant_id=intent.tenant_id,
+                    user_id=intent.user_id,
                     role="owner",
                     status="active",
                     version=1,
@@ -1849,9 +2091,9 @@ class TenantOnboardingCoordinator:
             db.flush()
             db.add(
                 SpaceMembership(
-                    tenant_id=registration.tenant_id,
-                    space_id=registration.space_id,
-                    user_id=registration.user_id,
+                    tenant_id=intent.tenant_id,
+                    space_id=intent.space_id,
+                    user_id=intent.user_id,
                     role="owner",
                     status="active",
                     version=1,
@@ -1859,41 +2101,43 @@ class TenantOnboardingCoordinator:
                 )
             )
             request_payload: dict[str, object] = {
-                "onboarding_id": str(registration.onboarding_id),
-                "registration_id": str(registration.id),
-                "user_id": str(registration.user_id),
-                "tenant_id": str(registration.tenant_id),
-                "space_id": str(registration.space_id),
-                "subscription_id": str(registration.subscription_id),
-                "pricing_snapshot_id": str(registration.pricing_snapshot_id),
-                "entitlement_id": str(registration.entitlement_id),
-                "runtime_partition_id": str(registration.runtime_partition_id),
-                "default_project_id": str(registration.default_project_id),
-                "runtime_binding_id": str(registration.runtime_binding_id),
-                "plan_key": registration.plan_key,
-                "plan_policy_revision": registration.plan_policy_revision,
-                "plan_snapshot": registration.plan_snapshot,
-                "plan_snapshot_hash": registration.plan_snapshot_hash,
+                "onboarding_id": str(intent.onboarding_id),
+                "creation_intent_id": str(intent.id),
+                "registration_id": str(intent.registration_id) if intent.registration_id else None,
+                "user_id": str(intent.user_id),
+                "tenant_id": str(intent.tenant_id),
+                "space_id": str(intent.space_id),
+                "subscription_id": str(intent.subscription_id),
+                "pricing_snapshot_id": str(intent.pricing_snapshot_id),
+                "entitlement_id": str(intent.entitlement_id),
+                "runtime_partition_id": str(intent.runtime_partition_id),
+                "default_project_id": str(intent.default_project_id),
+                "runtime_binding_id": str(intent.runtime_binding_id),
+                "plan_key": intent.plan_key,
+                "plan_policy_revision": intent.plan_policy_revision,
+                "plan_snapshot": intent.plan_snapshot,
+                "plan_snapshot_hash": intent.plan_snapshot_hash,
                 "expected_status": "tenant_created",
                 "version": 1,
             }
             saga = TenantOnboardingRecord(
-                id=registration.onboarding_id,
-                registration_id=registration.id,
-                user_id=registration.user_id,
-                tenant_id=registration.tenant_id,
-                space_id=registration.space_id,
-                subscription_id=registration.subscription_id,
-                pricing_snapshot_id=registration.pricing_snapshot_id,
-                entitlement_id=registration.entitlement_id,
-                runtime_partition_id=registration.runtime_partition_id,
-                default_project_id=registration.default_project_id,
-                runtime_binding_id=registration.runtime_binding_id,
+                id=intent.onboarding_id,
+                registration_id=intent.registration_id,
+                creation_intent_id=intent.id,
+                user_id=intent.user_id,
+                tenant_id=intent.tenant_id,
+                space_id=intent.space_id,
+                subscription_id=intent.subscription_id,
+                pricing_snapshot_id=intent.pricing_snapshot_id,
+                entitlement_id=intent.entitlement_id,
+                runtime_partition_id=intent.runtime_partition_id,
+                default_project_id=intent.default_project_id,
+                runtime_binding_id=intent.runtime_binding_id,
                 plan_key=plan.key,
                 plan_policy_revision=plan.policy_revision,
-                plan_snapshot=registration.plan_snapshot,
-                plan_snapshot_hash=registration.plan_snapshot_hash,
-                home_region=registration.home_region,
+                plan_snapshot=intent.plan_snapshot,
+                plan_snapshot_hash=intent.plan_snapshot_hash,
+                home_region=intent.home_region,
                 trial_days=plan.trial_days,
                 trial_started_at=None,
                 trial_ends_at=None,
@@ -1915,7 +2159,7 @@ class TenantOnboardingCoordinator:
             db.flush()
             db.add(
                 ControlPlaneOutboxEvent(
-                    tenant_id=registration.tenant_id,
+                    tenant_id=intent.tenant_id,
                     aggregate_type="tenant_onboarding",
                     aggregate_key=str(saga.id),
                     event_type=_BILLING_EVENT,
@@ -1957,6 +2201,7 @@ class TenantOnboardingCoordinator:
             default_project_id=saga.default_project_id,
             status=saga.status,
             replayed=replayed,
+            creation_intent_id=saga.creation_intent_id,
         )
 
 
@@ -2064,7 +2309,9 @@ class OnboardingOutboxPublisher:
                     pre_side_effect=True,
                 )
             try:
-                registration_id = UUID(str(payload["registration_id"]))
+                intent_id = UUID(
+                    str(payload.get("creation_intent_id") or payload["registration_id"])
+                )
             except (KeyError, TypeError, ValueError) as error:
                 raise OutboxPublishError(
                     "onboarding_event_invalid",
@@ -2072,10 +2319,14 @@ class OnboardingOutboxPublisher:
                     pre_side_effect=True,
                 ) from error
             try:
-                self._coordinator.start(
-                    registration_id=registration_id,
-                    idempotency_key=str(event_id),
-                )
+                if payload.get("creation_intent_id"):
+                    self._coordinator.start_intent(
+                        creation_intent_id=intent_id, idempotency_key=str(event_id)
+                    )
+                else:
+                    self._coordinator.start(
+                        registration_id=intent_id, idempotency_key=str(event_id)
+                    )
             except IntegrityError as error:
                 raise OutboxPublishError(
                     "tenant_onboarding_integrity_conflict",

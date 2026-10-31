@@ -530,9 +530,16 @@ h1 > span {
 .flow-track > span {
   display: block;
   height: 100%;
+  width: 33.333%;
   border-radius: inherit;
   background: #2563eb;
   transition: width 250ms ease;
+}
+.flow-steps[data-step="2"] .flow-track > span {
+  width: 66.666%;
+}
+.flow-steps[data-step="3"] .flow-track > span {
+  width: 100%;
 }
 .signup-form {
   display: grid;
@@ -997,4 +1004,88 @@ h1 > span {
   color: var(--primary);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+.workspace-setup {
+  display: grid;
+  gap: 28px;
+  margin-top: 30px;
+}
+.workspace-setup h2 {
+  font-size: 17px;
+  font-weight: 650;
+  margin-bottom: 18px;
+}
+.workspace-options {
+  display: grid;
+  gap: 10px;
+}
+.workspace-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  padding: 17px 18px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: #fff;
+  transition:
+    border-color 120ms,
+    background 120ms;
+}
+.workspace-option:hover {
+  border-color: #7a9dff;
+  background: #f6f9ff;
+}
+.workspace-option strong,
+.workspace-option small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.workspace-option small {
+  margin-top: 5px;
+  color: #667896;
+  font-size: 12px;
+}
+.workspace-create-form {
+  display: grid;
+  gap: 12px;
+}
+.workspace-create-form .identity-caption {
+  margin: 0 0 8px;
+}
+.workspace-resume {
+  border-top: 1px solid var(--border);
+  margin-top: 24px;
+  padding-top: 20px;
+}
+.workspace-resume h3 {
+  color: #667896;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.workspace-resume button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  text-align: left;
+  font-size: 13px;
+  color: #2860eb;
+}
+.workspace-invitation {
+  border-top: 1px solid var(--border);
+  padding-top: 22px;
+}
+.workspace-invitation-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 13px;
+  color: #526789;
+  margin-bottom: 16px;
 }

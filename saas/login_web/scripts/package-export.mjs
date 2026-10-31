@@ -12,6 +12,7 @@ const pages = new Map([
   ["signup-status.html", "out/signup/status.html"],
   ["identities.html", "out/saas/account/identities.html"],
   ["oidc-result.html", "out/saas/auth/result.html"],
+  ["setup.html", "out/setup.html"],
 ]);
 const exports = new Map(
   await Promise.all(

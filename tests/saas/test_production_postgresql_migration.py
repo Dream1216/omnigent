@@ -740,6 +740,11 @@ def test_current_migration_heads_have_source_catalog_baselines(server_major: int
     )
 
 
+def test_current_source_schema_is_explicitly_supported_by_runtime_verification() -> None:
+    head = migration._expected_head("saas")
+    assert migration._runtime_saas_head(head) == head
+
+
 def test_platform_model_profile_requires_its_own_source_catalog_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

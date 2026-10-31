@@ -43,6 +43,7 @@ class OnboardingRlsContext:
     registration_id: UUID | None = None
     actor_id: UUID | None = None
     tenant_id: UUID | None = None
+    creation_intent_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +229,8 @@ def apply_onboarding_rls_context(session: Session, context: OnboardingRlsContext
         "app.onboarding_id",
         str(context.onboarding_id) if context.onboarding_id else "",
     )
+    intent_id = context.creation_intent_id or context.registration_id
+    _set_local(session, "app.creation_intent_id", str(intent_id) if intent_id else "")
     _set_local(session, "app.actor_id", str(context.actor_id) if context.actor_id else "")
     _set_local(session, "app.tenant_id", str(context.tenant_id) if context.tenant_id else "")
 
@@ -239,6 +242,7 @@ def _clear_registration_context(session: Session) -> None:
         "app.registration_email_hash",
         "app.registration_idempotency_key",
         "app.onboarding_id",
+        "app.creation_intent_id",
     ):
         _set_local(session, name, "")
 

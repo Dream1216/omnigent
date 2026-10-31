@@ -29,6 +29,26 @@ _MODEL_TABLES = frozenset(
 )
 
 
+def postgresql_control_plane_migration_metadata(base: sa.MetaData) -> sa.MetaData:
+    """Declare the PostgreSQL Runner API index without mutating runtime metadata."""
+    name = "uq_runner_isolation_grant_capability_worktree_v1"
+    table = base.tables["saas_run_isolation_grants"]
+    if any(index.name == name for index in table.indexes):
+        return base
+    metadata = sa.MetaData(naming_convention=base.naming_convention)
+    for source in base.tables.values():
+        source.to_metadata(metadata)
+    table = metadata.tables["saas_run_isolation_grants"]
+    sa.Index(
+        name,
+        table.c.capability_id,
+        table.c.worktree_id,
+        table.c.worktree_lease_generation,
+        unique=True,
+    )
+    return metadata
+
+
 def control_plane_migration_metadata(base: sa.MetaData) -> sa.MetaData:
     declared = _MODEL_TABLES.intersection(base.tables)
     if declared:

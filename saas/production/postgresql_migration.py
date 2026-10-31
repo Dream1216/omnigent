@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Clean PG16/18 source replay: Casdoor sessions and authenticated workspace intents.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "2e481f23731506ec165034515c6aec9e9cdf1e36cc0a388f1475923621db6a4f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "e63c08bee7412c00133927384300e83b551a6955e0d21345ad9bd3261f563a1f",
     # Source replay: exact owner-scoped budget settlement without ACL widening.
     (
         16,
@@ -582,6 +593,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Exact 15-service graph from clean restricted-authority source replay.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "a45da043a8ee5779c7a2c9d65135f0a7616f0f0c7d60dbd3211a1633370aa96d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "d07cc614b1591be8db8ecb3392741692ddb2843e856ebf3110286d2f1682a012",
     (
         16,
         "mm1a2b3c4d5e",
@@ -946,6 +968,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Exact 17-service graph; onboarding authority remains separate from HTTP.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "8ce5ed46a4e058a0c1896ff43805d95ab78c332966809fd0f14970667bf81fea",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "4246aa25e57a34fa9cec0d36d555e334ebffa7d3526772acbd81bddb099e1948",
     (
         16,
         "mm1a2b3c4d5e",
@@ -1280,6 +1313,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Exact 18-service graph from clean PG16/18 source replay.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "2bd56c840fdf873e99f6ae98b75687e4aba9123164076976ac4cacb87d1d499e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "59158759c7d643ae2b98191c08b0f3968dfd187b902c9aaf0541c70dd738526c",
     (
         16,
         "mm1a2b3c4d5e",
@@ -1609,6 +1653,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Reviewed Preview deployment policies are distinct from the clean schema.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "f63647e82f5038ad235d2d1ae89cad9cbb7441fd35993ad5bb6a012318015d8b",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "6c10d32ee79c3965c3845fcc2dc17b7a9acc12a7364658bed898e6374a74135b",
     (
         16,
         "mm1a2b3c4d5e",
@@ -1913,6 +1968,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Exact 18-service graph with the reviewed Preview deployment authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "ced62ea0b54856f11d86ef6610834a5f17f5da969846a2265e7cc8c97fc7647f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "f3d0f6d056d8bb051a8e98032908eb1170eb1542e97ea69a4cd651e38638d66f",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2224,6 +2290,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Exact 19-service graph from clean PG16/18 source replay.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "d7bd67d9a15ea9637d9e69b02938d8343e42878d49025133070d01928847cc11",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "f8f4b16b54956b6ccff125e52409461300d3849aab457a1c5291b3e8afb1e11e",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2500,6 +2577,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Exact 19-service graph with the reviewed Preview deployment authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "82798b1f579d77361d85c0f122499b2dd50993dbabdbb39ec8491791648a6705",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd2a00000001",
+    ): "71614aa5fef554cff020a0f4ae233445d45430247ead9150df250994747c244f",
     (
         16,
         "mm1a2b3c4d5e",
@@ -4116,6 +4204,7 @@ def _runtime_saas_head(requested: object) -> str:
         "lm2r00000001": ("lm2r00000001", "lm2s00000001", "lm2t00000001"),
         "lm2s00000001": ("lm2s00000001", "lm2t00000001"),
         "lm2t00000001": ("lm2t00000001",),
+        "cd2a00000001": ("cd2a00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")

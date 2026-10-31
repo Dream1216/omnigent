@@ -107,12 +107,16 @@ export function LoginForm() {
     request.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 30_000);
     try {
-      await signIn(
+      const next = await signIn(
         String(fields.get("email") || ""),
         String(fields.get("password") || ""),
         controller.signal,
       );
-      window.location.assign(destination);
+      window.location.assign(
+        next === "/setup" && !destination.startsWith("/saas/account/")
+          ? "/setup?" + new URLSearchParams({ return_to: destination })
+          : destination,
+      );
     } catch (cause) {
       pending.current = false;
       setBusy(false);

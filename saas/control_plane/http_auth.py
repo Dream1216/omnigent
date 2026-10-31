@@ -9,12 +9,12 @@ from enum import Enum
 from hashlib import sha256
 from importlib import resources
 from typing import TYPE_CHECKING, Literal, Protocol, cast
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 from starlette.requests import HTTPConnection
@@ -66,7 +66,10 @@ if TYPE_CHECKING:
         ApprovalOperationsProtocol,
         NotificationOperationsProtocol,
     )
-    from saas.control_plane.onboarding import SelfServiceOnboardingService
+    from saas.control_plane.onboarding import (
+        SelfServiceOnboardingService,
+        TenantCreationIntentService,
+    )
     from saas.control_plane.onboarding_status import OnboardingStatusService
     from saas.control_plane.platform_governed_access import PlatformGovernedAccessService
     from saas.control_plane.projects import ProjectAdministrationService
@@ -226,6 +229,10 @@ class IdentityConflictResolutionRequest(BaseModel):
 class ContextSnapshotRequest(BaseModel):
     tenant_id: UUID
     space_id: UUID
+
+
+class ActiveScopeRequest(ContextSnapshotRequest):
+    model_config = ConfigDict(extra="forbid")
 
 
 class SaasAuthProvider(AuthProvider):
@@ -781,6 +788,7 @@ class SaasAuthContextMiddleware:
             return True
         if method == "GET" and path in {
             "/saas/auth/bootstrap",
+            "/setup",
             "/saas/auth/options",
             "/saas/auth/result",
             "/saas/account/identities",
@@ -874,6 +882,9 @@ class SaasAuthContextMiddleware:
                 session=session,
                 workspace_id=workspace_id,
             )
+        elif session.active_tenant_id is not None and session.active_space_id is not None:
+            tenant_id = session.active_tenant_id
+            space_id = session.active_space_id
         else:
             # The upstream OSS web client has no Tenant/Space selector yet and
             # browser WebSockets cannot attach arbitrary selector headers.  A
@@ -1093,6 +1104,35 @@ def create_saas_auth_router(
             "providers": oidc.browser_providers() if oidc is not None else [],
         }
 
+    @router.post("/auth/active-scope", status_code=204)
+    def select_active_scope(
+        body: ActiveScopeRequest, request: Request, response: Response
+    ) -> None:
+        principal = _require_principal(auth_provider, request)
+        _, source = auth_provider.extract_token(request)
+        if source != "cookie":
+            raise _http_error(
+                LifecycleError("authentication_required", "cookie login required"), 401
+            )
+        try:
+            selected = context_resolver.resolve_request_context(
+                actor_id=principal.session.user_id,
+                tenant_id=body.tenant_id,
+                space_id=body.space_id,
+                trace_id=uuid4().hex,
+            )
+            context_resolver.resolve_space_allocation(selected)
+            lifecycle.set_active_scope(
+                session_id=principal.session.session_id,
+                user_id=principal.session.user_id,
+                tenant_id=body.tenant_id,
+                space_id=body.space_id,
+                expected_security_version=principal.session.security_version,
+            )
+        except (LifecycleError, ControlPlaneResolutionError) as error:
+            raise _http_error(error, 403) from error
+        response.headers["Cache-Control"] = "private, no-store"
+
     @router.post("/auth/login")
     def login(body: LoginRequest, response: Response) -> dict[str, object]:
         if mode == "casdoor":
@@ -1180,6 +1220,11 @@ def create_saas_auth_router(
         if principal is None:
             return {"authenticated": False, "user_id": None, "scopes": [], "next": "/saas/login"}
         scopes = context_resolver.list_available_scopes(actor_id=principal.session.user_id)
+        selected = any(
+            scope.tenant_id == principal.session.active_tenant_id
+            and scope.space_id == principal.session.active_space_id
+            for scope in scopes
+        )
         return {
             "authenticated": True,
             "user_id": str(principal.session.user_id),
@@ -1192,7 +1237,9 @@ def create_saas_auth_router(
                 }
                 for scope in scopes
             ],
-            "next": "/" if scopes else "/setup",
+            "next": "/"
+            if selected or (len(scopes) == 1 and principal.session.active_tenant_id is None)
+            else "/setup",
         }
 
     @router.get("/auth/assets/session.js")
@@ -1518,11 +1565,21 @@ def create_saas_auth_router(
             )
             if browser:
                 scopes = context_resolver.list_available_scopes(actor_id=user_id)
+                return_to = completed.return_to
+                if (
+                    len(scopes) != 1
+                    and completed.purpose not in {"link", "reauth"}
+                    and not return_to.startswith("/saas/account/")
+                    and urlsplit(return_to).path != "/setup"
+                ):
+                    return_to = (
+                        "/setup"
+                        if return_to == "/"
+                        else "/setup?" + urlencode({"return_to": return_to})
+                    )
                 response = completion_document(
                     csrf_token=issued.csrf_token,
-                    return_to=completed.return_to
-                    if scopes or completed.purpose in {"link", "reauth"}
-                    else "/setup",
+                    return_to=return_to,
                     ui_locale=completed.ui_locale,
                 )
             response.headers["Cache-Control"] = "private, no-store"
@@ -1747,6 +1804,7 @@ def create_saas_http_integration(
     onboarding: SelfServiceOnboardingService | None = None,
     onboarding_status: OnboardingStatusService | None = None,
     onboarding_client_network: TrustedClientNetworkResolver | None = None,
+    workspace_creation: TenantCreationIntentService | None = None,
     runtime_store_adapter: OmnigentStoreAdapter | None = None,
     runtime_router: APIRouter | None = None,
     runtime_initializer: RuntimeInitializer | None = None,
@@ -1804,6 +1862,16 @@ def create_saas_http_integration(
             onboarding_ui_router = create_onboarding_ui_router()
         else:
             onboarding_ui_router = None
+    if workspace_creation is not None:
+        if onboarding_status is None:
+            raise ValueError("workspace creation requires onboarding status")
+        from saas.control_plane.workspace_http import create_workspace_router
+
+        router.include_router(
+            create_workspace_router(
+                auth_provider=auth_provider, creation=workspace_creation, status=onboarding_status
+            )
+        )
     if (project_admin is None) != (project_authorizer is None):
         raise ValueError("Project Admin service and Authorizer must be configured together")
     if project_admin is not None and project_authorizer is not None:

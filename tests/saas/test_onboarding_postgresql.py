@@ -428,7 +428,7 @@ def test_onboarding_roles_and_all_131_control_plane_tables_are_force_rls(
                 {"table_names": sorted(CONTROL_PLANE_RLS_TABLES)},
             ).scalars()
         )
-        assert len(CONTROL_PLANE_RLS_TABLES) == 131
+        assert len(CONTROL_PLANE_RLS_TABLES) == 133
         assert protected == CONTROL_PLANE_RLS_TABLES
 
         email_index = connection.execute(
@@ -1316,8 +1316,10 @@ def test_real_postgresql_quarantine_rejects_retained_dispatch_state(
     assert getattr(rejected.value.orig, "sqlstate", None) == "23514"
 
 
+@pytest.mark.parametrize("entry", ["registration", "authenticated"])
 def test_real_postgresql_vertical_chain_obeys_onboarding_rls(
     isolated_onboarding_engine: Engine,
+    entry: str,
 ) -> None:
     postgresql_engine = isolated_onboarding_engine
     suffix = uuid4().hex[:12]
@@ -1339,57 +1341,97 @@ def test_real_postgresql_vertical_chain_obeys_onboarding_rls(
         rate_limiter=_AllowAllRateLimiter(),
     )
     coordinator = TenantOnboardingCoordinator(onboarding_sessions, policy=policy)
-    accepted = registrations.request_registration(
-        email=f"vertical-{suffix}@example.test",
-        display_name="Vertical Owner",
-        tenant_name=f"Vertical Tenant {suffix}",
-        tenant_slug=f"vertical-{suffix}",
-        default_space_name="Default Space",
-        default_space_slug="default",
-        plan_key="starter",
-        home_region="cn-east-1",
-        idempotency_key=f"vertical-registration-{suffix}",
-        now=now,
-    )
-    with postgresql_engine.begin() as connection:
-        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
-        email_event = connection.execute(
-            sa.text(
-                "SELECT id, payload FROM saas_control_plane_outbox "
-                "WHERE aggregate_type = 'self_service_registration' "
-                "AND aggregate_key = :registration_id AND event_type = :event_type"
-            ),
-            {
-                "registration_id": str(accepted.registration_id),
-                "event_type": _EMAIL_EVENT,
-            },
-        ).one()
-    message = envelopes.open(event_id=email_event.id, payload=email_event.payload)
-    requested = registrations.verify_and_request_onboarding(
-        registration_id=accepted.registration_id,
-        verification_token=message.verification_token,
-        password="correct-horse-battery-staple",
-        idempotency_key=f"vertical-verify-{suffix}",
-        now=now + timedelta(minutes=1),
-    )
-    with postgresql_engine.begin() as connection:
-        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
-        tenant_event_id = connection.execute(
-            sa.text(
-                "SELECT id FROM saas_control_plane_outbox "
-                "WHERE aggregate_type = 'tenant_onboarding' "
-                "AND aggregate_key = :onboarding_id AND event_type = :event_type"
-            ),
-            {
-                "onboarding_id": str(requested.onboarding_id),
-                "event_type": _TENANT_EVENT,
-            },
-        ).scalar_one()
-    started = coordinator.start(
-        registration_id=accepted.registration_id,
-        idempotency_key=str(tenant_event_id),
-        now=now + timedelta(minutes=2),
-    )
+    if entry == "registration":
+        accepted = registrations.request_registration(
+            email=f"vertical-{suffix}@example.test",
+            display_name="Vertical Owner",
+            tenant_name=f"Vertical Tenant {suffix}",
+            tenant_slug=f"vertical-{suffix}",
+            default_space_name="Default Space",
+            default_space_slug="default",
+            plan_key="starter",
+            home_region="cn-east-1",
+            idempotency_key=f"vertical-registration-{suffix}",
+            now=now,
+        )
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+            email_event = connection.execute(
+                sa.text(
+                    "SELECT id, payload FROM saas_control_plane_outbox "
+                    "WHERE aggregate_type = 'self_service_registration' "
+                    "AND aggregate_key = :registration_id AND event_type = :event_type"
+                ),
+                {
+                    "registration_id": str(accepted.registration_id),
+                    "event_type": _EMAIL_EVENT,
+                },
+            ).one()
+        message = envelopes.open(event_id=email_event.id, payload=email_event.payload)
+        requested = registrations.verify_and_request_onboarding(
+            registration_id=accepted.registration_id,
+            verification_token=message.verification_token,
+            password="correct-horse-battery-staple",
+            idempotency_key=f"vertical-verify-{suffix}",
+            now=now + timedelta(minutes=1),
+        )
+        with postgresql_engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+            tenant_event_id = connection.execute(
+                sa.text(
+                    "SELECT id FROM saas_control_plane_outbox "
+                    "WHERE aggregate_type = 'tenant_onboarding' "
+                    "AND aggregate_key = :onboarding_id AND event_type = :event_type"
+                ),
+                {
+                    "onboarding_id": str(requested.onboarding_id),
+                    "event_type": _TENANT_EVENT,
+                },
+            ).scalar_one()
+        started = coordinator.start(
+            registration_id=accepted.registration_id,
+            idempotency_key=str(tenant_event_id),
+            now=now + timedelta(minutes=2),
+        )
+    else:
+        from saas.control_plane.identity import (
+            IdentityManagementService,
+            VerifiedIdentityAssertion,
+        )
+        from saas.control_plane.onboarding_models import TenantCreationIntentRecord
+
+        auth = _role_sessions(postgresql_engine, "saas_authenticator")
+        actor = (
+            IdentityManagementService(auth)
+            .resolve_verified_login(
+                VerifiedIdentityAssertion(
+                    provider="casdoor",
+                    issuer="https://auth.example.test",
+                    subject=suffix,
+                    email=f"authenticated-{suffix}@example.test",
+                    email_verified=True,
+                )
+            )
+            .user_id
+        )
+        assert actor is not None
+        created = registrations.workspace_creation_service(auth).create(
+            actor_id=actor,
+            tenant_name="Authenticated workspace",
+            idempotency_key=suffix,
+            now=now,
+        )
+        with auth() as db:
+            from saas.control_plane.rls import RlsContext, apply_rls_context
+
+            apply_rls_context(db, RlsContext(actor_id=actor))
+            requested = db.get(TenantCreationIntentRecord, created.intent_id)
+            assert requested is not None
+        started = coordinator.start_intent(
+            creation_intent_id=created.intent_id,
+            idempotency_key=suffix,
+            now=now + timedelta(minutes=2),
+        )
 
     placement_id = uuid4()
     with postgresql_engine.begin() as connection:
@@ -1409,7 +1451,8 @@ def test_real_postgresql_vertical_chain_obeys_onboarding_rls(
 
     scope = OnboardingScope(
         onboarding_id=started.onboarding_id,
-        registration_id=accepted.registration_id,
+        registration_id=started.registration_id,
+        creation_intent_id=started.creation_intent_id,
         actor_id=requested.user_id,
         tenant_id=requested.tenant_id,
     )

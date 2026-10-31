@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import UUID
 
 import httpx
@@ -61,6 +61,38 @@ def test_public_options_are_local_controlled_paths_without_private_authority(
     }
     assert "secret" not in response.text and "csrf" not in response.text
     assert oidc_harness.provider.jwks_request_count == 0
+
+
+@pytest.mark.parametrize(
+    "target,expected",
+    [
+        ("/", "/setup"),
+        ("/saas/account/identities", "/saas/account/identities"),
+        ("/setup?intent=retained", "/setup?intent=retained"),
+        (
+            "/projects?view=recent#activity",
+            "/setup?" + urlencode({"return_to": "/projects?view=recent#activity"}),
+        ),
+    ],
+)
+def test_no_workspace_callback_preserves_the_intended_destination(
+    oidc_harness: _Harness, target: str, expected: str
+) -> None:
+    import json
+    import re
+
+    callback, _ = _start(
+        oidc_harness, subject="setup-return", email="setup-return@example.test", return_to=target
+    )
+    response = oidc_harness.client.get(
+        "/saas/auth/oidc/test/callback", params=callback, headers={"Accept": "text/html"}
+    )
+    assert response.status_code == 200
+    payload = re.search(
+        r'<script id="oidc-result" type="application/json">(.*?)</script>', response.text
+    )
+    assert payload is not None
+    assert json.loads(payload.group(1))["return_to"] == expected
 
 
 @pytest.mark.parametrize("change", ["logout", "old", "retained_legacy"])

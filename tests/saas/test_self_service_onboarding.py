@@ -803,8 +803,10 @@ def test_onboarding_rejects_a_self_consistent_plan_snapshot_outside_reviewed_pol
     message = onboarding.envelopes.open(event_id=email_event.id, payload=email_event.payload)
     _verify(onboarding, registration_id, message)
 
+    from saas.control_plane.onboarding_models import TenantCreationIntentRecord
+
     with onboarding.sessions.begin() as db:
-        registration = db.get(SelfServiceRegistrationRecord, registration_id)
+        registration = db.get(TenantCreationIntentRecord, registration_id)
         assert registration is not None
         forged_snapshot = dict(registration.plan_snapshot)
         forged_snapshot["quota_limit"] = 1_000_000

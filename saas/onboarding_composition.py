@@ -56,6 +56,9 @@ _ONBOARDING_DATABASE_ROLES: dict[OnboardingDatabaseAuthority, str] = {
     "status": "saas_onboarding_status",
 }
 _STATUS_SELECT_COLUMNS: dict[str, frozenset[str]] = {
+    "saas_tenant_creation_intents": frozenset(
+        {"id", "user_id", "tenant_id", "onboarding_id", "status", "created_at"}
+    ),
     "saas_tenant_onboardings": frozenset(
         {
             "id",
@@ -68,6 +71,7 @@ _STATUS_SELECT_COLUMNS: dict[str, frozenset[str]] = {
             "trial_ends_at",
             "last_transition_at",
             "created_at",
+            "creation_intent_id",
         }
     ),
     "saas_tenant_memberships": frozenset({"tenant_id", "user_id", "status"}),

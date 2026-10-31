@@ -113,9 +113,10 @@ class OnboardingScope:
     """Exact server-derived Saga identity used to bind PostgreSQL RLS GUCs."""
 
     onboarding_id: UUID
-    registration_id: UUID
+    registration_id: UUID | None
     actor_id: UUID
     tenant_id: UUID
+    creation_intent_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1615,6 +1616,7 @@ class TenantOnboardingWorkflow:
             OnboardingRlsContext(
                 onboarding_id=scope.onboarding_id,
                 registration_id=scope.registration_id,
+                creation_intent_id=scope.creation_intent_id,
                 actor_id=scope.actor_id,
                 tenant_id=scope.tenant_id,
             ),
@@ -1624,7 +1626,15 @@ class TenantOnboardingWorkflow:
     def _saga(db: Session, scope: OnboardingScope, *, lock: bool) -> TenantOnboardingRecord:
         statement = sa.select(TenantOnboardingRecord).where(
             TenantOnboardingRecord.id == scope.onboarding_id,
-            TenantOnboardingRecord.registration_id == scope.registration_id,
+            sa.or_(
+                TenantOnboardingRecord.creation_intent_id
+                == (scope.creation_intent_id or scope.registration_id),
+                sa.and_(
+                    TenantOnboardingRecord.creation_intent_id.is_(None),
+                    TenantOnboardingRecord.registration_id == scope.registration_id,
+                    TenantOnboardingRecord.registration_id.is_not(None),
+                ),
+            ),
             TenantOnboardingRecord.user_id == scope.actor_id,
             TenantOnboardingRecord.tenant_id == scope.tenant_id,
         )
@@ -1646,7 +1656,8 @@ class TenantOnboardingWorkflow:
     ) -> None:
         payload: dict[str, object] = {
             "onboarding_id": str(saga.id),
-            "registration_id": str(saga.registration_id),
+            "registration_id": str(saga.registration_id) if saga.registration_id else None,
+            "creation_intent_id": str(saga.creation_intent_id or saga.registration_id),
             "user_id": str(saga.user_id),
             "tenant_id": str(saga.tenant_id),
             "expected_status": saga.status,
@@ -1752,9 +1763,12 @@ def onboarding_scope_from_payload(payload: dict[str, object]) -> OnboardingScope
     """Parse only server-authored Outbox facts; callers must not pass HTTP bodies."""
 
     try:
+        registration = payload.get("registration_id")
+        intent_id = UUID(str(payload.get("creation_intent_id") or registration))
         return OnboardingScope(
             onboarding_id=UUID(str(payload["onboarding_id"])),
-            registration_id=UUID(str(payload["registration_id"])),
+            registration_id=UUID(str(registration)) if registration is not None else None,
+            creation_intent_id=intent_id,
             actor_id=UUID(str(payload["user_id"])),
             tenant_id=UUID(str(payload["tenant_id"])),
         )

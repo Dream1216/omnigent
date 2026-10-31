@@ -207,6 +207,72 @@ class SelfServiceRegistrationRecord(SaasBase):
     )
 
 
+class TenantCreationIntentRecord(SaasBase):
+    """Product-owned workspace intent for an existing, verified Global User."""
+
+    __tablename__ = "saas_tenant_creation_intents"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
+    )
+    registration_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_self_service_registrations.id", ondelete="RESTRICT"), unique=True
+    )
+    source: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="ready")
+    tenant_name: Mapped[str] = mapped_column(sa.String(256), nullable=False)
+    tenant_slug: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
+    default_space_name: Mapped[str] = mapped_column(sa.String(256), nullable=False)
+    default_space_slug: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    plan_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    plan_policy_revision: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    home_region: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    plan_snapshot: Mapped[dict[str, object]] = mapped_column(sa.JSON, nullable=False)
+    plan_snapshot_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    space_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    subscription_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    pricing_snapshot_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    entitlement_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    runtime_partition_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    default_project_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    runtime_binding_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    onboarding_id: Mapped[UUID] = mapped_column(nullable=False, default=uuid4, unique=True)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint("status IN ('ready', 'revoked')", name="ck_creation_intent_status"),
+        sa.CheckConstraint(
+            "(source = 'registration' AND registration_id IS NOT NULL AND id = registration_id) "
+            "OR (source = 'authenticated' AND registration_id IS NULL)",
+            name="ck_creation_intent_source",
+        ),
+        sa.CheckConstraint(
+            "length(tenant_name) BETWEEN 1 AND 256 AND "
+            "length(default_space_name) BETWEEN 1 AND 256 AND "
+            "length(tenant_slug) BETWEEN 1 AND 128 AND tenant_slug = lower(tenant_slug) AND "
+            "length(default_space_slug) BETWEEN 1 AND 128 "
+            "AND default_space_slug = lower(default_space_slug)",
+            name="ck_creation_intent_names",
+        ),
+        sa.CheckConstraint(
+            "length(plan_key) BETWEEN 1 AND 64 AND "
+            "length(plan_policy_revision) BETWEEN 1 AND 128 AND "
+            "length(home_region) BETWEEN 1 AND 64 AND length(plan_snapshot_hash) = 64 AND "
+            "length(CAST(plan_snapshot AS TEXT)) > 2 AND "
+            "length(idempotency_key) = 64 AND length(request_hash) = 64",
+            name="ck_creation_intent_snapshot",
+        ),
+        sa.UniqueConstraint("id", "onboarding_id", name="uq_creation_intent_onboarding_scope"),
+        sa.Index("ix_creation_intent_actor_created", "user_id", "created_at", "id"),
+    )
+
+
 class RegistrationRateLimitPolicyRecord(SaasBase):
     """Database-owned limits, retention, and bounded counter capacity."""
 
@@ -428,7 +494,8 @@ class TenantOnboardingRecord(SaasBase):
     __tablename__ = "saas_tenant_onboardings"
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    registration_id: Mapped[UUID] = mapped_column(nullable=False, unique=True)
+    registration_id: Mapped[UUID | None] = mapped_column(unique=True)
+    creation_intent_id: Mapped[UUID | None] = mapped_column(unique=True)
     user_id: Mapped[UUID] = mapped_column(
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -487,6 +554,16 @@ class TenantOnboardingRecord(SaasBase):
     )
 
     __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ("creation_intent_id", "id"),
+            ("saas_tenant_creation_intents.id", "saas_tenant_creation_intents.onboarding_id"),
+            ondelete="RESTRICT",
+            name="fk_tenant_onboarding_creation_intent",
+        ),
+        sa.CheckConstraint(
+            "registration_id IS NOT NULL OR creation_intent_id IS NOT NULL",
+            name="ck_tenant_onboarding_creation_source",
+        ),
         sa.ForeignKeyConstraint(
             ("registration_id", "id"),
             (

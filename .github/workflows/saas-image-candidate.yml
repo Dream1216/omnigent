@@ -139,6 +139,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        role_profile: [core, model, admin, projection]
         postgres:
           - postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
           - postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
@@ -156,6 +157,7 @@ jobs:
           --health-retries 10
     env:
       OMNIGENT_SKIP_WEB_UI: "true"
+      OMNIGENT_SAAS_REPLAY_ROLE_PROFILE: ${{ matrix.role_profile }}
       OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL: >-
         postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
     steps:

@@ -29,10 +29,14 @@ export function FlowIntro({
         <span>.</span>
       </h1>
       <p className="login-description">{description}</p>
-      <div className="flow-steps" aria-label={t("flow.step", { step })}>
+      <div
+        className="flow-steps"
+        data-step={step}
+        aria-label={t("flow.step", { step })}
+      >
         <b>0{step}</b>
         <span className="flow-track" aria-hidden="true">
-          <span style={{ width: `${step * 33.333}%` }} />
+          <span />
         </span>
         <em>{t("flow.step", { step })}</em>
       </div>

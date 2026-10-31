@@ -319,8 +319,13 @@ def create_onboarding_ui_router() -> APIRouter:
 
     @router.get("/saas/account/identities", include_in_schema=False)
     @router.get("/saas/auth/result", include_in_schema=False)
+    @router.get("/setup", include_in_schema=False)
     def identity_shell(request: Request) -> HTMLResponse:
-        page = "identities" if request.url.path.endswith("/identities") else "oidc-result"
+        page = (
+            "setup"
+            if request.url.path == "/setup"
+            else ("identities" if request.url.path.endswith("/identities") else "oidc-result")
+        )
         exported = login_page(_UI_HEADERS, page=page)
         if exported is None:
             return HTMLResponse(

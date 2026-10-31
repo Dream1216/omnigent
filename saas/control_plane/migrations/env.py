@@ -28,7 +28,10 @@ from saas.control_plane import scheduling_models as _scheduling_models  # noqa: 
 from saas.control_plane import webhook_models as _webhook_models  # noqa: F401
 from saas.control_plane import worktree_models as _worktree_models  # noqa: F401
 from saas.control_plane.db_models import SaasBase
-from saas.control_plane.migrations.schema_metadata import control_plane_migration_metadata
+from saas.control_plane.migrations.schema_metadata import (
+    control_plane_migration_metadata,
+    postgresql_control_plane_migration_metadata,
+)
 
 config = context.config
 target_metadata = control_plane_migration_metadata(SaasBase.metadata)
@@ -52,7 +55,11 @@ def _configure(connection: Connection) -> None:
     sqlite = connection.dialect.name == "sqlite"
     context.configure(
         connection=connection,
-        target_metadata=target_metadata,
+        target_metadata=(
+            postgresql_control_plane_migration_metadata(target_metadata)
+            if connection.dialect.name == "postgresql"
+            else target_metadata
+        ),
         render_as_batch=True,
         version_table="saas_alembic_version",
         transactional_ddl=True if sqlite else None,

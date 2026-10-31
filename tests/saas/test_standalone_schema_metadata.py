@@ -14,12 +14,13 @@ from saas.control_plane.execution_models import ExecutionSessionRecord, RunRecor
 from saas.control_plane.migrations.schema_metadata import (
     _MODEL_TABLES,
     control_plane_migration_metadata,
+    postgresql_control_plane_migration_metadata,
 )
 from tests.saas.test_control_plane_migration import _migration_config
 from tests.saas.test_execution_control_plane import _admitted_run, _execution_fixture
 
 _R = "lm2r00000001"
-_T = "lm2t00000001"
+_CURRENT = "cd2a00000001"
 _PRICE_KEYS = {"fk_session_customer_pricing", "fk_run_customer_pricing"}
 
 
@@ -96,9 +97,35 @@ def test_fresh_schema_matches_the_ordinary_unfiltered_alembic_check(schema_datab
         command.check(_migration_config(connection))
         assert (
             connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-            == _T
+            == _CURRENT
         )
     assert _foreign_keys(schema_database) == set()
+
+
+def test_postgresql_runner_index_projection_does_not_mutate_runtime_metadata():
+    name = "uq_runner_isolation_grant_capability_worktree_v1"
+    table = SaasBase.metadata.tables["saas_run_isolation_grants"]
+    before = set(table.indexes)
+    projected = postgresql_control_plane_migration_metadata(SaasBase.metadata)
+    assert set(table.indexes) == before
+    assert any(
+        index.name == name and index.unique for index in projected.tables[table.name].indexes
+    )
+
+
+def test_real_postgresql_schema_matches_unfiltered_metadata_and_empty_rollback(
+    isolated_postgres_url: str,
+):
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "head")
+        with engine.begin() as connection:
+            command.check(_migration_config(connection))
+        with engine.begin() as connection:
+            command.downgrade(_migration_config(connection), "base")
+    finally:
+        engine.dispose()
 
 
 def test_complete_application_metadata_is_not_overridden_or_hidden(schema_database):
@@ -184,7 +211,7 @@ def test_schema_downgrade_refuses_retained_execution_without_erasing_data(schema
     with schema_database.connect() as connection:
         assert (
             connection.exec_driver_sql("SELECT version_num FROM saas_alembic_version").scalar_one()
-            == _T
+            == _CURRENT
         )
 
 

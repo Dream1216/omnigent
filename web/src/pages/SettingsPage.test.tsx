@@ -1107,6 +1107,7 @@ describe("SettingsPage", () => {
       "href",
       "/saas/account/identities",
     );
+    expect(screen.getByRole("link", { name: "Workspaces" })).toHaveAttribute("href", "/setup");
   });
 
   it("renders the Members section at /settings/members when accounts is on", async () => {

@@ -9,6 +9,36 @@ DATABASE_SQL = (ROOT / "saas/control_plane/postgresql_database.sql").read_text(e
 VERTICAL_MIGRATION = (
     ROOT / "saas/control_plane/migrations/versions/p0s000000002_onboarding_vertical_chain.py"
 ).read_text(encoding="utf-8")
+_INTENT_INSERT_COLUMNS = frozenset(
+    {
+        "id",
+        "user_id",
+        "registration_id",
+        "source",
+        "status",
+        "tenant_name",
+        "tenant_slug",
+        "default_space_name",
+        "default_space_slug",
+        "plan_key",
+        "plan_policy_revision",
+        "home_region",
+        "plan_snapshot",
+        "plan_snapshot_hash",
+        "tenant_id",
+        "space_id",
+        "subscription_id",
+        "pricing_snapshot_id",
+        "entitlement_id",
+        "runtime_partition_id",
+        "default_project_id",
+        "runtime_binding_id",
+        "onboarding_id",
+        "idempotency_key",
+        "request_hash",
+        "created_at",
+    }
+)
 
 
 def _write_grants(role: str, privilege: str) -> dict[str, frozenset[str]]:
@@ -34,16 +64,17 @@ def _write_grants(role: str, privilege: str) -> dict[str, frozenset[str]]:
         )
         columns = frozenset(column.strip() for column in privilege_match.group(1).split(","))
         for table in (item.strip() for item in grant_match.group(2).split(",")):
+            table = table.removeprefix("public.")
             assert re.fullmatch(r"saas_[a-z0-9_]+", table), (
                 f"unexpected {privilege} target for {role}: {table}"
             )
-            assert table not in grants, f"duplicate {privilege} grant for {role} on {table}"
-            grants[table] = columns
+            grants[table] = grants.get(table, frozenset()) | columns
     return grants
 
 
 def test_registration_write_grants_are_column_scoped_and_minimal() -> None:
     inserts = _write_grants("saas_registration", "INSERT")
+    assert inserts.pop("saas_tenant_creation_intents") == _INTENT_INSERT_COLUMNS
     assert inserts == {
         "saas_self_service_registrations": frozenset(
             {
@@ -267,11 +298,13 @@ def test_rate_limit_tables_have_zero_service_role_acl_and_exact_function_entries
 
 def test_onboarding_vertical_chain_write_grants_are_exact_and_exclude_runs() -> None:
     inserts = _write_grants("saas_onboarding", "INSERT")
+    assert inserts.pop("saas_tenant_creation_intents") == _INTENT_INSERT_COLUMNS
     assert inserts == {
         "saas_tenant_onboardings": frozenset(
             {
                 "id",
                 "registration_id",
+                "creation_intent_id",
                 "user_id",
                 "tenant_id",
                 "space_id",
@@ -505,6 +538,7 @@ def test_onboarding_vertical_chain_write_grants_are_exact_and_exclude_runs() -> 
     }
 
     updates = _write_grants("saas_onboarding", "UPDATE")
+    assert updates.pop("saas_tenant_creation_intents") == frozenset({"status"})
     assert updates == {
         "saas_tenant_onboardings": frozenset(
             {

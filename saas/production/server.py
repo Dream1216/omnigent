@@ -1385,6 +1385,11 @@ def build_production_saas_services(
         billing=billing,
         onboarding=None if onboarding is None else onboarding.onboarding,
         onboarding_status=None if onboarding is None else onboarding.onboarding_status,
+        workspace_creation=(
+            None
+            if onboarding is None
+            else onboarding.onboarding.workspace_creation_service(sessions.authenticator)
+        ),
         onboarding_client_network=(
             None if onboarding is None else onboarding.onboarding_client_network
         ),

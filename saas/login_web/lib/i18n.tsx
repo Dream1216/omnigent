@@ -202,6 +202,47 @@ const enUS = {
   "error.invalidResponse":
     "The server returned an invalid response. Please try again.",
   "error.retryAfter": "Try again in {{seconds}} seconds.",
+  "setup.title": "Your workspace starts here",
+  "setup.eyebrow": "MAKE ROOM FOR YOUR NEXT IDEA",
+  "setup.description":
+    "Choose a workspace, accept an invitation, or create a new place for your agents and team.",
+  "setup.available": "Your workspaces",
+  "setup.create": "Create a workspace",
+  "setup.name": "Workspace name",
+  "setup.placeholder": "A name for your team or idea",
+  "setup.defaults":
+    "Start with a {{days}}-day trial. You can complete your profile later.",
+  "setup.creating": "Creating your workspace…",
+  "setup.preparing": "Your workspace is taking shape",
+  "setup.accepted": "Request received",
+  "setup.continuing":
+    "Setup continues safely in the background. You can return to this page at any time.",
+  "setup.recovering":
+    "A setup step needs another attempt. Recovery is continuing automatically.",
+  "setup.ready": "Your workspace is ready",
+  "setup.readyDescription":
+    "Your space and first project are ready. Open your workspace to start a task.",
+  "setup.open": "Open workspace",
+  "setup.another": "Create another workspace",
+  "setup.previous": "Continue a previous setup",
+  "setup.support": "Your setup needs attention",
+  "setup.supportDescription":
+    "Contact your administrator with this reference. Your request has been kept safely.",
+  "setup.invitation": "Have an invitation?",
+  "setup.invitationCode": "Invitation code",
+  "setup.join": "Accept invitation",
+  "setup.joined":
+    "Invitation accepted. Your workspaces will appear when space access is available.",
+  "setup.invitationError":
+    "This invitation could not be accepted. Check the code and the account you signed in with.",
+  "setup.error": "Workspace setup error",
+  "setup.verifyEmail":
+    "Verify your email with your sign-in provider, then sign in again to create a workspace.",
+  "setup.limited":
+    "You have requested several workspaces recently. Please try again later.",
+  "setup.changedRequest":
+    "This request was already submitted with different details. Return to your previous setup.",
+  "setup.signInDescription": "Sign in to choose or create your workspace.",
 } as const;
 
 export type MessageKey = keyof typeof enUS;
@@ -384,6 +425,39 @@ const zhCN: Record<MessageKey, string> = {
   "error.credentials": "请检查邮箱和密码后重试。",
   "error.invalidResponse": "服务器返回了无效响应，请重试。",
   "error.retryAfter": "请在 {{seconds}} 秒后重试。",
+  "setup.title": "开启你的工作空间",
+  "setup.eyebrow": "为你的下一个想法留出空间",
+  "setup.description":
+    "选择工作空间、接受邀请，或为智能体和团队创建一个新的协作空间。",
+  "setup.available": "你的工作空间",
+  "setup.create": "创建工作空间",
+  "setup.name": "工作空间名称",
+  "setup.placeholder": "给团队或想法起一个名字",
+  "setup.defaults": "从 {{days}} 天试用开始，其他资料可以稍后完善。",
+  "setup.creating": "正在创建工作空间…",
+  "setup.preparing": "工作空间正在准备中",
+  "setup.accepted": "已收到开通请求",
+  "setup.continuing": "系统会在后台继续开通，你可以随时返回此页面查看进展。",
+  "setup.recovering": "某个开通步骤需要重试，系统正在自动恢复。",
+  "setup.ready": "工作空间已就绪",
+  "setup.readyDescription":
+    "空间和首个项目已准备好，进入工作空间即可开始任务。",
+  "setup.open": "进入工作空间",
+  "setup.another": "创建另一个工作空间",
+  "setup.previous": "继续之前的开通",
+  "setup.support": "开通需要协助处理",
+  "setup.supportDescription":
+    "请将此编号提供给管理员。你的开通请求已安全保留。",
+  "setup.invitation": "已有工作空间邀请？",
+  "setup.invitationCode": "邀请码",
+  "setup.join": "接受邀请",
+  "setup.joined": "邀请已接受，获得空间访问权限后即可在此选择工作空间。",
+  "setup.invitationError": "此邀请未能接受，请检查邀请码和当前登录账号。",
+  "setup.error": "工作空间开通错误",
+  "setup.verifyEmail": "请先在身份服务中验证邮箱，再重新登录以创建工作空间。",
+  "setup.limited": "你近期已提交多个工作空间开通请求，请稍后再试。",
+  "setup.changedRequest": "此请求已经用其他资料提交，请继续之前的开通。",
+  "setup.signInDescription": "登录后即可选择或创建工作空间。",
 };
 
 const messages: Record<Locale, Record<MessageKey, string>> = {

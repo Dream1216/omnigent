@@ -1,7 +1,7 @@
 # Casdoor customer identity integration
 
-This branch implements the first protocol and browser-session slice of the
-Casdoor integration plan dated 2026-10-13. It is not ready for production
+This branch implements protocol, browser sessions and authenticated workspace
+setup from the Casdoor integration plan dated 2026-10-13. It is not ready for production
 cutover. Existing customer and Staff authentication remain on their current
 production deployment.
 
@@ -57,6 +57,15 @@ secret is delivered to browser storage. Storage failure leaves a retry link.
 `GET /saas/auth/bootstrap` reports the next step without exposing a CSRF
 secret. A user without available scopes is sent to `/setup`.
 
+`/setup` offers existing workspaces, invitation acceptance, and a name-only
+creation form using the reviewed plan and region defaults. An authenticated
+user may create multiple independent intents. Cookie authentication, CSRF,
+actor-scoped idempotency and a per-user daily quota guard creation. The browser
+retains the request key across an uncertain network outcome and resumes the
+accepted intent by URL. Opening a workspace stores a preference in the local
+session; HTTP and WebSocket requests still recheck live membership, placement
+and allocation. Settings provides a Workspaces entry to change that preference.
+
 Customer management, delivery and notification pages share the same browser
 session helper. Each mutation reads the current shared token, so another
 tab's login does not leave an old CSRF value captured at page load. Staff
@@ -64,9 +73,9 @@ notification CSRF continues to use its separate key.
 
 Migration `cd1a00000001` expands existing OIDC transactions and preserves their
 RLS policies and grants. Empty test schemas can be downgraded; retained
-transactions require application-only rollback. Production migration receipt
-and catalog anchors must still be generated through the existing release
-replay, never by bypassing the schema verifier.
+transactions require application-only rollback. Production migration receipts
+must be generated through the existing release replay and checked against
+source-pinned catalog anchors, never by bypassing the schema verifier.
 
 Migration `cd1b00000001` associates local sessions with verified provider,
 issuer, subject, optional `sid` and ID Token issue time. Signed back-channel
@@ -79,7 +88,31 @@ Migration `cd1c00000001` persists reauthentication and its authorizing local
 session. Retained older link transactions remain stored but cannot complete
 without a bound session. Its downgrade refuses retained OIDC transactions,
 including for a schema owner subject to forced RLS. Full production catalog
-anchors and recovery replay remain outstanding for these revisions.
+qualification uses the combined `cd2a00000001` head; the intermediate Casdoor
+heads are not separately qualified deployment targets. Recovery replay remains
+required before cutover.
+
+Migration `cd2a00000001` adds `TenantCreationIntent` without a unique user
+constraint, backfills verified registration history, and connects both request
+sources to the same Billing → Runtime → Project → Activation Saga. Legacy
+registration/Saga paths remain readable during deployment overlap. New RLS
+and column grants keep HTTP creation under `saas_authenticator`, Saga writes
+under `saas_onboarding`, and status projection under its narrow role. The
+same migration adds the session's optional tenant/space preference. Retained
+intents or workspace selections require application-only rollback.
+The current server requires this schema head. Deploy the matching Worker
+before accepting new intents. An old Worker does not understand authenticated
+intent events; stop new creation and drain or quarantine that event generation
+before rolling the Worker back.
+
+Clean PG16/18 source replay provides separate catalog anchors for the exact
+15/17/18/19-service graphs and for reviewed Preview deployment policies. The
+candidate workflow runs all eight combinations. To reproduce one, select
+`OMNIGENT_SAAS_REPLAY_ROLE_PROFILE=core|model|admin|projection` and run
+`tests/saas/test_production_migration_replay.py` against a fresh dedicated
+cluster via `OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL`. The default profile
+is `admin`. Each run must start from a fresh cluster. Current-head admission
+does not qualify a predecessor image, backup restore, or a production release.
 
 Local logout revokes the product session before returning a fixed provider
 logout URL. Provider unavailability cannot undo that revocation. Logout JWTs
@@ -111,7 +144,9 @@ From this checkout, with its Python development and SaaS dependencies:
 ```bash
 PYTHONPATH=. python -m pytest tests/saas/test_oidc_http_auth.py tests/saas/test_oidc_logout.py tests/saas/test_oidc_key_rotation.py tests/saas/test_casdoor_config.py tests/saas/test_oidc_completion_browser.py -q
 PYTHONPATH=. python -m pytest tests/saas/test_oidc_browser_entry.py tests/saas/test_identity_ui_browser.py -q
+PYTHONPATH=. python -m pytest tests/saas/test_workspace_creation.py tests/saas/test_active_workspace_scope.py tests/saas/test_workspace_setup_browser.py -q
 OMNIGENT_SAAS_TEST_POSTGRES_URL=postgresql+psycopg://USER@localhost/TEST_ADMIN_DB PYTHONPATH=. python -m pytest tests/saas/test_casdoor_migration.py tests/saas/test_federated_sessions_postgresql.py -q
+OMNIGENT_SAAS_TEST_POSTGRES_URL=postgresql+psycopg://USER@localhost/TEST_ADMIN_DB PYTHONPATH=. python -m pytest tests/saas/test_workspace_creation_postgresql.py tests/saas/test_workspace_creation_migration.py -q
 ```
 
 The PostgreSQL fixture creates and removes a disposable database. Use a local
@@ -122,18 +157,21 @@ complete both callbacks, refresh, and open customer management in a new tab.
 Perform a permitted mutation, then sign in again in another tab and repeat
 the mutation in the original management tab. Disable both storage backends
 and confirm the callback shows a retry instead of claiming success.
+With a new verified identity, confirm setup requests only a workspace name,
+retry an interrupted request, and confirm it produces one workspace. Open it,
+create another through Settings, switch between both, and accept an invitation
+to a third. Remove the selected membership and confirm access is denied until
+another authorized workspace is chosen. Execute the first task using a real
+runner; control-plane admission with a fixture adapter does not satisfy that check.
 
 ## Required work before cutover
 
-- Production PostgreSQL 16/18 migration replay, exact catalog anchors,
-  role graph receipts, runtime verification and restore compatibility.
-- Authenticated workspace creation intent, shared onboarding Saga, historical
-  backfill, RLS, `/setup`, invitations and first Run acceptance.
+- Release-specific PostgreSQL role graph receipts, runtime verification,
+  predecessor-image compatibility and backup restore qualification.
+- Fully assembled provider → setup → workspace → real runner first-task
+  acceptance, including retry and membership revocation.
 - Per-user credential ownership and migration receipts; old passwords must
   stop working after authority moves to Casdoor.
-- Real patched-provider RP and back-channel logout acceptance, durable
-  identity event Inbox, state reconciliation and disable/reset convergence.
-- Explicit account-linking and conflict pages, full branding, actual language
-  switching without resending codes, signup expiration and replay tests.
+- Durable identity event Inbox, state reconciliation and disable/reset convergence.
 - Approved social/enterprise channels, isolated deployment with durable DB,
   production TLS and email, signed images, GitOps rollout and recovery drills.

@@ -93,4 +93,14 @@ export async function signIn(
   // matching double-submit token must be shared too. Keep sessionStorage for
   // compatibility with existing admin surfaces and localStorage for new tabs.
   persistCsrfToken(payload.csrf_token);
+  const bootstrap = await fetch("/saas/auth/bootstrap", {
+    credentials: "same-origin",
+    cache: "no-store",
+    signal,
+  });
+  if (bootstrap.status === 404) return null;
+  if (!bootstrap.ok)
+    throw new Error("Could not load your workspace. Try again.");
+  const account = await bootstrap.json();
+  return account.next === "/setup" ? "/setup" : null;
 }

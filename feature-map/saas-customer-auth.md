@@ -12,6 +12,10 @@ explicit consent and fresh authentication. Product permissions remain local.
 - `connect`: connected identities, pending conflict, consent and fresh proof.
 - `reauthenticate`: current-account proof and cross-tab CSRF refresh.
 - `logout`: local revocation followed by provider logout and back-channel convergence.
+- `workspace-setup`: authenticated users without a workspace, name-only creation,
+  pending/recovery/support states, invitations and multiple workspace choices.
+- `workspace-selection`: choose a server-provided workspace for browser and
+  WebSocket requests; removed membership requires another authorized choice.
 
 ## How to get to it (user POV)
 
@@ -21,6 +25,10 @@ explicit consent and fresh authentication. Product permissions remain local.
   sign-in, or Sign-in methods in the header. The sign-in return retains the page.
 - Complete provider authorization to reach the completion or conflict page.
 - On Sign-in methods, confirm connecting an identity, sign in again, or sign out.
+- After sign-in without an available workspace, continue to workspace setup.
+- Open workspace setup directly, or choose Workspaces in the main app Settings.
+- On setup, choose an available workspace, create another, resume a previous
+  request, or enter an invitation code.
 
 ## Driving it with the repro environment
 
@@ -35,6 +43,20 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
 - Existing password/registration pages and language layout:
   `tests/saas/test_onboarding_ui_browser.py`.
 - Main Settings entry: `web/src/pages/SettingsPage.test.tsx`.
+- Setup direct entry, Chinese/English draft preservation, mobile and desktop,
+  network retry/reload, pending recovery, invitations, signed-out state and
+  unavailable browser storage: `tests/saas/test_workspace_setup_browser.py`.
+- Authenticated creation, repeat requests, quota, multiple tenants and shared
+  opening workflow: `tests/saas/test_workspace_creation.py`.
+- Workspace preference, HTTP/WebSocket routing, CSRF and membership removal:
+  `tests/saas/test_active_workspace_scope.py`.
+- Real database worker authority, concurrent replay, source backfill and
+  non-bypass-owner rollback guards: `tests/saas/test_workspace_creation_postgresql.py`,
+  `tests/saas/test_workspace_creation_migration.py`, and
+  `tests/saas/test_federated_sessions_postgresql.py`.
+- Both registration and authenticated-intent paths through Billing, Runtime,
+  Project, Activation and first Run admission:
+  `tests/saas/test_onboarding_postgresql.py`.
 - Customer console legacy workflows: `tests/saas/test_project_admin_browser.py`
   and `tests/saas/test_delivery_browser.py`.
 - Signed protocol, replay and logout races: `tests/saas/test_oidc_http_auth.py`,
@@ -51,6 +73,10 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
 - Staff authentication, host credentials and Databricks sign-in are separate.
 - A captured notification replay is not proof of direct provider connectivity.
 - Browser API fixtures prove the actual packaged UI, not provider availability.
+- A persisted workspace choice grants no permission; each request still checks
+  current membership and allocation. Explicit scope requests retain their own choice.
+- Runtime adapter fixtures prove Saga integration and control-plane Run admission;
+  they do not prove a real runner executed a user's first task.
 - PostgreSQL role/race tests and isolated SQLite previews do not qualify a
   production schema, TLS setup, HA deployment, tenant setup or release rollback.
 - Pending email conflicts never prove ownership. Public conflict approval is

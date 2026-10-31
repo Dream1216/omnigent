@@ -6,7 +6,7 @@ Runtime Provider binding before a server-side dry-run.
 
 ## Process authority split
 
-- Server: `saas_registration` and `saas_onboarding_status` only. It calls
+- Server onboarding additions: `saas_registration` and `saas_onboarding_status`. It calls
   `build_production_onboarding_http_services()` and passes all three values in
   `integration_kwargs` to `create_saas_http_integration()`.
 - Outbox Worker: restricted `saas_dispatcher` for claims, plus distinct
@@ -16,6 +16,15 @@ Runtime Provider binding before a server-side dry-run.
 - Migration Job: owner authorities only. It creates/grants the roles and emits
   a new receipt whose `service_role_bindings_sha256` covers the expanded
   canonical manifest.
+
+Authenticated workspace creation also uses the server's existing
+`saas_authenticator` connection. The production server derives
+`TenantCreationIntentService` from the same reviewed onboarding policy and
+passes it as `workspace_creation`; no worker connection enters the HTTP
+composition. Both registration and authenticated intents produce the existing
+onboarding Outbox chain. Migration `cd2a00000001` and its matching role SQL must
+be admitted before deploying this server/worker version. The setup status
+role gains only the intent/Saga columns needed for its projection.
 
 The shared service-role manifest must add these exact entries to the existing
 production profile:
@@ -28,8 +37,8 @@ production profile:
 ```
 
 Keep the existing `executor -> saas_executor` entry. All login names must be
-unique. The downstream production profile must therefore contain exactly 14
-services: its 10 current services plus the three onboarding services and the
+unique. The downstream production profile must therefore contain exactly 15
+services: its 11 other services plus the three onboarding services and the
 Runtime Provider journal service. Server, migration, onboarding, and the
 Runtime Provider consume that same exact canonical authority. The Provider
 config's `journal_login` must equal the `runtime_provider_journal` login in the
@@ -39,7 +48,7 @@ migration receipt. The policy file and full manifest must be canonical compact
 JSON with one trailing newline; the init containers stage them as uid-owned
 mode `0400` files before either process starts.
 
-`service-role-bindings.example.json` is the exact 14-service canonical shape.
+`service-role-bindings.example.json` is the exact 15-service canonical shape.
 Only its `replace_*_login` values may be rendered; service and base-role names
 are part of the migration/admission contract.
 

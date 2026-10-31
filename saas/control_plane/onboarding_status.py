@@ -5,17 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.db_models import TenantMembership
-from saas.control_plane.onboarding_models import TenantOnboardingRecord
+from saas.control_plane.onboarding_models import TenantCreationIntentRecord, TenantOnboardingRecord
 from saas.control_plane.rls import RlsContext, apply_rls_context
 
 OnboardingCustomerState = Literal[
+    "pending",
     "provisioning",
     "ready_for_first_run",
     "complete",
@@ -23,6 +24,7 @@ OnboardingCustomerState = Literal[
     "support_required",
 ]
 OnboardingCustomerStage = Literal[
+    "workspace",
     "billing",
     "runtime",
     "project",
@@ -116,6 +118,66 @@ class OnboardingStatusService:
             ).one_or_none()
         if row is None:
             raise OnboardingStatusError("Onboarding status is unavailable")
+        return self._project(row)
+
+    def for_workspace(self, actor_id: UUID, intent_id: UUID) -> OnboardingStatusView:
+        with self._sessions() as db:
+            apply_rls_context(db, RlsContext(actor_id=actor_id))
+            intent = db.execute(
+                sa.select(
+                    TenantCreationIntentRecord.id,
+                    TenantCreationIntentRecord.onboarding_id,
+                    TenantCreationIntentRecord.status,
+                    TenantCreationIntentRecord.created_at,
+                ).where(
+                    TenantCreationIntentRecord.id == intent_id,
+                    sa.or_(
+                        TenantCreationIntentRecord.user_id == actor_id,
+                        sa.exists(
+                            sa.select(TenantMembership.tenant_id).where(
+                                TenantMembership.tenant_id == TenantCreationIntentRecord.tenant_id,
+                                TenantMembership.user_id == actor_id,
+                                TenantMembership.status == "active",
+                            )
+                        ),
+                    ),
+                )
+            ).one_or_none()
+            if intent is None:
+                raise OnboardingStatusError("Onboarding status is unavailable")
+            if intent.status != "ready":
+                return OnboardingStatusView(
+                    state="support_required",
+                    stage="support",
+                    version=1,
+                    updated_at=intent.created_at,
+                    can_start_first_run=False,
+                    support_reference=_support_reference(intent.onboarding_id),
+                )
+            row = db.execute(
+                sa.select(
+                    TenantOnboardingRecord.id,
+                    TenantOnboardingRecord.status,
+                    TenantOnboardingRecord.version,
+                    TenantOnboardingRecord.last_transition_at,
+                    TenantOnboardingRecord.tenant_id,
+                    TenantOnboardingRecord.space_id,
+                    TenantOnboardingRecord.default_project_id,
+                    TenantOnboardingRecord.trial_ends_at,
+                ).where(TenantOnboardingRecord.id == intent.onboarding_id)
+            ).one_or_none()
+            if row is None:
+                return OnboardingStatusView(
+                    state="pending",
+                    stage="workspace",
+                    version=1,
+                    updated_at=intent.created_at,
+                    can_start_first_run=False,
+                )
+        return self._project(row)
+
+    @staticmethod
+    def _project(row: sa.Row[Any]) -> OnboardingStatusView:
         public = _PUBLIC_STATE_BY_STATUS.get(row.status)
         if public is None:
             raise OnboardingStatusError("Onboarding status is unavailable")

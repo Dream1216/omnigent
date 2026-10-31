@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from saas.production import postgresql_migration as migration
 from saas.production.server import create_role_session_factories
 from saas.production.server_config import ProductionMigrationReceipt
 from saas.production.service_bindings import (
+    EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
@@ -202,6 +204,43 @@ def production_replay(
         platform_admin_service_role_bindings=platform_admin_manifest,
         require_tls=True,
     )
+    profile = os.environ.get("OMNIGENT_SAAS_REPLAY_ROLE_PROFILE", "admin")
+    assert profile in {"core", "model", "admin", "projection"}
+    if profile == "core":
+        plan = replace(
+            plan,
+            platform_model_service_role_bindings=None,
+            platform_admin_service_role_bindings=None,
+        )
+    elif profile == "model":
+        plan = replace(plan, platform_admin_service_role_bindings=None)
+    elif profile == "projection":
+        projection_bindings = tuple(
+            ProductionServiceRoleBinding(
+                service=service, login="replay_model_projection", base_role=role
+            )
+            for service, role in sorted(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES.items())
+        )
+        projection_document = render_production_service_role_bindings(projection_bindings)
+        projection_path = tmp_path / "projection-bindings.json"
+        projection_path.write_text(projection_document)
+        projection_path.chmod(0o400)
+        projection_manifest = ProductionServiceRoleBindings(
+            projection_path,
+            hashlib.sha256(projection_document.encode()).hexdigest(),
+            projection_bindings,
+        )
+        admin = sa.create_engine(url, isolation_level="AUTOCOMMIT")
+        try:
+            with admin.connect() as connection:
+                connection.exec_driver_sql(
+                    "CREATE ROLE replay_model_projection LOGIN NOSUPERUSER NOCREATEDB "
+                    "NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS "
+                    "PASSWORD 'production-replay-test'"
+                )
+        finally:
+            admin.dispose()
+        plan = replace(plan, model_projection_service_role_bindings=projection_manifest)
     yield plan
 
 
@@ -215,7 +254,16 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     first = migration.run_production_postgresql_migration(plan)
     assert first.status == "pass" and first.official_head == target
     assert first.service_role_graph_sha256 == plan.service_role_graph.sha256
-    assert len(plan.service_role_graph.bindings) == 18
+    profile = os.environ.get("OMNIGENT_SAAS_REPLAY_ROLE_PROFILE", "admin")
+    assert (
+        len(plan.service_role_graph.bindings)
+        == {
+            "core": 15,
+            "model": 17,
+            "admin": 18,
+            "projection": 19,
+        }[profile]
+    )
     verified = migration.run_production_postgresql_migration(plan, verify_only=True)
     assert verified.catalog_sha256 == first.catalog_sha256
     repeated = migration.run_production_postgresql_migration(plan)
@@ -236,7 +284,12 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         with monkeypatch.context() as context:
             context.setattr(
                 migration,
-                "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                {
+                    "core": "_SOURCE_SECURITY_CATALOG_SHA256",
+                    "model": "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
+                    "admin": "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                    "projection": "_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256",
+                }[profile],
                 {},
             )
             with pytest.raises(migration.PostgreSqlMigrationError) as absent:
@@ -278,7 +331,8 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         )
 
         verify_non_bypass_budget_owner_settlement(plan)
-    _verify_preview_deployment_and_startup(plan, final, tmp_path)
+    if profile in {"admin", "projection"}:
+        _verify_preview_deployment_and_startup(plan, final, tmp_path)
 
 
 def _startup_config(
@@ -374,12 +428,12 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             print(f"CLEAN_REPLAY_PREVIEW_SECURITY_PG{major}={digest}")
-            assert (
-                digest
-                == migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(
-                    key
-                )
+            preview_catalogs = (
+                migration._PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+                if plan.model_projection_service_role_bindings is not None
+                else migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
             )
+            assert digest == preview_catalogs.get(key)
             return key, digest
     finally:
         engine.dispose()

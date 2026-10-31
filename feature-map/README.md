@@ -98,7 +98,8 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
   `omnigent login`, host daemon credentials, Databricks auth modes, and embedded
   authentication for project writes.
 - [SaaS customer authentication](./saas-customer-auth.md) covers central and
-  legacy login, explicit identity connection, reauthentication and logout.
+  legacy login, explicit identity connection, reauthentication, logout and
+  workspace setup/selection.
 - [Sessions](./sessions.md) covers the sidebar, whole-session and message forks,
   custom-agent targets, fork access checks, archive, reconnect, and resume.
 

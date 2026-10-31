@@ -187,6 +187,9 @@ def _http_harness(
             onboarding_status=(
                 OnboardingStatusService(sessions) if configure_onboarding else None
             ),
+            workspace_creation=(
+                onboarding.workspace_creation_service(sessions) if configure_onboarding else None
+            ),
             onboarding_client_network=(None if omit_client_network else effective_client_network),
         )
         app = FastAPI()

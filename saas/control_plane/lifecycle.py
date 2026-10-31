@@ -65,6 +65,8 @@ class ValidatedAuthSession:
     authn_method: str
     authenticated_at: datetime
     expires_at: datetime
+    active_tenant_id: UUID | None = None
+    active_space_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +178,7 @@ class MembershipLifecycleService:
             if user is None or user.status != "active":
                 raise LifecycleError("user_inactive", "active user is required")
             external = {}
+            active_scope = {}
             if external_identity is not None:
                 from saas.control_plane.federated_sessions import bind_external_session
 
@@ -214,6 +217,10 @@ class MembershipLifecycleService:
                     raise LifecycleError(
                         "authorization_snapshot_stale", "authorizing session is no longer active"
                     )
+                active_scope = {
+                    "active_tenant_id": parent.active_tenant_id,
+                    "active_space_id": parent.active_space_id,
+                }
             db.add(
                 AuthSessionRecord(
                     id=session_id,
@@ -226,6 +233,7 @@ class MembershipLifecycleService:
                     last_seen_at=issued_at,
                     created_at=issued_at,
                     **external,
+                    **active_scope,
                 )
             )
             security_version = user.security_version
@@ -271,7 +279,41 @@ class MembershipLifecycleService:
                 authn_method=auth_session.authn_method,
                 authenticated_at=_comparable_time(auth_session.created_at),
                 expires_at=_comparable_time(auth_session.expires_at),
+                active_tenant_id=auth_session.active_tenant_id,
+                active_space_id=auth_session.active_space_id,
             )
+
+    def set_active_scope(
+        self,
+        *,
+        session_id: UUID,
+        user_id: UUID,
+        tenant_id: UUID,
+        space_id: UUID,
+        expected_security_version: int,
+    ) -> None:
+        with self._session_factory.begin() as db:
+            user = db.scalar(
+                sa.select(GlobalUser).where(GlobalUser.id == user_id).with_for_update()
+            )
+            session = db.scalar(
+                sa.select(AuthSessionRecord)
+                .where(AuthSessionRecord.id == session_id)
+                .with_for_update()
+            )
+            if (
+                user is None
+                or user.status != "active"
+                or session is None
+                or session.user_id != user_id
+                or session.revoked_at is not None
+                or _comparable_time(session.expires_at) <= _utcnow()
+                or session.security_version != user.security_version
+                or user.security_version != expected_security_version
+            ):
+                raise LifecycleError("invalid_session", "authentication session is invalid")
+            session.active_tenant_id = tenant_id
+            session.active_space_id = space_id
 
     def validate_csrf(self, token: str, csrf_token: str) -> None:
         """Validate a double-submit CSRF token against its authenticated session."""

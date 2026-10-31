@@ -17,6 +17,7 @@ _PAGE_EXPORTS = {
     "signup-status": "signup-status.html",
     "identities": "identities.html",
     "oidc-result": "oidc-result.html",
+    "setup": "setup.html",
 }
 
 

@@ -22,6 +22,8 @@ from saas.control_plane.db_models import (
     ControlPlaneOutboxEvent,
     IdentityConflict,
     OidcSessionFence,
+    Space,
+    Tenant,
 )
 from saas.control_plane.federated_sessions import (
     ExternalSessionIdentity,
@@ -226,7 +228,7 @@ def test_real_postgresql_fence_authority_and_external_mapping_are_not_customer_c
         )
 
 
-@pytest.mark.parametrize("retained", ["empty", "fence", "session", "oidc"])
+@pytest.mark.parametrize("retained", ["empty", "fence", "session", "oidc", "scope"])
 def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
     postgres_federation: tuple[sa.Engine, sessionmaker[Session]], retained: str
 ) -> None:
@@ -260,6 +262,51 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
         )
         with engine.begin() as connection:
             connection.exec_driver_sql("DELETE FROM saas_oidc_session_fences")
+    elif retained == "scope":
+        user = IdentityManagementService(sessions).resolve_verified_login(
+            VerifiedIdentityAssertion(
+                "existing", "https://existing.example.test", "scope-user", None, False
+            )
+        )
+        assert user.user_id is not None
+        tenant_id, space_id = uuid4(), uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                sa.insert(Tenant).values(
+                    id=tenant_id,
+                    name="Selected workspace",
+                    slug="selected-workspace",
+                    status="active",
+                    plan="starter",
+                    home_region="cn-east-1",
+                    lifecycle_version=1,
+                )
+            )
+            connection.execute(
+                sa.insert(Space).values(
+                    id=space_id,
+                    tenant_id=tenant_id,
+                    name="Default",
+                    slug="default",
+                    status="active",
+                )
+            )
+        lifecycle = MembershipLifecycleService(sessions)
+        issued = lifecycle.issue_auth_session(
+            user_id=user.user_id,
+            authn_method="password",
+            expires_at=now + timedelta(hours=1),
+        )
+        validated = lifecycle.validate_auth_session(issued.token)
+        lifecycle.set_active_scope(
+            session_id=validated.session_id,
+            user_id=user.user_id,
+            tenant_id=tenant_id,
+            space_id=space_id,
+            expected_security_version=validated.security_version,
+        )
+        selected = lifecycle.validate_auth_session(issued.token)
+        assert (selected.active_tenant_id, selected.active_space_id) == (tenant_id, space_id)
     elif retained == "oidc":
         with engine.begin() as connection:
             connection.execute(
@@ -286,11 +333,13 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
         # Schema owners can reference tables used by existing RLS predicates.
         connection.exec_driver_sql(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {owner}")
         connection.exec_driver_sql(f"GRANT SELECT, UPDATE ON saas_alembic_version TO {owner}")
-        for table in (
-            "saas_auth_sessions",
-            "saas_oidc_session_fences",
-            "saas_oidc_login_transactions",
-        ):
+        owned_tables = connection.scalars(
+            sa.text(
+                "SELECT tablename FROM pg_tables WHERE schemaname='public' "
+                "AND tablename LIKE 'saas_%' ORDER BY tablename"
+            )
+        ).all()
+        for table in owned_tables:
             connection.exec_driver_sql(f"ALTER TABLE {table} OWNER TO {owner}")
     try:
 
@@ -316,7 +365,7 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
             with engine.connect() as connection:
                 assert connection.scalar(
                     sa.text("SELECT version_num FROM saas_alembic_version")
-                ) == ("cd1c00000001")
+                ) == ("cd2a00000001")
                 table = (
                     "saas_oidc_login_transactions"
                     if retained == "oidc"
@@ -327,11 +376,7 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
                 assert connection.scalar(sa.text(f"SELECT count(*) FROM {table}")) > 0
     finally:
         with engine.begin() as connection:
-            for table in (
-                "saas_auth_sessions",
-                "saas_oidc_session_fences",
-                "saas_oidc_login_transactions",
-            ):
+            for table in owned_tables:
                 connection.exec_driver_sql(
                     f'ALTER TABLE IF EXISTS {table} OWNER TO "{original_owner}"'
                 )

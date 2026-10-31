@@ -165,6 +165,8 @@ class AuthSessionRecord(SaasBase):
     external_subject: Mapped[str | None] = mapped_column(sa.String(512))
     external_sid: Mapped[str | None] = mapped_column(sa.String(512))
     external_issued_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    active_tenant_id: Mapped[UUID | None] = mapped_column()
+    active_space_id: Mapped[UUID | None] = mapped_column()
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
@@ -179,6 +181,17 @@ class AuthSessionRecord(SaasBase):
             name="ck_auth_session_csrf_hash",
         ),
         sa.CheckConstraint("security_version > 0", name="ck_auth_session_security_version"),
+        sa.CheckConstraint(
+            "(active_tenant_id IS NULL AND active_space_id IS NULL) OR "
+            "(active_tenant_id IS NOT NULL AND active_space_id IS NOT NULL)",
+            name="ck_auth_session_active_scope",
+        ),
+        sa.ForeignKeyConstraint(
+            ("active_tenant_id", "active_space_id"),
+            ("saas_spaces.tenant_id", "saas_spaces.id"),
+            ondelete="RESTRICT",
+            name="fk_auth_session_active_scope",
+        ),
         sa.CheckConstraint("length(authn_method) > 0", name="ck_auth_session_method_nonempty"),
         sa.CheckConstraint(
             "(external_provider IS NULL AND external_issuer IS NULL AND external_subject IS NULL "
