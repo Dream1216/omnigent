@@ -90,6 +90,8 @@ class RecoveryOperation:
 
 
 T_PROTOCOL = "omnigent.postgresql-preserving-explicit-t/v1"
+D0_T_PROTOCOL = "omnigent.postgresql-preserving-d0-compatible-t/v1"
+D0_HEAD = "d0a1f879a01d"
 T_HEAD = "lm2t00000001"
 
 
@@ -105,7 +107,8 @@ class ExplicitTRecoveryOperation(RecoveryOperation):
         super().validate()
         adapter.need(
             type(self.contract_version) is str
-            and self.contract_version == T_PROTOCOL
+            and self.contract_version
+            == (D0_T_PROTOCOL if type(self) is D0CompatibleTRecoveryOperation else T_PROTOCOL)
             and type(self.rollback_saas_target) is str
             and self.rollback_saas_target == T_HEAD,
             "explicit_t_protocol_or_target_invalid",
@@ -124,13 +127,24 @@ class ExplicitTRecoveryOperation(RecoveryOperation):
         return {
             "contract_version": self.contract_version,
             "saas_head": T_HEAD,
-            "official_head": "mm1a2b3c4d5e",
+            "official_head": (
+                D0_HEAD if type(self) is D0CompatibleTRecoveryOperation else "mm1a2b3c4d5e"
+            ),
             "product_revision": self.rollback_product_revision,
             "server_digest": self.rollback_server_digest,
             "host_digest": self.rollback_host_digest,
             "upstream_revision": self.rollback_upstream_revision,
             "adapter_contract_version": self.rollback_adapter_contract_version,
         }
+
+
+@dataclass(frozen=True, kw_only=True)
+class D0CompatibleTRecoveryOperation(ExplicitTRecoveryOperation):
+    """Keep every D0 field; require a separately qualified legacy compatible pair.
+
+    This distinct wire contract carries no approval and never authorizes the
+    original destructive official-schema inverse or an arbitrary target head.
+    """
 
 
 def load_operation_document(document: object) -> RecoveryOperation:
@@ -143,10 +157,15 @@ def load_operation_document(document: object) -> RecoveryOperation:
         operation = RecoveryOperation(**document)
     else:
         adapter.need(
-            set(document) == t_keys and document.get("contract_version") == T_PROTOCOL,
+            set(document) == t_keys
+            and document.get("contract_version") in {T_PROTOCOL, D0_T_PROTOCOL},
             "operation_document_version_or_shape_unknown",
         )
-        operation = ExplicitTRecoveryOperation(**document)
+        operation = (
+            D0CompatibleTRecoveryOperation(**document)
+            if document["contract_version"] == D0_T_PROTOCOL
+            else ExplicitTRecoveryOperation(**document)
+        )
     adapter.need(
         all(
             type(value) is str
@@ -167,7 +186,8 @@ def load_operation_document(document: object) -> RecoveryOperation:
 def require_checkpoint_operation(state: dict, expected_operation: RecoveryOperation) -> None:
     """Pure binding check; phase/catalog/actual authority are still mandatory."""
     adapter.need(
-        type(expected_operation) in {RecoveryOperation, ExplicitTRecoveryOperation},
+        type(expected_operation)
+        in {RecoveryOperation, ExplicitTRecoveryOperation, D0CompatibleTRecoveryOperation},
         "operation_type_unknown",
     )
     expected_operation.validate()
@@ -182,10 +202,11 @@ def require_checkpoint_operation(state: dict, expected_operation: RecoveryOperat
 
 def _is_explicit_t(operation: RecoveryOperation) -> TypeGuard[ExplicitTRecoveryOperation]:
     adapter.need(
-        type(operation) in {RecoveryOperation, ExplicitTRecoveryOperation},
+        type(operation)
+        in {RecoveryOperation, ExplicitTRecoveryOperation, D0CompatibleTRecoveryOperation},
         "operation_type_unknown",
     )
-    return type(operation) is ExplicitTRecoveryOperation
+    return type(operation) in {ExplicitTRecoveryOperation, D0CompatibleTRecoveryOperation}
 
 
 def _rollback_revision(operation: RecoveryOperation) -> str:
@@ -273,7 +294,7 @@ def _source_projection(plan, engines):
         }
 
 
-def _original_t_security_projection(catalog, role_edges):
+def _original_t_security_projection(catalog, role_edges, *, official_head="mm1a2b3c4d5e"):
     """Match the original T capability enumeration after proving retired roles inert.
 
     The retained receipt ACLs still reference these three P17 roles. Their full
@@ -281,7 +302,9 @@ def _original_t_security_projection(catalog, role_edges):
     this accepts no membership or authority in the original T business catalog.
     """
     adapter.need(
-        catalog.get("saas_head") == T_HEAD and catalog.get("official_head") == "mm1a2b3c4d5e",
+        official_head in {"mm1a2b3c4d5e", D0_HEAD}
+        and catalog.get("saas_head") == T_HEAD
+        and catalog.get("official_head") == official_head,
         "explicit_t_original_source_heads_required",
     )
     retired = {"saas_usage_consumer", "saas_audit_delivery", "saas_revocation_consumer"}
@@ -429,7 +452,11 @@ class PreservingPostgreSqlRecovery:
             "explicit_t_source_gold_binding_changed",
         )
         old_plan = replace(self.plan, business_delivery_service_role_bindings=None)
-        key = (self.operation.database_identity["server_major"], "mm1a2b3c4d5e", "lm2t00000001")
+        key = (
+            self.operation.database_identity["server_major"],
+            operation.target_contract()["official_head"],
+            T_HEAD,
+        )
         inventory = migration._PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
         security = migration._source_security_catalog_baselines(old_plan.service_role_graph).get(
             key
@@ -466,7 +493,17 @@ class PreservingPostgreSqlRecovery:
                 head = connection.exec_driver_sql(
                     "SELECT version_num FROM public.alembic_version"
                 ).scalar_one()
-            adapter.need(head == "nf12ab34cd56", "official_schema_inverse_not_source_qualified")
+            if type(self.operation) is D0CompatibleTRecoveryOperation:
+                adapter.need(head == D0_HEAD, "d0_retaining_recovery_head_required")
+                runtime_native.require_d0_legacy_values_supported(
+                    self.owner,
+                    maintenance=self.maintenance,
+                    expected_identity=self.operation.database_identity,
+                )
+            else:
+                adapter.need(
+                    head == "nf12ab34cd56", "official_schema_inverse_not_source_qualified"
+                )
 
     def _t_old_catalog(self, state) -> None:
         archive = adapter.archive_name(self.operation.operation_id)
@@ -489,7 +526,12 @@ class PreservingPostgreSqlRecovery:
         old_plan = replace(self.plan, business_delivery_service_role_bindings=None)
         observed = _source_projection(old_plan, self.engines)
         edges = native.role_edges(self.maintenance)
-        source_catalog = _original_t_security_projection(observed["catalog"], edges)
+        operation = self.operation
+        if not _is_explicit_t(operation):
+            raise adapter.Refused("explicit_t_operation_required")
+        source_catalog = _original_t_security_projection(
+            observed["catalog"], edges, official_head=operation.target_contract()["official_head"]
+        )
         adapter.need(
             observed["inventory_sha256"] == self.gold["old_inventory_sha256"]
             and adapter.sha(adapter.canonical(source_catalog)) == self.gold["old_security_sha256"]
@@ -714,8 +756,20 @@ class PreservingPostgreSqlRecovery:
             down=True,
         )
         self._save("p16_downgraded", state)
-        self._begin("original_nf_downgrade")
-        _migrate(self.engines["official_owner"], "official", "mm1a2b3c4d5e", down=True)
+        if type(self.operation) is D0CompatibleTRecoveryOperation:
+            # No official downgrade, stamping or data rewrite: all D0 columns
+            # remain present for the separately verified old compatible image.
+            with self.engines["official_owner"].connect() as connection:
+                adapter.need(
+                    connection.exec_driver_sql(
+                        "SELECT version_num FROM public.alembic_version"
+                    ).scalar_one()
+                    == D0_HEAD,
+                    "d0_retained_head_changed",
+                )
+        else:
+            self._begin("original_nf_downgrade")
+            _migrate(self.engines["official_owner"], "official", "mm1a2b3c4d5e", down=True)
         adapter.need(
             native.head(self.owner) == _rollback_revision(self.operation),
             "old_saas_head_missing",

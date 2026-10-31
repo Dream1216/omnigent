@@ -331,6 +331,30 @@ def test_explicit_t_json_roundtrip_is_versioned_and_bound(recovery_boundary):
     assert recovery_boundary.events == []
 
 
+def test_d0_retaining_protocol_cannot_reuse_original_t_checkpoints_or_target_gold(
+    recovery_boundary,
+):
+    original, original_gold = _explicit_t_fixture(recovery_boundary)
+    operation = recovery.D0CompatibleTRecoveryOperation(
+        **{**asdict(original), "contract_version": recovery.D0_T_PROTOCOL}
+    )
+    gold = {**original_gold, "rollback_target": operation.target_contract()}
+    operation = replace(operation, source_gold_sha256=adapter.sha(adapter.canonical(gold)))
+    decoded = recovery.load_operation_document(json.loads(adapter.canonical(asdict(operation))))
+    assert type(decoded) is recovery.D0CompatibleTRecoveryOperation
+    assert operation.target_contract()["official_head"] == recovery.D0_HEAD
+    assert original.target_contract()["official_head"] == "mm1a2b3c4d5e"
+    with pytest.raises(adapter.Refused, match="checkpoint_operation_mismatch"):
+        recovery.require_checkpoint_operation({"operation": asdict(original)}, decoded)
+    with pytest.raises(adapter.Refused, match="explicit_t_source_gold_binding_changed"):
+        control, _ = recovery_boundary.make(supplied_operation=operation, supplied_gold=gold)
+        control.gold = original_gold
+        control._t_source_gold()
+    with pytest.raises(adapter.Refused, match="explicit_t_protocol_or_target_invalid"):
+        replace(operation, contract_version=recovery.T_PROTOCOL).validate()
+    assert recovery_boundary.events == []
+
+
 @pytest.mark.parametrize(
     "change",
     [

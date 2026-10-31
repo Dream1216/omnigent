@@ -58,6 +58,60 @@ INVERSE_RETAINED_AUDIT_TYPES = (
 )
 
 
+def require_d0_legacy_values_supported(owner, *, maintenance, expected_identity: dict) -> None:
+    """Reject unsupported task semantics through an existing unfiltered reader.
+
+    The old runtime cannot execute completed/continued/delegated tasks or new
+    dispatch states. No caller flag, owner zero-row view or role change may
+    stand in for checking every workspace before any recovery mutation.
+    """
+    db.require_idle(owner)
+    db.require_idle(maintenance)
+    try:
+        db.need(native.head(owner) == "p0s000000018", "p18_inverse_head_required")
+        db.need(
+            db.database_identity(owner, maintenance) == expected_identity,
+            "actual_database_identity_mismatch",
+        )
+        with maintenance.transaction():
+            maintenance.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            maintenance.execute("SET LOCAL row_security=on")
+            maintenance.execute("SET LOCAL search_path=pg_catalog,pg_temp")
+            maintenance.execute("SET LOCAL statement_timeout='60s'")
+            login = maintenance.execute("SELECT current_user,session_user").fetchone()
+            db.need(
+                login[0] == login[1] != owner.info.user,
+                "independent_existing_full_reader_required",
+            )
+            for table in ("scheduled_tasks", "scheduled_task_runs"):
+                coverage = db.one(
+                    maintenance,
+                    "SELECT c.relkind::text,has_table_privilege(current_user,c.oid,'SELECT') "
+                    "AS can_select,pg_catalog.row_security_active(c.oid) AS rls_active "
+                    "FROM pg_catalog.pg_class c WHERE c.oid=to_regclass(%s)",
+                    ("public." + table,),
+                )
+                db.need(
+                    coverage["relkind"] == "r"
+                    and coverage["can_select"] is True
+                    and coverage["rls_active"] is False,
+                    "existing_maintenance_full_visibility_required",
+                )
+            supported = maintenance.execute(
+                "SELECT NOT EXISTS(SELECT 1 FROM public.scheduled_tasks WHERE "
+                "state NOT IN (1,2,3) OR session_mode<>1 OR session_id IS NOT NULL "
+                "OR project_id IS NOT NULL OR delegation_ref IS NOT NULL) "
+                "AND NOT EXISTS(SELECT 1 FROM public.scheduled_task_runs "
+                "WHERE status NOT IN (3,4,5))"
+            ).fetchone()[0]
+            db.need(supported is True, "d0_task_semantics_not_legacy_qualified")
+    except psycopg.Error:
+        raise db.Refused("d0_legacy_semantic_preflight_failed") from None
+    finally:
+        db.require_idle(owner)
+        db.require_idle(maintenance)
+
+
 def require_source_inverse_possible(owner, *, maintenance, expected_identity: dict) -> dict:
     """Conservatively reject every retained lm1/lm2 guard before ANY mutation.
 

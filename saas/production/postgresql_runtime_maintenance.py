@@ -21,8 +21,8 @@ from psycopg.types.json import Jsonb
 from saas.production import postgresql_migration as migration
 from saas.production import postgresql_preserving_adapter as db
 from saas.production.postgresql_preserving_recovery import (
-    ExplicitTRecoveryOperation,
     RecoveryOperation,
+    _is_explicit_t,
 )
 
 HEAD = "p0s000000018"
@@ -89,13 +89,17 @@ class FencedTRuntimeOperation(RuntimeMaintenanceOperation):
     def validate(self) -> None:
         super().validate()
         recovery = self.recovery
-        if type(recovery) is not ExplicitTRecoveryOperation:
+        if not _is_explicit_t(recovery):
             raise db.Refused("typed_t_recovery_required")
         db.need(
             self.direction in {"to_t", "to_candidate"}
             and self.source_official_schema_revision == "d0a1f879a01d"
             and self.official_schema_revision
-            == ("mm1a2b3c4d5e" if self.direction == "to_t" else "d0a1f879a01d"),
+            == (
+                recovery.target_contract()["official_head"]
+                if self.direction == "to_t"
+                else "d0a1f879a01d"
+            ),
             "fenced_t_runtime_transition_invalid",
         )
         if self.direction == "to_t":
@@ -527,7 +531,9 @@ class FencedTRuntimeRecovery:
         )
         operation = preserving.operation
         db.need(
-            type(operation) is recovery.ExplicitTRecoveryOperation, "typed_t_recovery_required"
+            type(operation)
+            in {recovery.ExplicitTRecoveryOperation, recovery.D0CompatibleTRecoveryOperation},
+            "typed_t_recovery_required",
         )
         operation.validate()
         # The exact Product/Server/Host pins belong to the versioned operation
@@ -542,7 +548,12 @@ class FencedTRuntimeRecovery:
         )
         db.need(
             target["saas_head"] == recovery.T_HEAD
-            and target["official_head"] == "mm1a2b3c4d5e"
+            and target["official_head"]
+            == (
+                recovery.D0_HEAD
+                if type(operation) is recovery.D0CompatibleTRecoveryOperation
+                else "mm1a2b3c4d5e"
+            )
             and target["upstream_revision"] == "825f8500d7cc8e997e5562fa55694cd146165f3c"
             and target["adapter_contract_version"] == "0.2.0",
             "original_t_runtime_contract_required",
@@ -646,7 +657,7 @@ class FencedTRuntimeRecovery:
             values.update(
                 runtime_version="0.18.0.dev20261006",
                 upstream_revision=parent.rollback_upstream_revision,
-                official_schema_revision="mm1a2b3c4d5e",
+                official_schema_revision=parent.target_contract()["official_head"],
                 adapter_contract_version=parent.rollback_adapter_contract_version,
             )
         return FencedTRuntimeOperation(

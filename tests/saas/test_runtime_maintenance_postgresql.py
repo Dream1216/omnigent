@@ -769,7 +769,7 @@ def test_retained_facts_without_any_run_refuse_before_all_inverse_mutation(
         engine.dispose()
 
 
-def _derive_clean_original_t(plan, temporary_root):
+def _derive_clean_original_t(plan, temporary_root, *, retain_d0=False):
     """Clean T source resources plus the byte-identical original 3264 verifier.
 
     3264 packages P15 and explicitly accepts verify-only T. Fixed main254 owns
@@ -967,13 +967,18 @@ def _derive_clean_original_t(plan, temporary_root):
         )
         verified = old._verify_state(old_plan, engines)  # Original 3264 explicit-T runtime path.
         assert (verified.official_head, verified.saas_head) == ("mm1a2b3c4d5e", "lm2t00000001")
+        if retain_d0:
+            # Independently verified clean predecessor, then exact official U
+            # definitions. Never derive the expected target from the live DB.
+            migration._upgrade(engines["official_owner"], "official")
         projection = _source_projection(old_plan, engines)
         major = db.database_identity(owner, reader)["server_major"]
-        key = (major, "mm1a2b3c4d5e", "lm2t00000001")
-        assert projection["inventory_sha256"] == old._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
+        key = (major, "d0a1f879a01d" if retain_d0 else "mm1a2b3c4d5e", "lm2t00000001")
+        anchors = migration if retain_d0 else old
+        assert projection["inventory_sha256"] == anchors._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
         assert (
             projection["security_sha256"]
-            == old._source_security_catalog_baselines(old_plan.service_role_graph)[key]
+            == anchors._source_security_catalog_baselines(old_plan.service_role_graph)[key]
         )
         # Clean T intentionally has no P17 receipt relations. Read only the
         # original builtin/ACL using the same catalog projection as preservation;
@@ -1014,6 +1019,60 @@ def _derive_clean_original_t(plan, temporary_root):
         source._dispose_engines(engines)
         for module in (old, source):
             sys.modules.pop(module.__name__, None)
+
+
+def _seed_d0_official_rows(engine):
+    """Populate two workspaces, including additive fields and completed history."""
+    from omnigent.db.db_models import workspace_scope
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+    from omnigent.stores.scheduled_task_store.sqlalchemy_store import SqlAlchemyScheduledTaskStore
+
+    location = engine.url.render_as_string(hide_password=False)
+    conversations = SqlAlchemyConversationStore(location)
+    tasks = SqlAlchemyScheduledTaskStore(location)
+    result = []
+    for workspace in (1, 2):
+        with workspace_scope(workspace):
+            conversation = conversations.create_conversation(title="D0 retained metadata")
+            task_id, run_id = uuid4().hex, uuid4().hex
+            tasks.create(
+                task_id,
+                "paused",
+                "retained",
+                "FREQ=YEARLY",
+                None,
+                uuid4().hex,
+                "UTC",
+                state="paused",
+            )
+            tasks.create_run(run_id, task_id, "succeeded", 1, finished_at=2)
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        "UPDATE omnigent_conversation_metadata SET pull_requests=:value "
+                        "WHERE workspace_id=:workspace AND id=:id"
+                    ),
+                    {
+                        "value": b"opaque-retained-D0-PR-cache\x00\xfe",
+                        "workspace": workspace,
+                        "id": bytes.fromhex(conversation.id),
+                    },
+                )
+                connection.execute(
+                    sa.text(
+                        "UPDATE scheduled_tasks SET next_run_at=:value "
+                        "WHERE workspace_id=:workspace AND id=:id"
+                    ),
+                    {"value": 2**33, "workspace": workspace, "id": bytes.fromhex(task_id)},
+                )
+            result.append(
+                {
+                    "workspace": workspace,
+                    "id": bytes.fromhex(task_id),
+                    "run": bytes.fromhex(run_id),
+                }
+            )
+    return result
 
 
 def _seed_t_delivery_receipts(engine, plan, scopes):
@@ -1109,19 +1168,25 @@ def _seed_t_delivery_receipts(engine, plan, scopes):
 
 
 @contextmanager
-def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
+def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None, retain_d0=False):
     """Actual SQL/RLS/COMMIT phase, not original-image or provider qualification."""
     from omnigent.version import VERSION
     from saas.control_plane.bindings import RuntimeBindingService
     from saas.control_plane.resolver import RuntimeCompatibilityPolicy
     from saas.production.postgresql_preserving_recovery import (
+        D0_T_PROTOCOL,
         T_PROTOCOL,
+        D0CompatibleTRecoveryOperation,
         ExplicitTRecoveryOperation,
         _source_projection,
     )
 
     plan = production_replay
-    old_gold = _derive_clean_original_t(plan, derive_t_gold_at) if derive_t_gold_at else None
+    old_gold = (
+        _derive_clean_original_t(plan, derive_t_gold_at, retain_d0=retain_d0)
+        if derive_t_gold_at
+        else None
+    )
     receipt = migration.run_production_postgresql_migration(plan)
     admin_url = sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"]).set(
         database=plan.saas_owner.url.database,
@@ -1260,6 +1325,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
                 }
             finally:
                 database_owner.close()
+        d0_rows = _seed_d0_official_rows(engine) if retain_d0 else []
         _seed_t_delivery_receipts(engine, plan, scopes)
         gold = {
             "inventory": migration._PUBLIC_SCHEMA_INVENTORY_SHA256[
@@ -1269,7 +1335,10 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
                 (identity["server_major"], receipt.official_head, receipt.saas_head)
             ],
         }
-        operation = ExplicitTRecoveryOperation(
+        operation_type = (
+            D0CompatibleTRecoveryOperation if retain_d0 else ExplicitTRecoveryOperation
+        )
+        operation = operation_type(
             str(uuid4()),
             plan.product_revision,
             "sha256:" + "b" * 64,
@@ -1285,7 +1354,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
             "1" * 64,
             "2" * 64,
             db.sha(db.canonical(gold)),
-            contract_version=T_PROTOCOL,
+            contract_version=D0_T_PROTOCOL if retain_d0 else T_PROTOCOL,
             rollback_saas_target="lm2t00000001",
             rollback_host_digest="sha256:1c969bb11a41edcf3ec8f16090a6ebd7956ef80de060697f76ce4ea02a140b69",
             rollback_upstream_revision="825f8500d7cc8e997e5562fa55694cd146165f3c",
@@ -1300,7 +1369,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
             placement_id=str(placement_id),
             runtime_version="0.18.0.dev20261006",
             upstream_revision=operation.rollback_upstream_revision,
-            official_schema_revision="mm1a2b3c4d5e",
+            official_schema_revision="d0a1f879a01d" if retain_d0 else "mm1a2b3c4d5e",
             adapter_contract_version="0.2.0",
             runtime_observation_ref="fixture://provider-not-qualified",
             runtime_observation_sha256="4" * 64,
@@ -1355,6 +1424,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
             control=control,
             facts=facts,
             complete_gold=complete_gold,
+            d0_rows=d0_rows,
             RuntimeBindingService=RuntimeBindingService,
             RuntimeCompatibilityPolicy=RuntimeCompatibilityPolicy,
         )
@@ -1649,12 +1719,14 @@ def _assert_native_t_readonly_observation(context, coordinator, state):
 
 
 def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
-    production_replay, tmp_path, *, expected_inverse_refusal=None
+    production_replay, tmp_path, *, expected_inverse_refusal=None, retain_d0=False
 ):
     """Full real SQL, not real images/provider/backup/65-second readiness."""
     from saas.production.postgresql_preserving_recovery import PreservingPostgreSqlRecovery
 
-    with _native_t_rebinding_fixture(production_replay, derive_t_gold_at=tmp_path) as context:
+    with _native_t_rebinding_fixture(
+        production_replay, derive_t_gold_at=tmp_path, retain_d0=retain_d0
+    ) as context:
         gold = {**context.complete_gold, "rollback_target": context.operation.target_contract()}
         (tmp_path / "independent-source-gold.fixture.json").write_text(
             json.dumps(gold, sort_keys=True, indent=2) + "\n"
@@ -1719,7 +1791,7 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
                     official.exec_driver_sql(
                         "SELECT version_num FROM public.alembic_version"
                     ).scalar_one()
-                    == "mm1a2b3c4d5e"
+                    == operation.target_contract()["official_head"]
                 )
             # Actual old-image startup is a separate required operator callback.
             actual = runtime_native.runtime_rows_snapshot(
@@ -1761,6 +1833,54 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
                         context.plan, context.engines
                     ).official_head == ("d0a1f879a01d")
                 return
+            if retain_d0:
+                assert original["tables"]["scheduled_tasks"]["row_count"] == 2
+                callbacks_before = list(callbacks)
+                checkpoints_before = copy.deepcopy(checkpoints)
+                row = context.d0_rows[-1]  # The second workspace must also be checked.
+                for table, field, bad, good in (
+                    ("scheduled_tasks", "state", 4, 2),
+                    ("scheduled_tasks", "session_mode", 2, 1),
+                    ("scheduled_tasks", "session_id", uuid4().bytes, None),
+                    ("scheduled_tasks", "project_id", uuid4().bytes, None),
+                    ("scheduled_tasks", "delegation_ref", "not-legacy", None),
+                    ("scheduled_task_runs", "status", 6, 3),
+                    ("scheduled_task_runs", "status", 2, 3),
+                ):
+                    values = {
+                        "workspace": row["workspace"],
+                        "id": row["run"] if table.endswith("runs") else row["id"],
+                    }
+                    statement = sa.text(
+                        f"UPDATE {table} SET {field}=:value "
+                        "WHERE workspace_id=:workspace AND id=:id"
+                    )
+                    with context.engine.begin() as connection:
+                        assert (
+                            connection.execute(statement, {**values, "value": bad}).rowcount == 1
+                        )
+                    try:
+                        for inverse, prepared, refusal in (
+                            (coordinator.inverse, state, r"^t_runtime_prepared_CAS_failed$"),
+                            (
+                                preserving.inverse,
+                                state["initial_preserving_state"],
+                                r"^d0_task_semantics_not_legacy_qualified$",
+                            ),
+                        ):
+                            with pytest.raises(db.Refused, match=refusal):
+                                inverse(prepared)
+                        assert callbacks == callbacks_before and checkpoints == checkpoints_before
+                    finally:
+                        with context.engine.begin() as connection:
+                            connection.execute(statement, {**values, "value": good})
+                    assert coordinator._facts() == original
+                with pytest.raises(db.Refused, match="independent_existing_full_reader_required"):
+                    runtime_native.require_d0_legacy_values_supported(
+                        context.owner,
+                        maintenance=context.owner,
+                        expected_identity=context.identity,
+                    )
             old = coordinator.inverse(state)
             assert {fact["schema"] for fact in old["preserving"]["before"]["tables"].values()} == {
                 "public"
@@ -1789,10 +1909,18 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
                     business_delivery_service_role_bindings=None,
                     verification_saas_head="lm2t00000001",
                 )
-                assert (
-                    original_verifier._verify_state(old_plan, context.engines).saas_head
-                    == "lm2t00000001"
-                )
+                if retain_d0:
+                    # The unmodified old verifier must continue refusing D0;
+                    # the separately bounded compatibility artifact owns its
+                    # new schema definitions and independently pinned catalogs.
+                    with pytest.raises(original_verifier.PostgreSqlMigrationError):
+                        original_verifier._verify_state(old_plan, context.engines)
+                    preserving._t_old_catalog(old["preserving"])
+                else:
+                    assert (
+                        original_verifier._verify_state(old_plan, context.engines).saas_head
+                        == "lm2t00000001"
+                    )
             finally:
                 sys.modules.pop(module_name, None)
             quoted_owner = context.engine.dialect.identifier_preparer.quote(

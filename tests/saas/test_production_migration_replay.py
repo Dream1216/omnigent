@@ -837,3 +837,17 @@ def test_real_fenced_t_new_schema_inverse_refuses_before_mutation(production_rep
         tmp_path,
         expected_inverse_refusal=r"^official_schema_inverse_not_source_qualified$",
     )
+
+
+@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
+def test_real_d0_retaining_t_inverse_and_reattach_preserves_complete_facts(
+    production_replay, tmp_path
+):
+    """Real SQL proof; image/provider/physical-restore qualification is separate."""
+    from tests.saas.test_runtime_maintenance_postgresql import (
+        assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold,
+    )
+
+    assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
+        production_replay, tmp_path, retain_d0=True
+    )

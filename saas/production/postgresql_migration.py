@@ -216,6 +216,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "6d7392624de765f08bfd65b4e9920b5c7d5033906b51beda24e2ed198e253581",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "7c3306b1db4ed773b94310f0fecf4d7c599e37699c737e537306845185423ad7",
     # 2026-11-01: clean target replay after independently validated 0.19/P18 anchor.
     (
         16,
@@ -635,6 +646,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "65cdff3e1cf583f8fb0a61adc8d17f40d649fa993255af8bb6ec3d10ed7c0867",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "df022b4cce3bf1d4b531603da1b3095e7aa2a396e53937d4a22ebf44ff84e8a6",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "070951b550226b105529748e30c5491a954b5ea265d24ae8ef872209b9a01767",
     (
         16,
         "nf12ab34cd56",
@@ -1019,6 +1041,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "e6dc5bf4f06b785fdbb4eed658992989f5933b49067ce4305c4593b04cb701a0",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "93563fdd36e06603d91f9eba656757884829d38302b6d5b1b00e0bb400b1acf8",
     (
         16,
         "nf12ab34cd56",
@@ -1373,6 +1406,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "479e05f250d5da68032c71cc328662120e8cce3a0d37fb445bfb736bd2384416",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "8a92f7e26fcd0434166a1b0b4378a93b594483a6ef6005b228e69857accb2b0f",
     (
         16,
         "nf12ab34cd56",
@@ -1722,6 +1766,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "f88aa63800d39940832469cb77f01ffa7242d009e33f380a8562f49e895eb3d5",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "dc993fcb3cdad3cc03aa2507c1c0deb1ffebf6aca252e606448b8e58bde5fe8e",
     (
         16,
         "d0a1f879a01d",
@@ -2077,6 +2132,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "05a3b8eca8a8fffccd1ea093c7afa3f7ef62abb845fd9547ceaa0d5ce1eccbf6",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "db37a1191db52ff83ad38d57a5d75bb9b491f78b0d0169886099f3632ccb5675",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "7a8ce4520cdd0f793447aff2394a495ad74db69367ab70c0f8523027a3161c6e",
     (
         16,
         "d0a1f879a01d",
@@ -2439,6 +2505,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "c7af7d9ca880667187c56263938c7fd923c12afec4a5bb95d53f81a57dca2193",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "f5b42846e2160a15a66a49f996131bd09e2b2b03b7036e83d8d6284669350173",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2715,6 +2792,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Independent M0/T clean source + exact U official migration replay.
+    (
+        16,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "633615875903f38c2d261092c661101458e8c63e19eabce6c122bedd7c587f57",
+    (
+        18,
+        "d0a1f879a01d",
+        "lm2t00000001",
+    ): "6157d24cfff153e7f4da480e35974f52095080f550c4c735cceb2d5ba95b245d",
     (
         16,
         "d0a1f879a01d",
