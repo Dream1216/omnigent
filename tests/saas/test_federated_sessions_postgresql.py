@@ -17,7 +17,12 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane import federated_sessions as federated
-from saas.control_plane.db_models import AuthSessionRecord, OidcSessionFence
+from saas.control_plane.db_models import (
+    AuthSessionRecord,
+    ControlPlaneOutboxEvent,
+    IdentityConflict,
+    OidcSessionFence,
+)
 from saas.control_plane.federated_sessions import (
     ExternalSessionIdentity,
     FederatedSessionService,
@@ -288,3 +293,55 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
                 )
             connection.exec_driver_sql(f"DROP OWNED BY {owner}")
             connection.exec_driver_sql(f"DROP ROLE {owner}")
+
+
+def test_authenticator_links_reviewed_conflict_and_audits_it_atomically(
+    postgres_federation: tuple[sa.Engine, sessionmaker[Session]],
+) -> None:
+    engine, sessions = postgres_federation
+    identities = IdentityManagementService(sessions)
+    primary = VerifiedIdentityAssertion(
+        "existing", "https://existing.example.test", "owner", "owner@example.test", True
+    )
+    owner = identities.resolve_verified_login(primary).user_id
+    assert owner is not None
+    secondary = VerifiedIdentityAssertion(
+        "casdoor", "https://auth.example.test", "secondary", "owner@example.test", True
+    )
+    conflict = identities.resolve_verified_login(secondary)
+    assert conflict.user_id is None and conflict.conflict_id is not None
+    connection = identities.link_identity(
+        user_id=owner, assertion=secondary, idempotency_key="explicit-reviewed-link"
+    )
+    assert (
+        identities.link_identity(
+            user_id=owner, assertion=secondary, idempotency_key="explicit-reviewed-link"
+        )
+        == connection
+    )
+    with sessions() as db:
+        row = db.get(IdentityConflict, conflict.conflict_id)
+        assert row is not None and row.status == "approved" and row.resolved_by == owner
+        assert (
+            db.scalar(
+                sa.select(sa.func.count())
+                .select_from(ControlPlaneOutboxEvent)
+                .where(ControlPlaneOutboxEvent.event_type == "identity.conflict.resolved")
+            )
+            == 1
+        )
+    ambiguous = VerifiedIdentityAssertion(
+        "casdoor", "https://auth.example.test", "ambiguous", "owner@example.test", True
+    )
+    pending = identities.resolve_verified_login(ambiguous)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.update(IdentityConflict)
+            .where(IdentityConflict.id == pending.conflict_id)
+            .values(candidate_user_id=None)
+        )
+    with pytest.raises(LifecycleError, match="requires platform review"):
+        identities.link_identity(
+            user_id=owner, assertion=ambiguous, idempotency_key="ambiguous-reviewed-link"
+        )
+    assert len(identities.list_identities(owner)) == 2

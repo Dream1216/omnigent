@@ -34,6 +34,8 @@ from saas.control_plane import (
     VerifiedIdentityAssertion,
     create_saas_http_integration,
 )
+from saas.control_plane.db_models import IdentityConflict
+from saas.control_plane.platform_security import PlatformAuthorizationService
 
 _ISSUER = "https://idp.example.test"
 _CLIENT_ID = "omnigent-test-client"
@@ -688,3 +690,85 @@ def test_link_cannot_outlive_the_target_security_version(oidc_harness: _Harness)
     assert rejected.status_code == 400
     assert rejected.json()["error"]["code"] == "authorization_snapshot_stale"
     assert len(oidc_harness.identities.list_identities(UUID(login["user_id"]))) == 1
+
+
+@pytest.mark.parametrize(
+    "review", ["blocked", "rejected", "ambiguous", "other_candidate", "pending", "assigned"]
+)
+def test_fresh_link_respects_identity_conflict_review(oidc_harness: _Harness, review: str) -> None:
+    callback, _ = _start(oidc_harness, subject="review-owner", email="review@example.com")
+    login = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback)
+    assert login.status_code == 200
+    user_id = UUID(login.json()["user_id"])
+    pending, _ = _start(oidc_harness, subject="review-secondary", email="review@example.com")
+    conflict = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=pending)
+    assert conflict.status_code == 409
+    other = (
+        oidc_harness.identities.provision_identity(
+            VerifiedIdentityAssertion(
+                provider="existing",
+                issuer="https://existing.example.test",
+                subject="other-candidate",
+                email=None,
+                email_verified=False,
+            )
+        )
+        if review == "other_candidate"
+        else None
+    )
+    reviewer = (
+        PlatformAuthorizationService(oidc_harness.sessions).provision_staff_principal(
+            identity_connection_ref="staff:identity-reviewer",
+            issuer="https://staff.example.test",
+            subject="identity-reviewer",
+        )
+        if review in {"blocked", "assigned"}
+        else None
+    )
+    with oidc_harness.sessions.begin() as db:
+        row = db.get(IdentityConflict, UUID(conflict.json()["identity_conflict_id"]))
+        assert row is not None
+        if review == "blocked":
+            row.platform_review_status = "blocked"
+            row.candidate_user_id = None
+        elif review == "rejected":
+            row.status = "rejected"
+            row.resolved_by = user_id
+            row.resolution_reason = "Customer rejected the identity"
+            row.resolved_at = datetime.now(timezone.utc)
+        elif review == "ambiguous":
+            row.candidate_user_id = None
+        elif review == "other_candidate":
+            row.candidate_user_id = other
+        elif review == "assigned":
+            row.platform_review_status = "assigned"
+        if review in {"blocked", "assigned"}:
+            row.platform_reviewed_by_principal_id = reviewer
+            row.platform_review_approval_ref = "review-approval"
+            row.platform_review_reason = "Verified identity review"
+            row.platform_reviewed_at = datetime.now(timezone.utc)
+    started = oidc_harness.client.post(
+        "/saas/auth/oidc/test/link/start",
+        headers={"Origin": "https://testserver", "X-CSRF-Token": login.json()["csrf_token"]},
+        follow_redirects=False,
+    )
+    assert started.status_code == 303
+    callback = oidc_harness.provider.authorize(
+        started.headers["location"], subject="review-secondary", email="review@example.com"
+    )
+    refused = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback)
+    if review in {"pending", "assigned"}:
+        assert refused.status_code == 200
+        assert refused.json()["user_id"] == str(user_id)
+        assert len(oidc_harness.identities.list_identities(user_id)) == 2
+        with oidc_harness.sessions() as db:
+            row = db.get(IdentityConflict, UUID(conflict.json()["identity_conflict_id"]))
+            assert row is not None and row.status == "approved" and row.resolved_by == user_id
+        return
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] in {
+        "identity_conflict_rejected",
+        "identity_conflict_manual_review_required",
+        "forbidden",
+    }
+    assert len(oidc_harness.identities.list_identities(user_id)) == 1

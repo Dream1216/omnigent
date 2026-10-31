@@ -153,6 +153,37 @@ def _invalidate_sessions(db: Session, user_id: UUID, changed_at: datetime) -> tu
     return security_version, result.rowcount
 
 
+def _approve_link_conflict(
+    db: Session,
+    conflict: IdentityConflict | None,
+    user_id: UUID,
+    connection_id: UUID,
+    idempotency_key: str,
+    request_hash: str,
+) -> None:
+    if conflict is None or conflict.status != "pending":
+        return
+    conflict.status = "approved"
+    conflict.version += 1
+    conflict.resolved_by = user_id
+    conflict.resolution_reason = "Confirmed through explicit identity linking after authentication"
+    conflict.resolved_at = _now()
+    _add_event(
+        db,
+        event_type="identity.conflict.resolved",
+        aggregate_type="global_user",
+        aggregate_key=str(user_id),
+        idempotency_key=f"identity-link-confirm:{conflict.id}:{idempotency_key}",
+        request_hash=request_hash,
+        payload={
+            "identity_conflict_id": str(conflict.id),
+            "user_id": str(user_id),
+            "decision": "approve",
+            "identity_connection_id": str(connection_id),
+        },
+    )
+
+
 def _reject_deleted_identity(db: Session, issuer: str, subject: str) -> None:
     locator = oidc_identity_locator_hash(issuer, subject)
     apply_rls_context(db, RlsContext(privacy_locator_hash=locator))
@@ -607,6 +638,26 @@ class IdentityManagementService:
                 raise LifecycleError(
                     "authorization_snapshot_stale", "account changed during identity link"
                 )
+            conflict = db.scalar(
+                sa.select(IdentityConflict)
+                .where(
+                    IdentityConflict.issuer == assertion.issuer,
+                    IdentityConflict.subject == assertion.subject,
+                )
+                .with_for_update()
+            )
+            if conflict is not None:
+                if conflict.platform_review_status == "blocked" or conflict.status == "rejected":
+                    raise LifecycleError(
+                        "identity_conflict_rejected", "identity connection was explicitly rejected"
+                    )
+                if conflict.candidate_user_id is None:
+                    raise LifecycleError(
+                        "identity_conflict_manual_review_required",
+                        "ambiguous identity conflict requires platform review",
+                    )
+                if conflict.candidate_user_id != user_id:
+                    raise LifecycleError("forbidden", "identity conflict belongs to another user")
             existing = db.execute(
                 sa.select(IdentityConnection).where(
                     IdentityConnection.issuer == assertion.issuer,
@@ -619,6 +670,9 @@ class IdentityManagementService:
                         "identity_conflict", "identity subject belongs to another Global User"
                     )
                 if existing.status == "active":
+                    _approve_link_conflict(
+                        db, conflict, user_id, existing.id, idempotency_key, request_hash
+                    )
                     _add_event(
                         db,
                         event_type="identity.connection.linked",
@@ -636,6 +690,11 @@ class IdentityManagementService:
                     return existing.id
                 raise LifecycleError("identity_revoked", "revoked identities cannot be relinked")
 
+            if conflict is not None and conflict.status == "approved":
+                raise LifecycleError(
+                    "identity_conflict_state_invalid",
+                    "approved identity conflict has no active connection",
+                )
             connection_id = uuid4()
             db.add(
                 IdentityConnection(
@@ -648,6 +707,9 @@ class IdentityManagementService:
                     email_verified=assertion.email_verified,
                     status="active",
                 )
+            )
+            _approve_link_conflict(
+                db, conflict, user_id, connection_id, idempotency_key, request_hash
             )
             _add_event(
                 db,
