@@ -3,7 +3,10 @@
 The P4 storage modules are an opt-in candidate. Profile versions 2 and 3 wire
 them into the real Server builder and managed Host launcher. Version 3 also
 enables persisted output browsing and download. Version 1 leaves storage
-disabled. No production profile is activated, and cloud storage
+disabled. Use version 3 for newly created Volumes: the real Aliyun API limits
+Bucket Path to 128 characters. Version 2 serialization is retained, but an
+overlong legacy plan is rejected before any signed create request. No production
+profile is activated, and cloud storage
 acceptance is still pending. Installing the code creates no cloud resources.
 
 `saas/production/aliyun_storage.py` defines immutable, deterministic OSS Volume
@@ -74,8 +77,8 @@ Do not send credentials in chat or commit a populated credential file.
 
 The generated RAM policy is a draft for one Session's two prefixes. It grants
 listing under those prefixes, read access to inputs and read/write/multipart
-operations for outputs. It does not grant Bucket administration. It is not an
-attached role or proof of cross-session isolation; production role allocation
+operations for outputs. It does not grant Bucket administration. Generating it does not attach a
+role or prove cross-session isolation; production role allocation
 and actual STS downscoping must still be checked.
 
 Before enabling storage:
@@ -135,8 +138,16 @@ need real IAM and lifecycle acceptance before production activation.
 Version 3 namespaces include the effective logical Project:
 
 ```text
-<prefix>/tenants/<tenant>/spaces/<space>/projects/<project-or-unbound>/sessions/<session>/outputs/
+/<prefix>/v3/<tenant64>/<space64>/<project64-or-unbound>/<session64>/outputs/
 ```
+
+Each UUID uses its complete 128 bits encoded as a canonical 22-character
+unpadded Base64URL segment. There is no truncation or hashing of identity.
+The prefix is limited to 23 characters; even the longest Project-bound output
+path, including its leading and trailing slashes, is at most 128 characters.
+Zero UUIDs and alternate Base64 spellings are rejected. The actual CreateVolume
+API exposed this limit during the PoC; complete textual UUID paths were refused
+before any Volume was created.
 
 Inputs use the corresponding `inputs/` suffix. Unbound, Project A and Project B
 produce different Volume names and object prefixes. Moving a Session between

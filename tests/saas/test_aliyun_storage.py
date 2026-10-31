@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from copy import deepcopy
 from dataclasses import replace
 from uuid import UUID, uuid4
@@ -112,9 +113,71 @@ def test_project_namespaces_separate_unbound_and_moved_sessions_without_changing
         for spec in plan.volumes:
             assert spec.project_scoped and spec.project_id == project
             assert spec.space_id == runtime.space_id
-            assert f"/projects/{project or 'unbound'}/sessions/{session_id}/" in spec.bucket_path
+            assert spec.bucket_path.startswith(f"/{config.prefix}/v3/")
+            assert len(spec.bucket_path) <= 128
+            segments = spec.bucket_path.rstrip("/").split("/")
+            assert UUID(bytes=base64.urlsafe_b64decode(segments[-5] + "==")) == runtime.tenant_id
+            assert UUID(bytes=base64.urlsafe_b64decode(segments[-2] + "==")) == session_id
             assert spec.verify(_volume(spec))
     assert all(not spec.project_scoped and spec.project_id is None for spec in legacy.volumes)
+
+
+def test_compact_project_namespace_fits_the_actual_128_character_provider_limit():
+    runtime = replace(_runtime(), project_id=uuid4())
+    config = replace(_config(runtime), project_scoped=True, prefix="a" * 23)
+    session = config.session(runtime, uuid4())
+    assert len(session.volumes[1].bucket_path) == 128
+    assert all(
+        v.space_id == runtime.space_id and v.project_id == runtime.project_id
+        for v in session.volumes
+    )
+    with pytest.raises(AliyunStorageError):
+        replace(config, prefix="a" * 24)
+
+
+@pytest.mark.parametrize("part", ["tenant", "space", "project", "session"])
+def test_compact_namespace_rejects_zero_uuid_segments(part):
+    runtime = replace(_runtime(), project_id=uuid4())
+    spec = replace(_config(runtime), project_scoped=True).session(runtime, uuid4()).volumes[1]
+    segments = spec.bucket_path.split("/")
+    positions = {"tenant": -6, "space": -5, "project": -4, "session": -3}
+    segments[positions[part]] = "A" * 22
+    with pytest.raises(AliyunStorageError):
+        replace(spec, bucket_path="/".join(segments))
+
+
+def test_compact_namespace_rejects_noncanonical_base64_aliases_and_wrong_identity():
+    runtime = _runtime()
+    spec = replace(_config(runtime), project_scoped=True).session(runtime, uuid4()).volumes[0]
+    segments = spec.bucket_path.split("/")
+    canonical = segments[-5]
+    segments[-5] = canonical[:-1] + {"A": "B", "Q": "R", "g": "h", "w": "x"}[canonical[-1]]
+    with pytest.raises(AliyunStorageError):
+        replace(spec, bucket_path="/".join(segments))
+    for position in (-6, -3):
+        segments = spec.bucket_path.split("/")
+        segments[position] = base64.urlsafe_b64encode(uuid4().bytes).decode().rstrip("=")
+        with pytest.raises(AliyunStorageError):
+            replace(spec, bucket_path="/".join(segments))
+
+
+def test_legacy_volume_names_keep_the_predeployment_v2_golden_vector():
+    runtime = replace(
+        _runtime(),
+        tenant_id=UUID("11111111-1111-4111-8111-111111111111"),
+        space_id=UUID("22222222-2222-4222-8222-222222222222"),
+        physical_workspace_id=91,
+    )
+    config = replace(
+        _config(runtime),
+        team_id=UUID("33333333-3333-4333-8333-333333333333"),
+        prefix="test-prefix-v2",
+    )
+    plan = config.session(runtime, UUID("44444444-4444-4444-8444-444444444444"))
+    assert plan.mount_points == {
+        INPUT_MOUNT: "omni-in-7f02831891719f8e11f3f4864db1d2c3648f1984",
+        OUTPUT_MOUNT: "omni-out-836c98342e9f56c3a5969ec58b425add1e3d129d",
+    }
 
 
 @pytest.mark.parametrize(

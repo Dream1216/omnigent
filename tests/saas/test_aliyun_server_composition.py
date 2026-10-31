@@ -192,7 +192,7 @@ def test_older_profile_does_not_mount_output_reader_routes(composition_case):
     assert "/v1/sessions/{session_id}/artifacts/content" not in routes
 
 
-@pytest.mark.parametrize("composition_case", ["storage"], indirect=True)
+@pytest.mark.parametrize("composition_case", ["artifacts"], indirect=True)
 def test_storage_is_wired_into_the_actual_server_managed_launcher(composition_case, monkeypatch):
     c = composition_case
     sdk = Mock()
@@ -209,6 +209,7 @@ def test_storage_is_wired_into_the_actual_server_managed_launcher(composition_ca
             "/home/user/workspace/artifacts",
         }
         assert len(c.volumes) == 2
+        assert all(len(v["ossVolumeConfig"]["bucketPath"]) <= 128 for v in c.volumes.values())
         assert sorted(v["ossVolumeConfig"]["readOnly"] for v in c.volumes.values()) == [
             False,
             True,
@@ -236,7 +237,7 @@ def test_composed_storage_requires_session_admission_before_any_cloud_call(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("composition_case", ["storage"], indirect=True)
+@pytest.mark.parametrize("composition_case", ["artifacts"], indirect=True)
 async def test_real_managed_launch_failure_recycles_vm_and_host_but_retains_volumes(
     composition_case, monkeypatch
 ):

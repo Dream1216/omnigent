@@ -15,6 +15,7 @@ from uuid import UUID
 import httpx
 
 from saas.production.aliyun_storage import (
+    OSS_BUCKET_PATH_MAX,
     OSS_ENDPOINT,
     AliyunOssVolumeSpec,
     AliyunStorageError,
@@ -203,6 +204,10 @@ class AliyunVolumeControlClient(AliyunVolumeControl):
         return [volume.to_map() for volume in (body.volumes or [])]
 
     def create(self, spec: AliyunOssVolumeSpec) -> Mapping[str, object]:
+        if len(spec.bucket_path) > OSS_BUCKET_PATH_MAX:
+            raise AliyunStorageError(
+                "Aliyun OSS Bucket Path exceeds 128 characters; use compact profile-v3 storage"
+            )
         from alibabacloud_sandbox20260820 import models
 
         body = self._call(

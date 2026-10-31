@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from hashlib import sha256
 from types import SimpleNamespace
 from uuid import uuid4
@@ -19,7 +20,7 @@ from tests.saas.test_tenant_sandbox import _runtime
 @pytest.fixture
 def api_case(tmp_path):
     runtime = _runtime()
-    config = _config(runtime)
+    config = replace(_config(runtime), project_scoped=True)
     document = {
         "schema_version": 1,
         "issued_at": 990,
@@ -123,6 +124,15 @@ def test_real_sdk_models_and_signer_use_fixed_endpoint_and_explicit_sts(
     assert c.document["security_token"] not in str(request.url)
     _assert_signature(request, c.document)
     assert c.document["security_token"] not in capsys.readouterr().out
+
+
+def test_legacy_overlong_bucket_path_is_rejected_before_any_signed_request(api_case):
+    c = api_case
+    legacy = replace(c.config, project_scoped=False).session(c.runtime, uuid4()).volumes[0]
+    assert len(legacy.bucket_path) > 128
+    with pytest.raises(AliyunStorageError, match="128"):
+        c.build().create(legacy)
+    assert c.requests == []
 
 
 def test_list_and_get_use_team_scoped_native_sdk_queries(api_case):

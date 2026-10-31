@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -392,7 +393,10 @@ def test_project_move_cannot_reuse_cached_scope_or_read_the_previous_projects_ou
         old = client.get(c.base + "/availability").json()
         assert client.get(c.base, params={"scope": old["scope_key"]}).status_code == 200
         old_prefix = c.requests[-1].url.params["prefix"]
-        assert f"/projects/{before}/" in old_prefix
+        assert (
+            UUID(bytes=base64.urlsafe_b64decode(old_prefix.rstrip("/").split("/")[-3] + "=="))
+            == before
+        )
         with c.factory.begin() as db:
             row = db.get(RuntimeResourceBindingRecord, binding)
             row.project_id = after
@@ -413,7 +417,11 @@ def test_project_move_cannot_reuse_cached_scope_or_read_the_previous_projects_ou
         assert fresh["scope_key"] != old["scope_key"]
         assert client.get(c.base, params={"scope": fresh["scope_key"]}).status_code == 200
         new_prefix = c.requests[-1].url.params["prefix"]
-        assert f"/projects/{after}/" in new_prefix and new_prefix != old_prefix
+        assert (
+            UUID(bytes=base64.urlsafe_b64decode(new_prefix.rstrip("/").split("/")[-3] + "=="))
+            == after
+        )
+        assert new_prefix != old_prefix
         downloaded = client.get(
             c.base + "/content",
             params={"path": c.file_path, "etag": ETAG, "scope": fresh["scope_key"]},
