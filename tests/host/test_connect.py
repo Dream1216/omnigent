@@ -94,6 +94,7 @@ from omnigent.runner.identity import (
     token_bound_runner_id,
 )
 from omnigent.runtime.harnesses.paths import HARNESS_TMP_PARENT_ENV_VAR
+from tests.budgets import budget
 
 pytestmark = pytest.mark.asyncio
 
@@ -2692,7 +2693,7 @@ async def test_reconnect_does_not_cancel_or_repeat_startup_capability_discovery(
     monkeypatch.setattr(host, "_initialize_capabilities", _discover)
     first = _FakeTunnel()
     serve_task = asyncio.create_task(host._serve_frames(first))  # type: ignore[arg-type]
-    await asyncio.wait_for(started.wait(), timeout=1.0)
+    await asyncio.wait_for(started.wait(), timeout=budget(1.0))
     await _cancel(serve_task)
     assert first.sent == []
 

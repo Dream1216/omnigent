@@ -218,7 +218,7 @@ jobs:
           # repository's locked setuptools backend explicitly instead of
           # relying on a stale virtualenv cache to provide it.
           if [ "${{ matrix.group }}" = "misc" ]; then
-            uv pip install --no-deps "setuptools==83.0.0"
+            uv pip install --no-deps "setuptools==84.1.0"
           fi
 
       - name: Run pytest
