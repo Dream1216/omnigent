@@ -2,7 +2,7 @@
   "schema_version": 1,
   "upstream_version": "v4.25.0",
   "upstream_revision": "528a0213f01caf70b9f41009cbf7b2f67bdd67ec",
-  "source_url": "https://codeload.github.com/casdoor/casdoor/tar.gz/528a0213f01caf70b9f41009cbf7b2f67bdd67ec",
+  "source_url": "https://codeload.github.com/casdoor/casdoor/legacy.tar.gz/528a0213f01caf70b9f41009cbf7b2f67bdd67ec",
   "source_sha256": "fc80ec9398d19d333cabb258b824c6c4614248f943800c31366ef76a4660f7ad",
   "candidate_version": "v4.25.0-stbz.1",
   "patches": [
