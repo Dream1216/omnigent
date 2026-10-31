@@ -114,11 +114,33 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 178,
-    "max_upstream_net_added_loc": 4576,
+    "max_direct_upstream_files": 188,
+    "max_upstream_net_added_loc": 5342,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "aliyun_output_artifacts_budget_followup": {
+      "approved_at": "2026-10-31",
+      "previous_max_direct_upstream_files": 174,
+      "max_direct_upstream_files": 182,
+      "previous_max_upstream_net_added_loc": 4576,
+      "max_upstream_net_added_loc": 4869,
+      "measured_direct_upstream_files": 182,
+      "measured_upstream_net_added_loc": 4869,
+      "reviewed_patch_sha256": "f16f270d2e65ed0bb3d25530f04074f374ae3d03ce9f7b9b48ea40141ab56e3d",
+      "review_manifest_sha256": "dbbd10fed442ac00132d963d9b1841cfaad7fd0e62de282b8bc33915088a2003",
+      "scoped_paths": [
+        "tests/browser_ui/conftest.py",
+        "tests/browser_ui/files/test_saved_outputs.py",
+        "web/src/hooks/useFileContent.test.ts",
+        "web/src/hooks/useFileContent.ts",
+        "web/src/shell/FilesPanel.test.tsx",
+        "web/src/shell/FilesPanel.tsx",
+        "web/src/shell/SavedOutputs.test.tsx",
+        "web/src/shell/SavedOutputs.tsx"
+      ],
+      "reason": "Requester explicitly approved these two source-scope ceilings and synchronization of their existing budget assertions for the exact reviewed output-artifact patch. Preserve nine active patches, .85 isolation and all scan, trusted-input, signing, merge and production-release gates. Separate P5 native control repairs are not included in this reviewed patch."
+    },
     "reviewed_complete_security_budget_followup": {
       "approved_at": "2026-10-25",
       "previous_max_direct_upstream_files": 158,

@@ -1343,6 +1343,92 @@ def test_candidate_composite_build_contract_rejects_timestamp_rewrite_drift(
     assert "candidate composite build action weakens the approved build contract" in violations
 
 
+@pytest.mark.parametrize(
+    ("relative", "target", "replacement", "violation"),
+    [
+        (
+            "saas/actions/build-oci-candidate/action.yml",
+            "'kubernetes,e2b,aliyun-sandbox-control'",
+            "'kubernetes'",
+            "candidate composite build action weakens the approved build contract",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("e2b") == "2.31.0"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("alibabacloud-sandbox20260820") == "1.2.0"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("alibabacloud-sts20150401") == "1.2.0"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("alibabacloud-oss-v2") == "1.4.0"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("defusedxml") == "0.7.1"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            "--group dev --extra saas --extra e2b",
+            "--group dev --extra saas",
+            "candidate test jobs must install the qualified sandbox SDK",
+        ),
+    ],
+)
+def test_server_candidate_requires_the_qualified_sandbox_sdk(
+    tmp_path, relative, target, replacement, violation
+):
+    repo = _candidate_contract_repo(tmp_path)
+    path = repo / relative
+    source = path.read_text()
+    assert target in source
+    path.write_text(source.replace(target, replacement, 1))
+    assert violation in validate_candidate_build_contract(repo)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        'actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]',
+        'for arch in ("amd64", "arm64"):',
+        'assert version("e2b")=="2.31.0"',
+        'assert version("alibabacloud-sandbox20260820")=="1.2.0"',
+        'assert version("alibabacloud-sts20150401")=="1.2.0"',
+        'assert version("alibabacloud-oss-v2")=="1.4.0"',
+        'assert version("defusedxml")=="0.7.1"',
+        "import saas.production.aliyun_artifacts",
+        "import saas.production.aliyun_storage_admission",
+        "import saas.production.aliyun_sts_issuer",
+        '"--network", "none"',
+    ],
+)
+def test_candidate_runtime_gate_requires_exact_bytes_platforms_and_sdk(tmp_path, target):
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text()
+    assert target in source
+    workflow.write_text(source.replace(target, "removed_runtime_gate", 1))
+    assert (
+        "candidate workflow must verify the exact Server SDK on both platforms"
+        in validate_candidate_build_contract(repo)
+    )
+
+
 def test_n1_candidate_build_contract_rejects_shared_rebuild_cache(tmp_path: Path) -> None:
     repo = _candidate_contract_repo(tmp_path)
     workflow = repo / ".github/workflows/saas-n1-compat-image.yml"
@@ -1779,6 +1865,7 @@ def _write_oci(
     header_only_attestation: bool = False,
     buildkit_image_attestation_config: bool = False,
     statement_type: str = "https://in-toto.io/Statement/v0.1",
+    architectures: tuple[str, ...] | None = None,
 ) -> None:
     root = path.parent / f"{path.stem}-layout"
     (root / "blobs/sha256").mkdir(parents=True, exist_ok=True)
@@ -1803,6 +1890,14 @@ def _write_oci(
                 "ai.omnigent.saas.n1.contract-version": "contract-v1",
             }
         )
+    elif label_profile in {"aliyun-host", "aliyun-host-minimal"}:
+        labels = {
+            "org.opencontainers.image.revision": revision,
+            "ai.omnigent.saas.qualification": "candidate",
+            "ai.omnigent.saas.sandbox-runtime": "aliyun-microvm",
+        }
+        if label_profile == "aliyun-host":
+            labels.update(description="Aliyun base runtime", layer="base", maintainer="Aliyun")
     elif label_profile != "executable":
         raise ValueError(f"unsupported test label profile: {label_profile}")
     if missing_label is not None:
@@ -1810,7 +1905,11 @@ def _write_oci(
     if extra_label is not None:
         labels[extra_label] = "unexpected"
     descriptors = []
-    for architecture in ("amd64", "arm64"):
+    if architectures is None:
+        architectures = (
+            ("amd64",) if label_profile.startswith("aliyun-host") else ("amd64", "arm64")
+        )
+    for architecture in architectures:
         config = json.dumps(
             {
                 "architecture": architecture,
@@ -1987,7 +2086,9 @@ def test_oci_rebuild_comparison_ignores_attestation_time_but_not_image_drift(
     )
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize(
+    "label_profile", ["executable", "n1", "aliyun-host", "aliyun-host-minimal"]
+)
 def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     tmp_path: Path, label_profile: str
 ) -> None:
@@ -2007,6 +2108,8 @@ def test_oci_rebuild_accepts_only_the_exact_selected_label_profile(
     [
         ("executable", "ai.omnigent.saas.adapter-contract-version"),
         ("n1", "ai.omnigent.saas.n1.contract-version"),
+        ("aliyun-host", "ai.omnigent.saas.sandbox-runtime"),
+        ("aliyun-host-minimal", "ai.omnigent.saas.sandbox-runtime"),
     ],
 )
 def test_oci_rebuild_rejects_a_missing_profile_label(
@@ -2026,7 +2129,9 @@ def test_oci_rebuild_rejects_a_missing_profile_label(
         compare_archives(first, second, label_profile=label_profile)
 
 
-@pytest.mark.parametrize("label_profile", ["executable", "n1"])
+@pytest.mark.parametrize(
+    "label_profile", ["executable", "n1", "aliyun-host", "aliyun-host-minimal"]
+)
 def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profile: str) -> None:
     first = tmp_path / f"first-extra-{label_profile}.tar"
     second = tmp_path / f"second-extra-{label_profile}.tar"
@@ -2044,7 +2149,15 @@ def test_oci_rebuild_rejects_an_extra_profile_label(tmp_path: Path, label_profil
 
 @pytest.mark.parametrize(
     ("archive_profile", "selected_profile"),
-    [("executable", "n1"), ("n1", "executable")],
+    [
+        ("executable", "n1"),
+        ("n1", "executable"),
+        ("aliyun-host", "executable"),
+        ("executable", "aliyun-host"),
+        ("aliyun-host", "aliyun-host-minimal"),
+        ("aliyun-host-minimal", "aliyun-host"),
+        ("aliyun-host-minimal", "executable"),
+    ],
 )
 def test_oci_rebuild_rejects_cross_profile_label_contracts(
     tmp_path: Path, archive_profile: str, selected_profile: str
@@ -2056,6 +2169,27 @@ def test_oci_rebuild_rejects_cross_profile_label_contracts(
 
     with pytest.raises(ValueError, match=f"approved {selected_profile} image labels"):
         compare_archives(first, second, label_profile=selected_profile)
+
+
+@pytest.mark.parametrize(
+    ("profile", "architectures"),
+    [
+        ("aliyun-host", ("arm64",)),
+        ("aliyun-host", ("amd64", "arm64")),
+        ("aliyun-host-minimal", ("arm64",)),
+        ("aliyun-host-minimal", ("amd64", "arm64")),
+        ("executable", ("amd64",)),
+        ("n1", ("amd64",)),
+    ],
+)
+def test_aliyun_amd64_profile_cannot_replace_dual_platform_contract(
+    tmp_path: Path, profile: str, architectures: tuple[str, ...]
+) -> None:
+    first, second = tmp_path / "first.tar", tmp_path / "second.tar"
+    for path in (first, second):
+        _write_oci(path, revision="a" * 40, label_profile=profile, architectures=architectures)
+    with pytest.raises(ValueError, match="exact profile platforms"):
+        compare_archives(first, second, label_profile=profile)
 
 
 def test_oci_rebuild_comparison_descends_buildkit_nested_index(tmp_path: Path) -> None:

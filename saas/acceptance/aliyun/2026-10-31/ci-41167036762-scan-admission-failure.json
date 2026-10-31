@@ -1,0 +1,95 @@
+{
+  "conclusion": "failure",
+  "job_conclusions": {
+    "build (1)": "success",
+    "build (2)": "success",
+    "compare-and-scan": "failure",
+    "verify": "success"
+  },
+  "observed_at": "2026-10-31T04:54:04.607818+00:00",
+  "p2_accepted": false,
+  "production_ready": false,
+  "published": false,
+  "run_id": 41167036762,
+  "scan": {
+    "database_built_at": "2026-10-30T06:23:28Z",
+    "exceptions": [],
+    "images": [
+      {
+        "archive_sha256": "d30bc0f97adc430cc5aa4ae403e1099be1e182f959aef1e50ee2e992e58fe457",
+        "critical": 0,
+        "findings": [
+          {
+            "id": "CVE-2026-82560",
+            "package": "libperl5.42",
+            "severity": "High",
+            "version": "5.42.3-1"
+          },
+          {
+            "id": "CVE-2026-82560",
+            "package": "perl",
+            "severity": "High",
+            "version": "5.42.3-1"
+          },
+          {
+            "id": "CVE-2026-82560",
+            "package": "perl-base",
+            "severity": "High",
+            "version": "5.42.3-1"
+          },
+          {
+            "id": "CVE-2026-82560",
+            "package": "perl-modules-5.42",
+            "severity": "High",
+            "version": "5.42.3-1"
+          },
+          {
+            "id": "CVE-2026-113351",
+            "package": "libexpat1",
+            "severity": "High",
+            "version": "2.9.0-1"
+          },
+          {
+            "id": "CVE-2026-115506",
+            "package": "libexpat1",
+            "severity": "High",
+            "version": "2.9.0-1"
+          },
+          {
+            "id": "CVE-2026-107778",
+            "package": "libgssapi-krb5-2",
+            "severity": "High",
+            "version": "1.22.1-3"
+          },
+          {
+            "id": "CVE-2026-107778",
+            "package": "libk5crypto3",
+            "severity": "High",
+            "version": "1.22.1-3"
+          },
+          {
+            "id": "CVE-2026-107778",
+            "package": "libkrb5-3",
+            "severity": "High",
+            "version": "1.22.1-3"
+          },
+          {
+            "id": "CVE-2026-107778",
+            "package": "libkrb5support0",
+            "severity": "High",
+            "version": "1.22.1-3"
+          }
+        ],
+        "high": 10,
+        "image": "host",
+        "platform": "linux/amd64",
+        "report_sha256": "32f88c8530a85751cda56deccd290cc8e1ae0a5b7c184b2dcaa4df722108f4c0"
+      }
+    ],
+    "scanner": "grype 0.120.1",
+    "scope": "aliyun-host"
+  },
+  "scan_summary_sha256": "1be3d146d9f4ca56f6ef25c90253f1fbc5f95743d398c4f5adc5a1e814666fa6",
+  "source_revision": "917296883ee7a1418617e9995f1407231f7962d0",
+  "status": "completed"
+}

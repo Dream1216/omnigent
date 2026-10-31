@@ -18,13 +18,15 @@ from omnigent.host.frames import HarnessAvailability
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
 from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
-from saas.production.platform_model_relay import PlatformModelRelay
+from saas.production.platform_model_relay import PlatformModelRelay, validated_model_gateway_url
 from saas.runner_adapter.platform_model_gateway import (
     DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
     PlatformModelGatewayTokenAuthority,
+    PlatformModelTokenIssuer,
 )
 from saas.runner_adapter.platform_models import (
     PLATFORM_MODEL_CREDENTIAL_ENV,
+    PLATFORM_MODEL_GATEWAY_BASE_URL,
     PLATFORM_MODEL_RELAY_BASE_URL_ENV,
 )
 from saas.runner_adapter.process_policy import activate_managed_host_environment
@@ -49,8 +51,9 @@ class PlatformModelHostProcess(HostProcess):
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
         interactive_shells: list[str] | None = None,
-        token_authority: PlatformModelGatewayTokenAuthority,
+        token_authority: PlatformModelTokenIssuer,
         token_ttl_seconds: int,
+        gateway_base_url: str = PLATFORM_MODEL_GATEWAY_BASE_URL,
     ) -> None:
         super().__init__(
             identity,
@@ -60,6 +63,7 @@ class PlatformModelHostProcess(HostProcess):
         )
         self._platform_model_tokens = token_authority
         self._platform_model_token_ttl = token_ttl_seconds
+        self._platform_model_gateway_base = validated_model_gateway_url(gateway_base_url)
 
     async def _probe_configured_harnesses(
         self,
@@ -114,6 +118,7 @@ class PlatformModelHostProcess(HostProcess):
             authority=self._platform_model_tokens,
             session_id=session_id,
             ttl_seconds=self._platform_model_token_ttl,
+            gateway_base_url=self._platform_model_gateway_base,
         )
         try:
             env[PLATFORM_MODEL_RELAY_BASE_URL_ENV] = json.dumps(
@@ -157,6 +162,18 @@ def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:
         signing_key=signing_key,
         tenant_id=tenant_id,
     )
+    run_host_with_model_issuer(server_url, authority, token_ttl)
+
+
+def run_host_with_model_issuer(
+    server_url: str,
+    authority: PlatformModelTokenIssuer,
+    token_ttl: int,
+    *,
+    gateway_base_url: str = PLATFORM_MODEL_GATEWAY_BASE_URL,
+    host_process_type: type[PlatformModelHostProcess] = PlatformModelHostProcess,
+) -> None:
+    """Use the official managed Host with an explicitly supplied model authority."""
 
     # The direct-spawn policy prevents a session bearer from ever entering a
     # long-lived forkserver snapshot.
@@ -169,13 +186,14 @@ def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:
         lifecycle_lock: DaemonLifecycleLock | None = None,
         interactive_shells: list[str] | None = None,
     ) -> PlatformModelHostProcess:
-        return PlatformModelHostProcess(
+        return host_process_type(
             identity,
             resolved_server_url,
             lifecycle_lock=lifecycle_lock,
             interactive_shells=interactive_shells,
             token_authority=authority,
             token_ttl_seconds=token_ttl,
+            gateway_base_url=gateway_base_url,
         )
 
     run_host_process(server_url, host_factory=factory)
@@ -271,5 +289,6 @@ if __name__ == "__main__":
 __all__ = [
     "PlatformModelHostConfigurationError",
     "PlatformModelHostProcess",
+    "run_host_with_model_issuer",
     "run_platform_model_host",
 ]

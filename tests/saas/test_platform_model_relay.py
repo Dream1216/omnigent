@@ -258,6 +258,24 @@ async def test_concurrent_expiry_rejections_share_one_renewal():
     assert len(issued) == 2
 
 
+@pytest.mark.asyncio
+async def test_blocking_remote_credential_issuer_does_not_block_the_relay_event_loop():
+    authority = _authority()
+    released = threading.Event()
+    loop_thread = threading.get_ident()
+
+    class RemoteIssuer:
+        def issue(self, **kwargs):
+            assert threading.get_ident() != loop_thread
+            assert released.wait(1), "relay event loop could not release the HTTP issuer"
+            return authority.issue(**kwargs)
+
+    relay = PlatformModelRelay(authority=RemoteIssuer(), session_id=uuid4(), ttl_seconds=300)
+    asyncio.get_running_loop().call_later(0.02, released.set)
+    async with relay.app.router.lifespan_context(relay.app):
+        assert await relay.credentials.token_for_request()
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [

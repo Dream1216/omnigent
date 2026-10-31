@@ -1,0 +1,156 @@
+{
+  "authorization": "Fresh login, native Session OWNER, current Tenant/Space/Project content permission and placement before/after cloud open and per stream chunk",
+  "base_revision": "917296883ee7a1418617e9995f1407231f7962d0",
+  "browser_contract": {
+    "downloaded_bytes_verified": true,
+    "entry_points": [
+      "desktop Files",
+      "desktop Changes",
+      "mobile Files",
+      "mobile Changes"
+    ],
+    "existing_file_navigation": {
+      "errors": 0,
+      "failures": 0,
+      "junit_sha256": "ac615d1d55fea08044dc5a0c006dd09bbbad7b49ae89c21c53ba6118e2e7619f",
+      "passed": 8,
+      "skipped": 0,
+      "tests": 8
+    },
+    "host_online": false,
+    "initial_run": "4 setup failures: Chromium native download bypassed route interception. Exact registered local attachment responses fixed the harness; production download transport was unchanged.",
+    "new_checks": {
+      "errors": 0,
+      "failures": 0,
+      "junit_sha256": "c980342856e026715e900e4065f2e11ece4926952133f431e22e553141d7526e",
+      "passed": 6,
+      "skipped": 0,
+      "tests": 6
+    },
+    "runner_online": false,
+    "scope": "Real Chromium, sealed API fixtures and exact registered local attachment HTTP; not live OSS or IAM"
+  },
+  "candidate_identity": "Working-tree source/test SHA-256 values below; not a deployed or published revision",
+  "dependencies": {
+    "added": [
+      {
+        "name": "alibabacloud-oss-v2",
+        "version": "1.4.0"
+      },
+      {
+        "name": "crcmod-plus",
+        "version": "2.3.6"
+      },
+      {
+        "name": "defusedxml",
+        "version": "0.7.1"
+      },
+      {
+        "name": "pycryptodome",
+        "version": "4.1.0"
+      }
+    ],
+    "after_count": 310,
+    "before_count": 306,
+    "cooldown_exception_added": false,
+    "existing_versions_changed": false
+  },
+  "http_download_route_implemented": true,
+  "image_runtime_accepted": false,
+  "image_supply_chain_static_contract_passed": true,
+  "live_cloud_accepted": false,
+  "observed_at": "2026-10-31T05:02:56.570064+00:00",
+  "oss_reader_implemented": true,
+  "p4_accepted": false,
+  "p5_accepted": false,
+  "patch_queue_check_passed": true,
+  "precommit": {
+    "all_files_passed": true,
+    "checks": 30,
+    "log_sha256": "7a14b2af96963dc36011de5c7cb483e2a61e7e33f8b2bee4379306f88a35284c"
+  },
+  "production_activated": false,
+  "profile_schema": 3,
+  "project_namespaces": "unbound/A/B prefixes and Volume names are distinct; v2 unchanged; no implicit migration",
+  "read_admission_implemented": true,
+  "saas_typecheck": {
+    "errors": 0,
+    "log_sha256": "4114f1eb50f69c59813f3be46532adf858c49bfe994d676db363a24db2930cb3"
+  },
+  "scoped_regression": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "4cfd85d6feac44df7ad2e47de5ea2e8127e4e739c18eb8065370584be85209c0",
+    "passed": 996,
+    "skipped": 0,
+    "tests": 996
+  },
+  "source_budget": {
+    "admitted": false,
+    "limits": {
+      "max_active_patches": 9,
+      "max_direct_upstream_files": 174,
+      "max_upstream_net_added_loc": 4576,
+      "min_isolated_custom_code_ratio": 0.85
+    },
+    "manifest_or_assertions_modified": false,
+    "metrics": {
+      "active_patch_count": 9,
+      "direct_upstream_file_count": 182,
+      "forbidden_upstream_files": [],
+      "isolated_custom_code_ratio": 0.9832,
+      "reverse_dependencies": [],
+      "upstream_net_added_loc": 4869
+    },
+    "violations": [
+      "direct upstream file budget exceeded",
+      "upstream net-added LOC budget exceeded"
+    ]
+  },
+  "source_sha256": {
+    ".github/workflows/saas-aliyun-host-candidate.yml": "3ffdf0ee149feae2eb8a34e577de68315915e45eb38413a2808673c6f49497b6",
+    ".github/workflows/saas-image-candidate.yml": "5b48940e3187c5ba7274d67f9aa2e5139cf7d4041e25fed0ef2bdfeafb8138cc",
+    "pyproject.toml": "7b7bfc95d45ac928bb91cf6b383c94c48792474adf967e34fcfddca15d0c58a6",
+    "saas/control_plane/http_auth.py": "2fbba7c9eb1e01a76450d475c147664c1a9fe4bff0251f51e0d75636684f5524",
+    "saas/deployment/aliyun/README.md": "05e6479e10735e797932b6affa8ba61a67c113d82dcb4531c7cb2efe9449859c",
+    "saas/deployment/aliyun/storage.md": "c50a711ad415bfd6cdfe83b95c74cbff0f7f75290d1917d9fe0b2de19c15830e",
+    "saas/production/aliyun_artifacts.py": "721fb0060cc5d7053ee93287fb3b03c4955d8cbd358fbdfb5c12ce293be5f9c1",
+    "saas/production/aliyun_server_profile.py": "e2fa68751d1f3426f798ae77c419eea7403ca80205c4f5b9bc3d9bb2cc9eda9b",
+    "saas/production/aliyun_storage.py": "fc964de3fac4681161377f62c46ad2988d5269c372103cf660f159f222aaaa19",
+    "saas/production/aliyun_storage_admission.py": "7204f372e90aa4ea7def6c92560f44b5e4a0971eb20e954a2886e2fbb97de2ec",
+    "saas/production/server.py": "e5954e7c11f34a0564a686f763e113441065566d317c39bcbfd3e687bcea8ef5",
+    "saas/scripts/check_image_supply_chain.py": "e6b31ece142755270de804a19f9327fe147f30b6bf86cf0025c58f05522de2d8",
+    "tests/browser_ui/conftest.py": "4aeb141e6d9f6365cff0b965ff32bf62c598efb8c11c4646c1215b9fc696020d",
+    "tests/browser_ui/files/test_saved_outputs.py": "d70451c0705161a9939879fc3c1a23f96194af9f8a0271b6009b247f018dfbf4",
+    "tests/saas/test_aliyun_artifacts.py": "6c6858015e5892cae8e20d9bdc7abca2d3679b1ceff29f8c8d1f2f4ec0563219",
+    "tests/saas/test_aliyun_server_composition.py": "c5ec909035e62b0da861e9ded95699a200c244258585150d868f2a94e7b2b02c",
+    "tests/saas/test_aliyun_server_profile.py": "7d6769fc36df5ace5a9a785936681d0dafe0b3f4944d0eeadd3c5e834ef890ec",
+    "tests/saas/test_aliyun_storage.py": "97acafc07e8fe14861a3b4ed1a45282a8cbe4fabe256abe35f89c1978e161909",
+    "tests/saas/test_aliyun_storage_admission.py": "2e9c1e258b9ffdff5eddceda9e9283992fe91f18db61b1fb328517e2919fb9b1",
+    "tests/saas/test_image_supply_chain.py": "109ac4d727d73b271613089acbb693944047f9705f10c33c4e676075fe52d4f7",
+    "uv.lock": "a6fe77d24c8ce725813ed601abbcf34aefc164334c4471bef4069ceebe1171dc",
+    "web/src/hooks/useFileContent.test.ts": "5ad004b768651ba0849ef692f326a2d58ff43ec395c9898a8bbce62a3d43dab3",
+    "web/src/hooks/useFileContent.ts": "c5646c7ecf53f672efba92e3fa71dac96b5e2d5aba96285936c6276208ed4a79",
+    "web/src/shell/FilesPanel.test.tsx": "3dc5bde6a8127f358583161de80682efbb5360fd9ce78c91a4beb219caa57722",
+    "web/src/shell/FilesPanel.tsx": "76815e9b7cc033a9a59b9d1b55265f5be2ae8ac9a1cc16357f134e89e0a8202f",
+    "web/src/shell/SavedOutputs.test.tsx": "91e2d99aff5adc85f427570336ac9a10b4c3cc94a17994dabaa63b55dbac3735",
+    "web/src/shell/SavedOutputs.tsx": "8a4e1264ef8c2000a7ff9fc85534ecbfd93cc741b33e8f68605096af30930e29"
+  },
+  "sts_read_issuer_deployed": false,
+  "ui_download_integration_implemented": true,
+  "v1_v2_automatic_activation": false,
+  "web_build": {
+    "log_sha256": "747db361b964008fb458bbe02e08fa1f4b5eb1d970cbe1375e2a43b163d75e1b",
+    "passed": true
+  },
+  "web_component_tests": {
+    "files": 4,
+    "log_sha256": "92b0271f265890f22e1270df15d4dd792785ef680b4d366dc2b1e0d5fcee6ecb",
+    "passed": 100,
+    "post_lint_type_test_fixes": {
+      "files": 3,
+      "log_sha256": "e8699519e8f256c0dab520791b2553b1cc588094f5db506cffa92ed33faaafac",
+      "passed": 42
+    }
+  }
+}

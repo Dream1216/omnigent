@@ -1,0 +1,26 @@
+{
+  "checks": [
+    {
+      "errors": 0,
+      "failures": 0,
+      "postgres": "pg16",
+      "report_sha256": "74f946a9d8d8bc003d74d9b751dc5cf033576c480cec588e60df64002826a9da",
+      "skipped": 0,
+      "tests": 1
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "postgres": "pg18",
+      "report_sha256": "d000431d64b204492e59a62881db60e4f86748a4138d6344c4ee9e9bf3ad3ada",
+      "skipped": 0,
+      "tests": 1
+    }
+  ],
+  "coverage": "Real clean replay, predecessor upgrade and catalog rejection tests; no production database change",
+  "observed_at": "2026-10-31T01:44:29.533107+00:00",
+  "production_ready": false,
+  "run_id": 41156317471,
+  "source_revision": "a4ba238ebcfc7e676bacf954e464ef72307cb254",
+  "whole_workflow_status": "completed/failure: 2 protected source assertions failed; both replay jobs passed"
+}

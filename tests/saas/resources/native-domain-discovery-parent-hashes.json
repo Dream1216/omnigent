@@ -221,8 +221,8 @@
   "saas/scripts/oci_promotion.py": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
   "saas/scripts/check_image_supply_chain.py": {
     "parent_sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23",
-    "combined_sha256": "ded133dddef0e5185a396a936b83e66eecd3cd2532abb24c258f21f5e1dd95ca",
-    "approved_change": "A60e typed adapter only, preserving every original Root generic verifier function and assertion; exact inverse restores full Root base file",
+    "combined_sha256": "e6b31ece142755270de804a19f9327fe147f30b6bf86cf0025c58f05522de2d8",
+    "approved_change": "A60e typed adapter only, preserving every original Root generic verifier function and assertion; exact inverse restores full Root base file; proposed Aliyun SDK, immutable OCI identity and offline dual-architecture checks, retaining original generic admission functions",
     "preserved_functions": {
       "_sha256": "9da2ea2c4f7f9301e06e1ac26911597bbebdfdf8b3864861379b3e0612b9b38b",
       "canonical_release_evidence_sha256": "0aeafb36b2503bd1fbdf4bdd8e4e45fe24508b9890438927e3a2409e47c5ee28",
@@ -237,7 +237,6 @@
       "_ids": "8e661e518d1923f9c8eb9f93798700b8214067d7b90e5173591ec07ae2fab77a",
       "_read_repository_contract": "d964913b453d45c9c35bf8bf8a29ee791cbd0649dc69f653e35d71ed164df342",
       "_named_workflow_step": "c25c174fd99c37073c5f7314f47b4bad0dd5a740c6711f822c8f8777c1df2568",
-      "validate_candidate_build_contract": "3faacf46f3c4599c191975d52a2e966e3aa748cb176df93a0e0510e9394123bf",
       "validate_image_material_lock": "5249ee1bbf2ccb57db16135d088bb88bb282c70df4d68b570add10d9ef9182ea",
       "_validate_policy": "cd3aeb307696e47b720328dded6f0988787e9e032085a8be90775599e385b6d1",
       "_validate_workflow": "30217457e05f6fc2ca8c8f6d4627bd9884d580a5be80529244a55bce850a365b",
@@ -248,10 +247,11 @@
       "main": "793393ec42be00a6221570528ae7467c74d282666c2fd1a1f5612b316149df3c"
     },
     "approved_functions": {
-      "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b"
+      "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b",
+      "validate_candidate_build_contract": "a0a3b85f454815c76c3ec9ce366065429e64780ea708e1726753d7f1c1108e5c"
     },
     "type_and_context_correction": {
-      "corrected_sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185",
+      "corrected_sha256": "9193a9de63673c4808e7666f9024595aa2a31f5afe39391b8dcdbf1bdfcb71ec",
       "inverse_fragments": [
         {
           "before": "_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n",
@@ -262,8 +262,57 @@
           "after": "        \"python-3.12=3.12.16-r0\",\n"
         }
       ]
-    }
+    },
+    "prior_combined_sha256": "ded133dddef0e5185a396a936b83e66eecd3cd2532abb24c258f21f5e1dd95ca",
+    "prior_corrected_sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185",
+    "superseded_preserved_functions": {
+      "validate_candidate_build_contract": "3faacf46f3c4599c191975d52a2e966e3aa748cb176df93a0e0510e9394123bf"
+    },
+    "reviewed_extension_application_head": "4af5556d8bd5c068136852a12549b6ecc17c048f",
+    "reviewed_extension_trusted_main": "57c4802561bd5789d0f3a997a313ec3f4f4ee366",
+    "current_combination_source_sha256": "9193a9de63673c4808e7666f9024595aa2a31f5afe39391b8dcdbf1bdfcb71ec"
   },
-  "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
-  "saas/scripts/compare_oci_rebuilds.py": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
+  "saas/scripts/scan_oci_candidates.py": {
+    "parent_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
+    "combined_sha256": "e980769bb53a8da04b7707adc83db1950e495b09b0e406b293f8428fd6950507",
+    "approved_change": "Proposed exact Aliyun Host profile; generic complete and Server scopes retain their original architecture, raw vulnerability, digest and attestation checks",
+    "preserved_functions": {
+      "parse_database_status": "8278842657507f9545191b9bd62169de87698f8e9668409f07fe46b383dedb19",
+      "scan_report": "b7dfe6a0e66e09b16475d9bfdc5a9c9ca65cccfaaeba17c9770c6af6aebce0d3",
+      "validate_image_scope": "c5ecdf8a1e058f6a7e273cb33076d9e72e267ee427994b1385c3e58f717a083f",
+      "install_grype": "1ab373123d271623f9db6a388038f6523e0e9d95305f396c19d51c1f23e13e49",
+      "file_sha256": "36a7c640b710db0d294f9e123e9d2618df89172dfe3d935d9cc519a1ee6a9deb"
+    },
+    "approved_functions": {
+      "main": "d4f84ab90222bcc0b0b54f59b4c672033f51779c56811e3518593b5e81aa2f38",
+      "scan_platforms": "618f2f0e47d6c8be62f7225b530af40df11fe1f3350417b70302e4eb4219511e"
+    },
+    "reviewed_extension_application_head": "4af5556d8bd5c068136852a12549b6ecc17c048f",
+    "reviewed_extension_trusted_main": "57c4802561bd5789d0f3a997a313ec3f4f4ee366",
+    "current_combination_source_sha256": "e980769bb53a8da04b7707adc83db1950e495b09b0e406b293f8428fd6950507"
+  },
+  "saas/scripts/compare_oci_rebuilds.py": {
+    "parent_sha256": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
+    "combined_sha256": "fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732",
+    "approved_change": "Proposed exact Aliyun Host profile; generic complete and Server scopes retain their original architecture, raw vulnerability, digest and attestation checks",
+    "preserved_functions": {
+      "_blob_path": "b028f4477cef623e728ebd5d65d608e41e4325d244f5fd3bc1b7ed115f39b1d7",
+      "_verify_blob": "218389a9ebd86d972883b652fd2ae29609594567c47a5f617a1d5807f28ee5be",
+      "_blob": "832600a848c4fd20a79c97947ba0103142c9e19b2e1d1e5bfd2eea80da243847",
+      "_history": "a106bed0161254e319a27815e5acc5b860c03774bcb07ed661dbac00a92a76aa",
+      "_rootfs_diff_ids": "fd1be9751cc73bc40c295f02cadab7271f159f0d608abdfd8eeadf525066c4da",
+      "_layer_facts": "d311187dcaed9cfc5e76bfa63c87d42dd6d7c03ad26d4e46663f2370ff4f3b18",
+      "_approved_labels": "9e16dd5e4e28712d5b8a22fdcf07a00d23a526a6fe8b0caf84d797be0c55b64b",
+      "inspect_oci_archive": "0fef95700b91289b85395797f231af46f699265a5577aa3fb22af4fd95dc30f9",
+      "compare_archives": "38942d4d828b284f1b50473f0a9db648156c12dcbb7efb4410891e218db31762",
+      "_git": "f744d313ebbb1f689d1ab21fb352cb8601208c303cf507494f3d398f15ce1731"
+    },
+    "approved_functions": {
+      "_inspect_oci_archive": "2fe2116d336c18bbd0d3f1a3b6dea122366cf5098c1811a8f93e0380cec85203",
+      "main": "95b33dffaf0d4acb7a65a17957a45358db4bd3957005e16c6ec6b674a56d4b2d"
+    },
+    "reviewed_extension_application_head": "4af5556d8bd5c068136852a12549b6ecc17c048f",
+    "reviewed_extension_trusted_main": "57c4802561bd5789d0f3a997a313ec3f4f4ee366",
+    "current_combination_source_sha256": "fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732"
+  }
 }

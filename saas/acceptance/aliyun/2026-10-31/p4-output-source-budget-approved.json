@@ -1,0 +1,49 @@
+{
+  "observed_at": "2026-10-31T05:48:16.395798+00:00",
+  "base_revision": "917296883ee7a1418617e9995f1407231f7962d0",
+  "reviewed_patch_sha256": "f16f270d2e65ed0bb3d25530f04074f374ae3d03ce9f7b9b48ea40141ab56e3d",
+  "review_manifest_sha256": "dbbd10fed442ac00132d963d9b1841cfaad7fd0e62de282b8bc33915088a2003",
+  "authorization": {
+    "source": "Direct human reply in this Codex task",
+    "reply": "批准这两个上限及对应断言调整",
+    "scope": "Only 174 to 182 direct upstream files, 4576 to 4869 net added upstream LOC, and corresponding existing budget assertions"
+  },
+  "source_budget": {
+    "admitted": true,
+    "limits": {
+      "max_active_patches": 9,
+      "max_direct_upstream_files": 182,
+      "max_upstream_net_added_loc": 4869,
+      "min_isolated_custom_code_ratio": 0.85
+    },
+    "metrics": {
+      "active_patch_count": 9,
+      "direct_upstream_file_count": 182,
+      "forbidden_upstream_files": [],
+      "isolated_custom_code_ratio": 0.9832,
+      "reverse_dependencies": [],
+      "upstream_net_added_loc": 4869
+    },
+    "violations": []
+  },
+  "budget_regressions": {
+    "tests": 10,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "junit_sha256": "a7744b2982fc19a6e06b5cbdf15fb2822d14fd8dd120787021b39949eb903b5f",
+    "at_ceiling_passes": true,
+    "one_line_over_ceiling_rejected": true
+  },
+  "source_sha256": {
+    "saas/upstream-baseline.json": "a3c85d4ba4c899d63775f0d092ef2afe1ec826282576425b4fdcd60cb3be8aaf",
+    "tests/saas/test_upstream_delta.py": "31358e0164ea68bf8058a3e74bcf8aad740a08eaa399943dbfa8fa50a8c580e0"
+  },
+  "separate_p5_native_control_repairs_included": false,
+  "security_or_release_gate_waived": false,
+  "protected_policy_or_trusted_hashes_modified": false,
+  "production_activated": false,
+  "p4_accepted": false,
+  "p5_accepted": false,
+  "historical_preapproval_receipt": "p4-output-http-ui-local-validation.json"
+}

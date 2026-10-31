@@ -9,6 +9,7 @@ import json
 import time
 from dataclasses import dataclass
 from hashlib import sha256
+from typing import Protocol
 from uuid import UUID
 
 from saas.runner_adapter.platform_models import PLATFORM_MODEL_CREDENTIAL_ENV
@@ -24,6 +25,16 @@ class PlatformModelGatewayTokenError(ValueError):
 
 class PlatformModelGatewayTokenExpired(PlatformModelGatewayTokenError):
     """An otherwise authenticated, correctly scoped bearer has expired."""
+
+
+class PlatformModelTokenIssuer(Protocol):
+    def issue(
+        self,
+        *,
+        session_id: UUID,
+        ttl_seconds: int = DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
+        now: int | None = None,
+    ) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +145,7 @@ class PlatformModelGatewayTokenAuthority:
 def inject_platform_model_gateway_token(
     environment: dict[str, str],
     *,
-    authority: PlatformModelGatewayTokenAuthority,
+    authority: PlatformModelTokenIssuer,
     session_id: UUID,
     ttl_seconds: int = DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
 ) -> None:
@@ -162,5 +173,6 @@ __all__ = [
     "PlatformModelGatewayTokenAuthority",
     "PlatformModelGatewayTokenError",
     "PlatformModelGatewayTokenExpired",
+    "PlatformModelTokenIssuer",
     "inject_platform_model_gateway_token",
 ]

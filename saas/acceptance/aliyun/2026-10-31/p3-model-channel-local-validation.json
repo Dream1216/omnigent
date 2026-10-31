@@ -1,0 +1,36 @@
+{
+  "cloud_host_entrypoint_and_factory": "not yet wired",
+  "cloud_model_end_to_end": "not yet tested",
+  "p1_p5_accepted": false,
+  "phase": "P3 candidate; not production composition",
+  "production_deployed": false,
+  "production_route_default": "disabled",
+  "pyrefly_errors": 0,
+  "reports": {
+    "aliyun-model-broker-middleware-tests.xml": {
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "tests": 2
+    },
+    "aliyun-model-channel-and-regressions.xml": {
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "tests": 407
+    }
+  },
+  "schema_version": 1,
+  "server_only_model_signing_authority": true,
+  "source_code_sha256": {
+    "saas/control_plane/http_auth.py": "2164dbaeb0bd73552af8bc85ef26aa2fdef34a33322f265f57ee5a6f02f7696c",
+    "saas/control_plane/resolver.py": "317204faec98d86131eaae9cc58615714f9f445b209465c07616b170e4067ce2",
+    "saas/production/aliyun_model_broker.py": "68a80588efb6d0f1bdd808949ef06f4ea8a9dc71634ce8fe3444a84752c2ec55",
+    "saas/production/aliyun_model_client.py": "76eaa1f594438d4e554997decb90dad7a826c5670c77a7b43e7855fb32ccf852",
+    "saas/production/aliyun_model_lease.py": "0344fd5b4922ae5062c709aa87148f141c7dbda6e372e2ccb435c99541373ff6",
+    "saas/production/platform_model_host.py": "2e0ce7583c0601097f361e9f2a8bdf96280d4a6d02ec7cc771aadfd1da726137",
+    "saas/production/platform_model_relay.py": "ac51eafbd1485d7a6dc6987fd36b353fe826b151808efb2d3d156c4b0372705f",
+    "saas/runner_adapter/platform_model_gateway.py": "0277baacd2ddb68a51ee2b9d9cca5075a6f0f05e41e9b3bb6f9446e763fc6fbe"
+  },
+  "source_state": "working-tree regression followed by two additional real middleware cases; frozen commit must pass candidate CI"
+}

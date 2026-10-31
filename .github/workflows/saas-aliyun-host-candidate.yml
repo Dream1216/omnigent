@@ -1,0 +1,200 @@
+name: SaaS Aliyun Host candidate
+
+on:
+  push:
+    branches: [codex/aliyun-sandbox-p1-p5-20261031]
+    paths:
+      - .github/workflows/saas-aliyun-host-candidate.yml
+      - .github/ci-deps/package.json
+      - saas/deployment/aliyun/**
+      - saas/production/**
+      - saas/runner_adapter/**
+      - saas/compatibility/**
+      - saas/control_plane/*.py
+      - saas/scripts/compare_oci_rebuilds.py
+      - saas/scripts/scan_oci_candidates.py
+      - omnigent/**
+      - sdks/**
+      - pyproject.toml
+      - setup.py
+      - uv.lock
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-aliyun-host-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --extra all --extra saas --extra e2b --group dev
+      - name: Check scoped transport and existing production boundaries
+        run: |
+          uv run pyrefly check saas/production/aliyun_sdk.py \
+            saas/production/aliyun_server_profile.py saas/production/server.py \
+            saas/production/aliyun_model_ingress.py \
+            saas/production/aliyun_storage.py saas/production/aliyun_volume_control.py \
+            saas/production/aliyun_storage_admission.py \
+            saas/production/aliyun_artifacts.py \
+            saas/production/aliyun_sts.py saas/production/aliyun_sts_issuer.py \
+            saas/production/server_config.py \
+            saas/production/aliyun_sandbox.py saas/production/aliyun_host.py \
+            saas/production/aliyun_tenant_sandbox.py saas/production/tenant_sandbox.py \
+            saas/production/aliyun_model_lease.py saas/production/aliyun_model_broker.py \
+            saas/production/aliyun_model_client.py saas/production/platform_model_host.py \
+            saas/production/platform_model_relay.py saas/control_plane/resolver.py \
+            saas/control_plane/http_auth.py saas/runner_adapter/platform_model_gateway.py
+          uv run pytest tests/saas/test_aliyun_sdk.py \
+            tests/saas/test_aliyun_server_profile.py \
+            tests/saas/test_aliyun_model_ingress.py \
+            tests/saas/test_aliyun_storage.py tests/saas/test_aliyun_volume_control.py \
+            tests/saas/test_aliyun_storage_admission.py tests/saas/test_aliyun_storage_launch.py \
+            tests/saas/test_aliyun_sts_issuer.py \
+            tests/saas/test_aliyun_artifacts.py \
+            tests/saas/test_aliyun_server_composition.py \
+            tests/saas/test_production_server.py tests/saas/test_production_server_config.py \
+            tests/saas/test_aliyun_sandbox.py tests/saas/test_aliyun_sandbox_probe.py \
+            tests/saas/test_aliyun_host.py tests/saas/test_aliyun_host_launcher.py \
+            tests/saas/test_aliyun_tenant_sandbox.py \
+            tests/saas/test_tenant_sandbox.py tests/saas/test_image_supply_chain.py \
+            tests/saas/test_scan_oci_candidates.py tests/saas/test_aliyun_model_lease.py \
+            tests/saas/test_aliyun_model_broker.py tests/saas/test_aliyun_model_client.py \
+            tests/saas/test_control_plane_resolver.py tests/saas/test_http_cookie_auth.py \
+            tests/saas/test_platform_model_relay.py tests/saas/test_platform_model_runtime.py \
+            tests/saas/test_platform_model_gateway.py -q
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          driver-opts: image=moby/buildkit@sha256:b651bf250c2805569f1db385ad1ea8fb73737dfc851de305f274ca02690fa93f
+      - name: Bind the exact source revision
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ -z "$(git status --porcelain)" ]]
+          printf 'epoch=%s\n' "$(git show -s --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build independently with provenance and SPDX
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: saas/deployment/aliyun/Dockerfile.host
+          target: host
+          platforms: linux/amd64
+          push: false
+          no-cache: true
+          provenance: mode=max
+          sbom: true
+          tags: omnigent-aliyun-host:candidate
+          outputs: type=oci,dest=${{ runner.temp }}/host.oci.tar,rewrite-timestamp=true
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_DATE_EPOCH=${{ steps.source.outputs.epoch }}
+      - name: Verify non-root runtime and frozen harnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker load -i "$RUNNER_TEMP/host.oci.tar"
+          python - <<'PY'
+          import json, os, subprocess, tarfile
+          from pathlib import Path
+          from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+          archive = Path(os.environ["RUNNER_TEMP"]) / "host.oci.tar"
+          facts = inspect_oci_archive(archive, label_profile="aliyun-host-minimal")
+          expected = facts["platforms"]["linux/amd64"]
+          actual = json.loads(subprocess.check_output(["docker", "image", "inspect", "omnigent-aliyun-host:candidate"]))[0]
+          with tarfile.open(archive) as stream:
+              root = json.load(stream.extractfile("index.json"))["manifests"][0]["digest"]
+          assert actual["Descriptor"]["digest"] == root and actual["Id"] == root
+          assert actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]
+          PY
+          docker run --rm --pull never --network none --user 1000:1000 \
+            --cap-drop ALL --security-opt no-new-privileges:true --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+            --tmpfs /home/user:rw,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=0700 \
+            --pids-limit 128 --memory 1g --cpus 1 \
+            omnigent-aliyun-host:candidate /opt/venv/bin/python -B -I -c \
+            'import glob,os,shutil,sys;from pathlib import Path;from omnigent import _build_info;from omnigent.onboarding.harness_install import harness_cli_installed;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert all(shutil.which(x) for x in ("git","tmux","bwrap","node","sshd","chronyd","iptables","ossfs2"));assert all(harness_cli_installed(x) for x in ("pi","openai"));assert not glob.glob("/etc/ssh/ssh_host_*");assert Path("/etc/machine-id").stat().st_size==0;from saas.production import aliyun_host;assert Path(aliyun_host.__file__).resolve().is_relative_to(Path("/opt/venv"));private=Path.home()/".omnigent"/"runtime"/("aliyun-host-"+"a"*32+"-"+"b"*24);aliyun_host.prepare_aliyun_host_directory(private);assert private.stat().st_mode&0o777==0o700;assert private.stat().st_uid==1000' \
+            "$GITHUB_SHA"
+      - name: Retain exact OCI bytes for comparison
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aliyun-host-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/host.oci.tar
+          compression-level: 0
+          retention-days: 7
+
+  compare-and-scan:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: aliyun-host-${{ github.sha }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/archives
+      - name: Compare exact manifests, configs and attestations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          first="$RUNNER_TEMP/archives/aliyun-host-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-1/host.oci.tar"
+          second="$RUNNER_TEMP/archives/aliyun-host-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-2/host.oci.tar"
+          python -m saas.scripts.compare_oci_rebuilds --label-profile aliyun-host-minimal \
+            --image "host=$first,$second" --output artifacts/rebuild-comparison.json
+      - name: Scan the exact admitted candidate bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          first="$RUNNER_TEMP/archives/aliyun-host-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-1/host.oci.tar"
+          python -m saas.scripts.scan_oci_candidates --scope aliyun-host \
+            --image "host=$first" --output artifacts/scan
+      - name: Retain supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aliyun-host-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 14

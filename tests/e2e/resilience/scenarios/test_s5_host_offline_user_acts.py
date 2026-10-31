@@ -9,8 +9,10 @@ retry. It is never silently dropped or applied twice.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
@@ -32,20 +34,6 @@ _KNOWN_GAPS = {
         "given while the host was offline never reaches Claude",
         [("approve", 150)],
     ),
-    **contract.gaps(
-        "R3: a message sent while the host is unreachable is accepted (202), then the "
-        "relaunch fails with runner_failed_to_start; the message is never delivered and "
-        "the failure stays after the host returns",
-        [("send", 20), ("send", 150)],
-        harnesses=("claude", "codex"),
-    ),
-    **contract.gaps(
-        "R4: Stop with the host unreachable reports success and shows idle, but the turn "
-        "keeps running on the host and finishes once it returns (claude can also lose the "
-        "next message in the busy TUI)",
-        [("stop", 20), ("stop", 150)],
-        harnesses=("claude", "codex"),
-    ),
 }
 #: A refusal slower than this is not "at once" for a user waiting on a button.
 _PROMPT_REFUSAL_S = 35.0
@@ -57,6 +45,13 @@ def _host_offline(lab: Lab) -> list[Fault]:
     for link in links:
         link.reset()
     return faults
+
+
+def _restore_after(faults: list[Fault], deadline: float, cancel: threading.Event) -> float:
+    cancel.wait(max(0.0, deadline - time.monotonic()))
+    for fault in faults:
+        fault.clear()
+    return time.monotonic()
 
 
 @pytest.mark.timeout(900)
@@ -74,23 +69,44 @@ def test_s5_host_offline_user_acts(
         "S5 host offline, user acts", {"harness": harness, "action": action, "outage_s": outage_s}
     )
     with contract.observe(lab, driver, report) as watcher:
+        assert contract.eventually(
+            lambda: True if lab.snapshot(session_id).get("runner_online") is True else None,
+            timeout=contract.RECOVERY_S,
+        ), "The runner must connect before the setup turn and fault injection"
         entered = contract.enter(driver, _ACTIONS[action], outage_s=outage_s)
+        if action == "send":
+            assert contract.eventually(
+                lambda: True if lab.snapshot(session_id).get("status") == "idle" else None,
+                timeout=contract.SETTLE_S,
+            ), "The initial turn must settle idle before the outage begins"
         started = time.time()
+        outage_started = time.monotonic()
         faults = _host_offline(lab)
-        try:
-            time.sleep(2.0)
-            response, elapsed = _act(driver, entered, action)
-            accepted = response is not None and response.status_code < 400
-            status = response.status_code if response is not None else "timeout"
-            report.check(
-                "action_accepted_or_refused_promptly",
-                accepted or elapsed <= _PROMPT_REFUSAL_S,
-                f"HTTP {status} after {elapsed:.1f}s",
+        cancel_restore = threading.Event()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            restored = executor.submit(
+                _restore_after, faults, outage_started + outage_s, cancel_restore
             )
-            time.sleep(max(0.0, started + outage_s - time.time()))
-        finally:
-            for fault in faults:
-                fault.clear()
+            try:
+                time.sleep(2.0)
+                response, elapsed = _act(driver, entered, action)
+                accepted = response is not None and response.status_code < 400
+                status = response.status_code if response is not None else "timeout"
+                report.check(
+                    "action_accepted_or_refused_promptly",
+                    accepted or elapsed <= _PROMPT_REFUSAL_S,
+                    f"HTTP {status} after {elapsed:.1f}s",
+                )
+                restored_at = restored.result()
+            finally:
+                cancel_restore.set()
+                restored.result()
+        actual_outage = restored_at - outage_started
+        report.check(
+            "outage_duration_matches_requested",
+            abs(actual_outage - outage_s) <= 2.0,
+            f"requested {outage_s}s, observed {actual_outage:.2f}s",
+        )
         ended = time.time()
         _check_outcome(report, lab, driver, entered, action, accepted)
         contract.check_settled_idle(report, lab, session_id)

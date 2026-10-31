@@ -1,0 +1,137 @@
+{
+  "archive_sha256": "a36757d7a1f8264d927280c74caec66550d00a3741e9de7065559d249bff4b1b",
+  "attestations": {
+    "linux/amd64": {
+      "slsa_provenance": true,
+      "spdx_sbom": true
+    }
+  },
+  "config_digest": "sha256:1ac2dcafe2da916345ed3eb0b307a5357b8e4bc8e71bd83e7198ed05158afdb4",
+  "critical_match_count": 0,
+  "database_built_at": "2026-10-30T06:23:28Z",
+  "findings": [
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-82560",
+      "package": "libperl5.42",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-82560",
+      "package": "perl",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-82560",
+      "package": "perl-base",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-82560",
+      "package": "perl-modules-5.42",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-113351",
+      "package": "libexpat1",
+      "severity": "High",
+      "version": "2.9.0-1"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-115506",
+      "package": "libexpat1",
+      "severity": "High",
+      "version": "2.9.0-1"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-107778",
+      "package": "libgssapi-krb5-2",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-107778",
+      "package": "libk5crypto3",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-107778",
+      "package": "libkrb5-3",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "fix": {
+        "state": "not-fixed",
+        "versions": []
+      },
+      "id": "CVE-2026-107778",
+      "package": "libkrb5support0",
+      "severity": "High",
+      "version": "1.22.1-3"
+    }
+  ],
+  "high_cve_count": 4,
+  "high_match_count": 10,
+  "ignored_match_count": 0,
+  "manifest_digest": "sha256:48a82f3903b1e72e72679ab157b2947c24afc5161752d190b0df28263807974a",
+  "p2_accepted": false,
+  "policy_changed": false,
+  "production_deployed": false,
+  "raw_grype_report_sha256": "2d2f83db45ee4f7aea5bc50b06940018fd344f6a143c091b38fb40b1da8be4bb",
+  "rebuild_comparison_status": "pass",
+  "registry_published": false,
+  "scan_gate": "failed",
+  "scanner": "grype 0.120.1",
+  "schema_version": 1,
+  "scope": "complete Aliyun Host image",
+  "severity_match_counts": {
+    "High": 10,
+    "Low": 9,
+    "Medium": 44,
+    "Negligible": 134
+  },
+  "source_revision": "1f19ebd3af8ed6bea91cee686cd51c06b677e43b",
+  "workflow_run_id": 41148992698,
+  "workflow_url": "https://github.com/Dream1216/omnigent/actions/runs/41148992698"
+}

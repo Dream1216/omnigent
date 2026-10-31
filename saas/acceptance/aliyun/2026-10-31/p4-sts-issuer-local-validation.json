@@ -1,0 +1,47 @@
+{
+  "candidate_parent": "466ec8bb67631eddd982064ba07cd7136d0c5460",
+  "cloud_sts_issuance_verified": false,
+  "errors": 0,
+  "evidence": "sts-issuer-scoped-regression.junit.xml",
+  "failures": 0,
+  "file_sha256": {
+    ".github/workflows/saas-aliyun-host-candidate.yml": "4f5638e4d646daf51e1f80e7f52c2c1db985aea99ba5e458d89453acd7591872",
+    ".github/workflows/saas-image-candidate.yml": "879bd4d28268bff9d348cb3073152ca655921106bcf4a6b2208d4ebfd9bf0071",
+    "pyproject.toml": "aad75856ec4eb424b653b56564cffbf120a2dfda1a43d867f85170aed1ef7ee8",
+    "saas/production/aliyun_sts.py": "f00e0c63928c20a1d9d53a3d7c62fed8552267080b0c7d26c563eee4b2652413",
+    "saas/production/aliyun_sts_issuer.py": "ecd321a14dc3226810b64a077b742f2815c4e7ecb246fd112e52c91c5897dff0",
+    "saas/production/aliyun_volume_control.py": "d7a4fd4e4b7f391f7dca56302987be62f82d598b3f45c1b08160e0d37cdef7ba",
+    "saas/scripts/check_image_supply_chain.py": "924a1472a0ae4ed9cae472db1de61debd6c05e444b5e591be24083dc60015ece",
+    "tests/saas/test_aliyun_sts_issuer.py": "db9de273782d8754743dcb152c9f8fc29099e1fc679a4a04344b6097e34ad94b",
+    "uv.lock": "dff5c8834708a06ff724a91a867c9c8744eda508c669ee1a95973a95a23fcd58"
+  },
+  "frozen_python_packages": 306,
+  "iam_or_instance_role_changed": false,
+  "observed_at": "2026-10-31T03:18:43.006414+00:00",
+  "p4_accepted": false,
+  "production_changed": false,
+  "production_ready": false,
+  "saas_type_errors": 0,
+  "schema_version": 1,
+  "sdk_versions": {
+    "alibabacloud-sandbox20260820": "1.2.0",
+    "alibabacloud-sts20150401": "1.2.0"
+  },
+  "skipped": 0,
+  "source_identity": "working-file hashes; no released image identity",
+  "static_guards": "upstream delta, patch queue, production baseline and image supply chain passed; separate protected-source/trusted-input admission still required",
+  "status": "local-candidate-only",
+  "supervised_deployment_installed": false,
+  "unattended_renewal_verified": false,
+  "unique_successful_test_cases": 910,
+  "verified": [
+    "Native STS SDK models and ACS3 signature on the actual mocked outbound request",
+    "Explicit IMDSv2 source role; reject IMDSv1 fallback and long-term keys",
+    "900-second target credential with exact Team-scoped policy and ExternalId",
+    "Reject redirect, expiry, wrong target identity and unsafe output files",
+    "Atomic 0600 publication, concurrent issuer exclusion and failure cleanup",
+    "Existing Volume client accepts renewed canonical file and rejects expiry",
+    "Credential-free CLI, readiness and policy review modes",
+    "Candidate and protected OCI contracts require the STS SDK and issuer import"
+  ]
+}

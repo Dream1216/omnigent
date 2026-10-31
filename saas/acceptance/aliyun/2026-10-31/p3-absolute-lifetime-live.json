@@ -1,0 +1,37 @@
+{
+  "after_reconnect_end_at": "2026-10-30T23:14:07.895774+00:00",
+  "checks": {
+    "admitted_lifetime_persisted": true,
+    "cleanup_absence_confirmed": true,
+    "cloud_absolute_expiry_confirmed": true,
+    "cross_tenant_cleanup_rejected": true,
+    "expired_cleanup_idempotent": true,
+    "expired_operation_rejected": true,
+    "heartbeats_do_not_extend_deadline": true,
+    "nonroot_command": true,
+    "repeated_reconnect_does_not_accumulate_extension": true,
+    "restart_keeps_creation_time_and_bounds_deadline": true
+  },
+  "cloud_deadline_precision_tolerance_seconds": 0,
+  "cloud_started_at": "2026-10-30T23:13:07.895805+00:00",
+  "controlplane_absence_after_expiry_seconds": 4.297,
+  "finished_at": "2026-10-30T23:14:12.536251+00:00",
+  "original_end_at": "2026-10-30T23:14:07.895774+00:00",
+  "post_expiry_dataplane_accepted": false,
+  "post_expiry_dataplane_error_type": "SandboxException",
+  "post_expiry_observations": [],
+  "production_acceptance": false,
+  "reconnect_deadline_drifts_seconds": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "sandbox_id": "sbx-09304ed0-e750-41e3-ab3d-d43d3d007533",
+  "schema_version": 1,
+  "scope": "real SDK transport using Base template and synthetic tenant; no Host or production admission",
+  "sdk_adapter_sha256": "30539612dc4b87dee2c26b010d7bdf693e36805b1dc43e46f6078c26ab51131c",
+  "started_at": "2026-10-30T23:13:07.125476+00:00",
+  "template": "0mipsyhtqfvkegns0jbw",
+  "transport_module_sha256": "2f2ea1ece2afc831508bd8de63ba736d77abf28658abb2ee28002d2eb221c1bc",
+  "transport_passed": true
+}

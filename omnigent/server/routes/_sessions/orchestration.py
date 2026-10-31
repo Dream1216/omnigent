@@ -3784,21 +3784,7 @@ async def _wait_for_host_reconnect(
     runner_id: str | None,
     timeout_s: float,
 ) -> HostConnection | None:
-    """Wait for an absent host or its surviving runner to reconnect.
-
-    Only reads the local registries; no database or network polling. A runner
-    reconnect ends the host grace too, so a surviving runner can serve the
-    input even while its host daemon remains offline. Callers re-resolve the
-    runner before launching a replacement. Remote reconnects and changed
-    runner bindings are resolved after this grace and can take the full timeout.
-
-    :param host_id: Host whose tunnel must return before a launch is possible.
-    :param host_registry: Workspace-scoped registry of host connections.
-    :param tunnel_registry: Registry of locally connected runners, if configured.
-    :param runner_id: Existing runner binding, or ``None`` before the first launch.
-    :param timeout_s: Maximum host grace, separate from runner startup time.
-    :returns: The reconnected host, or ``None`` on runner recovery or timeout.
-    """
+    """Wait boundedly for the host or its surviving runner in local registries."""
     deadline = time.monotonic() + timeout_s
     while True:
         host_conn = host_registry.get(host_id)
@@ -3826,29 +3812,14 @@ async def _wait_for_host_bound_runner_client(
     runner_exit_reports: RunnerExitReports | None,
     host_conn: HostConnection,
     host_registry: HostRegistry,
+    preserve_live_runner_s: float | None = None,
 ) -> httpx.AsyncClient | None:
-    """
-    Wait for a host-bound runner to connect, ending early if the host
-    reports it already gone.
+    """Wait for a runner while querying its host for process liveness.
 
-    Races the connect grace (:func:`_wait_for_runner_client`) against a
-    one-shot ``host.runner_status`` query, because they answer different
-    questions and either can settle the outcome first:
-
-    * The runner connecting — or a crash report — resolves the wait exactly
-      as :func:`_wait_for_runner_client` does. This is ground truth and
-      always wins when it lands first.
-    * Concurrently, the host — the authoritative owner of runner-process
-      liveness — may report the runner ``dead`` or ``unknown`` (stopped,
-      crashed, or lost to a host restart). That means it will never
-      connect, so the wait ends immediately and the caller relaunches
-      without burning the rest of the grace.
-
-    Running the query *alongside* the wait rather than before it is what
-    keeps the query strictly a speed-up: a host that is too old to answer,
-    slow, or silent (verdict ``None`` / ``"alive"``) never shortcuts the
-    wait, so the connect grace runs its normal course with no added
-    latency.
+    A connected client wins. Dead/unknown ends the grace early; a slow
+    or unavailable status query adds no wait. A live process not yet seen
+    on this host tunnel receives the optional extra grace. An established
+    unresponsive runner can be replaced after the ordinary grace.
 
     :param session_id: Session/conversation identifier.
     :param runner_router: The ``RunnerRouter`` instance, or ``None``.
@@ -3859,6 +3830,8 @@ async def _wait_for_host_bound_runner_client(
         connect wait to abort early on a reported death.
     :param host_conn: Live host connection to query for liveness.
     :param host_registry: Registry used to enqueue the query frame.
+    :param preserve_live_runner_s: Extra grace for a live process before its
+        first connection on this host tunnel; refuse if it cannot reconnect.
     :returns: The runner HTTP client if it connected, otherwise ``None``
         (timed out, crash report, or host-confirmed dead/unknown).
     """
@@ -3880,17 +3853,42 @@ async def _wait_for_host_bound_runner_client(
             {connect_task, status_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
-        # The connect settling is authoritative (client, timeout, or crash
-        # report) — the host's opinion no longer matters once it lands.
+        # A connected client wins; a timed-out wait can still need the
+        # confirmed-live verdict before deciding whether to replace it.
         if connect_task in done:
-            return connect_task.result()
-        # Only the status query has resolved so far.
-        if status_task.result() in ("dead", "unknown"):
-            # Host confirms the runner will never connect — stop waiting.
-            return None
-        # No verdict ("alive" or an unavailable/too-old/slow host): let the
-        # connect grace run to its natural conclusion.
-        return await connect_task
+            client = connect_task.result()
+            if client is not None or not status_task.done():
+                return client
+            status = status_task.result()
+        else:
+            status = status_task.result()
+            if status in ("dead", "unknown"):
+                return None
+            client = await connect_task
+        # A process already seen on this host tunnel can be hung, rather than reconnecting.
+        last_seen = session_live_state.last_liveness_stamp(runner_id)
+        if (
+            client is None
+            and status == "alive"
+            and preserve_live_runner_s is not None
+            and (last_seen is None or last_seen < int(host_conn.connected_at))
+        ):
+            if preserve_live_runner_s > 0:
+                client = await _wait_for_runner_client(
+                    session_id,
+                    runner_router,
+                    tunnel_registry,
+                    runner_id=runner_id,
+                    timeout_s=preserve_live_runner_s,
+                    runner_exit_reports=runner_exit_reports,
+                )
+            if client is None:
+                raise OmnigentError(
+                    "The existing runner is still reconnecting. Your message was not accepted; "
+                    "retry when it reconnects.",
+                    code=ErrorCode.RUNNER_UNAVAILABLE,
+                )
+        return client
     finally:
         outstanding = [t for t in (connect_task, status_task) if not t.done()]
         for task in outstanding:

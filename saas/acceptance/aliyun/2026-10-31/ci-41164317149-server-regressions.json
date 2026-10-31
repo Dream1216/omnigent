@@ -1,0 +1,62 @@
+{
+  "conclusion": "failure",
+  "failed_cases": [
+    {
+      "classname": "tests.saas.test_legacy_domain_discovery",
+      "name": "test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged"
+    },
+    {
+      "classname": "tests.saas.test_n1_merge_gate_candidate",
+      "name": "test_all_trusted_candidate_inputs_match_main_policy_hashes"
+    }
+  ],
+  "image_built": false,
+  "migration_replay": [
+    {
+      "errors": 0,
+      "failures": 0,
+      "job_index": 0,
+      "junit_sha256": "f0560db5d9502d8368a1baeec318f26ead9f449970bdc44969abafc2b77a62b7",
+      "skipped": 0,
+      "tests": 1
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "job_index": 1,
+      "junit_sha256": "7d4cdbb1de67a89c2dbf3bf684e2ea2f3d9e32bb330443856ccea8756d1b0dab",
+      "skipped": 0,
+      "tests": 1
+    }
+  ],
+  "observed_at": "2026-10-31T04:00:56.371379+00:00",
+  "production_ready": false,
+  "published": false,
+  "regressions": {
+    "errors": 0,
+    "failures": 2,
+    "junit_sha256": "6ab9410bb08b7dc49614414d626bdc3311ddae0e4516d89937e2a95f2be771f7",
+    "passed": 5017,
+    "skipped": 13,
+    "tests": 5032
+  },
+  "run_id": 41164317149,
+  "source_revision": "85f102b507bacab1f2e1101ab310a454bcdc7aa4",
+  "status": "completed",
+  "storage_inventory_rls": {
+    "case": {
+      "classname": "tests.saas.test_aliyun_storage_admission_postgresql",
+      "name": "test_real_app_login_sees_project_binding_inventory_only_in_its_space",
+      "time": "5.352"
+    },
+    "passed": true,
+    "scope": "Real PostgreSQL app-login inventory/RLS; not deployed Session authorization or OSS",
+    "skipped": false
+  },
+  "sts_issuer": {
+    "executed_cases": 58,
+    "passed": 58,
+    "scope": "Pinned SDK and mocked cloud/metadata HTTP; not actual ECS IAM or cloud renewal",
+    "skipped": 0
+  }
+}

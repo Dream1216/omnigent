@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -68,6 +69,7 @@ def _build_fastapi_app(
     database_url: str | None = None,
     *,
     with_platform_support_access: bool = False,
+    host_model_broker_enabled: bool = False,
 ) -> tuple[FastAPI, dict[str, str]]:
     database = database_url or (
         f"sqlite+pysqlite:///file:omnigent-http-{uuid4().hex}?mode=memory&cache=shared&uri=true"
@@ -336,6 +338,7 @@ def _build_fastapi_app(
         degraded_read_paths=frozenset({"/v1/protected"}),
         platform_support_access=platform_support_access,
     )
+    integration = replace(integration, host_model_broker_enabled=host_model_broker_enabled)
     auth = integration.auth_provider
     app = FastAPI()
     app.state.saas_test_engine = engine
@@ -376,6 +379,14 @@ def _build_fastapi_app(
             "runner_id": runner_id,
             "workspace_id": current_workspace_id(),
             "state_workspace_id": request.scope["state"]["saas_runner_machine_workspace_id"],
+        }
+
+    @app.post("/v1/hosts/{host_id}/sessions/{session_id}/model-token")
+    def model_broker_route(host_id: str, session_id: str) -> dict[str, object]:
+        return {
+            "host_id": host_id,
+            "session_id": session_id,
+            "workspace_id": current_workspace_id(),
         }
 
     integration.install_middleware(app)
@@ -779,6 +790,55 @@ def test_host_machine_credential_cannot_route_non_tunnel_websocket() -> None:
             pass
     assert forbidden.value.code == 1008
     assert forbidden.value.reason == "host_machine_route_forbidden"
+
+
+def test_host_model_machine_route_remains_closed_by_default() -> None:
+    app, _scope = _build_fastapi_app()
+    path = f"/v1/hosts/test-host/sessions/{uuid4().hex}/model-token"
+    result = TestClient(app).post(
+        path,
+        headers={
+            "X-Omnigent-Host-Token": "path-bound-secret",
+            "X-Omnigent-Workspace-Id": "41",
+        },
+    )
+    assert result.status_code == 403
+    assert result.json()["error"]["code"] == "host_machine_route_forbidden"
+
+
+@pytest.mark.parametrize("canonical", ["hex", "hyphenated"])
+def test_opted_in_host_model_route_binds_only_the_positive_workspace(canonical) -> None:
+    app, _scope = _build_fastapi_app(host_model_broker_enabled=True)
+    session_id = uuid4()
+    encoded = session_id.hex if canonical == "hex" else str(session_id)
+    path = f"/v1/hosts/test-host/sessions/{encoded}/model-token"
+    client = TestClient(app)
+    headers = {"X-Omnigent-Host-Token": "path-bound-secret", "X-Omnigent-Workspace-Id": "41"}
+    result = client.post(path, headers=headers)
+    assert result.status_code == 200 and result.json()["workspace_id"] == 41
+    for invalid in ("0", "-1", "041", "not-a-workspace"):
+        result = client.post(path, headers={**headers, "X-Omnigent-Workspace-Id": invalid})
+        assert result.status_code == 403
+        assert result.json()["error"]["code"] == "host_machine_workspace_required"
+
+
+def test_host_model_route_does_not_admit_other_routes_methods_or_mixed_user_credentials() -> None:
+    app, _scope = _build_fastapi_app(host_model_broker_enabled=True)
+    client = TestClient(app)
+    headers = {"X-Omnigent-Host-Token": "path-bound-secret", "X-Omnigent-Workspace-Id": "41"}
+    path = f"/v1/hosts/test-host/sessions/{uuid4().hex}/model-token"
+    for method, endpoint in (
+        ("GET", path),
+        ("DELETE", path),
+        ("POST", "/v1/protected"),
+        ("POST", path + "/extra"),
+    ):
+        result = client.request(method, endpoint, headers=headers)
+        assert result.status_code == 403
+        assert result.json()["error"]["code"] == "host_machine_route_forbidden"
+    result = client.post(path, headers={**headers, "Authorization": "Bearer user-token"})
+    assert result.status_code == 403
+    assert result.json()["error"]["code"] == "host_machine_route_forbidden"
 
 
 def test_runner_machine_credential_routes_only_its_bound_bootstrap_endpoint() -> None:

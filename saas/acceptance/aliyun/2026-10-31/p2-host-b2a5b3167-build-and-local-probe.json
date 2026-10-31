@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-30T20:16:38.700263+00:00",
+  "source_revision": "b2a5b3167dd14accc61f64dbc3a706aaf3dafb82",
+  "build_attempt": 2,
+  "build_exit_code": 0,
+  "archive_sha256": "615ee1cb807dc4211d4696530617e551d5dd5ad4f2e12051c788726afc0deef7",
+  "archive_bytes": 497369088,
+  "verified_oci_blobs": 14,
+  "oci_index_digest": "sha256:1f7680636cc135462cafe5d264d106349e13610c1d180a3583bf3e52e263189d",
+  "amd64_manifest_digest": "sha256:64665e4963563612d67955a613267e17fae55c8bfa883051f799b0717c383b68",
+  "image_config_digest": "sha256:6373503832848355bee8ed26c7ca8076728b4165f1150fb6dc5b9002290ac176",
+  "build_metadata": {
+    "buildx.build.provenance": {
+      "builder": {
+        "id": ""
+      },
+      "buildType": "https://mobyproject.org/buildkit@v1",
+      "materials": [
+        {
+          "uri": "pkg:oci/node-runtime?digest=sha256:9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2&platform=linux%2Famd64",
+          "digest": {
+            "sha256": "9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2"
+          }
+        },
+        {
+          "uri": "pkg:docker/fc-e2b-registry.cn-hangzhou.cr.aliyuncs.com/runtime-v2/base?digest=sha256:1ff61a87eeef4ebcc1285741465a434973c70c814fa20a55bfd6915022150cf6&platform=linux%2Famd64",
+          "digest": {
+            "sha256": "1ff61a87eeef4ebcc1285741465a434973c70c814fa20a55bfd6915022150cf6"
+          }
+        }
+      ],
+      "invocation": {
+        "configSource": {},
+        "parameters": {
+          "frontend": "dockerfile.v0",
+          "args": {
+            "build-arg:SOURCE_DATE_EPOCH": "1793390130",
+            "build-arg:SOURCE_REVISION": "b2a5b3167dd14accc61f64dbc3a706aaf3dafb82",
+            "context:node-runtime": "oci-layout://du37sopxde1nih7imdzdy9krm@sha256:9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2",
+            "frontend.caps": "moby.buildkit.frontend.contexts+forward",
+            "target": "host"
+          },
+          "locals": [
+            {
+              "name": "context"
+            },
+            {
+              "name": "dockerfile"
+            }
+          ]
+        },
+        "environment": {
+          "platform": "linux/amd64"
+        }
+      }
+    },
+    "buildx.build.ref": "omnigent-aliyun-01a18d5f/omnigent-aliyun-01a18d5f0/c60rh6d84r2hogjmcohva277y",
+    "containerimage.descriptor": {
+      "mediaType": "application/vnd.oci.image.index.v1+json",
+      "digest": "sha256:1f7680636cc135462cafe5d264d106349e13610c1d180a3583bf3e52e263189d",
+      "size": 856,
+      "annotations": {
+        "org.opencontainers.image.created": "2026-10-30T19:55:30Z"
+      }
+    },
+    "containerimage.digest": "sha256:1f7680636cc135462cafe5d264d106349e13610c1d180a3583bf3e52e263189d",
+    "image.name": "docker.io/library/omnigent-aliyun-host:b2a5b3167"
+  },
+  "local_inventory": {
+    "uid": 1000,
+    "revision": "b2a5b3167dd14accc61f64dbc3a706aaf3dafb82",
+    "commands": [
+      {
+        "argv": [
+          "python",
+          "--version"
+        ],
+        "exit": 0,
+        "stdout": "Python 3.13.13",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "node",
+          "--version"
+        ],
+        "exit": 0,
+        "stdout": "v22.23.4",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "tmux",
+          "-V"
+        ],
+        "exit": 0,
+        "stdout": "tmux 3.5a",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "bwrap",
+          "--version"
+        ],
+        "exit": 0,
+        "stdout": "bubblewrap 0.12.0",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "git",
+          "--version"
+        ],
+        "exit": 0,
+        "stdout": "git version 2.47.3",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "omnigent",
+          "--version"
+        ],
+        "exit": 0,
+        "stdout": "omnigent 0.18.0.dev20261006 (b2a5b316, built 2026-10-30T19:55:30Z)",
+        "stderr": ""
+      }
+    ],
+    "system_paths": {
+      "/sbin/init": false,
+      "/usr/sbin/sshd": false,
+      "/usr/bin/sudo": true,
+      "/usr/sbin/chronyd": false,
+      "/usr/bin/ossfs2": false
+    },
+    "management_credentials_present": false
+  },
+  "local_bubblewrap_namespace_probe": {
+    "exit_code": 1,
+    "result": "kernel does not allow non-privileged user namespaces under constrained Docker; MicroVM test still required"
+  },
+  "qualification_gaps": [
+    "sshd, chronyd and iptables absent in this initial candidate; Dockerfile repair pending next build",
+    "snapshot package input freeze pending next build",
+    "real MicroVM Host/namespace/harness checks",
+    "SBOM, vulnerability/license scan, signature and reproducible comparison",
+    "registry publication and qualified generation-2 template"
+  ],
+  "host_prerequisites_ready": false,
+  "production_acceptance": false
+}

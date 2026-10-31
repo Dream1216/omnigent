@@ -41,6 +41,29 @@ _N1_LABELS = _EXECUTABLE_LABELS | frozenset(
 _LABEL_PROFILES = {
     "executable": _EXECUTABLE_LABELS,
     "n1": _N1_LABELS,
+    "aliyun-host-minimal": frozenset(
+        {
+            "org.opencontainers.image.revision",
+            "ai.omnigent.saas.qualification",
+            "ai.omnigent.saas.sandbox-runtime",
+        }
+    ),
+    "aliyun-host": frozenset(
+        {
+            "org.opencontainers.image.revision",
+            "ai.omnigent.saas.qualification",
+            "ai.omnigent.saas.sandbox-runtime",
+            "description",
+            "layer",
+            "maintainer",
+        }
+    ),
+}
+_PLATFORM_PROFILES = {
+    "executable": {"linux/amd64", "linux/arm64"},
+    "n1": {"linux/amd64", "linux/arm64"},
+    "aliyun-host": {"linux/amd64"},
+    "aliyun-host-minimal": {"linux/amd64"},
 }
 
 _SAFE_DIAGNOSTIC_POLICY = {
@@ -239,8 +262,8 @@ def _inspect_oci_archive(
 
         for descriptor in index.get("manifests", []):
             inspect_descriptor(descriptor)
-        if set(platforms) != {"linux/amd64", "linux/arm64"}:
-            raise ValueError(f"OCI archive does not contain both production platforms: {path}")
+        if set(platforms) != _PLATFORM_PROFILES[label_profile]:
+            raise ValueError(f"OCI archive does not contain the exact profile platforms: {path}")
         manifest_to_platform = {
             facts["manifest_digest"]: platform for platform, facts in platforms.items()
         }
@@ -433,7 +456,9 @@ def main() -> int:
         if not comparison["matching_platform_manifest_and_config"]:
             violations.append(f"{name} repeated build platform facts differ")
         for attempt in ("first", "second"):
-            if comparison[attempt]["attestation_descriptor_count"] < 2:
+            if comparison[attempt]["attestation_descriptor_count"] < len(
+                _PLATFORM_PROFILES[args.label_profile]
+            ):
                 violations.append(f"{name} {attempt} build lacks SBOM/provenance descriptors")
     report = {
         "candidate_evidence_version": 3,

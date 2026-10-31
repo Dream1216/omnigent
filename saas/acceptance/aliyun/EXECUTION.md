@@ -1,0 +1,132 @@
+# 阿里云 Agent Sandbox P1～P5 执行记录
+
+目标：按 `omnigent-aliyun-agent-sandbox-integration-plan-2026-10-31.zh-CN.md` 完成极速版接入、测试、持续修复及生产发布。P6 容器版不在本次必需交付中。
+
+## 实施基线
+
+- 实施分支：`codex/aliyun-sandbox-p1-p5-20261031`。
+- 源码目录：`/Users/dream/Projects/omnigent-aliyun-sandbox-20261031`。
+- 起点：实际生产提交 `dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec`。
+- 线上地址：`https://next.jxhh.com`。
+- 公开版本证据：`2026-10-31/p1-current-state.json`。
+- 当前阶段：P1～P5 候选实施中，完整生产验收尚未通过。
+- 生产发布：未执行。生产原有两个 provider 保持不变。
+
+## 当前修复与验收边界
+
+本提交修复了补充 E2E 中旧 Runner 被 SIGSTOP 冻结后无法替换的问题。
+通过本进程保留的 liveness 时间区分启动／Host 重连与已经连接后失去响应的进程；
+启动和重连继续有界保留，已建立但无响应的 Runner 可在普通宽限后替换并回收旧进程。
+冻结源码下，原失败用例 1 项、服务端回归 120 项，以及 Claude/Codex × 发送 ×
+20/150 秒严格复测 4 项分别通过，均无失败、错误或跳过；使用真实本地进程与模拟模型。
+既有停止／审批证据保留各自源码身份，不合并声称一次 12 项全绿。
+当前上游范围为184文件／5205净增行，未调整已批准的184／5216上限；九补丁逐字节回放通过。
+见 [`p5-stalled-runner-local-validation.json`](2026-10-31/p5-stalled-runner-local-validation.json)。
+这些本地结果不代表阿里云 Host 或 P5 云端验收。
+
+前一签名候选8d47da8f8的Host扫描为0 Critical／13 High／0忽略，Server回归5115通过、
+13跳过、2项受保护输入失败；上游兼容5116通过、12跳过、相同2项失败。
+其补充集成CI41197161532为21通过，补充E2E41197166329暴露本提交修复的SIGSTOP问题。
+独立受信登记草稿PR #202保留所有既有主线与0.18回退哈希，尚未批准或合并。
+其自身上游兼容与N-1通过，但双架构Server候选原始扫描各1 Critical／1 High，发布与签名跳过；
+该结果属于独立登记分支，不能当作本应用分支的新镜像结果。
+阿里云SDK来源IP仍被拒绝，外发诊断工单尚待明确授权。P1～P5未全体验收，未发布上线。
+
+## 既有签名候选与历史证据
+
+以下结果仅对应各自冻结源码；“尚未提交”等描述保留当轮历史状态。
+
+已推送签名候选 `50a4db09139531e2037a49b85dd6166fdfb9cf57`，草稿 PR #200。
+候选已实现显式阿里云装配、模型通道、会话存储及下载界面；默认关闭，未部署。
+Host CI `41182409678` 的双构建与可复现比较通过，原始扫描为
+0 Critical、13 High、0 忽略，P2 未通过。Server CI `41182413291`
+通过预检与实际 PG16/18 回放，回归 5111 通过、13 跳过、2 项受保护身份校验失败，
+未构建或发布 Server 镜像。历史结果不代替当前候选的准入。
+
+控制台创建的两个不同 Base VM 已验证输入挂载只读、输出读写及跨实例 84 字节
+内容与 SHA-256 一致；先释放写入 VM，再创建读取 VM，最终两个 VM 均已释放。
+见 [`p4-console-oss-cross-vm-durability.json`](2026-10-31/p4-console-oss-cross-vm-durability.json)。
+这不证明完整 Host、STS 续期、SaaS 下载授权或跨租户负向验收，P4 未通过。
+
+后续上传生成的79字节中文输入样例，在第三台300秒寿命的独立 Base VM 中，
+以 UID1000 验证实际挂载、文件名列出、UTF-8解码及完整 SHA-256 相等；
+输入卷写入返回 EROFS(30)。本轮唯一实例已释放，活动列表为0；见
+[`p4-console-utf8-input-readonly.json`](2026-10-31/p4-console-utf8-input-readonly.json)。
+此拒绝来自只读挂载，不等同于 IAM 后端拒绝证明。SDK只读复测仍被来源IP策略拒绝，
+未修改IP名单或其他权限。
+
+隔离 P5 候选与上述签名存储源码组合后，真实本地 Server/Host/Runner、
+Claude Code 2.1.266、Codex 0.139.0 配合模拟模型，发送/停止 × 20/150 秒
+8 项严格恢复场景通过；服务端 116 项回归通过。见
+[`p5-host-offline-control-local-validation.json`](2026-10-31/p5-host-offline-control-local-validation.json)。
+该历史矩阵未选择审批场景。后续增加故障前的只读就绪等待，并在阿里云专用
+Host 中通过现有扩展点固定 12 次审批硬失败重试；通用默认仍为 8，托管策略仍
+拒绝任意环境透传。70 项相关单元测试通过，类型检查 0 错误；Claude/Codex × 审批 × 20/150 秒
+4 项严格矩阵全部通过，0 失败、0 错误、0 跳过，耗时 963.292 秒，38 项结果检查通过。
+见 [`p5-approval-recovery-profile-local-validation.json`](2026-10-31/p5-approval-recovery-profile-local-validation.json)。
+这与前述 8 项属于两轮证据，并非一次 12 项全绿运行。
+用户已明确批准源码上限182→184、净增行4869→5216及对应两处预算断言。
+精确四位置数值补丁已应用，最终源码范围检查通过，10项预算用例通过，
+包括九个上游补丁的完整回放检查。见
+[`p5-source-scope-approval.json`](2026-10-31/p5-source-scope-approval.json)。
+恢复候选尚未提交，完整P5云端验收与生产发布仍未通过。
+
+## 初期实施历史
+
+1. 通过 `/saas/version` 和当前 Kubernetes Deployment 注解核对生产版本；Server、Host 就绪，三节点 Ready。
+2. 建立独立工作区，保留其他任务的源码、集群配置与活动构建。
+3. 固定候选 E2B SDK 2.31.0，仅变更该包版本；uv 对已有 marker 的重新计算单独保留在 diff 中。
+4. 实际安装包含 SaaS、E2B、开发测试依赖的完整 Omnigent 环境；`uv lock --check` 通过。
+5. 新建有界实时探针：只向已核对的杭州 TLS Endpoint 发送凭据，拒绝共享权限、软链接、硬链接、重复配置和异常模板。
+6. 探针在独立 SDK 环境及完整应用环境各运行成功，实例均已终止确认。包含创建、重连、超时、后台进程及 kill、非零退出码、中文文件、1 MiB 二进制文件。
+7. 90 项定向回归通过，包括 15 项探针凭据检查、原租户沙箱身份和 E2B launcher 回归。初始 Ruff 报告的宽泛异常捕获和格式问题已修复，后续 Ruff、格式、Pyrefly 检查通过。
+8. 核对官方 Base Runtime 的 manifest digest；在 exec-a 的 Docker 缓存中按该 digest 拉取基础镜像，未修改生产工作负载。
+9. 103 项现有 SaaS 生产装配/配置回归通过。探针补充 Node 版本校验后，19 项相关测试通过；真实云端确认 Node 为 20.20.2，低于应用的 22.13 要求。
+10. 新增使用已核对基础镜像、固定 Node 镜像和冻结应用依赖的候选 Host Dockerfile。已完成候选构建与 OCI 内容校验；系统包输入冻结、扫描和模板验收仍待完成。
+11. `b2a5b3167` 候选构建成功，OCI 的 14 个内容块校验通过；受限 Docker 中 UID 1000 下 Omnigent、Python、Node 22.23.4、tmux、bubblewrap 和 Git 的命令自检通过。实际命令、digest 和未通过项记录在 `2026-10-31/p2-host-b2a5b3167-build-and-local-probe.json`。
+12. 本地镜像缺少 sshd、chronyd 和 iptables，不能将云端已注入的系统服务推断为镜像已包含。Dockerfile 已补齐必需包并切换到固定日期的 Debian 签名快照；修复后的新候选待重新构建。
+13. 通用 E2B Template SDK 创建出的临时模板实测为一代，且代际不可编辑；临时模板已删除并在列表确认。正式 Host 模板需显式验证二代；原始 Base 模板已通过控制台 GetTemplate 响应确认 generation=2。受限 Docker 的 bubblewrap namespace 探针被内核拒绝，真实 MicroVM 隔离验收仍未通过。
+14. 原始二代 Base MicroVM 中，以 UID 1000 使用候选镜像中的相同 bwrap 二进制，用户、进程和网络 namespace 前提探针通过；测试实例已终止并确认不存在。此结果只证明命名空间前提，不替代完整 Host、文件屏蔽、seccomp、凭据和网络验收。
+15. 固定 Debian 签名快照并补齐系统服务的 `98910699b` 候选已构建成功。发现包安装会产生 SSH 主机密钥及机器身份，Dockerfile 已补充同层删除/重置、包日志清理和 Python 文件树规范化；须从修复后的冻结提交重新构建，不发布旧中间产物。
+
+16. `ebbc71355` 修复版构建成功，本地 UID 1000 自检确认系统服务齐全、Node 22.23.4、SSH 主机密钥为 0、机器身份为空。当前本地 BuildKit 0.23.2 只生成 SLSA v0.2 且缺少 SPDX，仍不满足供应链验收，后续构建须保留 v1、SBOM 和独立重建门槛。
+17. 新增显式杭州 Endpoint、私有文件凭据、有界生命周期和租户/工作区 metadata 核对的 SaaS 云 transport。33 项测试通过；真实云端 8 项创建、命令、文件、重连、续期、拒绝跨租户终止和清理检查通过。验证使用合成租户身份，尚未接入真实 SaaS 请求或放行生产配置。
+18. Host 模型通道需要服务端签发并续期的会话凭据。现有 SaaS middleware 只允许 Host 机器凭据访问 tunnel；新增模型通道必须保留精确路由、Host 与会话归属验证，不能简单放宽全体 `/v1/`。
+
+19. 已推送实施分支，CI `41126141094` 的代码验证通过；双构建在开始前因 Docker exporter 不支持含 attestation 的 manifest list 而失败。修复保留 OCI/SBOM/provenance，改用隔离 CI runner 的 containerd image store 加载原始 OCI 并核对 index digest 与 rootfs；待新提交重跑验证。
+
+20. CI `41127064896` 的代码验证再次通过，OCI 导出配置已修复；构建进入 CLI 安装后失败。离线复现定位到 npm 目录覆盖混入旧依赖，引发 minizlib 的 Class extends TypeError。新增共享 Node stage，先清空旧 npm 树再复制固定版本；实际 node-base 构建、安装模块加载及 npm 10.9.9 自检通过，完整新候选待 CI 验证。
+
+## 初期识别的差异
+
+| 差异 | 权威来源 | 所需工作 |
+|---|---|---|
+| SaaS 生产校验拒绝 e2b provider | `saas/production/server.py` | 增加明确的云沙箱配置校验，保留原 profile 的拒绝行为 |
+| 租户身份装配只有两个 Kubernetes launcher | `saas/production/tenant_sandbox.py` | 云沙箱必须继承请求上下文中的租户/工作区，不读取全局用户身份 |
+| 回连、模型网关使用集群内 HTTP 名称 | 生产 ConfigMap 的相关非敏感字段 | 新增受控 TLS 路径，验证认证、失效、续签和重连 |
+| 原模型 authority 通过 Secret 挂载 | `platform_model_sandbox_host.py` | 云端设计受限模型访问和安全交付，避免发送平台管理凭据 |
+| Base Runtime 没有 Omnigent/tmux/bwrap | 两份真实云端探针 inventory | 构建新 Host 模板并验证内部隔离 |
+| 本机 Docker VM 的 DNS 指向不可用 ::1 | 实际 pull 错误 | 保留原 VM 配置，改用可达的独立构建路径 |
+
+## 后续顺序
+
+1. 完成 Host 镜像构建和真实 MicroVM 自检；固定镜像、源码及依赖证据。
+2. 完成 SaaS 云 provider 身份、外部回连和模型访问适配，补齐负向权限与生命周期测试。
+3. 进行 CLI/managed 真实模型任务闭环，再实施 OSS 跨实例持久化。
+4. 完成配额、观测、取消/超时/故障/重启、灰度、回退和生产证明。
+
+阶段结论以逐项证据为准，不将 90 项本地回归或基础 SDK 成功视为 P3/P4/P5 已通过。
+
+## 复核命令
+
+```bash
+uv sync --frozen --extra all --extra saas --extra e2b --group dev --no-default-groups
+uv lock --check
+.venv/bin/python -m pytest tests/saas/test_aliyun_sandbox_probe.py \
+  tests/saas/test_tenant_sandbox.py tests/onboarding/sandboxes/test_e2b.py -q
+.venv/bin/python -m saas.scripts.aliyun_sandbox_probe \
+  --env-file /Users/dream/.config/omnigent/aliyun-poc.env \
+  --report-dir saas/acceptance/aliyun/2026-10-31
+```
+
+最后一条会创建并清理一个 240 秒 TTL 沙箱。现场凭据不在本目录，报告不包含密钥。不同执行产生不同报告名，不覆盖历史结果。

@@ -151,6 +151,8 @@ class SaasHttpIntegration:
     onboarding_ui_router: APIRouter | None = None
     runtime_router: APIRouter | None = None
     runtime_initializer: RuntimeInitializer | None = None
+    host_model_broker_enabled: bool = False
+    aliyun_model_ingress_enabled: bool = False
 
     @property
     def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
@@ -184,6 +186,8 @@ class SaasHttpIntegration:
             availability_gate=self.availability_gate,
             degraded_read_paths=self.degraded_read_paths,
             runtime_initializer=self.runtime_initializer,
+            host_model_broker_enabled=self.host_model_broker_enabled,
+            aliyun_model_ingress_enabled=self.aliyun_model_ingress_enabled,
         )
 
 
@@ -357,6 +361,8 @@ class SaasAuthContextMiddleware:
         availability_gate: ControlPlaneAvailabilityGate | None = None,
         degraded_read_paths: frozenset[str] = frozenset(),
         runtime_initializer: RuntimeInitializer | None = None,
+        host_model_broker_enabled: bool = False,
+        aliyun_model_ingress_enabled: bool = False,
     ) -> None:
         self._app = app
         self._auth = auth_provider
@@ -370,6 +376,12 @@ class SaasAuthContextMiddleware:
         self._availability = availability_gate or ControlPlaneAvailabilityGate()
         self._degraded_read_paths = degraded_read_paths
         self._runtime_initializer = runtime_initializer
+        if type(host_model_broker_enabled) is not bool:
+            raise ValueError("Host model broker enablement must be boolean")
+        self._host_model_broker_enabled = host_model_broker_enabled
+        if type(aliyun_model_ingress_enabled) is not bool:
+            raise ValueError("Aliyun model ingress enablement must be boolean")
+        self._aliyun_model_ingress_enabled = aliyun_model_ingress_enabled
         if degraded_read_paths and context_snapshots is None:
             raise ValueError("degraded read paths require a Context Snapshot service")
 
@@ -405,6 +417,19 @@ class SaasAuthContextMiddleware:
                 receive=receive,
                 send=send,
             )
+            return
+        if (
+            self._aliyun_model_ingress_enabled
+            and scope["type"] == "http"
+            and scope.get("method") == "POST"
+            and connection.url.path
+            in {"/saas/models/v1/responses", "/saas/models/v1/chat/completions"}
+        ):
+            try:
+                self._availability.require_available()
+                await self._app(scope, receive, send)
+            except (ControlPlaneDependencyUnavailable, OperationalError, SqlAlchemyTimeoutError):
+                await self._reject_dependency(scope, receive, send)
             return
         if self._is_public_request(connection.url.path, cast(str, scope.get("method", "GET"))):
             try:
@@ -521,11 +546,22 @@ class SaasAuthContextMiddleware:
         """Route one Host capability to its workspace before token validation."""
 
         path = connection.url.path
-        if (
-            scope["type"] != "websocket"
-            or not re.fullmatch(r"/v1/hosts/[^/]+/tunnel", path)
-            or token is not None
-        ):
+        tunnel = (
+            scope["type"] == "websocket"
+            and re.fullmatch(r"/v1/hosts/[^/]+/tunnel", path) is not None
+        )
+        model_broker = (
+            self._host_model_broker_enabled
+            and scope["type"] == "http"
+            and scope.get("method") == "POST"
+            and re.fullmatch(
+                r"/v1/hosts/[A-Za-z0-9_-]{1,128}/sessions/"
+                r"(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/model-token",
+                path,
+            )
+            is not None
+        )
+        if not (tunnel or model_broker) or token is not None:
             await self._reject(
                 scope,
                 receive,
@@ -533,7 +569,7 @@ class SaasAuthContextMiddleware:
                 status=403,
                 error=LifecycleError(
                     "host_machine_route_forbidden",
-                    "Host machine credentials are accepted only by the Host tunnel",
+                    "Host machine credentials are accepted only by reviewed Host routes",
                 ),
             )
             return
@@ -817,6 +853,35 @@ class SaasAuthContextMiddleware:
             return None
         tenant_raw = connection.headers.get("x-saas-tenant-id")
         space_raw = connection.headers.get("x-saas-space-id")
+        download_scope = None
+        if (
+            connection.scope.get("method") == "GET"
+            and re.fullmatch(
+                r"/v1/sessions/(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}"
+                r"-[0-9a-f]{12})/artifacts/content",
+                path,
+            )
+            is not None
+        ):
+            query_tenant = connection.query_params.get("tenant_id")
+            query_space = connection.query_params.get("space_id")
+            if query_tenant is not None or query_space is not None:
+                if not query_tenant or not query_space:
+                    raise LifecycleError("runtime_context_required", "both selectors are required")
+                download_scope = (UUID(query_tenant), UUID(query_space))
+                if tenant_raw or space_raw:
+                    if (
+                        not tenant_raw
+                        or not space_raw
+                        or download_scope
+                        != (
+                            UUID(tenant_raw),
+                            UUID(space_raw),
+                        )
+                    ):
+                        raise LifecycleError("runtime_context_mismatch", "scope selectors differ")
+                else:
+                    tenant_raw, space_raw = query_tenant, query_space
         verified: VerifiedContextSnapshot | None = None
         snapshot_token = connection.headers.get("x-saas-context-snapshot")
         if snapshot_token:
@@ -827,6 +892,11 @@ class SaasAuthContextMiddleware:
             verified = self._context_snapshots.verify(token=snapshot_token, auth_token=token)
             self._validate_live_snapshot_session(verified, session)
             self._validate_selector_headers(connection, verified.runtime_context)
+            if download_scope is not None and download_scope != (
+                verified.runtime_context.tenant_id,
+                verified.runtime_context.space_id,
+            ):
+                raise LifecycleError("runtime_context_mismatch", "scope selectors differ")
             tenant_id = verified.runtime_context.tenant_id
             space_id = verified.runtime_context.space_id
         elif tenant_raw and space_raw:

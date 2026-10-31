@@ -1,0 +1,43 @@
+{
+  "administrative_merge_performed": false,
+  "drift": [
+    {
+      "observed_sha256": "4bd739d59b054da0066fe7518b37fe9753517d95209a0423ada8f2f81703e1c9",
+      "path": "pyproject.toml",
+      "trusted_sha256": [
+        "b597e4be6e44533bebaeb8924a6d89a448fec70616a00547fea5e9de27692299",
+        "60f744ddfde3ea8269830631c991a87a2c9f108afd3ace8a8c30507794abe471"
+      ]
+    },
+    {
+      "observed_sha256": "97308df54ab125e33023d4b95d421ab86be37ac48bfcbecaaaec6a37a6182f84",
+      "path": "uv.lock",
+      "trusted_sha256": [
+        "ea461ebf87f5aaa2fad7ad89ef8bf31963bbe293770d57f3e3ec824c5db56615",
+        "1966ee6220ecf80274e85edad6eb9bae5c3a23751f9fe68f7de27c8419ac0d58"
+      ]
+    },
+    {
+      "observed_sha256": "49f8890b6051a17a96994a4447fc233d2553908eda4affe88df835c2e52c06e9",
+      "path": "tests/saas/test_image_supply_chain.py",
+      "trusted_sha256": [
+        "beed03ae797d7a2a969bb57c25f824f22881cb8c6412f908d3095a65543c2bea",
+        "6133d94e9a06a23d464d01fff8efe5bd5bf753fcc812baa15bd1f838ad7f3482"
+      ]
+    },
+    {
+      "observed_sha256": "fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732",
+      "path": "saas/scripts/compare_oci_rebuilds.py",
+      "trusted_sha256": [
+        "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
+        "49e6f76608c90dc191d8776a74e23956260f037a83f14cb98aca651d77aac557"
+      ]
+    }
+  ],
+  "gate_bypassed": false,
+  "note": "This is diagnostic evidence, not approval of new hashes. The actual gate evaluates candidate bytes against its checkout from trusted main.",
+  "observed_at": "2026-10-31T01:20:45.255396+00:00",
+  "policy_modified": false,
+  "status": "not-admitted",
+  "trusted_input_count": 21
+}

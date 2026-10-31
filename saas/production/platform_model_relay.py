@@ -13,6 +13,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Protocol
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -22,7 +23,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from omnigent.inner.model_auth import ProviderAuthRequired
 from omnigent.inner.model_credential import CredentialLifecycle
-from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayTokenAuthority
+from saas.runner_adapter.platform_model_gateway import PlatformModelTokenIssuer
 from saas.runner_adapter.platform_models import PLATFORM_MODEL_GATEWAY_BASE_URL
 
 _MAX_BODY_BYTES = 2 * 1024 * 1024
@@ -43,12 +44,14 @@ class PlatformModelRelay:
     def __init__(
         self,
         *,
-        authority: PlatformModelGatewayTokenAuthority,
+        authority: PlatformModelTokenIssuer,
         session_id: UUID,
         ttl_seconds: int,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         clock: Callable[[], float] = time.time,
+        gateway_base_url: str = PLATFORM_MODEL_GATEWAY_BASE_URL,
     ) -> None:
+        self._gateway_base_url = validated_model_gateway_url(gateway_base_url)
         self.capability = secrets.token_urlsafe(32)
         self._last_token = ""
         self._client_factory = client_factory or (
@@ -60,7 +63,8 @@ class PlatformModelRelay:
         self._client: httpx.AsyncClient | None = None
 
         async def mint() -> str:
-            self._last_token = authority.issue(
+            self._last_token = await asyncio.to_thread(
+                authority.issue,
                 session_id=session_id,
                 ttl_seconds=ttl_seconds,
                 now=int(clock()),
@@ -121,7 +125,7 @@ class PlatformModelRelay:
                 response = await self._client.send(
                     self._client.build_request(
                         "POST",
-                        f"{PLATFORM_MODEL_GATEWAY_BASE_URL}{request.url.path.removeprefix('/v1')}",
+                        f"{self._gateway_base_url}{request.url.path.removeprefix('/v1')}",
                         headers={
                             "Authorization": f"Bearer {token}",
                             "Content-Type": "application/json",
@@ -250,3 +254,35 @@ class PlatformModelRelay:
         if self._socket is not None:
             with contextlib.suppress(OSError):
                 self._socket.close()
+
+
+def validated_model_gateway_url(value: str) -> str:
+    """Keep the legacy endpoint or accept a canonical, explicitly configured TLS endpoint."""
+
+    if not isinstance(value, str):
+        raise ValueError("Platform model gateway TLS endpoint is invalid")
+    if value == PLATFORM_MODEL_GATEWAY_BASE_URL:
+        return value
+    try:
+        url = urlsplit(value)
+        valid = (
+            value == value.strip()
+            and url.scheme == "https"
+            and bool(url.hostname)
+            and url.username is None
+            and url.password is None
+            and url.port in (None, 443)
+            and url.path.endswith("/v1")
+            and not any(segment in (".", "..") for segment in url.path.split("/"))
+            and "//" not in url.path
+            and "%" not in value
+            and "\\" not in value
+            and not any(ord(c) < 33 or ord(c) > 126 for c in value)
+            and not url.query
+            and not url.fragment
+        )
+    except (TypeError, ValueError):
+        valid = False
+    if not valid:
+        raise ValueError("Platform model gateway TLS endpoint is invalid")
+    return value

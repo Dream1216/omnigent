@@ -324,6 +324,13 @@ saas = [
     "hvac>=2,<3",
     "psycopg[binary]>=3.1,<4",
 ]
+# Server-only management of session-scoped Aliyun storage volumes.
+aliyun-sandbox-control = [
+    "alibabacloud-sandbox20260820==1.2.0",
+    "alibabacloud-sts20150401==1.2.0",
+    "alibabacloud-oss-v2==1.4.0",
+    "defusedxml==0.7.1",
+]
 # Load testing (dev/loadtest/). Locust drives the concurrency and the
 # openai-agents harness runs the mocked turns. Opt-in — only load-test users
 # need it.
@@ -357,6 +364,11 @@ test = [
     "build>=1.2",
     # These clients are optional product capabilities, but their tests import
     # and execute the real packages against mocks.
+    "e2b==2.31.0",
+    "alibabacloud-sandbox20260820==1.2.0",
+    "alibabacloud-sts20150401==1.2.0",
+    "alibabacloud-oss-v2==1.4.0",
+    "defusedxml==0.7.1",
     "hindsight-client>=0.4.0",
     "kubernetes>=36,<37",
     "nimble-python>=1.2.0,<2",

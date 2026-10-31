@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-31T13:20:57.455338+00:00",
+  "status": "local_regressions_passed_cloud_release_not_accepted",
+  "base_commit": "8d47da8f8d02aea54480ea23dd596f78a4b0afc0",
+  "four_file_repair_patch_sha256": "1edcc68ea24613f12e519f74435d8df442dc8aa7b26fbebf37a8f1323979b2b1",
+  "source_hashes": {
+    "omnigent/server/routes/_sessions/orchestration.py": "db4aadfae4689f0ac7c6e71b129c97a2c68794a4eec79e8bdb37eae6350320b7",
+    "omnigent/server/routes/sessions/routes_events.py": "fb7b66f84dfddcb09d58343a95bef35c3cb0c3a6d866011aa8e979c07ce48ace",
+    "tests/server/integration/test_session_host_launch.py": "9889f72457013beb7d8e9383d25f4f8bba4098efb0a61ebb42bfb8a5602be237",
+    "tests/e2e/test_host_runner_leak_5182.py": "d037a27ce927bbf41003c74969570b9d16105ce383ceba1a05093fe7eec43335",
+    "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py": "120f7c0264a67ea419d7e3ae73fff2912648c492f969d65b81abe3bdcc8855fa",
+    "saas/upstream-patches/0010-next-agent-session-reliability.patch": "1f432c5636bc252fb18eb142849865e2302d6d46c72e391f38f020a82345cb85",
+    "saas/upstream-patches/README.md": "fe94650016ca6bd4d8ac97763d35138a4ecf7cfe4217b08730764032f628c3d5"
+  },
+  "source_budget": {
+    "active_patch_count": 9,
+    "direct_upstream_file_count": 184,
+    "forbidden_upstream_files": [],
+    "isolated_custom_code_ratio": 0.9824,
+    "reverse_dependencies": [],
+    "upstream_net_added_loc": 5205
+  },
+  "approved_ceiling": {
+    "direct_upstream_file_count": 184,
+    "upstream_net_added_loc": 5216
+  },
+  "scope_ceiling_changed": false,
+  "failure": {
+    "ci_run": 41197166329,
+    "case": "test_relaunch_reaps_the_superseded_runner",
+    "cause": "A SIGSTOP-frozen established Runner was reported alive and preserved indefinitely, preventing replacement."
+  },
+  "repair": "Keep bounded preservation for startup and Host reconnect; let an established unresponsive Runner be replaced after the ordinary connection grace using the local liveness stamp. Superseded-process reaping remains required.",
+  "negative_control": {
+    "source": "original production code with expanded controls",
+    "tests": 6,
+    "passed": 4,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0,
+    "junit_sha256": "f89e39d20333777218bee3fd3b3e9a30736937dc750a6c83f6528becf48860e3"
+  },
+  "runs": {
+    "native_sigstop": {
+      "at": "2026-10-31T12:45:44.712069+00:00",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "2e6cf3d078cfd63a311d30666368ff0596a7272fd6d6b91cf77a11e0682527cf",
+      "source_unchanged": true,
+      "suite_seconds": 187.453,
+      "cases": [
+        "test_relaunch_reaps_the_superseded_runner"
+      ]
+    },
+    "server_regressions": {
+      "at": "2026-10-31T13:03:03.666972+00:00",
+      "tests": 120,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "6809eba2ef958bb3126616cc7d244d789f809acf98f858fdcc5528d7e3ca7c86",
+      "source_unchanged": true,
+      "suite_seconds": 334.782
+    },
+    "strict_send_matrix": {
+      "at": "2026-10-31T13:19:50.943317+00:00",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "19bb559ac747b0d2d1418e40f3fcd1bb26815d98cf722178885e783af0c81786",
+      "source_unchanged": true,
+      "suite_seconds": 774.512,
+      "cases": [
+        "test_s5_host_offline_user_acts[claude-send-20s]",
+        "test_s5_host_offline_user_acts[claude-send-150s]",
+        "test_s5_host_offline_user_acts[codex-send-20s]",
+        "test_s5_host_offline_user_acts[codex-send-150s]"
+      ]
+    }
+  },
+  "versions": {
+    "claude_code": "2.1.266",
+    "codex_cli": "0.139.0",
+    "tmux": "3.4"
+  },
+  "test_configuration": {
+    "model": "mock",
+    "processes": "real local Server, Host, Runner and native harness CLIs",
+    "strict_matrix_runxfail": true,
+    "strict_matrix_retry_default": 8,
+    "strict_matrix_selected": "send only; stop and approval deselected",
+    "proxy_isolation": "proxy variables removed only from native test child processes; loopback excluded from proxies",
+    "real_model_credentials": "removed from test child environment"
+  },
+  "patch_replay": {
+    "active_patches": 9,
+    "passed": true,
+    "patch_0010_sha256": "1f432c5636bc252fb18eb142849865e2302d6d46c72e391f38f020a82345cb85"
+  },
+  "invalid_attempts_retained": [
+    "Initial negative-control setup used an invalid monkeypatch target; not a recovery result.",
+    "First SIGSTOP retest failed during localhost mock setup through an inherited proxy; no fault injected."
+  ],
+  "limitations": [
+    "Distinct test runs are not a single full twelve-case matrix.",
+    "Historical send/stop and managed-approval receipts retain their own source identities.",
+    "No Aliyun Host, real model, deployed authorization, STS renewal, capacity, canary, rollback or production release acceptance."
+  ],
+  "manual_verification": [
+    "On an authorized isolated test deployment, freeze an already connected Runner with SIGSTOP, send one message and confirm exactly one replacement launch and old Runner reaping before teardown.",
+    "Disconnect only the isolated Host for 20 and 150 seconds; restore it and confirm each queued message is processed once in order with a usable next turn."
+  ]
+}

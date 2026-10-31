@@ -244,3 +244,31 @@ nine-patch ceiling and existing source-delta ceilings remain unchanged.
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `825f8500` | Remove when upstream supports the same credential-free platform routing |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `825f8500` | Remove when upstream exposes the equivalent dual managed runtime provider |
 | `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
+
+
+The proposed P5 Host-offline control extension stays in
+`0010-next-agent-session-reliability.patch`; the active patch count remains nine.
+Its source-budget expansion is not admitted yet. Owner: Omnigent Aliyun
+integration. Affected official paths are
+`omnigent/server/routes/_sessions/orchestration.py` and
+`omnigent/server/routes/sessions/routes_events.py`. It bounds reconnect waits,
+refuses unacknowledged message/stop requests, preserves a Host-confirmed live
+Runner and joins a concurrent replacement instead of starting another.
+Tests are `tests/server/integration/test_session_host_launch.py`,
+`tests/server/routes/test_orphaned_running_session_reconcile.py`,
+`tests/server/routes/test_intentional_runner_stop.py` and the send/stop subset
+of `tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py`.
+The first and latest replay target is pinned upstream
+`825f8500d7cc8e997e5562fa55694cd146165f3c`; replay must reproduce every
+modified official-source byte. Proposed downstream review:
+https://github.com/Dream1216/omnigent/pull/200; no separate upstream fix is
+claimed. Remove this extension once the pinned upstream implements these
+reconnect and acknowledgement contracts and the strict 20/150-second native
+matrix passes without the extension. Local mock-model fault coverage does not
+qualify an Aliyun Host deployment or waive release gates.
+
+The Aliyun Host recovery followup distinguishes a process starting or reconnecting
+after its Host tunnel from a previously connected Runner that has become
+unresponsive. The latter remains eligible for replacement and superseded-process
+reaping after the ordinary connect grace; live startup and Host reconnect cases
+retain their bounded preservation behavior. Patch 0010 carries this distinction.
