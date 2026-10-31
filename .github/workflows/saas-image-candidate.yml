@@ -648,6 +648,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/supply-chain
+          printf '%s\n' \
+            'ignore: []' 'exclude: []' 'vex-documents: []' 'vex-add: []' \
+            "ignore-wontfix: ''" 'only-fixed: false' 'only-notfixed: false' \
+            'match-upstream-kernel-headers: true' 'db:' \
+            "  cache-dir: ${RUNNER_TEMP}/supply-chain-tools/grype-db" \
+            '  auto-update: true' '  validate-age: true' \
+            '  max-allowed-built-age: 24h' \
+            > "${RUNNER_TEMP}/supply-chain-grype.yaml"
           for artifact in server host; do
             case "$artifact" in
               server) image="$SERVER_IMAGE" ;;
@@ -671,16 +679,31 @@ jobs:
                 --platform "linux/${arch}" \
                 -o "spdx-json=${prefix}.spdx.json" \
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
-              "${RUNNER_TEMP}/supply-chain-tools/grype" "$child_image" \
-                --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
+              "${RUNNER_TEMP}/supply-chain-tools/grype" \
+                -c "${RUNNER_TEMP}/supply-chain-grype.yaml" "$child_image" \
+                --platform "linux/${arch}" --fail-on high -o json > "${prefix}.raw.grype.json"
               jq -e '
+                (now - (.descriptor.db.status.built | fromdateiso8601)) as $age |
+                $age >= 0 and $age <= 86400 and .descriptor.db.status.valid == true and
+                .descriptor.configuration.ignore == [] and
+                .descriptor.configuration.exclude == [] and
+                .descriptor.configuration."vex-documents" == [] and
+                .descriptor.configuration."vex-add" == [] and
+                .descriptor.configuration."ignore-wontfix" == "" and
+                .descriptor.configuration."only-fixed" == false and
+                .descriptor.configuration."only-notfixed" == false and
+                .descriptor.configuration."match-upstream-kernel-headers" == true and
+                .descriptor.configuration."fail-on-severity" == "high" and
+                .descriptor.configuration.db."validate-age" == true and
+                .descriptor.configuration.db."max-allowed-built-age" == 86400000000000 and
                 ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
                 ([.matches[] | select(.vulnerability.severity == "High")] | length) == 0 and
                 (.ignoredMatches // []) == []
               ' "${prefix}.raw.grype.json" >/dev/null
             done
           done
-          "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
+          "${RUNNER_TEMP}/supply-chain-tools/grype" \
+            -c "${RUNNER_TEMP}/supply-chain-grype.yaml" db status -o json \
             > artifacts/supply-chain/grype-database.json
           find artifacts/supply-chain -type f ! -name SHA256SUMS -print0 \
             | sort -z | xargs -0 sha256sum > artifacts/supply-chain/SHA256SUMS

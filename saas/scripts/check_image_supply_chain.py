@@ -1276,7 +1276,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "COPY --from=secured-python-runtime-rootfs / /",
         "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
         "apk add --no-cache",
-        "python-3.12=3.12.15-r3",
+        "python-3.12=3.12.16-r3",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3.12",
