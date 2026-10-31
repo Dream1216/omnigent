@@ -90,6 +90,12 @@ planning, an STS-only control adapter and real Server/launcher admission behind
 profile version 2. Real cloud mounts, persistence, download authorization, STS
 issuance and P4 acceptance remain pending.
 
+The separate [STS issuer candidate](sts-issuer.md) supplies 15-minute,
+Team-scoped control credentials through an explicitly reviewed instance-role
+chain. The profile can consume its atomically renewed file, but no issuer or
+IAM grant is enabled by these changes. Source credentials stay outside the
+Server and Host processes; actual renewal and permission denial need cloud proof.
+
 `.github/workflows/saas-aliyun-host-candidate.yml` builds two independent amd64
 archives, checks non-root runtime against their exact OCI config/rootfs, requires
 SLSA v1 plus SPDX, compares executable manifests/configs, and scans the exact

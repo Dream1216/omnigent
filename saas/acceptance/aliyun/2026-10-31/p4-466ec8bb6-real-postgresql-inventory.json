@@ -1,0 +1,39 @@
+{
+  "image_built": false,
+  "job_id": 124417124094,
+  "junit_sha256": "378f4d80115ae9047c7ea8268aba93d91d9d42f31b31028055c59dfe6a1dd7cf",
+  "not_covered": [
+    "deployed Server authorization",
+    "live IAM role or OSS mounts",
+    "STS issuance or renewal",
+    "artifact download",
+    "production rollout"
+  ],
+  "observed_at": "2026-10-31T03:13:52.425416+00:00",
+  "p4_accepted": false,
+  "postgres_service": "postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280",
+  "production_ready": false,
+  "protected_guard_failures": [
+    "tests.saas.test_legacy_domain_discovery.test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged",
+    "tests.saas.test_n1_merge_gate_candidate.test_all_trusted_candidate_inputs_match_main_policy_hashes"
+  ],
+  "run_id": 41160504481,
+  "schema_version": 1,
+  "source_revision": "466ec8bb67631eddd982064ba07cd7136d0c5460",
+  "storage_rls_case": {
+    "classname": "tests.saas.test_aliyun_storage_admission_postgresql",
+    "executed": true,
+    "name": "test_real_app_login_sees_project_binding_inventory_only_in_its_space",
+    "passed": true,
+    "skipped": false
+  },
+  "suite": {
+    "errors": 0,
+    "failures": 2,
+    "passed": 4956,
+    "skipped": 13,
+    "tests": 4971
+  },
+  "verified_scope": "Actual NOSUPERUSER/NOBYPASSRLS login; Space-scoped binding inventory including Project rows; transaction context clearing",
+  "workflow_conclusion": "failure"
+}

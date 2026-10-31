@@ -56,7 +56,10 @@ exercise redirection, proxy, debug and ambiguous-creation cases.
 The control credential is an explicit private JSON file, reloaded per operation
 to support rotation. It accepts only STS credentials, valid for at most one hour;
 long-term AccessKeys, unsafe file permissions, symlinks and hardlinks are rejected.
-An issuer/renewal process and its real authorization remain to be implemented.
+The [STS issuer candidate](sts-issuer.md) can assume a separate Team-scoped
+control role using an explicitly configured ECS instance role and atomically
+renew this file. Its actual IAM authorization, deployment and unattended
+renewal remain unverified. No issuer is activated by the Server profile.
 Do not send credentials in chat or commit a populated credential file.
 
 The generated RAM policy is a draft for one Session's two prefixes. It grants
@@ -86,6 +89,7 @@ Run the local adapter checks from the repository root after the frozen dev sync:
 ```bash
 uv run pytest tests/saas/test_aliyun_storage.py \
   tests/saas/test_aliyun_volume_control.py \
+  tests/saas/test_aliyun_sts_issuer.py \
   tests/saas/test_aliyun_storage_admission.py \
   tests/saas/test_aliyun_storage_launch.py \
   tests/saas/test_aliyun_server_profile.py \

@@ -687,8 +687,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         '"$PRODUCT_REVISION"',
         'assert version("e2b") == "2.31.0"',
         'assert version("alibabacloud-sandbox20260820") == "1.2.0"',
+        'assert version("alibabacloud-sts20150401") == "1.2.0"',
         "import saas.production.aliyun_server_profile",
         "import saas.production.aliyun_storage_admission",
+        "import saas.production.aliyun_sts_issuer",
     }
     if (
         runtime_verification is None
@@ -716,8 +718,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         '"--pull", "never"',
         'assert version("e2b")=="2.31.0"',
         'assert version("alibabacloud-sandbox20260820")=="1.2.0"',
+        'assert version("alibabacloud-sts20150401")=="1.2.0"',
         "import saas.production.aliyun_model_ingress",
         "import saas.production.aliyun_storage_admission",
+        "import saas.production.aliyun_sts_issuer",
         "assert _build_info.COMMIT_SHA==sys.argv[1]",
         'Path("artifacts/server-candidate-runtime.json")',
     }

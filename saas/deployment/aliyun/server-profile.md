@@ -82,7 +82,7 @@ hashes locally, including independence after management-key rotation. Readiness
 does not make a cloud API call and does not prove API-key validity or network
 reachability. The candidate Server recipe includes
 `kubernetes,e2b,aliyun-sandbox-control`; protected publication checks E2B 2.31.0
-and the storage management SDK 1.2.0 before signing.
+and both the storage management SDK and STS SDK at 1.2.0 before signing.
 The candidate workflow also imports and executes the exact OCI archive on both
 architectures before its scan, checking source revision, layer identities,
 non-root execution, SDK version and profile/ingress imports without network access.
@@ -113,8 +113,10 @@ The storage allowlist must cover exactly the admitted profile tenants; Workspace
 IDs come from the existing tenant bindings. The control STS file must be separate
 from the E2B and signing-key files. Readiness requires the exact control SDK and a
 canonical, private, currently valid STS file. The credential is reread per cloud
-operation and must be rotated by an authorized issuer; that issuer is still
-pending. Long-term AccessKeys and projected-secret symlinks are rejected.
+operation and must be rotated by an authorized issuer. The separate
+[issuer candidate](sts-issuer.md) provides a bounded instance-role chain and
+atomic publication; actual IAM grants, deployment and renewal acceptance are
+still pending. Long-term AccessKeys and projected-secret symlinks are rejected.
 
 The Server builder supplies live Session authorization to the launcher, and the
 qualified E2B SDK receives two immutable named mounts. Inputs are read-only;

@@ -51,6 +51,7 @@ jobs:
             saas/production/aliyun_model_ingress.py \
             saas/production/aliyun_storage.py saas/production/aliyun_volume_control.py \
             saas/production/aliyun_storage_admission.py \
+            saas/production/aliyun_sts.py saas/production/aliyun_sts_issuer.py \
             saas/production/server_config.py \
             saas/production/aliyun_sandbox.py saas/production/aliyun_host.py \
             saas/production/aliyun_tenant_sandbox.py saas/production/tenant_sandbox.py \
@@ -63,6 +64,7 @@ jobs:
             tests/saas/test_aliyun_model_ingress.py \
             tests/saas/test_aliyun_storage.py tests/saas/test_aliyun_volume_control.py \
             tests/saas/test_aliyun_storage_admission.py tests/saas/test_aliyun_storage_launch.py \
+            tests/saas/test_aliyun_sts_issuer.py \
             tests/saas/test_aliyun_server_composition.py \
             tests/saas/test_production_server.py tests/saas/test_production_server_config.py \
             tests/saas/test_aliyun_sandbox.py tests/saas/test_aliyun_sandbox_probe.py \

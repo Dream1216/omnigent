@@ -327,6 +327,19 @@ wheels = [
 ]
 
 [[package]]
+name = "alibabacloud-sts20150401"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alibabacloud-tea-openapi" },
+    { name = "darabonba-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/46/31004d84d68148c34af5fb7372b28248898efcfc7dfb0433508e75ae60c8/alibabacloud_sts20150401-1.2.0.tar.gz", hash = "sha256:b97bbc6cbfb5cf2709ddb641a89399a1f6f3023d94c18335da9a93956979dfca", size = 11656, upload-time = "2026-01-07T07:08:09.368Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/e4/3d5989ade7661f3745eecc0e08b581c08acb573810132b36b0d3da7ceed4/alibabacloud_sts20150401-1.2.0-py3-none-any.whl", hash = "sha256:b5b61da0e9f7c637c432fe70b5a5cb435805755c9dc3efc5b7531704f281f177", size = 19157, upload-time = "2026-01-07T07:08:08.252Z" },
+]
+
+[[package]]
 name = "alibabacloud-tea"
 version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3407,6 +3420,7 @@ agents-sdk = [
 ]
 aliyun-sandbox-control = [
     { name = "alibabacloud-sandbox20260820" },
+    { name = "alibabacloud-sts20150401" },
 ]
 all = [
     { name = "aiohttp" },
@@ -3527,6 +3541,7 @@ vertex = [
 [package.dev-dependencies]
 dev = [
     { name = "alibabacloud-sandbox20260820" },
+    { name = "alibabacloud-sts20150401" },
     { name = "boto3" },
     { name = "build" },
     { name = "e2b" },
@@ -3560,6 +3575,7 @@ lint = [
 ]
 test = [
     { name = "alibabacloud-sandbox20260820" },
+    { name = "alibabacloud-sts20150401" },
     { name = "boto3" },
     { name = "build" },
     { name = "e2b" },
@@ -3587,6 +3603,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.4,<4" },
     { name = "alembic", specifier = ">=1.0,<2" },
     { name = "alibabacloud-sandbox20260820", marker = "extra == 'aliyun-sandbox-control'", specifier = "==1.2.0" },
+    { name = "alibabacloud-sts20150401", marker = "extra == 'aliyun-sandbox-control'", specifier = "==1.2.0" },
     { name = "anyio", specifier = ">=4.0,<5" },
     { name = "argon2-cffi", specifier = ">=23.1,<24" },
     { name = "blaxel", marker = "extra == 'blaxel'", specifier = ">=0.4.1,<0.5" },
@@ -3689,6 +3706,7 @@ provides-extras = ["claude-sdk", "openai-agents", "cockroachdb", "all", "bedrock
 [package.metadata.requires-dev]
 dev = [
     { name = "alibabacloud-sandbox20260820", specifier = "==1.2.0" },
+    { name = "alibabacloud-sts20150401", specifier = "==1.2.0" },
     { name = "boto3", specifier = ">=1.30,<2" },
     { name = "build", specifier = ">=1.2" },
     { name = "e2b", specifier = "==2.31.0" },
@@ -3722,6 +3740,7 @@ lint = [
 ]
 test = [
     { name = "alibabacloud-sandbox20260820", specifier = "==1.2.0" },
+    { name = "alibabacloud-sts20150401", specifier = "==1.2.0" },
     { name = "boto3", specifier = ">=1.30,<2" },
     { name = "build", specifier = ">=1.2" },
     { name = "e2b", specifier = "==2.31.0" },

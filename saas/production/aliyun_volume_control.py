@@ -20,7 +20,7 @@ from saas.production.aliyun_storage import (
     AliyunStorageError,
     AliyunVolumeControl,
 )
-from saas.production.tenant_model_keys import _read_file
+from saas.production.aliyun_sts import read_sts_document
 
 
 class AliyunVolumeControlClient(AliyunVolumeControl):
@@ -51,52 +51,10 @@ class AliyunVolumeControlClient(AliyunVolumeControl):
         self._credentials()
 
     def _credentials(self) -> dict[str, str]:
-        try:
-            raw = _read_file(self._credential_file, private=True, maximum=32768)
-            value = json.loads(raw)
-            if (
-                not isinstance(value, dict)
-                or set(value)
-                != {
-                    "schema_version",
-                    "issued_at",
-                    "expires_at",
-                    "access_key_id",
-                    "access_key_secret",
-                    "security_token",
-                }
-                or raw
-                != (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
-                or type(value["schema_version"]) is not int
-                or value["schema_version"] != 1
-                or type(value["issued_at"]) is not int
-                or type(value["expires_at"]) is not int
-                or value["issued_at"] > self._clock() + 30
-                or value["expires_at"] <= self._clock() + 30
-                or not 1 <= value["expires_at"] - value["issued_at"] <= 3600
-            ):
-                raise ValueError
-            for name, minimum, maximum in (
-                ("access_key_id", 12, 256),
-                ("access_key_secret", 16, 512),
-                ("security_token", 16, 16384),
-            ):
-                text = value[name]
-                if (
-                    not isinstance(text, str)
-                    or not minimum <= len(text) <= maximum
-                    or any(ord(c) < 33 or ord(c) > 126 for c in text)
-                ):
-                    raise ValueError
-            if not value["access_key_id"].startswith("STS."):
-                raise ValueError
-            return {
-                key: value[key] for key in ("access_key_id", "access_key_secret", "security_token")
-            }
-        except (ValueError, TypeError, KeyError, OSError):
-            raise AliyunStorageError(
-                "Aliyun volume STS credential is invalid or expired"
-            ) from None
+        value = read_sts_document(self._credential_file, now=self._clock())
+        return {
+            key: value[key] for key in ("access_key_id", "access_key_secret", "security_token")
+        }
 
     def _client(self):
         from alibabacloud_sandbox20260820.client import Client
