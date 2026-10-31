@@ -2503,7 +2503,7 @@ function AccountSection() {
     queryClient.clear();
     clearSessionDrafts();
     clearOptimisticTitles();
-    window.location.href = withBasePath(saasMode ? "/saas/login" : "/login");
+    window.location.href = result.redirectUrl ?? withBasePath(saasMode ? "/saas/login" : "/login");
   }, [accountsEnabled, info, queryClient, signOutBusy]);
 
   const resetPwForm = useCallback(() => {

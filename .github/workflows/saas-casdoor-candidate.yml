@@ -1,0 +1,72 @@
+name: SaaS Casdoor candidate
+
+on:
+  pull_request:
+    paths:
+      - "saas/production/casdoor/**"
+      - "saas/scripts/prepare_casdoor_source.py"
+      - ".github/workflows/saas-casdoor-candidate.yml"
+  push:
+    branches: ["codex/casdoor-integration-*"]
+    paths:
+      - "saas/production/casdoor/**"
+      - "saas/scripts/prepare_casdoor_source.py"
+      - ".github/workflows/saas-casdoor-candidate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-casdoor-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact candidate revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.CANDIDATE_REVISION }}
+          persist-credentials: false
+      - name: Prepare verified source and patch receipt
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
+          python3 -m saas.scripts.prepare_casdoor_source --output "$RUNNER_TEMP/casdoor-source"
+          cp "$RUNNER_TEMP/casdoor-source/stbz-source-receipt.json" "$RUNNER_TEMP/casdoor-source-receipt.json"
+      - name: Set up immutable image builder
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+      - name: Build isolated amd64 candidate
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
+        with:
+          context: ${{ runner.temp }}/casdoor-source
+          file: saas/production/casdoor/Dockerfile
+          platforms: linux/amd64
+          build-args: PRODUCT_REVISION=${{ env.CANDIDATE_REVISION }}
+          tags: casdoor-stbz:candidate
+          outputs: type=docker,dest=${{ runner.temp }}/casdoor-candidate.tar
+          push: false
+          github-token: ""
+      - name: Record immutable candidate bytes
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          sha256sum casdoor-candidate.tar > casdoor-candidate.tar.sha256
+          printf '%s\n' "$CANDIDATE_REVISION" > casdoor-product-revision.txt
+      - name: Upload isolated candidate for protocol acceptance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: casdoor-candidate-${{ env.CANDIDATE_REVISION }}
+          path: |
+            ${{ runner.temp }}/casdoor-candidate.tar
+            ${{ runner.temp }}/casdoor-candidate.tar.sha256
+            ${{ runner.temp }}/casdoor-source-receipt.json
+            ${{ runner.temp }}/casdoor-product-revision.txt
+          retention-days: 7
+          if-no-files-found: error

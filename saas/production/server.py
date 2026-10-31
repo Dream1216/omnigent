@@ -1285,13 +1285,14 @@ def build_production_saas_services(
     passwords = PasswordCredentialService(sessions.authenticator)
     oidc = None
     if config.identity.provider is not None:
-        if config.identity.transaction_key is None:
+        if config.identity.transaction_key is None and config.identity.transaction_keyring is None:
             raise ProductionServerCompositionError("OIDC transaction authority is missing")
         oidc = OidcAuthorizationService(
             sessions.authenticator,
             identities,
             {"casdoor": config.identity.provider},
             transaction_encryption_key=config.identity.transaction_key,
+            transaction_keyring=config.identity.transaction_keyring,
         )
     policy = RuntimeCompatibilityPolicy(
         runtime_type="omnigent",

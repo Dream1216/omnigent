@@ -222,6 +222,8 @@ def oidc_harness() -> Iterator[_Harness]:
         redirect_uri=_REDIRECT_URI,
         signup_endpoint=f"{_ISSUER}/signup/oauth/authorize",
         allowed_identity_owners=("stbz-users",),
+        end_session_endpoint=f"{_ISSUER}/logout",
+        post_logout_redirect_uri="https://testserver/saas/login",
     )
     oidc = OidcAuthorizationService(
         sessions,

@@ -18,18 +18,22 @@ from uuid import UUID, uuid4
 import httpx
 import jwt
 import sqlalchemy as sa
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from jwt import InvalidTokenError
 from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane.db_models import GlobalUser, OidcLoginTransaction
+from saas.control_plane.federated_sessions import (
+    ExternalSessionIdentity,
+    FederatedSessionService,
+    VerifiedLogoutEvent,
+)
 from saas.control_plane.identity import (
     IdentityLoginResolution,
     IdentityManagementService,
     VerifiedIdentityAssertion,
 )
 from saas.control_plane.lifecycle import LifecycleError, ValidatedAuthSession
+from saas.control_plane.oidc_keyring import OidcTransactionKeyring
 
 _PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _MAX_TOKEN_RESPONSE_BYTES = 1_048_576
@@ -127,6 +131,8 @@ class OidcProviderConfig:
     signup_endpoint: str | None = None
     allowed_identity_owners: tuple[str, ...] = ()
     ui_locale_parameter: Literal["ui_locales", "language"] = "ui_locales"
+    end_session_endpoint: str | None = None
+    post_logout_redirect_uri: str | None = None
 
     def __post_init__(self) -> None:
         if not _PROVIDER_NAME.fullmatch(self.provider):
@@ -166,6 +172,23 @@ class OidcProviderConfig:
             raise ValueError("OIDC customer identity owner allowlist is invalid")
         if self.ui_locale_parameter not in {"ui_locales", "language"}:
             raise ValueError("OIDC language parameter is invalid")
+        if (self.end_session_endpoint is None) != (self.post_logout_redirect_uri is None):
+            raise ValueError("OIDC logout endpoint and return URI must be configured together")
+        if self.end_session_endpoint is not None:
+            for name, url in (
+                ("logout", self.end_session_endpoint),
+                ("post logout", self.post_logout_redirect_uri),
+            ):
+                _validate_endpoint(
+                    cast(str, url), allow_insecure_loopback=self.allow_insecure_loopback, name=name
+                )
+            if urlsplit(self.end_session_endpoint).netloc != urlsplit(self.issuer).netloc:
+                raise ValueError("OIDC logout endpoint must belong to the pinned issuer")
+            if (
+                urlsplit(cast(str, self.post_logout_redirect_uri)).netloc
+                != urlsplit(self.redirect_uri).netloc
+            ):
+                raise ValueError("OIDC logout return URI must belong to the relying party")
         if not self.allowed_algorithms or any(
             algorithm not in {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
             for algorithm in self.allowed_algorithms
@@ -202,6 +225,7 @@ class OidcAuthorizationCompleted:
     purpose: Literal["login", "signup", "link"]
     return_to: str
     ui_locale: str
+    external_identity: ExternalSessionIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,12 +251,17 @@ class OidcAuthorizationService:
         identities: IdentityManagementService,
         providers: Mapping[str, OidcProviderConfig],
         *,
-        transaction_encryption_key: bytes,
+        transaction_encryption_key: bytes | None = None,
+        transaction_keyring: OidcTransactionKeyring | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
         now: Callable[[], datetime] = _utcnow,
     ) -> None:
-        if len(transaction_encryption_key) != 32:
-            raise ValueError("OIDC transaction encryption key must contain exactly 32 bytes")
+        if (transaction_encryption_key is None) == (transaction_keyring is None):
+            raise ValueError("configure exactly one OIDC transaction key authority")
+        if transaction_keyring is None:
+            transaction_keyring = OidcTransactionKeyring(
+                "legacy", {"legacy": cast(bytes, transaction_encryption_key)}
+            )
         if not providers:
             raise ValueError("at least one pinned OIDC provider is required")
         if set(providers) != {config.provider for config in providers.values()}:
@@ -240,11 +269,22 @@ class OidcAuthorizationService:
         self._session_factory = session_factory
         self._identities = identities
         self._providers = dict(providers)
-        self._cipher = AESGCM(transaction_encryption_key)
+        self._keyring = transaction_keyring
         self._http_transport = http_transport
         self._now = now
         self._jwks_cache: dict[str, tuple[datetime, list[dict[str, object]]]] = {}
         self._jwks_lock = asyncio.Lock()
+        self._jwks_last_forced_refresh: dict[str, datetime] = {}
+        with self._session_factory() as db:
+            pending = db.scalars(
+                sa.select(OidcLoginTransaction.code_verifier_ciphertext).where(
+                    OidcLoginTransaction.provider.in_(self._providers),
+                    OidcLoginTransaction.status == "pending",
+                    OidcLoginTransaction.expires_at > self._now(),
+                )
+            )
+            if any(self._keyring.key_id(value) not in self._keyring.keys for value in pending):
+                raise ValueError("OIDC transaction rotation must retain keys for pending logins")
 
     def begin(
         self,
@@ -285,12 +325,11 @@ class OidcAuthorizationService:
         code_verifier = secrets.token_urlsafe(64)
         state_hash = _digest(raw_state)
         verifier_nonce = secrets.token_bytes(12)
-        verifier_ciphertext = self._cipher.encrypt(
-            verifier_nonce,
+        encrypted_verifier = self._keyring.encrypt(
             code_verifier.encode("ascii"),
-            state_hash.encode("ascii"),
+            state_hash=state_hash,
+            nonce=verifier_nonce,
         )
-        encrypted_verifier = _b64url(verifier_nonce + verifier_ciphertext)
         expires_at = issued_at + config.transaction_ttl
         with self._session_factory.begin() as db:
             if target_session is not None:
@@ -372,6 +411,16 @@ class OidcAuthorizationService:
                 _digest(nonce), transaction.nonce_hash
             ):
                 raise LifecycleError("oidc_nonce_invalid", "OIDC nonce verification failed")
+            sid = claims.get("sid")
+            if sid is not None and (not isinstance(sid, str) or not sid or len(sid) > 512):
+                raise LifecycleError("oidc_id_token_invalid", "OIDC session identifier is invalid")
+            external = ExternalSessionIdentity(
+                provider=config.provider,
+                issuer=config.issuer,
+                subject=cast(str, claims["sub"]),
+                sid=cast(str | None, sid),
+                issued_at=datetime.fromtimestamp(cast(int, claims["iat"]), timezone.utc),
+            )
             assertion = VerifiedIdentityAssertion(
                 provider=config.provider,
                 issuer=cast(str, claims["iss"]),
@@ -415,7 +464,69 @@ class OidcAuthorizationService:
             purpose=transaction.purpose,
             return_to=transaction.return_to,
             ui_locale=transaction.ui_locale,
+            external_identity=external,
         )
+
+    def logout_url(self, provider: str) -> str | None:
+        config = self._providers.get(provider)
+        if config is None or config.end_session_endpoint is None:
+            return None
+        return f"{config.end_session_endpoint}?" + urlencode(
+            {
+                "client_id": config.client_id,
+                "post_logout_redirect_uri": config.post_logout_redirect_uri,
+            }
+        )
+
+    async def verify_logout_token(self, provider: str, token: str) -> VerifiedLogoutEvent:
+        config = self._provider(provider)
+        claims = await self._verify_signed_token(
+            config,
+            token,
+            required=("iss", "aud", "iat", "exp", "jti", "events"),
+            error_code="oidc_logout_token_invalid",
+        )
+        sub, sid, issued_at, expires_at, jti = (
+            claims.get("sub"),
+            claims.get("sid"),
+            claims.get("iat"),
+            claims.get("exp"),
+            claims.get("jti"),
+        )
+        events = claims.get("events")
+        event_type = "http://schemas.openid.net/event/backchannel-logout"
+        now = self._now().timestamp()
+        if (
+            "nonce" in claims
+            or not isinstance(events, dict)
+            or not isinstance(events.get(event_type), dict)
+            or (sub is None and sid is None)
+            or any(
+                value is not None and (not isinstance(value, str) or not value or len(value) > 512)
+                for value in (sub, sid)
+            )
+            or not isinstance(jti, str)
+            or not jti
+            or len(jti) > 512
+            or type(issued_at) is not int
+            or type(expires_at) is not int
+            or issued_at < now - 300 - config.clock_skew.total_seconds()
+            or issued_at > now + config.clock_skew.total_seconds()
+            or expires_at <= issued_at
+        ):
+            raise LifecycleError("oidc_logout_token_invalid", "OIDC logout token is invalid")
+        return VerifiedLogoutEvent(
+            provider=provider,
+            issuer=config.issuer,
+            subject=cast(str | None, sub),
+            sid=cast(str | None, sid),
+            jti=jti,
+            issued_at=datetime.fromtimestamp(issued_at, timezone.utc),
+        )
+
+    async def complete_logout(self, provider: str, token: str) -> None:
+        event = await self.verify_logout_token(provider, token)
+        FederatedSessionService(self._session_factory).revoke(event, now=self._now())
 
     def abort(
         self,
@@ -473,15 +584,9 @@ class OidcAuthorizationService:
 
     def _decrypt_verifier(self, encoded: str, state_hash: str) -> str:
         try:
-            padded = encoded + "=" * (-len(encoded) % 4)
-            payload = base64.urlsafe_b64decode(padded.encode("ascii"))
-            if len(payload) < 29:
-                raise ValueError
-            plaintext = self._cipher.decrypt(
-                payload[:12], payload[12:], state_hash.encode("ascii")
-            )
+            plaintext = self._keyring.decrypt(encoded, state_hash=state_hash)
             verifier = plaintext.decode("ascii")
-        except (InvalidTag, ValueError, UnicodeDecodeError) as error:
+        except (ValueError, UnicodeDecodeError) as error:
             raise LifecycleError(
                 "oidc_transaction_invalid", "OIDC transaction verifier is invalid"
             ) from error
@@ -500,7 +605,7 @@ class OidcAuthorizationService:
             "redirect_uri": config.redirect_uri,
             "code_verifier": code_verifier,
         }
-        auth = None
+        auth = httpx.USE_CLIENT_DEFAULT
         if config.token_endpoint_auth_method == "client_secret_basic":
             auth = httpx.BasicAuth(config.client_id, config.client_secret)
         else:
@@ -537,21 +642,71 @@ class OidcAuthorizationService:
     async def _verify_id_token(
         self, config: OidcProviderConfig, id_token: str
     ) -> dict[str, object]:
+        claims = await self._verify_signed_token(
+            config,
+            id_token,
+            required=("iss", "sub", "aud", "exp", "iat", "nbf", "nonce"),
+            error_code="oidc_id_token_invalid",
+        )
+        subject = claims.get("sub")
+        if (
+            not isinstance(subject, str)
+            or not subject
+            or len(subject) > 512
+            or any(type(claims.get(name)) is not int for name in ("iat", "exp", "nbf"))
+            or cast(int, claims["iat"]) < 0
+        ):
+            raise LifecycleError(
+                "oidc_id_token_invalid", "OIDC subject or issuance time is invalid"
+            )
+        if (
+            config.allowed_identity_owners
+            and claims.get("owner") not in config.allowed_identity_owners
+        ):
+            raise LifecycleError(
+                "oidc_identity_owner_invalid", "OIDC identity organization is forbidden"
+            )
+        return claims
+
+    async def _verify_signed_token(
+        self, config: OidcProviderConfig, token: str, *, required: tuple[str, ...], error_code: str
+    ) -> dict[str, object]:
+        if not token or len(token) > 64_000:
+            raise LifecycleError(error_code, "OIDC signed token is invalid")
+        try:
+            header = jwt.get_unverified_header(token)
+            if (
+                header.get("alg") not in config.allowed_algorithms
+                or not isinstance(header.get("kid"), str)
+                or not header["kid"]
+            ):
+                raise ValueError
+        except (InvalidTokenError, ValueError) as error:
+            raise LifecycleError(error_code, "OIDC signing header is invalid") from error
         last_error: Exception | None = None
         for force_refresh in (False, True):
             try:
                 keys = await self._jwks(config, force_refresh=force_refresh)
-                return self._decode_id_token(config, id_token, keys)
-            except (InvalidTokenError, LifecycleError, ValueError) as error:
+                return self._decode_signed_token(config, token, keys, required=required)
+            except (
+                InvalidTokenError,
+                LifecycleError,
+                ValueError,
+                TypeError,
+                OverflowError,
+            ) as error:
                 last_error = error
+                if (
+                    not isinstance(error, LifecycleError)
+                    or error.code != "oidc_signing_key_unknown"
+                ):
+                    break
         if (
             isinstance(last_error, LifecycleError)
             and last_error.code == "oidc_dependency_unavailable"
         ):
             raise last_error
-        raise LifecycleError(
-            "oidc_id_token_invalid", "OIDC ID Token verification failed"
-        ) from last_error
+        raise LifecycleError(error_code, "OIDC signed token verification failed") from last_error
 
     async def _jwks(
         self, config: OidcProviderConfig, *, force_refresh: bool
@@ -564,6 +719,15 @@ class OidcAuthorizationService:
             cached = self._jwks_cache.get(config.provider)
             if not force_refresh and cached is not None and cached[0] > now:
                 return cached[1]
+            if force_refresh:
+                last_refresh = self._jwks_last_forced_refresh.get(config.provider)
+                if (
+                    cached is not None
+                    and last_refresh is not None
+                    and now - last_refresh < timedelta(seconds=5)
+                ):
+                    return cached[1]
+                self._jwks_last_forced_refresh[config.provider] = now
             try:
                 async with httpx.AsyncClient(
                     transport=self._http_transport,
@@ -595,10 +759,12 @@ class OidcAuthorizationService:
             return keys
 
     @staticmethod
-    def _decode_id_token(
+    def _decode_signed_token(
         config: OidcProviderConfig,
         id_token: str,
         keys: list[dict[str, object]],
+        *,
+        required: tuple[str, ...],
     ) -> dict[str, object]:
         header = jwt.get_unverified_header(id_token)
         algorithm = header.get("alg")
@@ -612,6 +778,8 @@ class OidcAuthorizationService:
             and key.get("use", "sig") == "sig"
             and key.get("alg", algorithm) == algorithm
         ]
+        if not candidates:
+            raise LifecycleError("oidc_signing_key_unknown", "OIDC signing key is unknown")
         if len(candidates) != 1:
             raise LifecycleError("oidc_id_token_invalid", "OIDC signing key is ambiguous")
         signing_key = jwt.PyJWK.from_dict(candidates[0], algorithm=cast(str, algorithm)).key
@@ -623,7 +791,7 @@ class OidcAuthorizationService:
             issuer=config.issuer,
             leeway=config.clock_skew.total_seconds(),
             options={
-                "require": ["iss", "sub", "aud", "exp", "iat", "nbf", "nonce"],
+                "require": list(required),
                 "verify_signature": True,
                 "verify_exp": True,
                 "verify_iat": True,
@@ -642,16 +810,6 @@ class OidcAuthorizationService:
             and authorized_party != config.client_id
         ) or (authorized_party is not None and authorized_party != config.client_id):
             raise LifecycleError("oidc_id_token_invalid", "OIDC authorized party is invalid")
-        subject = claims.get("sub")
-        if not isinstance(subject, str) or not subject or len(subject) > 512:
-            raise LifecycleError("oidc_id_token_invalid", "OIDC subject is invalid")
-        if (
-            config.allowed_identity_owners
-            and claims.get("owner") not in config.allowed_identity_owners
-        ):
-            raise LifecycleError(
-                "oidc_identity_owner_invalid", "OIDC identity organization is forbidden"
-            )
         return cast(dict[str, object], claims)
 
     def _require_link_target_current(self, transaction: _ConsumedTransaction) -> None:

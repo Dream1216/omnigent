@@ -7,7 +7,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -31,6 +31,9 @@ from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.rls import RlsContext, apply_rls_context
 
 _FRESH_AUTH_WINDOW = timedelta(minutes=5)
+
+if TYPE_CHECKING:
+    from saas.control_plane.federated_sessions import ExternalSessionIdentity
 
 
 class LifecycleError(RuntimeError):
@@ -150,6 +153,7 @@ class MembershipLifecycleService:
         authn_method: str,
         expires_at: datetime,
         now: datetime | None = None,
+        external_identity: ExternalSessionIdentity | None = None,
     ) -> IssuedAuthSession:
         """Issue a revocable opaque bearer token for one active Global User."""
 
@@ -165,9 +169,33 @@ class MembershipLifecycleService:
         csrf_token = secrets.token_urlsafe(32)
         session_id = uuid4()
         with self._session_factory.begin() as db:
-            user = db.get(GlobalUser, user_id)
+            user = db.execute(
+                sa.select(GlobalUser).where(GlobalUser.id == user_id).with_for_update()
+            ).scalar_one_or_none()
             if user is None or user.status != "active":
                 raise LifecycleError("user_inactive", "active user is required")
+            external = {}
+            if external_identity is not None:
+                from saas.control_plane.federated_sessions import bind_external_session
+
+                if authn_method != f"oidc:{external_identity.provider}":
+                    raise LifecycleError(
+                        "invalid_authn_method", "external authentication method is invalid"
+                    )
+                connection = db.scalar(
+                    sa.select(IdentityConnection.id).where(
+                        IdentityConnection.user_id == user_id,
+                        IdentityConnection.provider == external_identity.provider,
+                        IdentityConnection.issuer == external_identity.issuer,
+                        IdentityConnection.subject == external_identity.subject,
+                        IdentityConnection.status == "active",
+                    )
+                )
+                if connection is None:
+                    raise LifecycleError(
+                        "oidc_identity_unavailable", "external identity connection is unavailable"
+                    )
+                external = bind_external_session(db, external_identity)
             db.add(
                 AuthSessionRecord(
                     id=session_id,
@@ -179,6 +207,7 @@ class MembershipLifecycleService:
                     expires_at=expires_at,
                     last_seen_at=issued_at,
                     created_at=issued_at,
+                    **external,
                 )
             )
             security_version = user.security_version

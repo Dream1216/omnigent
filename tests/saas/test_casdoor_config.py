@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -105,5 +106,49 @@ def test_partial_configuration_never_silently_disables_oidc(tmp_path: Path, name
 def test_world_readable_transaction_key_is_rejected(tmp_path: Path) -> None:
     environ, _ = _configuration(tmp_path)
     Path(environ["OMNIGENT_SAAS_OIDC_TRANSACTION_KEY_FILE"]).chmod(0o644)
+    with pytest.raises(ProductionServerConfigError):
+        load_production_identity_config(environ, public_origin="https://next.example.test")
+
+
+def test_keyring_file_loads_active_and_retained_keys_without_exposing_secrets(
+    tmp_path: Path,
+) -> None:
+    environ, _ = _configuration(tmp_path)
+    path = Path(environ["OMNIGENT_SAAS_OIDC_TRANSACTION_KEY_FILE"])
+    document = {
+        "schema_version": 1,
+        "active_key_id": "v2",
+        "keys": {
+            "legacy": base64.b64encode(b"o" * 32).decode(),
+            "v2": base64.b64encode(b"n" * 32).decode(),
+        },
+    }
+    path.write_text(json.dumps(document))
+    result = load_production_identity_config(environ, public_origin="https://next.example.test")
+    assert result.transaction_key is None
+    assert result.transaction_keyring is not None
+    assert result.transaction_keyring.active_key_id == "v2"
+    assert result.transaction_keyring.keys["legacy"] == b"o" * 32
+    assert result.transaction_keyring.keys["v2"] == b"n" * 32
+    assert document["keys"]["v2"] not in repr(result)
+    assert document["keys"]["v2"] not in repr(result.transaction_keyring)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"schema_version": True, "active_key_id": "v2", "keys": {}},
+        {"schema_version": 1, "active_key_id": "v2", "keys": {"v2": "invalid!"}},
+        {"schema_version": 1, "active_key_id": "v2", "keys": {"v2": 123}},
+        {
+            "schema_version": 1,
+            "active_key_id": "v2",
+            "keys": {"v2": base64.b64encode(b"x" * 31).decode()},
+        },
+    ],
+)
+def test_invalid_keyring_file_is_rejected(tmp_path: Path, document: dict[str, object]) -> None:
+    environ, _ = _configuration(tmp_path)
+    Path(environ["OMNIGENT_SAAS_OIDC_TRANSACTION_KEY_FILE"]).write_text(json.dumps(document))
     with pytest.raises(ProductionServerConfigError):
         load_production_identity_config(environ, public_origin="https://next.example.test")

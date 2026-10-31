@@ -1,0 +1,41 @@
+--- a/object/token_logout.go
++++ b/object/token_logout.go
+@@ -43,11 +43,12 @@
+ 	claims := LogoutTokenClaims{
+ 		Events: events,
+ 		RegisteredClaims: jwt.RegisteredClaims{
+-			Issuer:   originBackend,
+-			Subject:  user.Id,
+-			Audience: []string{application.ClientId},
+-			IssuedAt: jwt.NewNumericDate(nowTime),
+-			ID:       util.GetId(application.Owner, util.GenerateId()),
++			Issuer:    originBackend,
++			Subject:   user.Id,
++			Audience:  []string{application.ClientId},
++			IssuedAt:  jwt.NewNumericDate(nowTime),
++			ExpiresAt: jwt.NewNumericDate(nowTime.Add(5 * time.Minute)),
++			ID:        util.GetId(application.Owner, util.GenerateId()),
+ 		},
+ 	}
+ 
+@@ -75,6 +76,7 @@
+ 	}
+ 
+ 	token.Header["kid"] = cert.Name
++	token.Header["typ"] = "logout+jwt"
+ 	return token.SignedString(key)
+ }
+ 
+--- a/web/src/i18n.ts
++++ b/web/src/i18n.ts
+@@ -31,6 +31,10 @@
+ const localeLoaders = import.meta.glob("./locales/*/data.json");
+ 
+ function initLanguage(): string {
++  const requested = new URLSearchParams(window.location.search).get("language");
++  if (requested && SupportedLanguages.includes(requested)) {
++    return requested;
++  }
+   let language = localStorage.getItem("language");
+   if (language === undefined || language === null || language === "") {
+     if (Conf.ForceLanguage !== "") {

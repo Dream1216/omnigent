@@ -116,6 +116,34 @@ describe("resolveIdentity", () => {
 });
 
 describe("logoutBrowserSession", () => {
+  it("hands off to the configured IdP only after local revocation succeeds", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        logout_url: "https://auth.example.test/api/logout?client_id=public-id",
+      }),
+    );
+    window.localStorage.setItem("omnigent.saas.csrf", "csrf-before-logout");
+    const { logoutBrowserSession } = await import("./identity");
+    expect(await logoutBrowserSession("/saas/auth/logout")).toEqual({
+      ok: true,
+      redirectUrl: "https://auth.example.test/api/logout?client_id=public-id",
+    });
+    expect(window.localStorage.getItem("omnigent.saas.csrf")).toBeNull();
+  });
+
+  it.each([
+    "javascript:alert(1)",
+    "https://user:password@attacker.test/logout",
+    "http://attacker.test/logout",
+  ])(
+    "ignores an unsafe logout handoff %s after completing local revocation",
+    async (logout_url) => {
+      fetchMock.mockResolvedValueOnce(mockJsonResponse({ logout_url }));
+      const { logoutBrowserSession } = await import("./identity");
+      expect(await logoutBrowserSession("/saas/auth/logout")).toEqual({ ok: true });
+    },
+  );
+
   it("posts with the SaaS CSRF token and clears cached identity only after 204", async () => {
     fetchMock
       .mockResolvedValueOnce(mockJsonResponse({ user_id: "alice", is_admin: true }))

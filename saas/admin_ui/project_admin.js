@@ -1664,11 +1664,11 @@
 
   $("#logout-button").addEventListener("click", async () => {
     try {
-      await api("/auth/logout", { method: "POST" });
+      const result = await api("/auth/logout", { method: "POST" });
+      setLoggedOut();
+      if (result?.logout_url) location.assign(result.logout_url);
     } catch (error) {
       log(error.message, "error");
-    } finally {
-      setLoggedOut();
     }
   });
 

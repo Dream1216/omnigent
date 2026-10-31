@@ -9,6 +9,7 @@ from enum import Enum
 from hashlib import sha256
 from importlib import resources
 from typing import TYPE_CHECKING, Literal, Protocol, cast
+from urllib.parse import parse_qs
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, FastAPI, Header, Request, Response
@@ -785,6 +786,16 @@ class SaasAuthContextMiddleware:
         }:
             return True
         if method == "POST":
+            if path == "/saas/auth/logout":
+                return True
+            oidc_parts = path.split("/")
+            if (
+                len(oidc_parts) == 6
+                and oidc_parts[1:4] == ["saas", "auth", "oidc"]
+                and oidc_parts[4]
+                and oidc_parts[5] == "backchannel-logout"
+            ):
+                return True
             if path == "/saas/onboarding/registrations":
                 return True
             onboarding_parts = path.split("/")
@@ -1088,10 +1099,36 @@ def create_saas_auth_router(
 
     @router.post("/auth/logout", status_code=204)
     def logout(request: Request, response: Response) -> Response:
-        token, _ = auth_provider.extract_token(request)
+        token, source = auth_provider.extract_token(request)
+        if source == "ambiguous":
+            raise _http_error(
+                LifecycleError("ambiguous_authentication", "ambiguous authentication"), 400
+            )
+        if (
+            source == "cookie"
+            and request.headers.get("origin") not in cookie_config.trusted_origins
+        ):
+            raise _http_error(
+                LifecycleError("origin_forbidden", "browser request Origin is forbidden"), 403
+            )
+        principal = auth_provider.get_principal(request)
         if token:
             lifecycle.revoke_auth_session(token)
+        if (
+            oidc is not None
+            and principal is not None
+            and principal.session.authn_method.startswith("oidc:")
+        ):
+            provider = principal.session.authn_method.removeprefix("oidc:")
+            redirect = oidc.logout_url(provider)
+            if redirect is not None:
+                response = JSONResponse(
+                    {"logout_url": redirect}, headers={"Cache-Control": "private, no-store"}
+                )
+                _clear_cookie(response, cookie_config)
+                return response
         _clear_cookie(response, cookie_config)
+        response.headers["Cache-Control"] = "private, no-store"
         response.status_code = 204
         return response
 
@@ -1281,6 +1318,25 @@ def create_saas_auth_router(
 
     if oidc is not None:
 
+        def oidc_callback_error(
+            failure: LifecycleError, *, state: str, browser: bool, ui_locale: str = "zh-CN"
+        ) -> Response:
+            status_code = 503 if failure.code == "oidc_dependency_unavailable" else 400
+            response = (
+                completion_document(
+                    error_code=failure.code, ui_locale=ui_locale, status_code=status_code
+                )
+                if browser
+                else JSONResponse(
+                    status_code=status_code,
+                    content={"error": {"code": failure.code, "message": str(failure)}},
+                )
+            )
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            _clear_oidc_transaction_cookie(response, cookie_config, state=state)
+            return response
+
         @router.get("/auth/assets/oidc-complete.js")
         def oidc_complete_script() -> Response:
             return completion_script()
@@ -1363,24 +1419,7 @@ def create_saas_auth_router(
                     browser_binding=browser_binding,
                 )
             except LifecycleError as lifecycle_error:
-                status_code = 503 if lifecycle_error.code == "oidc_dependency_unavailable" else 400
-                response = JSONResponse(
-                    status_code=status_code,
-                    content={
-                        "error": {
-                            "code": lifecycle_error.code,
-                            "message": str(lifecycle_error),
-                        }
-                    },
-                )
-                if browser:
-                    response = completion_document(
-                        error_code=lifecycle_error.code, status_code=status_code
-                    )
-                response.headers["Cache-Control"] = "private, no-store"
-                response.headers["Referrer-Policy"] = "no-referrer"
-                _clear_oidc_transaction_cookie(response, cookie_config, state=state)
-                return response
+                return oidc_callback_error(lifecycle_error, state=state, browser=browser)
 
             if completed.conflict_id is not None:
                 response = JSONResponse(
@@ -1405,12 +1444,18 @@ def create_saas_auth_router(
 
             user_id = cast(UUID, completed.user_id)
             issued_at = datetime.now(timezone.utc)
-            issued = lifecycle.issue_auth_session(
-                user_id=user_id,
-                authn_method=f"oidc:{provider}",
-                expires_at=issued_at + cookie_config.ttl,
-                now=issued_at,
-            )
+            try:
+                issued = lifecycle.issue_auth_session(
+                    user_id=user_id,
+                    authn_method=f"oidc:{provider}",
+                    expires_at=issued_at + cookie_config.ttl,
+                    now=issued_at,
+                    external_identity=completed.external_identity,
+                )
+            except LifecycleError as lifecycle_error:
+                return oidc_callback_error(
+                    lifecycle_error, state=state, browser=browser, ui_locale=completed.ui_locale
+                )
             response = JSONResponse(
                 status_code=200,
                 content={
@@ -1432,6 +1477,45 @@ def create_saas_auth_router(
             _set_session_cookie(response, cookie_config, issued.token)
             _clear_oidc_transaction_cookie(response, cookie_config, state=state)
             return response
+
+        @router.post("/auth/oidc/{provider}/backchannel-logout")
+        async def backchannel_logout(provider: str, request: Request) -> Response:
+            try:
+                if (
+                    request.headers.get("content-type", "").split(";", 1)[0].strip()
+                    != "application/x-www-form-urlencoded"
+                ):
+                    raise LifecycleError(
+                        "oidc_logout_token_invalid", "logout request encoding is invalid"
+                    )
+                body = bytearray()
+                async for chunk in request.stream():
+                    body.extend(chunk)
+                    if len(body) > 96_000:
+                        raise LifecycleError(
+                            "oidc_logout_token_invalid", "logout request is too large"
+                        )
+                try:
+                    form = parse_qs(
+                        body.decode("ascii"), keep_blank_values=True, max_num_fields=16
+                    )
+                except (UnicodeError, ValueError) as error:
+                    raise LifecycleError(
+                        "oidc_logout_token_invalid", "logout request is invalid"
+                    ) from error
+                values = form.get("logout_token", [])
+                if len(values) != 1:
+                    raise LifecycleError(
+                        "oidc_logout_token_invalid", "exactly one logout token is required"
+                    )
+                await oidc.complete_logout(provider, values[0])
+            except LifecycleError as error:
+                return JSONResponse(
+                    {"error": {"code": error.code, "message": str(error)}},
+                    status_code=503 if error.code == "oidc_dependency_unavailable" else 400,
+                    headers={"Cache-Control": "private, no-store"},
+                )
+            return JSONResponse({}, headers={"Cache-Control": "private, no-store"})
 
         @router.post("/auth/identity-conflicts/{conflict_id}")
         def resolve_identity_conflict(

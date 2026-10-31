@@ -595,7 +595,8 @@ export async function authenticatedFetch(
   return res;
 }
 
-export type BrowserLogoutResult = { ok: true } | { ok: false; error: string; status: number };
+export type BrowserLogoutResult =
+  { ok: true; redirectUrl?: string } | { ok: false; error: string; status: number };
 
 /** Revoke the current cookie session and clear browser-only identity state. */
 export async function logoutBrowserSession(endpoint: string): Promise<BrowserLogoutResult> {
@@ -635,6 +636,23 @@ export async function logoutBrowserSession(endpoint: string): Promise<BrowserLog
       storage.removeItem(SAAS_CSRF_STORAGE_KEY);
     } catch {
       // Restricted storage contexts still get the server-side revocation.
+    }
+  }
+  if (response.status !== 204) {
+    try {
+      const payload = (await response.json()) as { logout_url?: unknown };
+      if (typeof payload?.logout_url === "string") {
+        const redirect = new URL(payload.logout_url, window.location.origin);
+        if (
+          !redirect.username &&
+          !redirect.password &&
+          !redirect.hash &&
+          (redirect.protocol === "https:" || redirect.origin === window.location.origin)
+        )
+          return { ok: true, redirectUrl: redirect.href };
+      }
+    } catch {
+      // Local revocation has completed even if the optional IdP handoff is unavailable.
     }
   }
   return { ok: true };

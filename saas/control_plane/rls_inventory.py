@@ -8,6 +8,7 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_identity_connections",
         "saas_identity_conflicts",
         "saas_oidc_login_transactions",
+        "saas_oidc_session_fences",
         "saas_auth_sessions",
         "saas_password_credentials",
         "saas_tenants",

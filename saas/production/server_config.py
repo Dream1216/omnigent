@@ -7,6 +7,7 @@ non-secret release facts, never credentials or key material.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import ipaddress
 import json
@@ -26,6 +27,7 @@ from urllib.parse import urlsplit
 from sqlalchemy.engine import URL, make_url
 
 from saas.control_plane.oidc import OidcProviderConfig
+from saas.control_plane.oidc_keyring import OidcTransactionKeyring
 from saas.delivery.client import DeliveryConfig
 from saas.production.service_bindings import (
     OPTIONAL_SERVICE_ROLE_PROFILES,
@@ -192,6 +194,7 @@ class ProductionIdentityConfig:
     mode: str = "legacy"
     provider: OidcProviderConfig | None = field(default=None, repr=False)
     transaction_key: bytes | None = field(default=None, repr=False)
+    transaction_keyring: OidcTransactionKeyring | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,8 +387,27 @@ def load_production_identity_config(
             _required(environ, key_name), name=key_name, owner_only=True
         )
         transaction_key = key_path.read_bytes()
+        transaction_keyring = None
         if len(transaction_key) != 32:
-            raise ValueError
+            key_document = json.loads(transaction_key)
+            if (
+                not isinstance(key_document, dict)
+                or set(key_document) != {"schema_version", "active_key_id", "keys"}
+                or type(key_document["schema_version"]) is not int
+                or key_document["schema_version"] != 1
+                or not isinstance(key_document["active_key_id"], str)
+                or not isinstance(key_document["keys"], dict)
+                or any(not isinstance(value, str) for value in key_document["keys"].values())
+            ):
+                raise ValueError
+            transaction_keyring = OidcTransactionKeyring(
+                key_document["active_key_id"],
+                {
+                    key: base64.b64decode(value, validate=True)
+                    for key, value in key_document["keys"].items()
+                },
+            )
+            transaction_key = None
         provider = OidcProviderConfig(
             provider="casdoor",
             issuer=issuer,
@@ -399,10 +421,17 @@ def load_production_identity_config(
             token_endpoint_auth_method=payload["token_endpoint_auth_method"],
             allowed_identity_owners=(organization,),
             ui_locale_parameter="language",
+            end_session_endpoint=f"{issuer}/api/logout",
+            post_logout_redirect_uri=f"{_https_origin(public_origin)}/saas/login",
         )
     except (OSError, UnicodeError, ValueError) as error:
         raise ProductionServerConfigError("Casdoor identity configuration is invalid") from error
-    return ProductionIdentityConfig(mode=mode, provider=provider, transaction_key=transaction_key)
+    return ProductionIdentityConfig(
+        mode=mode,
+        provider=provider,
+        transaction_key=transaction_key,
+        transaction_keyring=transaction_keyring,
+    )
 
 
 def _database_url(environ: Mapping[str, str], role: str) -> tuple[str, URL, Path]:

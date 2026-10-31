@@ -17,8 +17,13 @@ per-user credential authority gates must be completed before enabling it.
   [config.example.json](config.example.json).
 - `OMNIGENT_SAAS_CASDOOR_CLIENT_SECRET_FILE`: owner-only UTF-8 client secret,
   at least 16 bytes; one trailing line ending is accepted.
-- `OMNIGENT_SAAS_OIDC_TRANSACTION_KEY_FILE`: owner-only, exactly 32 binary bytes,
-  identical on all replicas. No line ending is removed from this binary key.
+- `OMNIGENT_SAAS_OIDC_TRANSACTION_KEY_FILE`: owner-only, either exactly 32
+  binary bytes or a versioned JSON keyring, identical on all replicas. No line
+  ending is removed from a binary key. A keyring has `schema_version: 1`, an
+  `active_key_id` and a `keys` object containing base64-encoded 32-byte keys.
+  Retain the `legacy` key when moving from binary configuration. A replica
+  refuses startup if an unexpired transaction needs a removed key. Deploy
+  overlapping keyrings to every replica before changing the active key.
 
 Only one customer application and one ordinary identity organization are
 accepted. Endpoints are derived from the pinned HTTPS origin and application.
@@ -53,13 +58,43 @@ transactions require application-only rollback. Production migration receipt
 and catalog anchors must still be generated through the existing release
 replay, never by bypassing the schema verifier.
 
+Migration `cd1b00000001` associates local sessions with verified provider,
+issuer, subject, optional `sid` and ID Token issue time. Signed back-channel
+notifications revoke matching external sessions; legacy and Staff sessions
+are outside their scope. Persistent event receipts reject conflicting replay,
+and PostgreSQL row locks prevent a late callback from restoring a logged-out
+session. New credentials issued after the logout epoch remain usable.
+
+Local logout revokes the product session before returning a fixed provider
+logout URL. Provider unavailability cannot undo that revocation. Logout JWTs
+require RS256, issuer, audience, `iat`, `exp`, `jti`, the logout event and a
+subject or `sid`; a login nonce is forbidden. Unknown signing keys trigger
+at most one forced refresh per five seconds per provider.
+
+## Pinned Casdoor candidate
+
+[source-lock.json](source-lock.json) fixes the upstream source archive and
+patch checksums. The maintained patch adds the required five-minute expiry
+to logout JWTs and selects a validated `language` query parameter before
+i18n initialization. The unpatched v4.25.0 logout JWT lacks `exp` and is
+rejected by this verifier. See the
+[back-channel logout specification](https://openid.net/specs/openid-connect-backchannel-1_0.html).
+
+Prepare the source with `python -m saas.scripts.prepare_casdoor_source
+--output /tmp/casdoor-source`. The candidate workflow builds the patched
+frontend and server using pinned image digests and uploads an amd64 Docker
+archive, checksum and source receipt. Its non-root runtime requires mounted
+configuration and writable `/data` and `/logs`. This workflow neither
+publishes nor qualifies an image for production; real protocol acceptance,
+signing and the normal release admission remain required.
+
 ## Verification
 
 From this checkout, with its Python development and SaaS dependencies:
 
 ```bash
-PYTHONPATH=. python -m pytest tests/saas/test_oidc_http_auth.py tests/saas/test_casdoor_config.py tests/saas/test_oidc_completion_browser.py -q
-OMNIGENT_SAAS_TEST_POSTGRES_URL=postgresql+psycopg://USER@localhost/TEST_ADMIN_DB PYTHONPATH=. python -m pytest tests/saas/test_casdoor_migration.py -q
+PYTHONPATH=. python -m pytest tests/saas/test_oidc_http_auth.py tests/saas/test_oidc_logout.py tests/saas/test_oidc_key_rotation.py tests/saas/test_casdoor_config.py tests/saas/test_oidc_completion_browser.py -q
+OMNIGENT_SAAS_TEST_POSTGRES_URL=postgresql+psycopg://USER@localhost/TEST_ADMIN_DB PYTHONPATH=. python -m pytest tests/saas/test_casdoor_migration.py tests/saas/test_federated_sessions_postgresql.py -q
 ```
 
 The PostgreSQL fixture creates and removes a disposable database. Use a local
@@ -75,13 +110,12 @@ and confirm the callback shows a retry instead of claiming success.
 
 - Production PostgreSQL 16/18 migration replay, exact catalog anchors,
   role graph receipts, runtime verification and restore compatibility.
-- Transaction-key rotation with old keys retained for in-flight transactions.
 - Authenticated workspace creation intent, shared onboarding Saga, historical
   backfill, RLS, `/setup`, invitations and first Run acceptance.
 - Per-user credential ownership and migration receipts; old passwords must
   stop working after authority moves to Casdoor.
-- External-session association, RP and back-channel logout, durable identity
-  event Inbox, state reconciliation and disable/reset convergence.
+- Real patched-provider RP and back-channel logout acceptance, durable
+  identity event Inbox, state reconciliation and disable/reset convergence.
 - Explicit account-linking and conflict pages, full branding, actual language
   switching without resending codes, signup expiration and replay tests.
 - Approved social/enterprise channels, isolated deployment with durable DB,

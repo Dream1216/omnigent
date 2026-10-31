@@ -160,6 +160,11 @@ class AuthSessionRecord(SaasBase):
     csrf_token_hash: Mapped[str | None] = mapped_column(sa.String(64))
     security_version: Mapped[int] = mapped_column(nullable=False)
     authn_method: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    external_provider: Mapped[str | None] = mapped_column(sa.String(64))
+    external_issuer: Mapped[str | None] = mapped_column(sa.String(512))
+    external_subject: Mapped[str | None] = mapped_column(sa.String(512))
+    external_sid: Mapped[str | None] = mapped_column(sa.String(512))
+    external_issued_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
@@ -175,7 +180,50 @@ class AuthSessionRecord(SaasBase):
         ),
         sa.CheckConstraint("security_version > 0", name="ck_auth_session_security_version"),
         sa.CheckConstraint("length(authn_method) > 0", name="ck_auth_session_method_nonempty"),
+        sa.CheckConstraint(
+            "(external_provider IS NULL AND external_issuer IS NULL AND external_subject IS NULL "
+            "AND external_sid IS NULL AND external_issued_at IS NULL) OR "
+            "(external_provider IS NOT NULL AND external_issuer IS NOT NULL "
+            "AND external_subject IS NOT NULL "
+            "AND length(external_provider) > 0 AND length(external_issuer) > 0 "
+            "AND length(external_subject) > 0 AND external_issued_at IS NOT NULL "
+            "AND authn_method = 'oidc:' || external_provider "
+            "AND (external_sid IS NULL OR length(external_sid) > 0))",
+            name="ck_auth_session_external_identity",
+        ),
         sa.Index("ix_auth_session_user_active", "user_id", "revoked_at", "expires_at"),
+        sa.Index("ix_auth_session_external_subject", "external_issuer", "external_subject"),
+        sa.Index("ix_auth_session_external_sid", "external_issuer", "external_sid"),
+    )
+
+
+class OidcSessionFence(SaasBase):
+    """Hashed identity/session locks and immutable logout-event deduplication."""
+
+    __tablename__ = "saas_oidc_session_fences"
+
+    provider: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    issuer: Mapped[str] = mapped_column(sa.String(512), primary_key=True)
+    kind: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    key_hash: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    logout_issued_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    event_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+    )
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "kind IN ('subject', 'subject_no_sid', 'sid', 'event')", name="ck_oidc_fence_kind"
+        ),
+        sa.CheckConstraint("length(key_hash) = 64", name="ck_oidc_fence_key_hash"),
+        sa.CheckConstraint(
+            "event_hash IS NULL OR (kind = 'event' AND length(event_hash) = 64)",
+            name="ck_oidc_fence_event_hash",
+        ),
+        sa.CheckConstraint(
+            "length(provider) > 0 AND length(issuer) > 0", name="ck_oidc_fence_provider"
+        ),
     )
 
 
