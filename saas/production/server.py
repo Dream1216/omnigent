@@ -52,6 +52,7 @@ from saas.control_plane.http_auth import (
 )
 from saas.control_plane.identity import IdentityManagementService, PasswordCredentialService
 from saas.control_plane.lifecycle import MembershipLifecycleService
+from saas.control_plane.oidc import OidcAuthorizationService
 from saas.control_plane.public_api import PublicApiExecutionService
 from saas.control_plane.resolver import RuntimeCompatibilityPolicy, SqlAlchemyContextResolver
 from saas.production.onboarding import (
@@ -1282,6 +1283,16 @@ def build_production_saas_services(
     lifecycle = MembershipLifecycleService(sessions.authenticator)
     identities = IdentityManagementService(sessions.authenticator)
     passwords = PasswordCredentialService(sessions.authenticator)
+    oidc = None
+    if config.identity.provider is not None:
+        if config.identity.transaction_key is None:
+            raise ProductionServerCompositionError("OIDC transaction authority is missing")
+        oidc = OidcAuthorizationService(
+            sessions.authenticator,
+            identities,
+            {"casdoor": config.identity.provider},
+            transaction_encryption_key=config.identity.transaction_key,
+        )
     policy = RuntimeCompatibilityPolicy(
         runtime_type="omnigent",
         allowed_runtime_versions=frozenset({config.runtime_version}),
@@ -1353,6 +1364,7 @@ def build_production_saas_services(
         lifecycle=lifecycle,
         identities=identities,
         passwords=passwords,
+        oidc=oidc,
         context_resolver=context_resolver,
         cookie_config=SaasCookieConfig(
             name=config.cookie_name,

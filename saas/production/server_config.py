@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy.engine import URL, make_url
 
+from saas.control_plane.oidc import OidcProviderConfig
 from saas.delivery.client import DeliveryConfig
 from saas.production.service_bindings import (
     OPTIONAL_SERVICE_ROLE_PROFILES,
@@ -185,6 +186,15 @@ class ProductionServerSecrets:
 
 
 @dataclass(frozen=True, slots=True)
+class ProductionIdentityConfig:
+    """Pinned customer application and replica-shared transaction authority."""
+
+    mode: str = "legacy"
+    provider: OidcProviderConfig | None = field(default=None, repr=False)
+    transaction_key: bytes | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ProductionServerConfig:
     """Validated release, network, capability, and secret configuration."""
 
@@ -227,6 +237,7 @@ class ProductionServerConfig:
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
     )
+    identity: ProductionIdentityConfig = field(default_factory=ProductionIdentityConfig)
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
 
@@ -327,6 +338,71 @@ def _secret_bytes(environ: Mapping[str, str], name: str, *, minimum: int = 32) -
     if len(value) < minimum or b"\x00" in value:
         raise ProductionServerConfigError(f"{name} does not contain valid secret material")
     return value
+
+
+def load_production_identity_config(
+    environ: Mapping[str, str], *, public_origin: str
+) -> ProductionIdentityConfig:
+    """Load Casdoor without network discovery or credentials in environment values."""
+
+    mode = environ.get("OMNIGENT_SAAS_AUTH_MODE", "legacy")
+    if mode not in {"legacy", "dual", "casdoor"}:
+        raise ProductionServerConfigError("OMNIGENT_SAAS_AUTH_MODE is invalid")
+    config_name = "OMNIGENT_SAAS_CASDOOR_CONFIG_FILE"
+    secret_name = "OMNIGENT_SAAS_CASDOOR_CLIENT_SECRET_FILE"
+    key_name = "OMNIGENT_SAAS_OIDC_TRANSACTION_KEY_FILE"
+    configured = any(name in environ for name in (config_name, secret_name, key_name))
+    if not configured and mode == "legacy":
+        return ProductionIdentityConfig()
+    path = _absolute_regular_file(
+        _required(environ, config_name), name=config_name, owner_only=False
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or set(payload) != {
+            "issuer",
+            "application",
+            "organization",
+            "client_id",
+            "token_endpoint_auth_method",
+        }:
+            raise ValueError
+        if any(
+            not isinstance(value, str) or not value or value != value.strip()
+            for value in payload.values()
+        ):
+            raise ValueError
+        issuer = _https_origin(payload["issuer"])
+        application = payload["application"]
+        organization = payload["organization"]
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", application) or application == "app-built-in":
+            raise ValueError
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", organization) or organization == "built-in":
+            raise ValueError
+        secret = _secret_bytes(environ, secret_name, minimum=16).decode("utf-8")
+        key_path = _absolute_regular_file(
+            _required(environ, key_name), name=key_name, owner_only=True
+        )
+        transaction_key = key_path.read_bytes()
+        if len(transaction_key) != 32:
+            raise ValueError
+        provider = OidcProviderConfig(
+            provider="casdoor",
+            issuer=issuer,
+            authorization_endpoint=f"{issuer}/login/oauth/authorize",
+            signup_endpoint=f"{issuer}/signup/oauth/authorize",
+            token_endpoint=f"{issuer}/api/login/oauth/access_token",
+            jwks_uri=f"{issuer}/.well-known/{application}/jwks",
+            redirect_uri=f"{_https_origin(public_origin)}/saas/auth/oidc/casdoor/callback",
+            client_id=payload["client_id"],
+            client_secret=secret,
+            token_endpoint_auth_method=payload["token_endpoint_auth_method"],
+            allowed_identity_owners=(organization,),
+            ui_locale_parameter="language",
+        )
+    except (OSError, UnicodeError, ValueError) as error:
+        raise ProductionServerConfigError("Casdoor identity configuration is invalid") from error
+    return ProductionIdentityConfig(mode=mode, provider=provider, transaction_key=transaction_key)
 
 
 def _database_url(environ: Mapping[str, str], role: str) -> tuple[str, URL, Path]:
@@ -1167,6 +1243,9 @@ def load_production_server_config(
         preview_root_domain=preview_root_domain,
         preview_lease_seconds=preview_lease_seconds,
         delivery_config=delivery_config,
+        identity=load_production_identity_config(
+            source, public_origin=_https_origin(_required(source, "OMNIGENT_SAAS_PUBLIC_ORIGIN"))
+        ),
     )
 
 

@@ -1,0 +1,7 @@
+{
+  "issuer": "https://auth.jxhh.com",
+  "application": "stbz-next-web",
+  "organization": "stbz-users",
+  "client_id": "REPLACE_WITH_APPROVED_PUBLIC_CLIENT_ID",
+  "token_endpoint_auth_method": "client_secret_basic"
+}

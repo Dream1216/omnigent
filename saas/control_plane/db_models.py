@@ -31,7 +31,7 @@ TENANT_ROLES = (
 SPACE_ROLES = ("owner", "admin", "operator", "member", "viewer")
 IDENTITY_CONNECTION_STATUSES = ("active", "revoked")
 OIDC_LOGIN_TRANSACTION_STATUSES = ("pending", "consumed", "failed")
-OIDC_LOGIN_PURPOSES = ("login", "link")
+OIDC_LOGIN_PURPOSES = ("login", "signup", "link")
 IDENTITY_CONFLICT_STATUSES = ("pending", "approved", "rejected")
 IDENTITY_CONFLICT_PLATFORM_REVIEW_STATUSES = ("unreviewed", "assigned", "blocked")
 INVITATION_STATUSES = ("pending", "accepted", "revoked", "expired")
@@ -223,6 +223,12 @@ class OidcLoginTransaction(SaasBase):
     nonce_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     code_verifier_ciphertext: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
     purpose: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    return_to: Mapped[str] = mapped_column(
+        sa.String(2048), nullable=False, default="/", server_default="/"
+    )
+    ui_locale: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="zh-CN", server_default="zh-CN"
+    )
     target_user_id: Mapped[UUID | None] = mapped_column(
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
@@ -253,7 +259,7 @@ class OidcLoginTransaction(SaasBase):
             "length(code_verifier_ciphertext) > 0", name="ck_oidc_login_verifier_nonempty"
         ),
         sa.CheckConstraint(
-            "(purpose = 'login' AND target_user_id IS NULL "
+            "(purpose IN ('login', 'signup') AND target_user_id IS NULL "
             "AND target_security_version IS NULL) OR "
             "(purpose = 'link' AND target_user_id IS NOT NULL "
             "AND target_security_version > 0)",

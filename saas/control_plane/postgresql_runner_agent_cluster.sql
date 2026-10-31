@@ -52,11 +52,11 @@ BEGIN
     END IF;
     EXECUTE 'SELECT version_num FROM public.saas_alembic_version'
     INTO STRICT schema_head;
-    IF schema_head NOT IN ('p0s000000015', 'lm2r00000001', 'lm2s00000001', 'lm2t00000001') THEN
+    IF schema_head NOT IN ('p0s000000015', 'lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'cd1a00000001') THEN
         RAISE EXCEPTION
             'Runner cluster admission rejected: P0S10 authority is unavailable';
     END IF;
-    IF schema_head IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001') THEN
+    IF schema_head IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'cd1a00000001') THEN
         api_signatures := api_signatures || ARRAY[
             'saas_interactive_recovery_owner_v1(uuid,bigint,uuid,bigint,jsonb)'
         ];
@@ -235,7 +235,7 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) TO
 DO $$
 BEGIN
     IF (SELECT version_num FROM public.saas_alembic_version)
-        IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001') THEN
+        IN ('lm2r00000001', 'lm2s00000001', 'lm2t00000001', 'cd1a00000001') THEN
         GRANT EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint)
             TO saas_platform_app;
         GRANT EXECUTE ON FUNCTION pg_catalog.pg_try_advisory_xact_lock(bigint)

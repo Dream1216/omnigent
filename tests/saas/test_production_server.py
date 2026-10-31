@@ -562,6 +562,57 @@ def test_runtime_database_is_a_mandatory_readiness_dependency(tmp_path: Path) ->
         sessions.close()
 
 
+def test_production_composes_pinned_casdoor_without_network_discovery(tmp_path: Path) -> None:
+    from saas.control_plane import SaasBase
+    from saas.control_plane.oidc import OidcProviderConfig
+    from saas.production.server_config import ProductionIdentityConfig
+
+    sessions = _sessions()
+    auth_engine = sa.create_engine(f"sqlite:///{tmp_path / 'identity.sqlite'}")
+    SaasBase.metadata.create_all(auth_engine)
+    sessions = replace(
+        sessions,
+        authenticator=sessionmaker(auth_engine, expire_on_commit=False),
+        _engines=(*sessions._engines, auth_engine),
+    )
+    config = replace(
+        _config(tmp_path),
+        identity=ProductionIdentityConfig(
+            mode="dual",
+            provider=OidcProviderConfig(
+                provider="casdoor",
+                issuer="https://auth.example.test",
+                authorization_endpoint="https://auth.example.test/login/oauth/authorize",
+                signup_endpoint="https://auth.example.test/signup/oauth/authorize",
+                token_endpoint="https://auth.example.test/api/login/oauth/access_token",
+                jwks_uri="https://auth.example.test/.well-known/stbz-next-web/jwks",
+                client_id="public-client",
+                client_secret="isolated-test-secret",
+                redirect_uri="https://next.example.test/saas/auth/oidc/casdoor/callback",
+                allowed_identity_owners=("stbz-users",),
+            ),
+            transaction_key=b"t" * 32,
+        ),
+    )
+    try:
+        services = build_production_saas_services(config, sessions)
+        app = _fake_official_app(integration=services.integration)
+        with TestClient(app, base_url="https://next.example.test") as client:
+            response = client.get(
+                "/saas/auth/oidc/casdoor/start",
+                params={"intent": "signup"},
+                follow_redirects=False,
+            )
+            assert response.status_code == 302
+            assert response.headers["location"].startswith(
+                "https://auth.example.test/signup/oauth/authorize?"
+            )
+            assert "isolated-test-secret" not in response.headers["location"]
+        services.close()
+    finally:
+        sessions.close()
+
+
 def test_enterprise_and_billing_capabilities_mount_reviewed_services_only(
     tmp_path: Path,
 ) -> None:

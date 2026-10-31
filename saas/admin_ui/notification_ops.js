@@ -36,7 +36,9 @@
     const headers = { Accept: "application/json" };
     if (options.body) headers["Content-Type"] = "application/json";
     if (method !== "GET") {
-      headers["X-CSRF-Token"] = sessionStorage.getItem(csrfKey) || "";
+      headers["X-CSRF-Token"] = realm === "staff"
+        ? sessionStorage.getItem(csrfKey) || ""
+        : window.OmnigentSaasSession.read();
       if (options.idempotent !== false) headers["Idempotency-Key"] = key("notification-ui");
     }
     const response = await fetch(`${base}${path}`, {

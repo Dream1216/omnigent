@@ -32,7 +32,7 @@
     rolling_back: "回滚中",
     rolled_back: "已回滚",
   };
-  const csrf = () => sessionStorage.getItem("omnigent.saas.csrf") || "";
+  const csrf = () => window.OmnigentSaasSession.read();
   const short = (id) => (id || "—").slice(0, 12);
   const date = (value) =>
     new Date(value).toLocaleString("zh-CN", { hour12: false });
@@ -466,7 +466,7 @@
         }),
       });
       $("password").value = "";
-      sessionStorage.setItem("omnigent.saas.csrf", result.csrf_token);
+      window.OmnigentSaasSession.write(result.csrf_token);
       message("");
       await load();
     });

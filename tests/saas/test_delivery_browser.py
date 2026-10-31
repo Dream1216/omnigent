@@ -47,6 +47,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         elif self.path == "/saas/delivery/assets/delivery.js":
             self.send(200, (ROOT / "delivery.js").read_bytes(), "text/javascript")
+        elif self.path == "/saas/auth/assets/session.js":
+            self.send(200, (ROOT / "browser_session.js").read_bytes(), "text/javascript")
         elif self.path == "/saas/delivery/assets/delivery.css":
             self.send(200, (ROOT / "delivery.css").read_bytes(), "text/css")
         elif self.path == "/saas/delivery/projects":

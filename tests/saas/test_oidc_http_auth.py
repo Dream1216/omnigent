@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import secrets
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import cast
@@ -64,6 +64,7 @@ class _FakeOidcProvider:
         ]
         self._key_index = 0
         self._codes: dict[str, _AuthorizationCode] = {}
+        self.token_auth_method = "client_secret_basic"
         self.token_exchange_count = 0
         self.jwks_request_count = 0
 
@@ -125,9 +126,17 @@ class _FakeOidcProvider:
         expected_basic = (
             "Basic " + base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
         )
-        if request.headers.get("authorization") != expected_basic:
-            return httpx.Response(401)
         form = parse_qs(request.content.decode())
+        if self.token_auth_method == "client_secret_basic":
+            if request.headers.get("authorization") != expected_basic:
+                return httpx.Response(401)
+            assert "client_id" not in form and "client_secret" not in form
+        else:
+            assert "authorization" not in request.headers
+            if form.get("client_id") != [_CLIENT_ID] or form.get("client_secret") != [
+                _CLIENT_SECRET
+            ]:
+                return httpx.Response(401)
         code = form.get("code", [""])[0]
         pending = self._codes.pop(code, None)
         if pending is None:
@@ -139,7 +148,6 @@ class _FakeOidcProvider:
         if (
             actual_challenge != pending.code_challenge
             or form.get("grant_type") != ["authorization_code"]
-            or form.get("client_id") != [_CLIENT_ID]
             or form.get("redirect_uri") != [_REDIRECT_URI]
         ):
             return httpx.Response(400)
@@ -156,6 +164,8 @@ class _FakeOidcProvider:
             "email": pending.email,
             "email_verified": True,
             "name": pending.subject,
+            "auth_time": int(now.timestamp()),
+            "owner": "stbz-users",
         }
         claims.update(pending.claim_overrides)
         if pending.algorithm == "RS256":
@@ -184,6 +194,8 @@ class _Harness:
     identities: IdentityManagementService
     passwords: PasswordCredentialService
     engine: Engine
+    oidc: OidcAuthorizationService
+    config: OidcProviderConfig
 
 
 @pytest.fixture
@@ -208,6 +220,8 @@ def oidc_harness() -> Iterator[_Harness]:
         client_id=_CLIENT_ID,
         client_secret=_CLIENT_SECRET,
         redirect_uri=_REDIRECT_URI,
+        signup_endpoint=f"{_ISSUER}/signup/oauth/authorize",
+        allowed_identity_owners=("stbz-users",),
     )
     oidc = OidcAuthorizationService(
         sessions,
@@ -238,9 +252,13 @@ def oidc_harness() -> Iterator[_Harness]:
     app.include_router(router, prefix=prefix, tags=tags)
     integration.install_middleware(app)
     with TestClient(app, base_url="https://testserver") as client:
-        yield _Harness(client, provider, sessions, identities, passwords, engine)
+        yield _Harness(client, provider, sessions, identities, passwords, engine, oidc, config)
     SaasBase.metadata.drop_all(engine)
     engine.dispose()
+
+
+def _cookie_name(state: str) -> str:
+    return "__Host-omnigent_saas_session_oidc_" + sha256(state.encode()).hexdigest()[:24]
 
 
 def _start(
@@ -250,13 +268,21 @@ def _start(
     email: str,
     claim_overrides: dict[str, object] | None = None,
     algorithm: str = "RS256",
+    intent: str = "login",
+    return_to: str = "/",
+    ui_locale: str = "zh-CN",
 ) -> tuple[dict[str, str], str]:
-    response = harness.client.get("/saas/auth/oidc/test/start", follow_redirects=False)
+    response = harness.client.get(
+        "/saas/auth/oidc/test/start",
+        params={"intent": intent, "return_to": return_to, "ui_locale": ui_locale},
+        follow_redirects=False,
+    )
     assert response.status_code == 302
     set_cookie = response.headers["set-cookie"]
-    assert "__Host-omnigent_saas_session_oidc=" in set_cookie
+    assert "__Host-omnigent_saas_session_oidc_" in set_cookie
     assert "HttpOnly" in set_cookie and "Secure" in set_cookie and "SameSite=lax" in set_cookie
     location = response.headers["location"]
+    state = parse_qs(urlsplit(location).query)["state"][0]
     return (
         harness.provider.authorize(
             location,
@@ -265,7 +291,7 @@ def _start(
             claim_overrides=claim_overrides,
             algorithm=algorithm,
         ),
-        cast(str, harness.client.cookies.get("__Host-omnigent_saas_session_oidc")),
+        cast(str, harness.client.cookies.get(_cookie_name(state))),
     )
 
 
@@ -278,10 +304,10 @@ def test_oidc_http_cookie_login_is_one_time_pkce_bound_and_jwks_rotates(
     assert completed.json()["purpose"] == "login"
     assert completed.json()["csrf_token"]
     assert oidc_harness.client.cookies.get("__Host-omnigent_saas_session")
-    assert oidc_harness.client.cookies.get("__Host-omnigent_saas_session_oidc") is None
+    assert oidc_harness.client.cookies.get(_cookie_name(callback["state"])) is None
 
     oidc_harness.client.cookies.set(
-        "__Host-omnigent_saas_session_oidc", browser_binding, domain="testserver.local", path="/"
+        _cookie_name(callback["state"]), browser_binding, domain="testserver.local", path="/"
     )
     replay = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback)
     assert replay.status_code == 400
@@ -302,7 +328,7 @@ def test_oidc_callback_rejects_wrong_browser_binding_without_exchanging_code(
         oidc_harness, subject="binding-user", email="binding@example.com"
     )
     oidc_harness.client.cookies.set(
-        "__Host-omnigent_saas_session_oidc",
+        _cookie_name(callback["state"]),
         "wrong-browser-binding",
         domain="testserver.local",
         path="/",
@@ -313,7 +339,7 @@ def test_oidc_callback_rejects_wrong_browser_binding_without_exchanging_code(
     assert oidc_harness.provider.token_exchange_count == 0
 
     oidc_harness.client.cookies.set(
-        "__Host-omnigent_saas_session_oidc",
+        _cookie_name(callback["state"]),
         browser_binding,
         domain="testserver.local",
         path="/",
@@ -438,3 +464,225 @@ def test_authenticated_oidc_link_flow_binds_target_security_version(
     assert linked.status_code == 200
     assert linked.json()["purpose"] == "link"
     assert len(oidc_harness.identities.list_identities(UUID(user_id))) == 2
+
+
+def test_signup_target_and_locale_survive_a_different_replica(oidc_harness: _Harness) -> None:
+    from saas.control_plane.db_models import OidcLoginTransaction
+
+    callback, binding = _start(
+        oidc_harness,
+        subject="signup-user",
+        email="signup@example.com",
+        intent="signup",
+        return_to="/projects?view=recent",
+        ui_locale="en-US",
+    )
+    with oidc_harness.sessions() as db:
+        transaction = db.execute(sa.select(OidcLoginTransaction)).scalar_one()
+        assert transaction.purpose == "signup"
+        assert transaction.return_to == "/projects?view=recent"
+        assert transaction.ui_locale == "en-US"
+    replica = OidcAuthorizationService(
+        oidc_harness.sessions,
+        oidc_harness.identities,
+        {"test": oidc_harness.config},
+        transaction_encryption_key=b"o" * 32,
+        http_transport=cast(
+            httpx.AsyncBaseTransport, httpx.MockTransport(oidc_harness.provider.handle)
+        ),
+    )
+    import asyncio
+
+    completed = asyncio.run(replica.complete("test", browser_binding=binding, **callback))
+    assert completed.purpose == "signup"
+    assert completed.return_to == "/projects?view=recent"
+    assert completed.ui_locale == "en-US"
+
+
+@pytest.mark.parametrize(
+    "return_to",
+    [
+        "https://attacker.test",
+        "//attacker.test",
+        "/%2fattacker.test",
+        "/%252fattacker.test",
+        "/\\attacker.test",
+        "/%0aLocation:bad",
+        "/saas/auth/oidc/test/start",
+        "/./saas/auth/oidc/test/start",
+        "/saas/auth",
+        "/signup",
+        " /",
+    ],
+)
+def test_start_rejects_unsafe_targets_before_persisting(
+    oidc_harness: _Harness, return_to: str
+) -> None:
+    from saas.control_plane.db_models import OidcLoginTransaction
+
+    response = oidc_harness.client.get(
+        "/saas/auth/oidc/test/start", params={"return_to": return_to}, follow_redirects=False
+    )
+    assert response.status_code == 400
+    assert "set-cookie" not in response.headers
+    with oidc_harness.sessions() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(OidcLoginTransaction)) == 0
+
+
+def test_two_tabs_keep_independent_browser_bindings(oidc_harness: _Harness) -> None:
+    first, _ = _start(oidc_harness, subject="tabs", email="tabs@example.com")
+    second, _ = _start(oidc_harness, subject="tabs", email="tabs@example.com")
+    assert oidc_harness.client.cookies.get(_cookie_name(first["state"]))
+    assert oidc_harness.client.cookies.get(_cookie_name(second["state"]))
+    a = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=first)
+    assert a.status_code == 200
+    assert oidc_harness.client.cookies.get(_cookie_name(second["state"]))
+    b = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=second)
+    assert b.status_code == 200
+    assert a.json()["user_id"] == b.json()["user_id"]
+
+
+@pytest.mark.parametrize("owner", ["built-in", "another-organization", None])
+def test_wrong_casdoor_owner_never_creates_a_product_identity(
+    oidc_harness: _Harness, owner: str | None
+) -> None:
+    from saas.control_plane.db_models import GlobalUser
+
+    callback, _ = _start(
+        oidc_harness,
+        subject="wrong-owner",
+        email="wrong-owner@example.com",
+        claim_overrides={"owner": owner, "isAdmin": True, "isGlobalAdmin": True},
+    )
+    response = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback)
+    assert response.status_code == 400
+    with oidc_harness.sessions() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(GlobalUser)) == 0
+
+
+def test_explicit_post_client_authentication_has_no_basic_header(oidc_harness: _Harness) -> None:
+    import asyncio
+
+    oidc_harness.provider.token_auth_method = "client_secret_post"
+    callback, binding = _start(oidc_harness, subject="post-client", email="post@example.com")
+    replica = OidcAuthorizationService(
+        oidc_harness.sessions,
+        oidc_harness.identities,
+        {"test": replace(oidc_harness.config, token_endpoint_auth_method="client_secret_post")},
+        transaction_encryption_key=b"o" * 32,
+        http_transport=cast(
+            httpx.AsyncBaseTransport, httpx.MockTransport(oidc_harness.provider.handle)
+        ),
+    )
+    result = asyncio.run(replica.complete("test", browser_binding=binding, **callback))
+    assert result.user_id is not None
+    assert oidc_harness.provider.token_exchange_count == 1
+
+
+def test_browser_callback_delivers_csrf_without_provider_tokens(oidc_harness: _Harness) -> None:
+    callback, _ = _start(
+        oidc_harness, subject="browser", email="browser@example.com", ui_locale="en-US"
+    )
+    response = oidc_harness.client.get(
+        "/saas/auth/oidc/test/callback", params=callback, headers={"Accept": "text/html"}
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert 'lang="en-US"' in response.text
+    assert '"return_to": "/setup"' in response.text
+    assert '"csrf_token": "' in response.text
+    assert "id_token" not in response.text and "access_token" not in response.text
+    assert "client-secret" not in response.text
+    script = oidc_harness.client.get("/saas/auth/assets/oidc-complete.js")
+    assert script.status_code == 200
+    assert "OmnigentSaasSession.write" in script.text
+    session_script = oidc_harness.client.get("/saas/auth/assets/session.js")
+    assert session_script.status_code == 200
+    assert "localStorage" in session_script.text and "sessionStorage" in session_script.text
+    bootstrap = oidc_harness.client.get("/saas/auth/bootstrap")
+    assert bootstrap.status_code == 200
+    assert bootstrap.json()["authenticated"] is True
+    assert bootstrap.json()["next"] == "/setup"
+    assert bootstrap.headers["cache-control"] == "private, no-store"
+
+
+def test_unauthenticated_bootstrap_does_not_cache_user_state(oidc_harness: _Harness) -> None:
+    response = oidc_harness.client.get("/saas/auth/bootstrap")
+    assert response.status_code == 200
+    assert response.json() == {
+        "authenticated": False,
+        "user_id": None,
+        "scopes": [],
+        "next": "/saas/login",
+    }
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize("locale,expected", [("zh-CN", "zh"), ("en-US", "en")])
+def test_casdoor_uses_its_supported_language_parameter(
+    oidc_harness: _Harness, locale: str, expected: str
+) -> None:
+    oidc = OidcAuthorizationService(
+        oidc_harness.sessions,
+        oidc_harness.identities,
+        {"test": replace(oidc_harness.config, ui_locale_parameter="language")},
+        transaction_encryption_key=b"o" * 32,
+    )
+    started = oidc.begin("test", purpose="signup", ui_locale=locale)
+    query = parse_qs(urlsplit(started.authorization_url).query)
+    assert query["language"] == [expected]
+    assert "ui_locales" not in query
+    assert urlsplit(started.authorization_url).path == "/signup/oauth/authorize"
+
+
+@pytest.mark.parametrize("auth_time", [None, True, 1, 4_102_444_800])
+def test_link_requires_a_fresh_identity_authentication_time(
+    oidc_harness: _Harness, auth_time: object
+) -> None:
+    callback, _ = _start(oidc_harness, subject="link-timing", email="link-timing@example.com")
+    login = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback).json()
+    response = oidc_harness.client.post(
+        "/saas/auth/oidc/test/link/start",
+        headers={"Origin": "https://testserver", "X-CSRF-Token": login["csrf_token"]},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["prompt"] == ["login"] and query["max_age"] == ["0"]
+    callback = oidc_harness.provider.authorize(
+        response.headers["location"],
+        subject="new-link",
+        email="new-link@example.com",
+        claim_overrides={"auth_time": auth_time},
+    )
+    rejected = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback)
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "oidc_recent_authentication_required"
+    assert len(oidc_harness.identities.list_identities(UUID(login["user_id"]))) == 1
+
+
+def test_link_cannot_outlive_the_target_security_version(oidc_harness: _Harness) -> None:
+    from saas.control_plane.db_models import GlobalUser
+
+    callback, _ = _start(oidc_harness, subject="link-version", email="link-version@example.com")
+    login = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback).json()
+    response = oidc_harness.client.post(
+        "/saas/auth/oidc/test/link/start",
+        headers={"Origin": "https://testserver", "X-CSRF-Token": login["csrf_token"]},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    callback = oidc_harness.provider.authorize(
+        response.headers["location"], subject="version-secondary", email="secondary@example.com"
+    )
+    with oidc_harness.sessions.begin() as db:
+        user = db.get(GlobalUser, UUID(login["user_id"]))
+        assert user is not None
+        user.security_version += 1
+    rejected = oidc_harness.client.get("/saas/auth/oidc/test/callback", params=callback)
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "authorization_snapshot_stale"
+    assert len(oidc_harness.identities.list_identities(UUID(login["user_id"]))) == 1

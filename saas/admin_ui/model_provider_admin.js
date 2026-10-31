@@ -1,7 +1,6 @@
 (() => {
   "use strict";
   const $ = (selector) => document.querySelector(selector);
-  const csrf = sessionStorage.getItem("omnigent.saas.csrf") || "";
   let current = null;
 
   function toast(message, tone = "info") {
@@ -22,6 +21,7 @@
       body = JSON.stringify(body);
     }
     if (method !== "GET" && method !== "HEAD") {
+      const csrf = window.OmnigentSaasSession.read();
       if (!csrf) throw new Error("登录会话缺少 CSRF，请退出后重新登录");
       headers.set("X-CSRF-Token", csrf);
     }

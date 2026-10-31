@@ -3,7 +3,7 @@
 
   const $ = (selector) => document.querySelector(selector);
   const state = {
-    csrf: sessionStorage.getItem("omnigent.saas.csrf") || "",
+    csrf: window.OmnigentSaasSession.read(),
     actorId: "",
     tenantId: "",
     spaceId: "",
@@ -63,6 +63,7 @@
   }
 
   async function api(path, options = {}) {
+    state.csrf = window.OmnigentSaasSession.read();
     const headers = new Headers(options.headers || {});
     if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     if (state.csrf && options.method && options.method !== "GET") headers.set("X-CSRF-Token", state.csrf);
@@ -128,7 +129,7 @@
     state.billingLedger = [];
     state.billingReconciliations = [];
     state.tenantRole = "";
-    sessionStorage.removeItem("omnigent.saas.csrf");
+    window.OmnigentSaasSession.clear();
     loginDeck.hidden = false;
     workspace.hidden = true;
     $("#logout-button").hidden = true;
@@ -1652,7 +1653,7 @@
         body: JSON.stringify({ email: $("#login-email").value, password: $("#login-password").value }),
       });
       state.csrf = result.csrf_token;
-      sessionStorage.setItem("omnigent.saas.csrf", state.csrf);
+      window.OmnigentSaasSession.write(state.csrf);
       message.textContent = "";
       setAuthenticated(result.user_id);
       await Promise.all([loadCatalog(), loadScopes()]);

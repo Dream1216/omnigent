@@ -8,11 +8,11 @@ import hmac
 import re
 import secrets
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Literal, cast
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import unquote, urlencode, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -33,6 +33,36 @@ from saas.control_plane.lifecycle import LifecycleError, ValidatedAuthSession
 
 _PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _MAX_TOKEN_RESPONSE_BYTES = 1_048_576
+
+
+def validate_oidc_return_to(value: str) -> str:
+    """Accept only an unambiguous local navigation target, never an auth loop."""
+
+    if not value or len(value) > 2048:
+        raise LifecycleError("oidc_return_to_invalid", "return target is invalid")
+    decoded = value
+    for _ in range(4):
+        if (
+            not decoded.startswith("/")
+            or decoded.startswith("//")
+            or "\\" in decoded
+            or any(ord(character) < 32 or ord(character) == 127 for character in decoded)
+        ):
+            raise LifecycleError("oidc_return_to_invalid", "return target is invalid")
+        parsed = urlsplit(decoded)
+        if (
+            parsed.scheme
+            or parsed.netloc
+            or parsed.path.rstrip("/") in {"/login", "/signup", "/saas/login", "/saas/auth"}
+            or any(part in {".", ".."} for part in parsed.path.split("/"))
+            or parsed.path.startswith("/saas/auth/")
+        ):
+            raise LifecycleError("oidc_return_to_invalid", "return target is invalid")
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            return value
+        decoded = next_value
+    raise LifecycleError("oidc_return_to_invalid", "return target is invalid")
 
 
 def _utcnow() -> datetime:
@@ -83,7 +113,7 @@ class OidcProviderConfig:
     token_endpoint: str
     jwks_uri: str
     client_id: str
-    client_secret: str
+    client_secret: str = field(repr=False)
     redirect_uri: str
     allowed_algorithms: tuple[str, ...] = ("RS256",)
     scopes: tuple[str, ...] = ("openid", "profile", "email")
@@ -91,6 +121,12 @@ class OidcProviderConfig:
     jwks_ttl: timedelta = timedelta(minutes=5)
     clock_skew: timedelta = timedelta(seconds=30)
     allow_insecure_loopback: bool = False
+    token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"] = (
+        "client_secret_basic"
+    )
+    signup_endpoint: str | None = None
+    allowed_identity_owners: tuple[str, ...] = ()
+    ui_locale_parameter: Literal["ui_locales", "language"] = "ui_locales"
 
     def __post_init__(self) -> None:
         if not _PROVIDER_NAME.fullmatch(self.provider):
@@ -113,6 +149,23 @@ class OidcProviderConfig:
             )
         if not self.client_id or not self.client_secret:
             raise ValueError("OIDC client credentials must be configured")
+        if self.token_endpoint_auth_method not in {"client_secret_basic", "client_secret_post"}:
+            raise ValueError("OIDC token endpoint authentication method is invalid")
+        if self.signup_endpoint is not None:
+            _validate_endpoint(
+                self.signup_endpoint,
+                allow_insecure_loopback=self.allow_insecure_loopback,
+                name="signup",
+            )
+            if (
+                urlsplit(self.signup_endpoint).netloc
+                != urlsplit(self.authorization_endpoint).netloc
+            ):
+                raise ValueError("OIDC signup and authorization endpoints must share an origin")
+        if any(not owner or owner == "built-in" for owner in self.allowed_identity_owners):
+            raise ValueError("OIDC customer identity owner allowlist is invalid")
+        if self.ui_locale_parameter not in {"ui_locales", "language"}:
+            raise ValueError("OIDC language parameter is invalid")
         if not self.allowed_algorithms or any(
             algorithm not in {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
             for algorithm in self.allowed_algorithms
@@ -136,6 +189,7 @@ class OidcAuthorizationStarted:
     authorization_url: str
     browser_binding: str
     expires_at: datetime
+    state: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +199,9 @@ class OidcAuthorizationCompleted:
     transaction_id: UUID
     user_id: UUID | None
     conflict_id: UUID | None
-    purpose: Literal["login", "link"]
+    purpose: Literal["login", "signup", "link"]
+    return_to: str
+    ui_locale: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,9 +210,12 @@ class _ConsumedTransaction:
     provider: str
     nonce_hash: str
     code_verifier: str
-    purpose: Literal["login", "link"]
+    purpose: Literal["login", "signup", "link"]
     target_user_id: UUID | None
     target_security_version: int | None
+    return_to: str
+    ui_locale: str
+    created_at: datetime
 
 
 class OidcAuthorizationService:
@@ -191,12 +250,19 @@ class OidcAuthorizationService:
         self,
         provider: str,
         *,
-        purpose: Literal["login", "link"] = "login",
+        purpose: Literal["login", "signup", "link"] = "login",
         target_session: ValidatedAuthSession | None = None,
+        return_to: str = "/",
+        ui_locale: str = "zh-CN",
     ) -> OidcAuthorizationStarted:
         """Persist state, nonce, encrypted verifier, and browser binding before redirect."""
 
         config = self._provider(provider)
+        return_to = validate_oidc_return_to(return_to)
+        if ui_locale not in {"zh-CN", "en-US"}:
+            raise LifecycleError("oidc_locale_invalid", "OIDC language is unsupported")
+        if purpose == "signup" and config.signup_endpoint is None:
+            raise LifecycleError("oidc_signup_unavailable", "OIDC signup is not configured")
         issued_at = self._now()
         if purpose == "link":
             if target_session is None:
@@ -209,7 +275,7 @@ class OidcAuthorizationService:
                 raise LifecycleError(
                     "recent_authentication_required", "recent authentication is required"
                 )
-        elif purpose != "login":
+        elif purpose not in {"login", "signup"}:
             raise LifecycleError("oidc_purpose_invalid", "OIDC purpose is invalid")
 
         transaction_id = uuid4()
@@ -244,6 +310,9 @@ class OidcAuthorizationService:
                     nonce_hash=_digest(raw_nonce),
                     code_verifier_ciphertext=encrypted_verifier,
                     purpose=purpose,
+                    return_to=return_to,
+                    ui_locale=ui_locale,
+                    created_at=issued_at,
                     target_user_id=target_session.user_id if target_session else None,
                     target_security_version=(
                         target_session.security_version if target_session else None
@@ -254,23 +323,31 @@ class OidcAuthorizationService:
             )
 
         code_challenge = _b64url(sha256(code_verifier.encode("ascii")).digest())
-        query = urlencode(
-            {
-                "response_type": "code",
-                "client_id": config.client_id,
-                "redirect_uri": config.redirect_uri,
-                "scope": " ".join(config.scopes),
-                "state": raw_state,
-                "nonce": raw_nonce,
-                "code_challenge": code_challenge,
-                "code_challenge_method": "S256",
-            }
-        )
+        parameters = {
+            "response_type": "code",
+            "client_id": config.client_id,
+            "redirect_uri": config.redirect_uri,
+            "scope": " ".join(config.scopes),
+            "state": raw_state,
+            "nonce": raw_nonce,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            config.ui_locale_parameter: (
+                {"zh-CN": "zh", "en-US": "en"}[ui_locale]
+                if config.ui_locale_parameter == "language"
+                else ui_locale
+            ),
+        }
+        if purpose == "link":
+            parameters.update({"prompt": "login", "max_age": "0"})
+        query = urlencode(parameters)
+        endpoint = config.signup_endpoint if purpose == "signup" else config.authorization_endpoint
         return OidcAuthorizationStarted(
             transaction_id=transaction_id,
-            authorization_url=f"{config.authorization_endpoint}?{query}",
+            authorization_url=f"{endpoint}?{query}",
             browser_binding=browser_binding,
             expires_at=expires_at,
+            state=raw_state,
         )
 
     async def complete(
@@ -304,6 +381,18 @@ class OidcAuthorizationService:
                 display_name=claims.get("name") if isinstance(claims.get("name"), str) else None,
             )
             if transaction.purpose == "link":
+                auth_time = claims.get("auth_time")
+                if (
+                    isinstance(auth_time, bool)
+                    or not isinstance(auth_time, int)
+                    or auth_time
+                    < transaction.created_at.timestamp() - config.clock_skew.total_seconds()
+                    or auth_time > self._now().timestamp() + config.clock_skew.total_seconds()
+                ):
+                    raise LifecycleError(
+                        "oidc_recent_authentication_required",
+                        "recent identity authentication is required",
+                    )
                 self._require_link_target_current(transaction)
                 user_id = cast(UUID, transaction.target_user_id)
                 self._identities.link_identity(
@@ -324,6 +413,8 @@ class OidcAuthorizationService:
             user_id=resolution.user_id,
             conflict_id=resolution.conflict_id,
             purpose=transaction.purpose,
+            return_to=transaction.return_to,
+            ui_locale=transaction.ui_locale,
         )
 
     def abort(
@@ -372,9 +463,12 @@ class OidcAuthorizationService:
                 provider=transaction.provider,
                 nonce_hash=transaction.nonce_hash,
                 code_verifier=code_verifier,
-                purpose=cast(Literal["login", "link"], transaction.purpose),
+                purpose=cast(Literal["login", "signup", "link"], transaction.purpose),
                 target_user_id=transaction.target_user_id,
                 target_security_version=transaction.target_security_version,
+                return_to=transaction.return_to,
+                ui_locale=transaction.ui_locale,
+                created_at=_comparable_time(transaction.created_at),
             )
 
     def _decrypt_verifier(self, encoded: str, state_hash: str) -> str:
@@ -400,6 +494,17 @@ class OidcAuthorizationService:
     async def _exchange_code(
         self, config: OidcProviderConfig, code: str, code_verifier: str
     ) -> str:
+        form = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": config.redirect_uri,
+            "code_verifier": code_verifier,
+        }
+        auth = None
+        if config.token_endpoint_auth_method == "client_secret_basic":
+            auth = httpx.BasicAuth(config.client_id, config.client_secret)
+        else:
+            form.update({"client_id": config.client_id, "client_secret": config.client_secret})
         try:
             async with httpx.AsyncClient(
                 transport=self._http_transport,
@@ -408,14 +513,8 @@ class OidcAuthorizationService:
             ) as client:
                 response = await client.post(
                     config.token_endpoint,
-                    data={
-                        "grant_type": "authorization_code",
-                        "code": code,
-                        "redirect_uri": config.redirect_uri,
-                        "client_id": config.client_id,
-                        "code_verifier": code_verifier,
-                    },
-                    auth=httpx.BasicAuth(config.client_id, config.client_secret),
+                    data=form,
+                    auth=auth,
                     headers={"Accept": "application/json"},
                 )
         except httpx.HTTPError as error:
@@ -445,6 +544,11 @@ class OidcAuthorizationService:
                 return self._decode_id_token(config, id_token, keys)
             except (InvalidTokenError, LifecycleError, ValueError) as error:
                 last_error = error
+        if (
+            isinstance(last_error, LifecycleError)
+            and last_error.code == "oidc_dependency_unavailable"
+        ):
+            raise last_error
         raise LifecycleError(
             "oidc_id_token_invalid", "OIDC ID Token verification failed"
         ) from last_error
@@ -541,6 +645,13 @@ class OidcAuthorizationService:
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject or len(subject) > 512:
             raise LifecycleError("oidc_id_token_invalid", "OIDC subject is invalid")
+        if (
+            config.allowed_identity_owners
+            and claims.get("owner") not in config.allowed_identity_owners
+        ):
+            raise LifecycleError(
+                "oidc_identity_owner_invalid", "OIDC identity organization is forbidden"
+            )
         return cast(dict[str, object], claims)
 
     def _require_link_target_current(self, transaction: _ConsumedTransaction) -> None:

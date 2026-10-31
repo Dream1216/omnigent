@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from hashlib import sha256
+from importlib import resources
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
@@ -47,6 +49,7 @@ from saas.control_plane.lifecycle import (
     ValidatedAuthSession,
 )
 from saas.control_plane.oidc import OidcAuthorizationService
+from saas.control_plane.oidc_browser import completion_document, completion_script
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
 from saas.public_api_contract import ApiVersionPolicy
 
@@ -775,6 +778,12 @@ class SaasAuthContextMiddleware:
             return True
         if method == "GET" and path == "/saas/onboarding/catalog":
             return True
+        if method == "GET" and path in {
+            "/saas/auth/bootstrap",
+            "/saas/auth/assets/oidc-complete.js",
+            "/saas/auth/assets/session.js",
+        }:
+            return True
         if method == "POST":
             if path == "/saas/onboarding/registrations":
                 return True
@@ -1107,6 +1116,38 @@ def create_saas_auth_router(
             "user_id": str(principal.session.user_id),
         }
 
+    @router.get("/auth/bootstrap")
+    def auth_bootstrap(request: Request, response: Response) -> dict[str, object]:
+        response.headers["Cache-Control"] = "private, no-store"
+        principal = auth_provider.get_principal(request)
+        if principal is None:
+            return {"authenticated": False, "user_id": None, "scopes": [], "next": "/saas/login"}
+        scopes = context_resolver.list_available_scopes(actor_id=principal.session.user_id)
+        return {
+            "authenticated": True,
+            "user_id": str(principal.session.user_id),
+            "scopes": [
+                {
+                    "tenant_id": str(scope.tenant_id),
+                    "space_id": str(scope.space_id),
+                    "tenant_name": scope.tenant_name,
+                    "space_name": scope.space_name,
+                }
+                for scope in scopes
+            ],
+            "next": "/" if scopes else "/setup",
+        }
+
+    @router.get("/auth/assets/session.js")
+    def browser_session_script() -> Response:
+        return Response(
+            resources.files("saas.admin_ui")
+            .joinpath("browser_session.js")
+            .read_text(encoding="utf-8"),
+            media_type="application/javascript",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
+
     @router.get("/context/scopes")
     def list_context_scopes(
         request: Request,
@@ -1240,10 +1281,21 @@ def create_saas_auth_router(
 
     if oidc is not None:
 
+        @router.get("/auth/assets/oidc-complete.js")
+        def oidc_complete_script() -> Response:
+            return completion_script()
+
         @router.get("/auth/oidc/{provider}/start")
-        def start_oidc_login(provider: str) -> Response:
+        def start_oidc_login(
+            provider: str,
+            intent: Literal["login", "signup"] = "login",
+            return_to: str = "/",
+            ui_locale: str = "zh-CN",
+        ) -> Response:
             try:
-                started = oidc.begin(provider)
+                started = oidc.begin(
+                    provider, purpose=intent, return_to=return_to, ui_locale=ui_locale
+                )
             except LifecycleError as error:
                 raise _http_error(error, 400) from error
             response = RedirectResponse(started.authorization_url, status_code=302)
@@ -1252,17 +1304,24 @@ def create_saas_auth_router(
                 cookie_config,
                 started.browser_binding,
                 started.expires_at,
+                state=started.state,
             )
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
             return response
 
         @router.post("/auth/oidc/{provider}/link/start")
-        def start_oidc_link(provider: str, request: Request) -> Response:
+        def start_oidc_link(
+            provider: str, request: Request, return_to: str = "/", ui_locale: str = "zh-CN"
+        ) -> Response:
             principal = _require_principal(auth_provider, request)
             try:
                 started = oidc.begin(
                     provider,
                     purpose="link",
                     target_session=principal.session,
+                    return_to=return_to,
+                    ui_locale=ui_locale,
                 )
             except LifecycleError as error:
                 raise _http_error(error, 409) from error
@@ -1272,7 +1331,9 @@ def create_saas_auth_router(
                 cookie_config,
                 started.browser_binding,
                 started.expires_at,
+                state=started.state,
             )
+            response.headers["Cache-Control"] = "private, no-store"
             return response
 
         @router.get("/auth/oidc/{provider}/callback")
@@ -1283,7 +1344,8 @@ def create_saas_auth_router(
             state: str = "",
             error: str | None = None,
         ) -> Response:
-            browser_binding = request.cookies.get(cookie_config.oidc_transaction_cookie_name, "")
+            browser = "text/html" in request.headers.get("accept", "")
+            browser_binding = request.cookies.get(_oidc_cookie_name(cookie_config, state), "")
             try:
                 if error is not None:
                     oidc.abort(
@@ -1301,8 +1363,9 @@ def create_saas_auth_router(
                     browser_binding=browser_binding,
                 )
             except LifecycleError as lifecycle_error:
+                status_code = 503 if lifecycle_error.code == "oidc_dependency_unavailable" else 400
                 response = JSONResponse(
-                    status_code=400,
+                    status_code=status_code,
                     content={
                         "error": {
                             "code": lifecycle_error.code,
@@ -1310,7 +1373,13 @@ def create_saas_auth_router(
                         }
                     },
                 )
-                _clear_oidc_transaction_cookie(response, cookie_config)
+                if browser:
+                    response = completion_document(
+                        error_code=lifecycle_error.code, status_code=status_code
+                    )
+                response.headers["Cache-Control"] = "private, no-store"
+                response.headers["Referrer-Policy"] = "no-referrer"
+                _clear_oidc_transaction_cookie(response, cookie_config, state=state)
                 return response
 
             if completed.conflict_id is not None:
@@ -1324,7 +1393,14 @@ def create_saas_auth_router(
                         "identity_conflict_id": str(completed.conflict_id),
                     },
                 )
-                _clear_oidc_transaction_cookie(response, cookie_config)
+                if browser:
+                    response = completion_document(
+                        error_code="identity_confirmation_required",
+                        ui_locale=completed.ui_locale,
+                        status_code=409,
+                    )
+                response.headers["Cache-Control"] = "private, no-store"
+                _clear_oidc_transaction_cookie(response, cookie_config, state=state)
                 return response
 
             user_id = cast(UUID, completed.user_id)
@@ -1344,8 +1420,17 @@ def create_saas_auth_router(
                     "purpose": completed.purpose,
                 },
             )
+            if browser:
+                scopes = context_resolver.list_available_scopes(actor_id=user_id)
+                response = completion_document(
+                    csrf_token=issued.csrf_token,
+                    return_to=completed.return_to if scopes else "/setup",
+                    ui_locale=completed.ui_locale,
+                )
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
             _set_session_cookie(response, cookie_config, issued.token)
-            _clear_oidc_transaction_cookie(response, cookie_config)
+            _clear_oidc_transaction_cookie(response, cookie_config, state=state)
             return response
 
         @router.post("/auth/identity-conflicts/{conflict_id}")
@@ -1740,10 +1825,12 @@ def _set_oidc_transaction_cookie(
     cookie_config: SaasCookieConfig,
     browser_binding: str,
     expires_at: datetime,
+    *,
+    state: str,
 ) -> None:
     max_age = max(1, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
     response.set_cookie(
-        key=cookie_config.oidc_transaction_cookie_name,
+        key=_oidc_cookie_name(cookie_config, state),
         value=browser_binding,
         max_age=max_age,
         path="/",
@@ -1753,9 +1840,17 @@ def _set_oidc_transaction_cookie(
     )
 
 
-def _clear_oidc_transaction_cookie(response: Response, cookie_config: SaasCookieConfig) -> None:
+def _oidc_cookie_name(cookie_config: SaasCookieConfig, state: str) -> str:
+    return (
+        f"{cookie_config.oidc_transaction_cookie_name}_{sha256(state.encode()).hexdigest()[:24]}"
+    )
+
+
+def _clear_oidc_transaction_cookie(
+    response: Response, cookie_config: SaasCookieConfig, *, state: str
+) -> None:
     response.delete_cookie(
-        cookie_config.oidc_transaction_cookie_name,
+        _oidc_cookie_name(cookie_config, state),
         path="/",
         secure=cookie_config.secure,
         httponly=True,

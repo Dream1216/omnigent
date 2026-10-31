@@ -6,6 +6,7 @@ import threading
 import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from fastapi import FastAPI
+from fastapi.responses import Response
 from playwright.sync_api import Browser, BrowserContext, Page, expect, sync_playwright
 
 from saas.control_plane.http_auth import SaasPrincipal
@@ -162,6 +164,14 @@ def notification_operations_server(tmp_path: Path) -> Iterator[str]:
     notifications.delivery.raw_error = "secret-provider-stack"
 
     app = FastAPI()
+
+    @app.get("/saas/auth/assets/session.js")
+    def session_script() -> Response:
+        return Response(
+            resources.files("saas.admin_ui").joinpath("browser_session.js").read_text(),
+            media_type="application/javascript",
+        )
+
     app.include_router(
         create_notification_router(
             config=TenantNotificationHttpConfig(origin=origin),
