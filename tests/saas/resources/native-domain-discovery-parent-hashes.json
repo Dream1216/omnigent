@@ -249,6 +249,19 @@
     },
     "approved_functions": {
       "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185",
+      "inverse_fragments": [
+        {
+          "before": "_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n",
+          "after": "_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n    \"decode-uri-component@0.5.1\",\n"
+        },
+        {
+          "before": "        \"python-3.12=3.12.15-r3\",\n",
+          "after": "        \"python-3.12=3.12.16-r0\",\n"
+        }
+      ]
     }
   },
   "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",

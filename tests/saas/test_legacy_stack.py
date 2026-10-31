@@ -317,6 +317,9 @@ def complete_stack(tmp_path, monkeypatch):
         record["components"][role]["digest_pinned_image"] = primary[
             inventory[identifiers[0]]["image_role"]
         ]
+        if role == "runner":
+            for placement in record["components"][role]["placements"]:
+                placement["seccomp"]["image"] = record["components"][role]["digest_pinned_image"]
     return {
         "repo": tmp_path,
         "rows": rows,

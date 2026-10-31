@@ -494,6 +494,7 @@ items:
             app.kubernetes.io/name: omnigent-saas-runner-agent-a
             app.kubernetes.io/component: runner-agent
           annotations:
+            omnigent.io/runner-seccomp-profile-sha256: c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363
             omnigent.io/runner-recovery-artifact-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
             omnigent.io/runner-fleet-phase: admission
             omnigent.io/runner-database-fleet-namespace: replace-with-runner-fleet-namespace
@@ -523,6 +524,12 @@ items:
             omnigent.io/runner-repository-receipt-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
         spec:
           serviceAccountName: omnigent-saas-runtime
+          hostPID: false
+          shareProcessNamespace: false
+          runtimeClassName: omnigent-runner
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            omnigent.io/seccomp-profile-v3: c500aa5e6862ba7d
           automountServiceAccountToken: false
           terminationGracePeriodSeconds: 45
           affinity:
@@ -538,9 +545,9 @@ items:
             seccompProfile:
               type: RuntimeDefault
             runAsNonRoot: true
-            runAsUser: 10001
-            runAsGroup: 10001
-            fsGroup: 10001
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
             fsGroupChangePolicy: OnRootMismatch
           initContainers:
             - name: stage-runner-identity
@@ -578,7 +585,8 @@ items:
                   drop: ["ALL"]
                 readOnlyRootFilesystem: true
                 runAsNonRoot: true
-                runAsUser: 10001
+                runAsUser: 65532
+                runAsGroup: 65532
               volumeMounts:
                 - {name: runner-identity-source, mountPath: /source/identity, readOnly: true}
                 - {name: runner-database-source, mountPath: /source/runner-database, readOnly: true}
@@ -602,6 +610,7 @@ items:
                 - configMapRef:
                     name: omnigent-saas-release-replace-release12
               env:
+                - {name: OMNIGENT_HOST_SANDBOX_BACKEND, value: kubernetes}
                 - {name: OMNIGENT_SAAS_RUNNER_ID, value: replace-with-runner-a-uuid}
                 - {name: OMNIGENT_SAAS_RUNNER_CONNECTION_GENERATION, value: "1"}
                 - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_URI, value: s3://replace-with-production-bucket/omnigent/runtime-recovery/runner/replace-with-runner-a-uuid/generation/1}
@@ -649,12 +658,16 @@ items:
                 requests: {cpu: 500m, memory: 512Mi}
                 limits: {cpu: "1", memory: 512Mi}
               securityContext:
+                seccompProfile:
+                  type: Localhost
+                  localhostProfile: omnigent/bubblewrap-v3.json
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
                 readOnlyRootFilesystem: true
                 runAsNonRoot: true
-                runAsUser: 10001
+                runAsUser: 65532
+                runAsGroup: 65532
               volumeMounts:
                 - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
                 - {name: repository-state, mountPath: /repository}
@@ -728,6 +741,7 @@ items:
             app.kubernetes.io/name: omnigent-saas-runner-agent-b
             app.kubernetes.io/component: runner-agent
           annotations:
+            omnigent.io/runner-seccomp-profile-sha256: c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363
             omnigent.io/runner-recovery-artifact-credential-revision: sha256:0000000000000000000000000000000000000000000000000000000000000000
             omnigent.io/runner-fleet-phase: admission
             omnigent.io/runner-database-fleet-namespace: replace-with-runner-fleet-namespace
@@ -757,6 +771,12 @@ items:
             omnigent.io/runner-repository-receipt-sha256: sha256:0000000000000000000000000000000000000000000000000000000000000000
         spec:
           serviceAccountName: omnigent-saas-runtime
+          hostPID: false
+          shareProcessNamespace: false
+          runtimeClassName: omnigent-runner
+          nodeSelector:
+            kubernetes.io/arch: amd64
+            omnigent.io/seccomp-profile-v3: c500aa5e6862ba7d
           automountServiceAccountToken: false
           terminationGracePeriodSeconds: 45
           affinity:
@@ -772,9 +792,9 @@ items:
             seccompProfile:
               type: RuntimeDefault
             runAsNonRoot: true
-            runAsUser: 10001
-            runAsGroup: 10001
-            fsGroup: 10001
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
             fsGroupChangePolicy: OnRootMismatch
           initContainers:
             - name: stage-runner-identity
@@ -812,7 +832,8 @@ items:
                   drop: ["ALL"]
                 readOnlyRootFilesystem: true
                 runAsNonRoot: true
-                runAsUser: 10001
+                runAsUser: 65532
+                runAsGroup: 65532
               volumeMounts:
                 - {name: runner-identity-source, mountPath: /source/identity, readOnly: true}
                 - {name: runner-database-source, mountPath: /source/runner-database, readOnly: true}
@@ -836,6 +857,7 @@ items:
                 - configMapRef:
                     name: omnigent-saas-release-replace-release12
               env:
+                - {name: OMNIGENT_HOST_SANDBOX_BACKEND, value: kubernetes}
                 - {name: OMNIGENT_SAAS_RUNNER_ID, value: replace-with-runner-b-uuid}
                 - {name: OMNIGENT_SAAS_RUNNER_CONNECTION_GENERATION, value: "1"}
                 - {name: OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_URI, value: s3://replace-with-production-bucket/omnigent/runtime-recovery/runner/replace-with-runner-b-uuid/generation/1}
@@ -883,12 +905,16 @@ items:
                 requests: {cpu: 500m, memory: 512Mi}
                 limits: {cpu: "1", memory: 512Mi}
               securityContext:
+                seccompProfile:
+                  type: Localhost
+                  localhostProfile: omnigent/bubblewrap-v3.json
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
                 readOnlyRootFilesystem: true
                 runAsNonRoot: true
-                runAsUser: 10001
+                runAsUser: 65532
+                runAsGroup: 65532
               volumeMounts:
                 - {name: runtime-secrets, mountPath: /runtime, readOnly: true}
                 - {name: repository-state, mountPath: /repository}

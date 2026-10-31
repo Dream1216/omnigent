@@ -467,7 +467,7 @@ def test_unrelated_pr_passes_without_n1_check(tmp_path: Path) -> None:
     ("path", "digest"),
     [
         ("pyproject.toml", "7b7bfc95d45ac928bb91cf6b383c94c48792474adf967e34fcfddca15d0c58a6"),
-        ("uv.lock", "a6fe77d24c8ce725813ed601abbcf34aefc164334c4471bef4069ceebe1171dc"),
+        ("uv.lock", "51412e72b0d0119f388ad9349025fb40f1f5458e55695b736f9e79ab99395b5b"),
         (
             "tests/saas/test_image_supply_chain.py",
             "109ac4d727d73b271613089acbb693944047f9705f10c33c4e676075fe52d4f7",

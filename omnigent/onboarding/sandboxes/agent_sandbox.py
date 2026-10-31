@@ -363,9 +363,10 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
 
         Both halves of the lifecycle land here, because the managed wake path
         calls :meth:`~KubernetesSandboxLauncher.start_host` again under the same
-        sandbox id. A fresh launch creates; a wake finds the suspended object
-        (409) and patches it back to life instead, which is what preserves the
-        workspace claim. The patch deliberately omits ``volumeClaimTemplates``
+        sandbox id. Inspect first: creating an existing object can hit quota
+        admission before returning 409. A wake patches the existing object,
+        preserving its workspace claim. Only a missing object is created, with
+        the 409 fallback retained for a concurrent create. The patch omits ``volumeClaimTemplates``
         (immutable after creation) and carries the re-rendered ``podTemplate``,
         so a token-Secret or ``host_config`` change since the last run is picked
         up when the controller rebuilds the Pod.
@@ -382,18 +383,30 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
         )
         custom = self._load_custom()
         try:
-            custom.create_namespaced_custom_object(
+            custom.get_namespaced_custom_object(
                 API_GROUP,
                 API_VERSION,
                 namespace,
                 SANDBOX_PLURAL,
-                body,
+                body["metadata"]["name"],  # type: ignore[index]
                 _request_timeout=_POD_READY_REQUEST_TIMEOUT_S,
             )
-            return
         except ApiException as exc:
-            if getattr(exc, "status", None) != 409:
+            if getattr(exc, "status", None) != 404:
                 raise
+            try:
+                custom.create_namespaced_custom_object(
+                    API_GROUP,
+                    API_VERSION,
+                    namespace,
+                    SANDBOX_PLURAL,
+                    body,
+                    _request_timeout=_POD_READY_REQUEST_TIMEOUT_S,
+                )
+                return
+            except ApiException as exc:
+                if getattr(exc, "status", None) != 409:
+                    raise
         spec = dict(body["spec"])  # type: ignore[arg-type]
         spec.pop("volumeClaimTemplates", None)
         click.echo(f"  → waking suspended agent-sandbox '{body['metadata']['name']}'")  # type: ignore[index]
