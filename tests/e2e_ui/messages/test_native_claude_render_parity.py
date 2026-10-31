@@ -457,6 +457,10 @@ def _send_composer_turn(
     :param steer_queued: Explicitly send a queued turn while a native dialog
         keeps the session busy.
     """
+    page.evaluate(
+        "(steer) => localStorage.setItem('omnigent:always-steer', String(steer))",
+        not steer_queued,
+    )
     set_fallback_mock_llm(mock_llm_server_url, "default", assistant_token)
     set_fallback_mock_llm(mock_llm_server_url, _CLAUDE_MOCK_MODEL, assistant_token)
     if steer_queued:
@@ -500,11 +504,6 @@ def test_native_claude_composer_delivers_into_an_occupied_tui(
     _log.info("occupied-composer journey: base_url=%s session_id=%s", base_url, session_id)
 
     page.goto(f"{base_url}/c/{session_id}")
-    # This journey exercises the bridge's live injection into an occupied TUI,
-    # not the default client-side follow-up queue. Keep every send on the
-    # immediate-steer path even when the session's idle/running signal lags a
-    # just-rendered assistant response on a loaded CI worker.
-    page.evaluate("() => localStorage.setItem('omnigent:always-steer', 'true')")
     _open_terminal_view(page)
     _wait_terminal_connected(page)
     _ensure_chat_view(page)
@@ -715,9 +714,10 @@ def _send_turn_and_settle(
     set_fallback_mock_llm(mock_llm_server_url, "default", assistant_token)
     set_fallback_mock_llm(mock_llm_server_url, _CLAUDE_MOCK_MODEL, assistant_token)
     _send(page, _turn_prompt(index, user_marker, assistant_token))
-    expect(page.locator(_ASSISTANT)).to_have_count(
-        expected_assistant_bubbles, timeout=turn_timeout_ms
+    answers = page.locator(_ASSISTANT).filter(
+        has_not=page.get_by_test_id("error-headline").filter(has_text=_UNDELIVERED_HEADLINE)
     )
+    expect(answers).to_have_count(expected_assistant_bubbles, timeout=turn_timeout_ms)
     expect(page.locator(_WORKING)).to_have_count(0, timeout=turn_timeout_ms)
     _wait_for_transcript_message(page, base_url, session_id, user_marker, role="user")
 
