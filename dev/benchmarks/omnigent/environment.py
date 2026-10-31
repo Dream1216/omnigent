@@ -454,6 +454,13 @@ class BenchEnvironment:
             self._mock_proc = self._spawn_mock(mock_port)
             self._wait_mock_ready()
 
+        # The seeded DB's agents point at this bundle. Both compared server
+        # versions need the same valid artifact: newer list responses resolve
+        # its harness, so an absent bundle would measure repeated failed reads.
+        with self._lifecycle_lock:
+            self._raise_if_stopping()
+            self._seed_agent_artifact(artifact_dir)
+
         port = _find_free_port()
         self.base_url = f"http://localhost:{port}"
         binding_token = uuid.uuid4().hex
@@ -922,6 +929,12 @@ class BenchEnvironment:
             info.size = len(payload)
             tar.addfile(info, io.BytesIO(payload))
         return buf.getvalue()
+
+    def _seed_agent_artifact(self, artifact_dir: Path) -> None:
+        from dev.benchmarks.omnigent.seed import _AGENT_BUNDLE, _AGENT_NAME
+        from omnigent.stores.artifact_store.local import LocalArtifactStore
+
+        LocalArtifactStore(str(artifact_dir)).put(_AGENT_BUNDLE, self._agent_bundle(_AGENT_NAME))
 
     async def ensure_agent(self, name: str = "bench-agent") -> str:
         """Register the benchmark agent once, returning its name (idempotent)."""

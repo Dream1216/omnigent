@@ -159,7 +159,7 @@ jobs:
           retention-days: 1
 
   browser-contract-shard:
-    name: Browser Contract UI (shard ${{ matrix.shard_id }}/2)
+    name: Browser Contract UI (shard ${{ matrix.shard_id }}/4)
     # It deliberately omits the server, runner, harness CLIs, bubblewrap, tmux,
     # and sidecar. The tests are CPU-bound rendering, so they split across
     # runners rather than xdist workers sharing one runner's CPUs.
@@ -170,7 +170,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard_id: [0, 1]
+        shard_id: [0, 1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -227,7 +227,7 @@ jobs:
           SHARD_ID: ${{ matrix.shard_id }}
         run: |
           targets=(tests/browser_ui)
-          extra_args=(--shard-id="$SHARD_ID" --num-shards=2)
+          extra_args=(--shard-id="$SHARD_ID" --num-shards=4)
           if [[ "$UI_SCOPE" == "dependency" ]]; then
             # Both required smoke files stay on one shard so the check sees them.
             if [[ "$SHARD_ID" != 0 ]]; then

@@ -7,7 +7,9 @@ import contextlib
 import dataclasses
 import json
 import secrets
+import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
@@ -30,6 +32,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from omnigent.codex_approval_modes import (
     CODEX_NATIVE_PERMISSION_VALUES,
 )
+from omnigent.db.db_models import current_workspace_id
 from omnigent.db.utils import generate_agent_id, generate_file_id
 from omnigent.debug_logging import (
     add_audit_attrs,
@@ -1819,6 +1822,14 @@ def register_core_routes(
 
     # ── GET /sessions ───────────────────────────────────────────
 
+    # Only display metadata is cached. Fresh page ACLs and agent rows still
+    # gate every response; bundle location/version/provenance changes miss.
+    # Missing/failed resolutions are never cached, so repairs stay visible.
+    list_harnesses: OrderedDict[
+        tuple[int, str, str, int, int, bool, str | None, str | None, Callable[..., Any]], str
+    ] = OrderedDict()
+    list_harnesses_lock = threading.Lock()
+
     def _session_agent_metadata(
         conversations: list[Conversation],
     ) -> tuple[dict[str, str], dict[str, str | None]]:
@@ -1829,9 +1840,37 @@ def register_core_routes(
         harnesses_by_id: dict[str, str | None] = {}
         for conv in conversations:
             try:
-                harnesses_by_id[conv.id] = _resolve_harness(
-                    conv, agent_cache=agent_cache, agents_by_id=agents
+                agent = agents.get(conv.agent_id) if conv.agent_id is not None else None
+                key = (
+                    (
+                        current_workspace_id(),
+                        agent.id,
+                        agent.bundle_location,
+                        agent.version,
+                        agent.created_at,
+                        agent.operator_authored,
+                        conv.sub_agent_name,
+                        conv.harness_override,
+                        AgentCache.load,
+                    )
+                    if agent is not None
+                    else None
                 )
+                cached = None
+                if key is not None:
+                    with list_harnesses_lock:
+                        cached = list_harnesses.get(key)
+                        if cached is not None:
+                            list_harnesses.move_to_end(key)
+                if cached is None:
+                    cached = _resolve_harness(conv, agent_cache=agent_cache, agents_by_id=agents)
+                    if key is not None and cached is not None:
+                        with list_harnesses_lock:
+                            list_harnesses[key] = cached
+                            list_harnesses.move_to_end(key)
+                            while len(list_harnesses) > 1024:
+                                list_harnesses.popitem(last=False)
+                harnesses_by_id[conv.id] = cached
             except Exception as error:
                 # Optional artifact metadata must not hide an otherwise readable session.
                 harnesses_by_id[conv.id] = None

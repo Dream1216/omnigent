@@ -12,6 +12,13 @@ records below remain audit history; the active limits are those in
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
+Patch 0010 also bounds repeated list-display harness resolution with a 1,024-entry
+cache keyed by workspace, current Agent identity/revision/bundle/provenance,
+sub-agent, session override and loader implementation. Page ACLs and Agent rows
+are still read on every request; failed/missing results are not cached. This
+does not cache authorization or bypass execution-time path validation. Existing
+workspace, revision, override, artifact-failure and revocation assertions remain.
+
 ## Historical pending cold-input regression correction (superseded by later approvals)
 
 Extend only `0010-next-agent-session-reliability.patch` with the original
