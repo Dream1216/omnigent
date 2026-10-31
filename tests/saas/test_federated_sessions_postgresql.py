@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -205,3 +206,85 @@ def test_real_postgresql_fence_authority_and_external_mapping_are_not_customer_c
                 "casdoor", "https://auth.example.test", "forged-sub", now
             ),
         )
+
+
+@pytest.mark.parametrize("retained", ["empty", "fence", "session"])
+def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
+    postgres_federation: tuple[sa.Engine, sessionmaker[Session]], retained: str
+) -> None:
+    engine, sessions = postgres_federation
+    now = datetime.now(timezone.utc)
+    if retained == "fence":
+        FederatedSessionService(sessions).revoke(
+            VerifiedLogoutEvent(
+                "casdoor", "https://auth.example.test", "retained", now, "s", None
+            ),
+            now=now,
+        )
+    elif retained == "session":
+        user = IdentityManagementService(sessions).resolve_verified_login(
+            VerifiedIdentityAssertion(
+                provider="casdoor",
+                issuer="https://auth.example.test",
+                subject="retained-user",
+                email=None,
+                email_verified=False,
+            )
+        )
+        assert user.user_id is not None
+        MembershipLifecycleService(sessions).issue_auth_session(
+            user_id=user.user_id,
+            authn_method="oidc:casdoor",
+            expires_at=now + timedelta(hours=1),
+            external_identity=ExternalSessionIdentity(
+                "casdoor", "https://auth.example.test", "retained-user", now
+            ),
+        )
+        with engine.begin() as connection:
+            connection.exec_driver_sql("DELETE FROM saas_oidc_session_fences")
+
+    owner = "federated_migration_" + uuid4().hex
+    with engine.begin() as connection:
+        original_owner = connection.scalar(sa.text("SELECT current_user"))
+        connection.exec_driver_sql(f"CREATE ROLE {owner} NOLOGIN NOSUPERUSER NOBYPASSRLS")
+        connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {owner}")
+        # Schema owners can reference tables used by existing RLS predicates.
+        connection.exec_driver_sql(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {owner}")
+        connection.exec_driver_sql(f"GRANT SELECT, UPDATE ON saas_alembic_version TO {owner}")
+        for table in ("saas_auth_sessions", "saas_oidc_session_fences"):
+            connection.exec_driver_sql(f"ALTER TABLE {table} OWNER TO {owner}")
+    try:
+
+        def downgrade() -> None:
+            with engine.begin() as connection:
+                connection.exec_driver_sql(f"SET LOCAL ROLE {owner}")
+                assert not connection.scalar(
+                    sa.text(
+                        "SELECT rolbypassrls OR rolsuper FROM pg_roles WHERE rolname=current_user"
+                    )
+                )
+                config = Config(
+                    Path(__file__).resolve().parents[2] / "saas/control_plane/alembic.ini"
+                )
+                config.attributes["connection"] = connection
+                command.downgrade(config, "cd1a00000001")
+
+        if retained == "empty":
+            downgrade()
+        else:
+            with pytest.raises(RuntimeError, match="application-only rollback"):
+                downgrade()
+            with engine.connect() as connection:
+                assert connection.scalar(
+                    sa.text("SELECT version_num FROM saas_alembic_version")
+                ) == ("cd1b00000001")
+                table = "saas_oidc_session_fences" if retained == "fence" else "saas_auth_sessions"
+                assert connection.scalar(sa.text(f"SELECT count(*) FROM {table}")) > 0
+    finally:
+        with engine.begin() as connection:
+            for table in ("saas_auth_sessions", "saas_oidc_session_fences"):
+                connection.exec_driver_sql(
+                    f'ALTER TABLE IF EXISTS {table} OWNER TO "{original_owner}"'
+                )
+            connection.exec_driver_sql(f"DROP OWNED BY {owner}")
+            connection.exec_driver_sql(f"DROP ROLE {owner}")
