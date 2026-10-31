@@ -292,6 +292,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       libbz2-1=1.0.8-r25 \
       libexpat1=2.9.0-r0 \
       libffi=3.8.0-r2 \
+      libseccomp=2.6.1-r4 \
       libstdc++=16.2.0-r1 \
       libuuid=2.42.4-r0 \
       mpdecimal=4.0.1-r4 \
@@ -797,6 +798,7 @@ COPY --from=gh-builder --chown=0:0 --chmod=0755 /opt/gh-export/gh /usr/local/bin
 # keeps package and license bytes in site-packages, so retaining /build would
 # add unused source and cache-dependent metadata to the runtime image.
 COPY --from=builder /opt/venv-export /opt/venv
+RUN /opt/venv/bin/python -B -I -c 'from omnigent.inner._seccomp import _load_libseccomp; _load_libseccomp()'
 RUN ! grep -R --include='*.pth' --include='*.egg-link' -nE '/build(/|$)' /opt/venv/lib/python*/site-packages
 RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
       /opt/venv/bin/python -B -I -c 'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"runtime build revision {actual!r} does not match {expected!r}"' "${SOURCE_REVISION}"; \
@@ -852,13 +854,16 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Git provisions the sealed repository mirrors used by Runner agents. The
 # Python standard library performs the health check and outbound HTTPS probes.
+# Bubblewrap supplies the hard sandbox used by managed SaaS Runner agents.
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache git=2.56.0-r0 \
+      bubblewrap=0.13.0-r0 \
       cyrus-sasl-heimdal-libs=2.1.28-r58 \
       heimdal-libs=7.8.0-r54 \
       keyutils-libs=1.6.3-r41 \
       krb5-conf=1.0-r10 \
       krb5-libs=1.22.2-r5 \
+      libcap=2.78-r4 \
       libcom_err=1.47.4-r4 \
       libcrypto3=3.6.5-r5 \
       libcurl-openssl4=8.23.0-r2 \
@@ -867,12 +872,17 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       libnghttp2-14=1.70.0-r6 \
       libpcre2-8-0=10.49-r1 \
       libpsl=0.23.3-r3 \
+      libselinux=3.11-r2 \
+      libsepol=3.11-r3 \
       libssl3=3.6.5-r5 \
       libunistring=1.5-r0 \
       libverto=0.3.2-r10 \
+      linux-pam=1.7.3-r1 \
       nghttp3=1.18.0-r2 \
       ngtcp2=1.25.0-r6 \
  && test -x /usr/bin/git \
+ && test -x /usr/bin/bwrap \
+ && /usr/bin/bwrap --version \
  && rm -rf /var/cache/apk/* \
  && rm -f /var/cache/ldconfig/aux-cache
 
@@ -882,6 +892,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
 COPY --from=server-builder /opt/server-venv-export /opt/venv
 COPY --from=server-builder /build /build
 COPY deploy/docker/entrypoint.py /app/entrypoint.py
+RUN /opt/venv/bin/python -B -I -c 'from omnigent.inner._seccomp import _load_libseccomp; _load_libseccomp()'
 RUN if [ "${SOURCE_REVISION}" != "unknown" ]; then \
       /opt/venv/bin/python -B -I -c 'import sys; from omnigent import _build_info; expected=sys.argv[1]; actual=_build_info.COMMIT_SHA; assert actual == expected, f"runtime build revision {actual!r} does not match {expected!r}"' "${SOURCE_REVISION}"; \
     fi
