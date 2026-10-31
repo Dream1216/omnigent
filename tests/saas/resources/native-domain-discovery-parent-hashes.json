@@ -221,7 +221,7 @@
   "saas/scripts/oci_promotion.py": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
   "saas/scripts/check_image_supply_chain.py": {
     "parent_sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23",
-    "combined_sha256": "e6b31ece142755270de804a19f9327fe147f30b6bf86cf0025c58f05522de2d8",
+    "combined_sha256": "7cf036b13959774828797c921465ec8c1e4ecec6967475dac9dfce2e388e2faf",
     "approved_change": "A60e typed adapter only, preserving every original Root generic verifier function and assertion; exact inverse restores full Root base file; proposed Aliyun SDK, immutable OCI identity and offline dual-architecture checks, retaining original generic admission functions",
     "preserved_functions": {
       "_sha256": "9da2ea2c4f7f9301e06e1ac26911597bbebdfdf8b3864861379b3e0612b9b38b",
@@ -248,10 +248,10 @@
     },
     "approved_functions": {
       "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b",
-      "validate_candidate_build_contract": "a0a3b85f454815c76c3ec9ce366065429e64780ea708e1726753d7f1c1108e5c"
+      "validate_candidate_build_contract": "a35ff12122b9b7c8a8bb8e6a4a9ab732da529ade71fdf8e5113a9da568b55e0e"
     },
     "type_and_context_correction": {
-      "corrected_sha256": "9193a9de63673c4808e7666f9024595aa2a31f5afe39391b8dcdbf1bdfcb71ec",
+      "corrected_sha256": "d4ee51901c18cee817364ddb3cb90ec8cc132956ebac6ef1a68a743207b6b16e",
       "inverse_fragments": [
         {
           "before": "_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n",
@@ -270,7 +270,7 @@
     },
     "reviewed_extension_application_head": "4af5556d8bd5c068136852a12549b6ecc17c048f",
     "reviewed_extension_trusted_main": "57c4802561bd5789d0f3a997a313ec3f4f4ee366",
-    "current_combination_source_sha256": "9193a9de63673c4808e7666f9024595aa2a31f5afe39391b8dcdbf1bdfcb71ec"
+    "current_combination_source_sha256": "d4ee51901c18cee817364ddb3cb90ec8cc132956ebac6ef1a68a743207b6b16e"
   },
   "saas/scripts/scan_oci_candidates.py": {
     "parent_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",

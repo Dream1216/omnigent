@@ -341,13 +341,17 @@ jobs:
           subprocess.run(["docker", "load", "-i", str(archive)], check=True)
           verified = []
           try:
+              actual = json.loads(subprocess.check_output([
+                  "docker", "image", "inspect", root,
+              ]))[0]
+              assert actual["Descriptor"]["digest"] == root and actual["Id"] == root
               for arch in ("amd64", "arm64"):
                   platform = f"linux/{arch}"
                   actual = json.loads(subprocess.check_output([
                       "docker", "image", "inspect", "--platform", platform, root,
                   ]))[0]
                   expected = facts["platforms"][platform]
-                  assert actual["Descriptor"]["digest"] == root and actual["Id"] == root
+                  assert actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]
                   assert actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]
                   subprocess.run([
                       "docker", "run", "--rm", "--pull", "never", "--platform", platform,

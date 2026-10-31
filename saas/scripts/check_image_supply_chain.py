@@ -718,6 +718,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         'for arch in ("amd64", "arm64"):',
         'actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]',
         'actual["Descriptor"]["digest"] == root and actual["Id"] == root',
+        'actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]',
         '"--network", "none"',
         '"--pull", "never"',
         'assert version("e2b")=="2.31.0"',
