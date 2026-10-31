@@ -24,6 +24,10 @@ key file or key material. An unconfigured tenant has no fallback authority.
 The broker also checks the current tenant/workspace allowlist for every renewal,
 so a previously signed lease cannot bypass a changed workspace configuration.
 
+To use the existing Server HTTPS front, set `model_gateway_url` to exactly
+`<server_origin>/saas/models/v1`. Only that value enables the hidden model ingress.
+An independently controlled HTTPS model endpoint leaves this ingress disabled.
+
 This human-readable example contains placeholders and is not a deployable file:
 
 ```json
@@ -78,6 +82,9 @@ hashes locally, including independence after management-key rotation. Readiness
 does not make a cloud API call and does not prove API-key validity or network
 reachability. The candidate Server recipe includes `kubernetes,e2b`; protected
 publication checks the installed E2B version before signing.
+The candidate workflow also imports and executes the exact OCI archive on both
+architectures before its scan, checking source revision, layer identities,
+non-root execution, SDK version and profile/ingress imports without network access.
 
 Only the Host's own launch token and signed model lease are delivered to a VM.
 The model lease uses the VM's cloud creation time and admitted lifetime, so
@@ -86,6 +93,31 @@ access beyond the VM deadline. Signing keys and management credentials stay on
 the Server. Each model bearer lasts at most 300 seconds and never beyond that
 lease. Revocation stops issuance; an already issued bearer can remain usable
 until its bounded expiry.
+
+## Existing HTTPS front
+
+The opt-in Server ingress accepts only POST `/saas/models/v1/responses` and
+`/saas/models/v1/chat/completions`. These routes use short model-bearer
+authentication, independently of browser sessions and Host launch credentials.
+They reject cookies, browser Origin, mixed machine credentials, query strings,
+duplicate authorization headers and bearers lasting longer than 300 seconds.
+
+The upstream is the fixed internal model Service; clients cannot supply a
+destination. The gateway still performs its own token, model and budget checks.
+The ingress forwards only the model bearer, JSON body and protocol headers,
+limits bodies to 2 MiB, bounds and redacts gateway errors, refuses redirects and
+does not replay requests. Only a definite pre-admission expiry is returned with
+the Host relay's renewable-expiry marker. A timeout after submission has an
+ambiguous result and returns a transport failure instead.
+
+SSE output stops at bearer expiry or disconnect and closes the upstream response
+and HTTP client. An expiry or transport failure after response headers aborts the
+stream instead of reporting normal completion; it is never replayed.
+Thus an individual model stream can use at most the remaining
+bearer lifetime (up to 300 seconds); the Agent may make subsequent separately
+admitted calls. Validate this limit against the intended model workload during
+P3/P5. Production front-end SSE buffering, idle timeouts and request-size limits
+still require cloud testing. No production route has been enabled.
 
 ## Server composition and release sequence
 

@@ -1345,6 +1345,12 @@ def test_candidate_composite_build_contract_rejects_timestamp_rewrite_drift(
             "pass",
             "protected release must verify both published runtime revisions before signing",
         ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            "--group dev --extra saas --extra e2b",
+            "--group dev --extra saas",
+            "candidate test jobs must install the qualified sandbox SDK",
+        ),
     ],
 )
 def test_server_candidate_requires_the_qualified_sandbox_sdk(
@@ -1356,6 +1362,27 @@ def test_server_candidate_requires_the_qualified_sandbox_sdk(
     assert target in source
     path.write_text(source.replace(target, replacement, 1))
     assert violation in validate_candidate_build_contract(repo)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        'actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]',
+        'for arch in ("amd64", "arm64"):',
+        'assert version("e2b")=="2.31.0"',
+        '"--network", "none"',
+    ],
+)
+def test_candidate_runtime_gate_requires_exact_bytes_platforms_and_sdk(tmp_path, target):
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text()
+    assert target in source
+    workflow.write_text(source.replace(target, "removed_runtime_gate", 1))
+    assert (
+        "candidate workflow must verify the exact Server SDK on both platforms"
+        in validate_candidate_build_contract(repo)
+    )
 
 
 def test_n1_candidate_build_contract_rejects_shared_rebuild_cache(tmp_path: Path) -> None:

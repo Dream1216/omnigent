@@ -48,6 +48,7 @@ jobs:
         run: |
           uv run pyrefly check saas/production/aliyun_sdk.py \
             saas/production/aliyun_server_profile.py saas/production/server.py \
+            saas/production/aliyun_model_ingress.py \
             saas/production/server_config.py \
             saas/production/aliyun_sandbox.py saas/production/aliyun_host.py \
             saas/production/aliyun_tenant_sandbox.py saas/production/tenant_sandbox.py \
@@ -57,6 +58,7 @@ jobs:
             saas/control_plane/http_auth.py saas/runner_adapter/platform_model_gateway.py
           uv run pytest tests/saas/test_aliyun_sdk.py \
             tests/saas/test_aliyun_server_profile.py \
+            tests/saas/test_aliyun_model_ingress.py \
             tests/saas/test_aliyun_server_composition.py \
             tests/saas/test_production_server.py tests/saas/test_production_server_config.py \
             tests/saas/test_aliyun_sandbox.py tests/saas/test_aliyun_sandbox_probe.py \

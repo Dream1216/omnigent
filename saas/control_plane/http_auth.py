@@ -152,6 +152,7 @@ class SaasHttpIntegration:
     runtime_router: APIRouter | None = None
     runtime_initializer: RuntimeInitializer | None = None
     host_model_broker_enabled: bool = False
+    aliyun_model_ingress_enabled: bool = False
 
     @property
     def extra_router(self) -> tuple[APIRouter, str, list[str | Enum]]:
@@ -186,6 +187,7 @@ class SaasHttpIntegration:
             degraded_read_paths=self.degraded_read_paths,
             runtime_initializer=self.runtime_initializer,
             host_model_broker_enabled=self.host_model_broker_enabled,
+            aliyun_model_ingress_enabled=self.aliyun_model_ingress_enabled,
         )
 
 
@@ -360,6 +362,7 @@ class SaasAuthContextMiddleware:
         degraded_read_paths: frozenset[str] = frozenset(),
         runtime_initializer: RuntimeInitializer | None = None,
         host_model_broker_enabled: bool = False,
+        aliyun_model_ingress_enabled: bool = False,
     ) -> None:
         self._app = app
         self._auth = auth_provider
@@ -376,6 +379,9 @@ class SaasAuthContextMiddleware:
         if type(host_model_broker_enabled) is not bool:
             raise ValueError("Host model broker enablement must be boolean")
         self._host_model_broker_enabled = host_model_broker_enabled
+        if type(aliyun_model_ingress_enabled) is not bool:
+            raise ValueError("Aliyun model ingress enablement must be boolean")
+        self._aliyun_model_ingress_enabled = aliyun_model_ingress_enabled
         if degraded_read_paths and context_snapshots is None:
             raise ValueError("degraded read paths require a Context Snapshot service")
 
@@ -411,6 +417,19 @@ class SaasAuthContextMiddleware:
                 receive=receive,
                 send=send,
             )
+            return
+        if (
+            self._aliyun_model_ingress_enabled
+            and scope["type"] == "http"
+            and scope.get("method") == "POST"
+            and connection.url.path
+            in {"/saas/models/v1/responses", "/saas/models/v1/chat/completions"}
+        ):
+            try:
+                self._availability.require_available()
+                await self._app(scope, receive, send)
+            except (ControlPlaneDependencyUnavailable, OperationalError, SqlAlchemyTimeoutError):
+                await self._reject_dependency(scope, receive, send)
             return
         if self._is_public_request(connection.url.path, cast(str, scope.get("method", "GET"))):
             try:

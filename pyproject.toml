@@ -357,6 +357,7 @@ test = [
     "build>=1.2",
     # These clients are optional product capabilities, but their tests import
     # and execute the real packages against mocks.
+    "e2b==2.31.0",
     "hindsight-client>=0.4.0",
     "kubernetes>=36,<37",
     "nimble-python>=1.2.0,<2",

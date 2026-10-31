@@ -694,6 +694,37 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             "protected release must verify both published runtime revisions before signing"
         )
 
+    candidate_runtime = _named_workflow_step(
+        workflow, "Verify executable Server candidate SDK on both architectures"
+    )
+    if workflow.count("uv sync --frozen --extra all --group dev --extra saas --extra e2b") != 3:
+        violations.append("candidate test jobs must install the qualified sandbox SDK")
+    candidate_runtime_contract = {
+        '"server-1.tar"',
+        'inspect_oci_archive(archive, label_profile="executable")',
+        '"docker", "load", "-i", str(archive)',
+        'for arch in ("amd64", "arm64"):',
+        'actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]',
+        'actual["Descriptor"]["digest"] == root and actual["Id"] == root',
+        '"--network", "none"',
+        '"--pull", "never"',
+        'assert version("e2b")=="2.31.0"',
+        "import saas.production.aliyun_model_ingress",
+        "assert _build_info.COMMIT_SHA==sys.argv[1]",
+        'Path("artifacts/server-candidate-runtime.json")',
+    }
+    if (
+        candidate_runtime is None
+        or any(fragment not in candidate_runtime for fragment in candidate_runtime_contract)
+        or (
+            workflow.index("name: Verify executable Server candidate SDK on both architectures")
+            > workflow.index("name: Preflight scan exact server candidate on both architectures")
+        )
+        or "artifacts/server-candidate-runtime.json"
+        not in workflow.partition("name: Upload candidate evidence")[2]
+    ):
+        violations.append("candidate workflow must verify the exact Server SDK on both platforms")
+
     action = _read_repository_contract(
         repo,
         _CANDIDATE_BUILD_ACTION,

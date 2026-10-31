@@ -1468,6 +1468,10 @@ def _install_aliyun_model_broker(
         AliyunHostModelBroker,
         create_aliyun_host_model_router,
     )
+    from saas.production.aliyun_model_ingress import (
+        MODEL_INGRESS_BASE_PATH,
+        AliyunModelIngress,
+    )
 
     deployment = official.sandbox_config
     if not isinstance(deployment, ManagedSandboxDeployment) or not any(
@@ -1488,7 +1492,18 @@ def _install_aliyun_model_broker(
         workspaces={scope.tenant_id: scope.workspace_id for scope in profile.managed.scopes},
     )
     router.include_router(create_aliyun_host_model_router(broker))
-    services.integration = replace(services.integration, host_model_broker_enabled=True)
+    ingress_enabled = (
+        profile.managed.model_gateway_url == f"{config.public_origin}{MODEL_INGRESS_BASE_PATH}"
+    )
+    if ingress_enabled:
+        services.integration.router.include_router(
+            AliyunModelIngress(profile.authorities).router()
+        )
+    services.integration = replace(
+        services.integration,
+        host_model_broker_enabled=True,
+        aliyun_model_ingress_enabled=ingress_enabled,
+    )
 
 
 def build_production_server(

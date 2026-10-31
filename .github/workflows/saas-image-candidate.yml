@@ -111,7 +111,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked preflight dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Set up crane for exact OCI transfer regression
@@ -176,7 +176,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Verify full four-authority fresh replay and predecessor upgrade
         run: >-
           uv run pytest tests/saas/test_production_migration_replay.py
@@ -234,7 +234,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Configure exact PostgreSQL 18 runner contract
         env:
           PGPASSWORD: postgres
@@ -281,6 +281,12 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
+      - name: Set up isolated candidate Docker runtime
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
@@ -317,6 +323,52 @@ jobs:
           artifact: server
           target: runtime
           attempt: "1"
+      - name: Verify executable Server candidate SDK on both architectures
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, subprocess, tarfile
+          from pathlib import Path
+          from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+          archive = Path(os.environ["RUNNER_TEMP"]) / "server-1.tar"
+          revision = os.environ["CANDIDATE_REVISION"]
+          facts = inspect_oci_archive(archive, label_profile="executable")
+          with tarfile.open(archive) as stream:
+              descriptors = json.load(stream.extractfile("index.json"))["manifests"]
+          assert len(descriptors) == 1
+          root = descriptors[0]["digest"]
+          subprocess.run(["docker", "load", "-i", str(archive)], check=True)
+          verified = []
+          try:
+              for arch in ("amd64", "arm64"):
+                  platform = f"linux/{arch}"
+                  actual = json.loads(subprocess.check_output([
+                      "docker", "image", "inspect", "--platform", platform, root,
+                  ]))[0]
+                  expected = facts["platforms"][platform]
+                  assert actual["Descriptor"]["digest"] == root and actual["Id"] == root
+                  assert actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]
+                  subprocess.run([
+                      "docker", "run", "--rm", "--pull", "never", "--platform", platform,
+                      "--network", "none", "--user", "1000:1000", "--cap-drop", "ALL",
+                      "--security-opt", "no-new-privileges:true", "--read-only",
+                      "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
+                      "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
+                      "--entrypoint", "/opt/venv/bin/python", root, "-B", "-I", "-c",
+                      'import os,sys,kubernetes;from pathlib import Path;from importlib.metadata import version;from omnigent import _build_info;import saas.production.aliyun_server_profile as profile;import saas.production.aliyun_model_ingress;assert version("e2b")=="2.31.0";assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert Path(profile.__file__).resolve().is_relative_to(Path("/opt/venv"))',
+                      revision,
+                  ], check=True, timeout=180)
+                  verified.append({"platform": platform, "config_digest": expected["config_digest"], "manifest_digest": expected["manifest_digest"]})
+          finally:
+              subprocess.run(["docker", "image", "rm", root], check=True)
+          with archive.open("rb") as stream:
+              archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          Path("artifacts/server-candidate-runtime.json").write_text(json.dumps({
+              "schema_version": 1, "source_revision": revision,
+              "archive_sha256": archive_sha256, "root_digest": root,
+              "e2b_version": "2.31.0", "platforms": verified, "passed": True,
+          }, sort_keys=True, indent=2) + "\n")
+          PY
       - name: Preflight scan exact server candidate on both architectures
         run: >-
           python -m saas.scripts.scan_oci_candidates
@@ -404,6 +456,7 @@ jobs:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
             artifacts/saas-image-candidate.json
+            artifacts/server-candidate-runtime.json
             artifacts/oci-promotion-manifest.json
             artifacts/oci-layer-drift.json
             artifacts/candidate-storage-reclamation.json

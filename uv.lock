@@ -3381,6 +3381,7 @@ vertex = [
 dev = [
     { name = "boto3" },
     { name = "build" },
+    { name = "e2b" },
     { name = "filelock" },
     { name = "grpcio-tools" },
     { name = "hindsight-client" },
@@ -3412,6 +3413,7 @@ lint = [
 test = [
     { name = "boto3" },
     { name = "build" },
+    { name = "e2b" },
     { name = "filelock" },
     { name = "hindsight-client" },
     { name = "kubernetes" },
@@ -3538,6 +3540,7 @@ provides-extras = ["claude-sdk", "openai-agents", "cockroachdb", "all", "bedrock
 dev = [
     { name = "boto3", specifier = ">=1.30,<2" },
     { name = "build", specifier = ">=1.2" },
+    { name = "e2b", specifier = "==2.31.0" },
     { name = "filelock", specifier = ">=3.0" },
     { name = "grpcio-tools", specifier = ">=1.68,<=1.81.1" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
@@ -3569,6 +3572,7 @@ lint = [
 test = [
     { name = "boto3", specifier = ">=1.30,<2" },
     { name = "build", specifier = ">=1.2" },
+    { name = "e2b", specifier = "==2.31.0" },
     { name = "filelock", specifier = ">=3.0" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
     { name = "kubernetes", specifier = ">=36,<37" },

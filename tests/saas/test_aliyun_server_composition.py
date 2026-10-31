@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from uuid import uuid4
 
+import httpx
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -48,7 +49,7 @@ def _sessions(app=None):
 
 
 @pytest.fixture
-def composition_case(broker_case, profile_case, tmp_path, monkeypatch):
+def composition_case(broker_case, profile_case, tmp_path, monkeypatch, request):
     c, p = broker_case, profile_case
     p.document["tenants"][0].update(
         {
@@ -56,6 +57,29 @@ def composition_case(broker_case, profile_case, tmp_path, monkeypatch):
             "workspace_id": c.runtime.physical_workspace_id,
         }
     )
+    c.model_requests = []
+    if getattr(request, "param", None) == "ingress":
+        from saas.production import aliyun_model_ingress as ingress_module
+
+        p.document["model_gateway_url"] = f"{p.document['server_origin']}/saas/models/v1"
+        original = ingress_module.AliyunModelIngress
+
+        def upstream(model_request):
+            c.model_requests.append(model_request)
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                stream=httpx.ByteStream(b"data: complete\n\n"),
+            )
+
+        monkeypatch.setattr(
+            ingress_module,
+            "AliyunModelIngress",
+            lambda authorities: original(
+                authorities,
+                client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(upstream)),
+            ),
+        )
     p.save()
     profile = p.load()
     assert profile is not None
@@ -93,6 +117,7 @@ def test_server_composition_mounts_scoped_broker_and_preserves_authentication(co
     c = composition_case
     middleware = next(m for m in c.built.app.user_middleware if m.cls is SaasAuthContextMiddleware)
     assert middleware.kwargs["host_model_broker_enabled"] is True
+    assert middleware.kwargs["aliyun_model_ingress_enabled"] is False
     with TestClient(c.built.app, base_url=c.config.public_origin) as client:
         result = client.post(c.path, headers=c.headers)
         assert result.status_code == 200
@@ -200,6 +225,37 @@ def test_default_server_keeps_broker_and_aliyun_provider_disabled(tmp_path, monk
             m for m in built.app.user_middleware if m.cls is SaasAuthContextMiddleware
         )
         assert middleware.kwargs["host_model_broker_enabled"] is False
+        assert middleware.kwargs["aliyun_model_ingress_enabled"] is False
         assert not any("model-token" in getattr(route, "path", "") for route in built.app.routes)
+        assert not any("/models/v1/" in getattr(route, "path", "") for route in built.app.routes)
     finally:
         built.close()
+
+
+@pytest.mark.parametrize("composition_case", ["ingress"], indirect=True)
+def test_same_origin_ingress_uses_model_auth_and_rejects_mixed_credentials(composition_case):
+    c = composition_case
+    middleware = next(m for m in c.built.app.user_middleware if m.cls is SaasAuthContextMiddleware)
+    assert middleware.kwargs["aliyun_model_ingress_enabled"] is True
+    path = "/saas/models/v1/responses"
+    with TestClient(c.built.app, base_url=c.config.public_origin) as client:
+        issued = client.post(c.path, headers=c.headers)
+        assert issued.status_code == 200
+        authorization = {"Authorization": f"Bearer {issued.json()['token']}"}
+        result = client.post(path, headers=authorization, json={"model": "allowed"})
+        assert result.status_code == 200
+        assert result.content == b"data: complete\n\n"
+        assert len(c.model_requests) == 1
+        assert client.post(path, json={}).status_code == 401
+        assert (
+            client.post(path, headers={**authorization, "Cookie": "bad=user"}, json={}).status_code
+            == 401
+        )
+        assert (
+            client.post(path, headers={**authorization, **c.headers}, json={}).status_code == 403
+        )
+        assert client.get(path, headers=authorization).status_code != 200
+        assert (
+            client.post("/saas/models/v1/files", headers=authorization, json={}).status_code != 200
+        )
+        assert len(c.model_requests) == 1

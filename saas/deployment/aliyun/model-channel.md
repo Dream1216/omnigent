@@ -51,6 +51,14 @@ the production builder. It binds the product/image/origin and enables only the
 exact machine POST route. The default remains disabled. Renewal also checks
 the profile's current tenant/workspace allowlist.
 
+The profile may select the Server's `/saas/models/v1` endpoint. This enables only
+the two model POST routes with independent short-bearer authentication, fixed
+internal gateway forwarding, bounded bodies, no redirects and no request
+replay. Browser cookies and Host/Runner credentials are rejected. Expiry or
+disconnect closes the upstream; individual streams are bounded by the remaining
+bearer lifetime (at most 300 seconds). This candidate route still needs real
+public-front and workload validation.
+
 Remaining integration and acceptance:
 
 - Verify the actual Server image, private credential copies, gateway tenant
@@ -64,8 +72,9 @@ Remaining integration and acceptance:
   The command channel rejected post-expiry access, and control-plane absence
   was confirmed about 4.3 seconds after expiry. An actual Server restart with
   a running Host/Runner and end-to-end model lease expiry still need acceptance.
-- Configure public TLS callback and model gateway ingress without broadening
-  ordinary SaaS authentication or exposing the gateway signing authority.
+- Validate the public TLS callback and opt-in model ingress through the actual
+  front, including SSE buffering, idle/size limits, workload duration and
+  cancellation. The candidate has not changed any production route.
 - Exercise a real Host, isolated Runner, model request, renewal, revocation and
   cleanup in a generation-2 Aliyun MicroVM.
 - Complete image qualification, persistent storage, operations and P5 release
