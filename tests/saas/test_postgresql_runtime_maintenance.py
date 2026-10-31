@@ -672,6 +672,9 @@ def t_composition_boundary(recovery_boundary, runtime_boundary, monkeypatch):
         return {"phase": "prepared", "operation": asdict(operation), "t_before": facts}
 
     monkeypatch.setattr(control, "prepare", prepared)
+    # Phase-composition fixture only; actual schema admission is a native SQL
+    # boundary, exercised independently by the two-major replay matrix.
+    monkeypatch.setattr(control, "require_original_schema_inverse_supported", lambda: None)
     monkeypatch.setattr(
         control,
         "inverse",

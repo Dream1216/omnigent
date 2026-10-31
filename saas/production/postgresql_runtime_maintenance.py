@@ -797,6 +797,7 @@ class FencedTRuntimeRecovery:
             and self._facts() == state["before_runtime_facts"],
             "t_runtime_prepared_CAS_failed",
         )
+        self.preserving.require_original_schema_inverse_supported()
         result = self._apply_runtime(state, "to_t")
         result["preserving"] = self.preserving.prepare()
         self._save("t_runtime:old_projection_before_inverse", result)

@@ -453,6 +453,21 @@ class PreservingPostgreSqlRecovery:
             receipt_schema=receipt_schema,
         )
 
+    def require_original_schema_inverse_supported(self) -> None:
+        """Reject a newer official schema before any legacy inverse mutation.
+
+        The original nf-to-mm proof predates 0.21's additive columns. A newer
+        schema requires the independently qualified compatible-image rollback
+        or a physical restore, rather than deleting fields through this path.
+        """
+        if _is_explicit_t(self.operation):
+            self._t_source_gold()
+            with self.engines["official_owner"].connect() as connection:
+                head = connection.exec_driver_sql(
+                    "SELECT version_num FROM public.alembic_version"
+                ).scalar_one()
+            adapter.need(head == "nf12ab34cd56", "official_schema_inverse_not_source_qualified")
+
     def _t_old_catalog(self, state) -> None:
         archive = adapter.archive_name(self.operation.operation_id)
         adapter.need(state["archive"] == archive, "explicit_t_archive_scope_changed")
@@ -623,6 +638,7 @@ class PreservingPostgreSqlRecovery:
             "prepared_operation_required",
         )
         require_checkpoint_operation(state, self.operation)
+        self.require_original_schema_inverse_supported()
         # This current P16 lineage includes T. Do not detach receipts or remove
         # policies before discovering any original retained-data refusal.
         if _is_explicit_t(self.operation):

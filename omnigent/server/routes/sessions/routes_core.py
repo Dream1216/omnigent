@@ -2031,18 +2031,27 @@ def register_core_routes(
                 last_id=page.last_id,
                 has_more=page.has_more,
             )
-        # Batch-fetch permissions and agent metadata concurrently.
+        # Fetch independent page metadata in one wave. In particular, PR and
+        # comment summaries must not add serial database round trips per page.
         # The tasks table has been removed — status comes exclusively from
         # the relay-fed ``_session_status_cache``.
         perms_by_conv: dict[str, list[SessionPermission]]
         if permission_store is not None:
-            perms_by_conv, agent_metadata, child_ids_by_parent = await asyncio.gather(
+            (
+                perms_by_conv,
+                agent_metadata,
+                child_ids_by_parent,
+                comments_fingerprints,
+                pull_requests,
+            ) = await asyncio.gather(
                 asyncio.to_thread(permission_store.list_for_sessions, conv_ids),
                 asyncio.to_thread(_session_agent_metadata, page.data),
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
                 ),
+                _comments_fingerprints_for(conv_ids),
+                _pull_requests_for(conv_ids),
             )
             user_is_admin = (
                 await asyncio.to_thread(permission_store.is_admin, user_id)
@@ -2050,12 +2059,19 @@ def register_core_routes(
                 else False
             )
         else:
-            agent_metadata, child_ids_by_parent = await asyncio.gather(
+            (
+                agent_metadata,
+                child_ids_by_parent,
+                comments_fingerprints,
+                pull_requests,
+            ) = await asyncio.gather(
                 asyncio.to_thread(_session_agent_metadata, page.data),
                 asyncio.to_thread(
                     conversation_store.list_child_conversation_ids_by_parent,
                     conv_ids,
                 ),
+                _comments_fingerprints_for(conv_ids),
+                _pull_requests_for(conv_ids),
             )
             perms_by_conv = {}
             user_is_admin = False
@@ -2063,8 +2079,6 @@ def register_core_routes(
         # In-memory lookup — no I/O, so batching avoids re-acquiring
         # the index's lock per row but otherwise has no DB cost.
         pending_counts = pending_elicitations.counts_for(conv_ids)
-        comments_fingerprints = await _comments_fingerprints_for(conv_ids)
-        pull_requests = await _pull_requests_for(conv_ids)
         # ── Lazy-on-read backstop for orphaned "running" sessions. ────────
         # A session whose persisted live_status is still running/waiting but
         # whose runner is confirmed gone — a replica that restarted and

@@ -24,8 +24,9 @@ def _suppress_context_free_builtin_seed(app: FastAPI) -> None:
     original_lifespan = app.router.lifespan_context
     expected_seed = official_app_module._ensure_default_agents
 
-    def skip_seed(agent_store: Any, artifact_store: Any, agent_cache: Any) -> None:
+    def skip_seed(agent_store: Any, artifact_store: Any, agent_cache: Any) -> frozenset[str]:
         del agent_store, artifact_store, agent_cache
+        return frozenset()
 
     @asynccontextmanager
     async def production_lifespan(app_instance: FastAPI):

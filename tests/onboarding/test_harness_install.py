@@ -560,7 +560,7 @@ def test_harness_cli_logged_in_kiro_uses_whoami_exit_code(
     monkeypatch.setattr(hi.shutil, "which", lambda name: f"/usr/bin/{name}")
 
     def _run(argv: list[str], **k: object):
-        assert argv == ["kiro-cli", "whoami"]
+        assert argv == ["/usr/bin/kiro-cli", "whoami"]
         return subprocess.CompletedProcess(
             args=argv, returncode=returncode, stdout=stdout, stderr=""
         )

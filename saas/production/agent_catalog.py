@@ -45,7 +45,7 @@ class TenantAgentCatalogInitializer:
         agent_store: Any,
         artifact_store: Any,
         agent_cache: Any,
-        seed: Callable[[Any, Any, Any], None] = _ensure_default_agents,
+        seed: Callable[[Any, Any, Any], frozenset[str] | None] = _ensure_default_agents,
     ) -> None:
         self._coordination_engine = coordination_engine
         self._agent_store = agent_store

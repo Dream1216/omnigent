@@ -310,14 +310,20 @@ def test_standalone_gate_is_main_side_and_posts_exact_head_status() -> None:
 def test_general_merge_ready_dispatch_cannot_select_an_arbitrary_sha() -> None:
     workflow = yaml.load(GENERAL_MERGE_READY.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
-    assert "sha" not in workflow["on"]["workflow_dispatch"]["inputs"]
+    # Upstream now accepts a SHA guard, but always resolves and posts to the
+    # live PR head. Stale, malformed and foreign guards are exercised by
+    # tests/scripts/test_merge_ready_workflow.py's real shell-step scenarios.
     resolve = next(
-        step
-        for step in workflow["jobs"]["evaluate"]["steps"]
-        if step.get("name") == "Resolve PR + head SHA"
+        step for step in workflow["jobs"]["resolve-head"]["steps"] if step.get("id") == "head"
     )
-    assert "SHA_INPUT" not in resolve["env"]
-    assert 'SHA=$(gh pr view "$PR"' in resolve["run"]
+    assert "SHA=$(jq -r '.head.sha'" in resolve["run"]
+    assert '"$SHA" != "$SHA_INPUT"*' in resolve["run"]
+    assert 'echo "sha=$SHA"' in resolve["run"]
+    context = next(
+        step for step in workflow["jobs"]["evaluate"]["steps"] if step.get("id") == "ctx"
+    )
+    assert context["env"]["RESOLVED_SHA"] == "${{ needs.resolve-head.outputs.sha }}"
+    assert "SHA_INPUT" not in context["env"]
 
 
 def test_policy_change_cannot_self_approve(tmp_path: Path) -> None:

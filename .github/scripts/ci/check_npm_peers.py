@@ -11,6 +11,26 @@ from pathlib import Path
 import yaml
 
 
+def load_peer_lock(source: str) -> dict:
+    """Collect every v9 dependency graph, including pnpm's manager document."""
+    documents = list(yaml.safe_load_all(source))
+    if not documents:
+        raise ValueError("Peer validation requires a nonempty pnpm lockfile")
+    lock = {"lockfileVersion": "9.0", "packages": {}, "snapshots": {}}
+    for document in documents:
+        if not isinstance(document, dict) or str(document.get("lockfileVersion")) != "9.0":
+            raise ValueError("Peer validation requires pnpm lockfile version 9.0")
+        for section in ("packages", "snapshots"):
+            values = document.get(section, {})
+            if not isinstance(values, dict):
+                raise ValueError(f"Invalid pnpm {section} document")
+            for key, value in values.items():
+                if key in lock[section] and lock[section][key] != value:
+                    raise ValueError(f"Conflicting pnpm {section} entry across documents: {key}")
+                lock[section][key] = value
+    return lock
+
+
 def changed_peer_checks(before: dict, after: dict) -> list[dict]:
     if any(str(lock.get("lockfileVersion")) != "9.0" for lock in (before, after)):
         raise ValueError("Peer validation requires pnpm lockfile version 9.0")
@@ -70,7 +90,7 @@ def main() -> None:
     parser.add_argument("--head", default="HEAD")
     args = parser.parse_args()
     locks = [
-        yaml.safe_load(
+        load_peer_lock(
             subprocess.check_output(["git", "show", f"{revision}:pnpm-lock.yaml"], text=True)
         )
         for revision in (args.base, args.head)

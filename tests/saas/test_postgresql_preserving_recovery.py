@@ -503,6 +503,9 @@ def test_explicit_t_json_dispatches_only_to_t_then_mm(recovery_boundary, monkeyp
 
     monkeypatch.setattr(control, "_remove_project_identity_guard", remove_guard)
     monkeypatch.setattr(control, "_t_source_gold", lambda: None)
+    # This case isolates original phase dispatch; real schema support and
+    # refusal before mutations are verified in both native PostgreSQL lanes.
+    monkeypatch.setattr(control, "require_original_schema_inverse_supported", lambda: None)
     monkeypatch.setattr(control, "_t_old_catalog", lambda *_args: None)
     monkeypatch.setattr(control, "_t_facts", lambda *_args, **_kwargs: facts)
     monkeypatch.setattr(control, "_capture", lambda *_args: {"tables": {}})

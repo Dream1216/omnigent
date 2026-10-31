@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
+import omnigent.server.app as official_app_module
 from omnigent.runtime import init as init_runtime
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -15,7 +18,7 @@ from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.comment_store.sqlalchemy_store import SqlAlchemyCommentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
-from saas.application import create_omnigent_saas_app
+from saas.application import _suppress_context_free_builtin_seed, create_omnigent_saas_app
 from saas.control_plane import (
     IdentityManagementService,
     MembershipLifecycleService,
@@ -27,6 +30,30 @@ from saas.control_plane import (
     VerifiedIdentityAssertion,
     create_saas_http_integration,
 )
+
+
+@pytest.mark.asyncio
+async def test_seed_suppression_returns_shadow_set_and_restores_helper(monkeypatch):
+    calls = []
+    shadow_sets = []
+
+    def original_seed(*_stores):
+        calls.append("seed")
+        return frozenset({"original"})
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        shadow_sets.append(official_app_module._ensure_default_agents(None, None, None))
+        yield {}
+
+    monkeypatch.setattr(official_app_module, "_ensure_default_agents", original_seed)
+    app = FastAPI(lifespan=lifespan)
+    _suppress_context_free_builtin_seed(app)
+    async with app.router.lifespan_context(app):
+        assert official_app_module._ensure_default_agents is original_seed
+    assert shadow_sets == [frozenset()]
+    assert calls == []
+    assert official_app_module._ensure_default_agents is original_seed
 
 
 def _integration(database_url: str):

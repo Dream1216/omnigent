@@ -183,6 +183,56 @@
           "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher consume \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent native consumer result\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-consumer-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
         }
       ]
+    },
+    "upstream_sync_correction": {
+      "corrected_sha256": "6fddf0695eb69c8a25d353f7e381fa89df3774139b07d8e14083080ca2320d3b",
+      "context": "0.21 toolchain pins and static version constants only; exact inverse restores prior independently hashed source; does not approve a release",
+      "inverse_fragments": [
+        {
+          "before": "jobs:\n  build-initial:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    timeout-minutes: 90\n    permissions:\n      contents: read\n",
+          "after": "jobs:\n  build-initial:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 90\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.12.1\"\n      - name: Derive hashed build backend constraints from the product lock\n        working-directory: control\n        run: |\n",
+          "after": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.13.4\"\n      - name: Derive hashed build backend constraints from the product lock\n        working-directory: control\n        run: |\n"
+        },
+        {
+          "before": "\n  qualify-source:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    timeout-minutes: 45\n    permissions:\n      contents: read\n",
+          "after": "\n  qualify-source:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  verify-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    name: legacy-pg (${{ matrix.major }})\n    runs-on: ubuntu-latest\n    timeout-minutes: 45\n    permissions:\n      contents: read\n",
+          "after": "  verify-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    name: legacy-pg (${{ matrix.major }})\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.12.1\"\n      - name: Install locked product contract dependencies without build hooks\n        working-directory: product\n        run: |\n",
+          "after": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.13.4\"\n      - name: Install locked product contract dependencies without build hooks\n        working-directory: product\n        run: |\n"
+        },
+        {
+          "before": "  collect-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-product-pg\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    permissions:\n      contents: read\n",
+          "after": "  collect-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-product-pg\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  prepare-publication:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: [build-initial, qualify-source, collect-product-pg]\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "  prepare-publication:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: [build-initial, qualify-source, collect-product-pg]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: prepare-publication\n    environment: production-image\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: prepare-publication\n    environment: production-image\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  verify-published-runtime:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: publish-exact-oci\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "  verify-published-runtime:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: publish-exact-oci\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-published-runtime\n    environment: production-image\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-published-runtime\n    environment: production-image\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  independent-readback:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: attest-exact-inputs\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "  independent-readback:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: attest-exact-inputs\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_pg_contract.py": {
@@ -260,6 +310,24 @@
         {
           "before": "        \"python-3.12=3.12.15-r3\",\n",
           "after": "        \"python-3.12=3.12.16-r0\",\n"
+        }
+      ]
+    },
+    "upstream_sync_correction": {
+      "corrected_sha256": "ebf978f26cca52b290b342ff8cb9ff51c33e9a695e2d0a503f5a6835d3bc1dec",
+      "context": "0.21 toolchain pins and static version constants only; exact inverse restores prior independently hashed source; does not approve a release",
+      "inverse_fragments": [
+        {
+          "before": "import json\nimport re\nimport subprocess\nfrom datetime import UTC, datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any\nfrom urllib.parse import urlsplit\n\nimport tomllib\n\nfrom saas.production.review_exception import apply_review_exception, review_verification_scope\n\n",
+          "after": "import json\nimport re\nimport subprocess\nimport tomllib\nfrom datetime import UTC, datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any\nfrom urllib.parse import urlsplit\n\nfrom saas.production.review_exception import apply_review_exception, review_verification_scope\n\n"
+        },
+        {
+          "before": "_GITHUB_CLI_SOURCE_LOCK = \"saas/supply_chain/github-cli-source-lock.json\"\n_BUILD_PUSH_ACTION = \"docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf\"\n_ATTEST_ACTION = \"actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4\"\n_APPROVED_UV_VERSION = \"0.12.1\"\n_APPROVED_PNPM_VERSION = \"12.10.1\"\n_APPROVED_PSYCOPG_VERSION = \"3.3.4\"\n_APPROVED_HOST_CLI_VERSIONS = {\n    \"@anthropic-ai/claude-code\": (\"CLAUDE_CODE_VERSION\", \"2.1.283\"),\n    \"@earendil-works/pi-coding-agent\": (\"PI_CODING_AGENT_VERSION\", \"1.0.4\"),\n    \"@moonshot-ai/kimi-code\": (\"KIMI_CODE_VERSION\", \"0.43.1\"),\n    \"@openai/codex\": (\"CODEX_CLI_VERSION\", \"0.139.0\"),\n    \"@qwen-code/qwen-code\": (\"QWEN_CODE_VERSION\", \"0.23.4\"),\n    \"opencode-ai\": (\"OPENCODE_VERSION\", \"1.18.31\"),\n}\n",
+          "after": "_GITHUB_CLI_SOURCE_LOCK = \"saas/supply_chain/github-cli-source-lock.json\"\n_BUILD_PUSH_ACTION = \"docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf\"\n_ATTEST_ACTION = \"actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4\"\n_APPROVED_UV_VERSION = \"0.13.4\"\n_APPROVED_PNPM_VERSION = \"12.10.1\"\n_APPROVED_PSYCOPG_VERSION = \"3.3.4\"\n_APPROVED_HOST_CLI_VERSIONS = {\n    \"@anthropic-ai/claude-code\": (\"CLAUDE_CODE_VERSION\", \"2.1.295\"),\n    \"@earendil-works/pi-coding-agent\": (\"PI_CODING_AGENT_VERSION\", \"1.3.0\"),\n    \"@moonshot-ai/kimi-code\": (\"KIMI_CODE_VERSION\", \"0.43.1\"),\n    \"@openai/codex\": (\"CODEX_CLI_VERSION\", \"0.142.0\"),\n    \"@qwen-code/qwen-code\": (\"QWEN_CODE_VERSION\", \"0.23.4\"),\n    \"opencode-ai\": (\"OPENCODE_VERSION\", \"1.18.31\"),\n}\n"
+        },
+        {
+          "before": "    if f\"ARG UV_VERSION={_APPROVED_UV_VERSION}\" not in dockerfile or not re.search(\n        r'pip install[^\\n]*\"uv==\\$\\{UV_VERSION\\}\"', dockerfile\n    ):\n        violations.append(\"production Dockerfile must pin and install uv 0.12.1\")\n    if 'case \"$(uv --version)\" in \"uv ${UV_VERSION}\"|\"uv ${UV_VERSION} \"*' not in dockerfile:\n        violations.append(\"production Dockerfile must verify the installed uv version\")\n    if \"COPY pyproject.toml setup.py uv.lock ./\" not in dockerfile:\n",
+          "after": "    if f\"ARG UV_VERSION={_APPROVED_UV_VERSION}\" not in dockerfile or not re.search(\n        r'pip install[^\\n]*\"uv==\\$\\{UV_VERSION\\}\"', dockerfile\n    ):\n        violations.append(f\"production Dockerfile must pin and install uv {_APPROVED_UV_VERSION}\")\n    if 'case \"$(uv --version)\" in \"uv ${UV_VERSION}\"|\"uv ${UV_VERSION} \"*' not in dockerfile:\n        violations.append(\"production Dockerfile must verify the installed uv version\")\n    if \"COPY pyproject.toml setup.py uv.lock ./\" not in dockerfile:\n"
         }
       ]
     }

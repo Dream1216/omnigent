@@ -361,14 +361,29 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 @@ -12145,0 +12276 @@ async def _create_session_from_existing_agent(
 +                conversation_id=_client_create_token(body),
 diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
-index 83b04a080cbea69d6c10cdf1837f53bb4673218a..081dfc92d0f186821f41d053967fae5b46efde46 100644
+index 83b04a080c..4a6a9e313c 100644
 --- a/omnigent/server/routes/sessions/routes_core.py
 +++ b/omnigent/server/routes/sessions/routes_core.py
-@@ -185,0 +186 @@ from omnigent.server.routes._sessions.orchestration import (
+@@ -183,6 +183,7 @@ from omnigent.server.routes._sessions.orchestration import (
+     _build_session_list_item,
+     _build_session_response,
+     _cancel_pending_archive_stop,
 +    _client_create_token,
-@@ -234,0 +236 @@ from omnigent.stores.conversation_store import (
+     _create_session_from_bundle,
+     _create_session_from_existing_agent,
+     _ensure_native_terminal_ready,
+@@ -232,6 +233,7 @@ from omnigent.stores.conversation_store import (
+     RUNNER_LIVENESS_TTL_S,
+     SIDE_CHAT_LABEL_KEY,
+     SIDE_CHAT_SOURCE_LABEL_KEY,
 +    ConversationAlreadyExistsError,
-@@ -1083,16 +1085,64 @@ def register_core_routes(
+     ConversationNotFoundError,
+     pinned_label_key,
+     runner_seen_is_fresh,
+@@ -1080,22 +1082,70 @@ def register_core_routes(
+                         code=ErrorCode.INVALID_INPUT,
+                     ) from exc
+         creation_metadata(parent_session_id=body.parent_session_id, host_type=body.host_type)
 -        resp, conv = await _create_session_from_existing_agent(
 -            conversation_store,
 -            agent_store,
@@ -449,7 +464,13 @@ index 83b04a080cbea69d6c10cdf1837f53bb4673218a..081dfc92d0f186821f41d053967fae5b
 +                "replay of this request",
 +                code=ErrorCode.CONFLICT,
 +            ) from collision
-@@ -1435,0 +1486,7 @@ def register_core_routes(
+         # Notify the runner about the new session so it can resolve
+         # the spec and cache sub_agent_name before the first turn.
+         # Without this, the runner doesn't know this session exists
+@@ -1433,6 +1483,13 @@ def register_core_routes(
+             host_store=getattr(request.app.state, "host_store", None),
+             parent=parent_conv,
+         )
 +        from omnigent.server.routes._sessions.orchestration import (
 +            _reject_unavailable_harness_for_create,
 +        )
@@ -457,6 +478,69 @@ index 83b04a080cbea69d6c10cdf1837f53bb4673218a..081dfc92d0f186821f41d053967fae5b
 +        await _reject_unavailable_harness_for_create(
 +            parsed_metadata, request, user_id, spec_harness(spec)
 +        )
+         require_codex_plan_launch_support(
+             harness=spec_harness(spec),
+             host_id=parsed_metadata.host_id,
+@@ -1974,18 +2031,27 @@ def register_core_routes(
+                 last_id=page.last_id,
+                 has_more=page.has_more,
+             )
+-        # Batch-fetch permissions and agent metadata concurrently.
++        # Fetch independent page metadata in one wave. In particular, PR and
++        # comment summaries must not add serial database round trips per page.
+         # The tasks table has been removed — status comes exclusively from
+         # the relay-fed ``_session_status_cache``.
+         perms_by_conv: dict[str, list[SessionPermission]]
+         if permission_store is not None:
+-            perms_by_conv, agent_metadata, child_ids_by_parent = await asyncio.gather(
++            (
++                perms_by_conv,
++                agent_metadata,
++                child_ids_by_parent,
++                comments_fingerprints,
++                pull_requests,
++            ) = await asyncio.gather(
+                 asyncio.to_thread(permission_store.list_for_sessions, conv_ids),
+                 asyncio.to_thread(_session_agent_metadata, page.data),
+                 asyncio.to_thread(
+                     conversation_store.list_child_conversation_ids_by_parent,
+                     conv_ids,
+                 ),
++                _comments_fingerprints_for(conv_ids),
++                _pull_requests_for(conv_ids),
+             )
+             user_is_admin = (
+                 await asyncio.to_thread(permission_store.is_admin, user_id)
+@@ -1993,12 +2059,19 @@ def register_core_routes(
+                 else False
+             )
+         else:
+-            agent_metadata, child_ids_by_parent = await asyncio.gather(
++            (
++                agent_metadata,
++                child_ids_by_parent,
++                comments_fingerprints,
++                pull_requests,
++            ) = await asyncio.gather(
+                 asyncio.to_thread(_session_agent_metadata, page.data),
+                 asyncio.to_thread(
+                     conversation_store.list_child_conversation_ids_by_parent,
+                     conv_ids,
+                 ),
++                _comments_fingerprints_for(conv_ids),
++                _pull_requests_for(conv_ids),
+             )
+             perms_by_conv = {}
+             user_is_admin = False
+@@ -2006,8 +2079,6 @@ def register_core_routes(
+         # In-memory lookup — no I/O, so batching avoids re-acquiring
+         # the index's lock per row but otherwise has no DB cost.
+         pending_counts = pending_elicitations.counts_for(conv_ids)
+-        comments_fingerprints = await _comments_fingerprints_for(conv_ids)
+-        pull_requests = await _pull_requests_for(conv_ids)
+         # ── Lazy-on-read backstop for orphaned "running" sessions. ────────
+         # A session whose persisted live_status is still running/waiting but
+         # whose runner is confirmed gone — a replica that restarted and
 diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
 index ad3f08c8103e9135e2d61ce344eaca8c36929340..e7834c88c2814a7d57ad8f5bca829d2d1cfa739f 100644
 --- a/omnigent/server/routes/sessions/routes_events.py

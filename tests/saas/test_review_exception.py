@@ -33,6 +33,14 @@ def _fixture(
         output = tmp_path / relative
         output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(origin / relative, output)
+    # Exercise the immutable October release authorization in its original
+    # revision context; it must never authorize the new upstream candidate.
+    baseline_path = tmp_path / "saas/production/baseline.json"
+    baseline = json.loads(baseline_path.read_text())
+    baseline["revision_contract"] = json.loads((tmp_path / review.POLICY_PATH).read_text())[
+        "revision_contract"
+    ]
+    baseline_path.write_text(json.dumps(baseline))
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "fixture@example.test")
     _git(tmp_path, "config", "user.name", "Fixture")
@@ -362,6 +370,7 @@ def test_single_owner_preserves_real_slo_window_and_capacity_thresholds(
         return value
 
     record = shift(fixture._record())
+    record["revision_contract"] = review._REVISION_CONTRACT
     record["attestations"] = [item]
     if failure == "short_window":
         record["window_started_at"] = "2026-10-20T08:30:00Z"
@@ -371,6 +380,9 @@ def test_single_owner_preserves_real_slo_window_and_capacity_thresholds(
         ] = 0.8
     fixture._resign(record)
     policy = fixture._policy()
+    policy["revision_contract"] = review._REVISION_CONTRACT
+    baseline = fixture._active_baseline()
+    baseline["revision_contract"] = review._REVISION_CONTRACT
     (tmp_path / policy["evidence_directory"]).mkdir(parents=True)
     report = validate_slo_capacity_readiness(
         tmp_path,
@@ -378,7 +390,7 @@ def test_single_owner_preserves_real_slo_window_and_capacity_thresholds(
         [record],
         now=_NOW,
         expected_product_revision=product,
-        baseline=fixture._active_baseline(),
+        baseline=baseline,
     )
     assert report["status"] == "pass", report
     if failure is None:

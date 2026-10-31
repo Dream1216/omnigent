@@ -556,8 +556,10 @@ def reviewed_source_bytes(root, relative, expected):
     body = (root / relative).read_bytes()
     if isinstance(expected, str):
         return body
-    correction = expected.get("type_and_context_correction")
-    if correction is not None:
+    for name in ("upstream_sync_correction", "type_and_context_correction"):
+        correction = expected.get(name)
+        if correction is None:
+            continue
         assert hashlib.sha256(body).hexdigest() == correction["corrected_sha256"]
         for fragment in correction["inverse_fragments"]:
             before, after = fragment["before"].encode(), fragment["after"].encode()

@@ -221,12 +221,12 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         16,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "5c10916ab3ca7ddb70bb6f19d9a3c4790799411f4a6586e083e17c9a28c43bcb",
+    ): "6a3abed7e47c3d239b854c3e2d79cfe2365973b406205dd114e93c7dc0f065fe",
     (
         18,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "fcedc5b4b7a20abd45ae4f19011b7a341167cd2380458842b3e2f727e7c3bc77",
+    ): "3118bfb8666f212996415ca2c076d7c2bfc602bec7d6236d67bf25a13c82a37c",
     # Independently old-anchor-verified clean PG16/18 P17 replay.
     (
         16,
@@ -3024,12 +3024,12 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             16,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "853572809ee2bdcb29c9d08efea2003a6a8466bc5b55a3586a4a1f5e9dbe8efb",
+        ): "e4d13e535ca4c4eb90442617d43fafc10b326873c6b15b0321afe9f363098cf1",
         (
             18,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "ed10d0c64002553b7281274266a22f1d09d216f4587a8adc564103b3664d6f7f",
+        ): "77f530076cfcf29a63acda19f7b0240075150cce16d5b1242a8ebb450fcc3ca4",
         (
             16,
             "nf12ab34cd56",
@@ -3056,12 +3056,12 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             16,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "9b5bd028e6ea14be1ab394d8b20c8ff4fc4025ce09f7561e2fe320d0a03f97b3",
+        ): "81735980565ca604131d6c845854836e8ba76fca41ad0c77177786b08d543240",
         (
             18,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "2edaeb0594136245acf82ed23ff24cf4c141d3adb3374d7fbdeec9b10fca5ed2",
+        ): "352934907362f6e0f4fa3b070d431771cea73ee02b5db6fb1b4c233af4747375",
         (
             16,
             "nf12ab34cd56",
@@ -3088,12 +3088,12 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             16,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "f49b51432d327eae910a5e717ab4acb2ea2be7458068dec13d6e5c9d18071da3",
+        ): "80a62188cc26b981f23126b3aeeed2a729f71ec001c390f8241432f7505b2bd1",
         (
             18,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "582ad53090ef313a2e8aee2810ef4e39f762f31fdd9bc8a810c9f54cc50543ce",
+        ): "395edb9eabd4bbcbb326093e96928c5782d0737af204ea104c2eb782063448bf",
         (
             16,
             "nf12ab34cd56",
@@ -3120,12 +3120,12 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
             16,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "218ce8b103bdaa1dae6daf4249153c3e4731e2b4886bee13bdfbf4566de2db80",
+        ): "2a9a3c6c0a175a7070746376a5af46d90bc6844e4ad11d3a7b2c36cfa54039c5",
         (
             18,
             "d0a1f879a01d",
             "p0s000000018",
-        ): "fc68deee1a1548eb909d22a291437b357c792fa6cacce39c69ea45d54505ed39",
+        ): "8e4c3c67dcb13011d7c6e5bf61a524e2d01193a3ebad5b55bb0546e4725f9ae6",
         (
             16,
             "nf12ab34cd56",

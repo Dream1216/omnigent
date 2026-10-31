@@ -1229,43 +1229,78 @@ def test_merge_gate_expiry_includes_workflows_vouching_for_absent_checks(tmp_pat
         "incompatible",
         "missing",
         "optional",
+        "optional-incompatible",
         "baseline",
         "context",
         "prerelease",
         "prerelease-outside-range",
+        "valid-multi-doc",
+        "incompatible-multi-doc",
+        "manager-peer-incompatible",
+        "conflicting-doc",
+        "invalid-doc-version",
     ],
 )
 def test_changed_npm_peer_gate_uses_candidate_lock_and_npm_semver(merged_repo, fault):
     repo, git = merged_repo
+    scenario = fault.removesuffix("-multi-doc")
     lock = {
         "lockfileVersion": "9.0",
         "packages": {"storybook@1.0.0": {"peerDependencies": {"vite": "^8.0.0"}}},
         "snapshots": {"storybook@1.0.0": {"dependencies": {"vite": "8.1.0"}}},
     }
-    if fault == "baseline":
+    if scenario == "baseline":
         lock["snapshots"]["storybook@1.0.0"]["dependencies"]["vite"] = "7.0.0"
     path = repo / "pnpm-lock.yaml"
     path.write_text(yaml.safe_dump(lock))
     git("add", ".")
     git("commit", "-qm", "baseline peers")
-    if fault != "baseline":
+    if scenario != "baseline":
         old = "storybook@1.0.0"
-        new = old if fault == "context" else "storybook@1.0.1"
+        new = old if scenario == "context" else "storybook@1.0.1"
         metadata = lock["packages"].pop(old)
         snapshot = lock["snapshots"].pop(old)
         lock["packages"][new] = metadata
         lock["snapshots"][new] = snapshot
-        if fault in {"incompatible", "context"}:
+        if scenario in {"incompatible", "context"}:
             snapshot["dependencies"]["vite"] = "7.0.0"
-        elif fault in {"missing", "optional"}:
+        elif scenario == "optional-incompatible":
+            metadata["peerDependenciesMeta"] = {"vite": {"optional": True}}
+            snapshot["dependencies"]["vite"] = "7.0.0"
+        elif scenario in {"missing", "optional"}:
             snapshot["dependencies"].clear()
-            if fault == "optional":
+            if scenario == "optional":
                 metadata["peerDependenciesMeta"] = {"vite": {"optional": True}}
-        elif fault.startswith("prerelease"):
+        elif scenario.startswith("prerelease"):
             snapshot["dependencies"]["vite"] = (
-                "8.1.0-rc.1" if fault == "prerelease" else "9.0.0-rc.1"
+                "8.1.0-rc.1" if scenario == "prerelease" else "9.0.0-rc.1"
             )
-    path.write_text(yaml.safe_dump(lock))
+    if fault.endswith("-multi-doc") or fault in {
+        "manager-peer-incompatible",
+        "conflicting-doc",
+        "invalid-doc-version",
+    }:
+        manager = {
+            "lockfileVersion": "9.0",
+            "packages": {"pnpm@12.10.1": {}},
+            "snapshots": {"pnpm@12.10.1": {}},
+        }
+        documents = [manager, lock]
+        if fault == "manager-peer-incompatible":
+            manager["packages"]["pnpm@12.10.1"] = {"peerDependencies": {"vite": "^8.0.0"}}
+            manager["snapshots"]["pnpm@12.10.1"] = {"dependencies": {"vite": "7.0.0"}}
+        elif fault == "invalid-doc-version":
+            manager["lockfileVersion"] = "8.0"
+        elif fault == "conflicting-doc":
+            documents.append(
+                {
+                    "lockfileVersion": "9.0",
+                    "packages": {"storybook@1.0.1": {"peerDependencies": {"vite": "^9.0.0"}}},
+                }
+            )
+        path.write_text(yaml.safe_dump_all(documents))
+    else:
+        path.write_text(yaml.safe_dump(lock))
     git("add", ".")
     git("commit", "--allow-empty", "-qm", "update peers")
     process = subprocess.run(
@@ -1276,5 +1311,11 @@ def test_changed_npm_peer_gate_uses_candidate_lock_and_npm_semver(merged_repo, f
         timeout=30,
     )
     assert (process.returncode == 0) == (
-        fault in {"valid", "optional", "baseline", "prerelease"}
+        scenario in {"valid", "optional", "baseline", "prerelease"}
     ), process.stdout + process.stderr
+    if fault == "manager-peer-incompatible":
+        assert "pnpm@12.10.1" in process.stderr
+    elif fault == "conflicting-doc":
+        assert "Conflicting pnpm packages entry" in process.stderr
+    elif fault == "invalid-doc-version":
+        assert "requires pnpm lockfile version 9.0" in process.stderr

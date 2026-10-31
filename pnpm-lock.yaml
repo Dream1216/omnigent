@@ -202,6 +202,8 @@ overrides:
   undici@>=7.0.0 <8.0.0: 7.30.1
   undici@>=8.0.0 <9.0.0: 8.12.2
   zod@>=4.0.0 <5.0.0: 4.6.7
+  openai@7.19.0>undici: '>=7.30.1 <8 || >=8.12.2 <9'
+  zod-to-json-schema@3.25.2>zod: ^3.25.76 || >=4.6.7 <5
   body-parser@>=2.0.0 <3.0.0: 2.4.0
   '@azure/identity@4.13.3>@azure/msal-node': 7.1.0
   proxy-addr: 2.0.8
@@ -262,7 +264,7 @@ overrides:
   sharp: 0.35.5
   '@modelcontextprotocol/sdk': 1.32.0
 
-packageExtensionsChecksum: sha256-pFEExG4o57joHucsVi/dgGpp9BfdxYD7y4blLQUpCqI=
+packageExtensionsChecksum: sha256-mhbvYUbFTUX7s0szFHf8okAA6GrQIBqOYAZyIQTlcA0=
 
 patchedDependencies:
   '@tiptap/react@3.31.4': 4276dd6552be2980d90b31e5346540e66e9b4eb3807014472e56c38116c14473
@@ -1806,6 +1808,9 @@ packages:
       antd: ^6.1.1
       react: ^18.2.0
       react-dom: ^18.2.0
+    peerDependenciesMeta:
+      '@lobehub/ui':
+        optional: true
 
   '@lydell/node-pty-darwin-arm64@1.2.0-beta.10':
     resolution: {integrity: sha512-C+eqDyRNHRYvx7RaHj6VVCx6nCpRBPuuxhTcc3JH3GuBMoxTsYeY4GkWH2XOktrgbAq1BG8e/Y8bu/wNQreCEw==}
@@ -4944,6 +4949,9 @@ packages:
     peerDependencies:
       dmg-builder: 26.15.3
       electron-builder-squirrel-windows: 26.15.3
+    peerDependenciesMeta:
+      electron-builder-squirrel-windows:
+        optional: true
 
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
@@ -7285,7 +7293,7 @@ packages:
       '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
       '@smithy/hash-node': '>=4.3.0 <5'
       '@smithy/signature-v4': '>=5.4.0 <6'
-      undici: 7.30.1
+      undici: '>=7.30.1 <8 || >=8.12.2 <9'
       ws: ^8.21.0
       zod: 4.6.7
     peerDependenciesMeta:
@@ -9004,7 +9012,7 @@ packages:
   zod-to-json-schema@3.25.2:
     resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
     peerDependencies:
-      zod: 4.6.7
+      zod: ^3.25.76 || >=4.6.7 <5
 
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}

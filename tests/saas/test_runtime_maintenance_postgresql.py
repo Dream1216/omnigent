@@ -1649,7 +1649,7 @@ def _assert_native_t_readonly_observation(context, coordinator, state):
 
 
 def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
-    production_replay, tmp_path
+    production_replay, tmp_path, *, expected_inverse_refusal=None
 ):
     """Full real SQL, not real images/provider/backup/65-second readiness."""
     from saas.production.postgresql_preserving_recovery import PreservingPostgreSqlRecovery
@@ -1742,6 +1742,25 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
             original = state["before_runtime_facts"]
             for table in db.TABLES:
                 assert original["tables"][table]["row_count"] == 2
+            if expected_inverse_refusal is not None:
+                rows_before = coordinator._rows()
+                facts_before = coordinator._facts()
+                checkpoints_before = copy.deepcopy(checkpoints)
+                callbacks_before = list(callbacks)
+                for inverse, prepared in (
+                    (coordinator.inverse, state),
+                    (preserving.inverse, state["initial_preserving_state"]),
+                ):
+                    with pytest.raises(db.Refused, match=expected_inverse_refusal):
+                        inverse(prepared)
+                    assert coordinator._rows() == rows_before
+                    assert coordinator._facts() == facts_before
+                    assert checkpoints == checkpoints_before
+                    assert callbacks == callbacks_before
+                    assert migration._verify_state(
+                        context.plan, context.engines
+                    ).official_head == ("d0a1f879a01d")
+                return
             old = coordinator.inverse(state)
             assert {fact["schema"] for fact in old["preserving"]["before"]["tables"].values()} == {
                 "public"

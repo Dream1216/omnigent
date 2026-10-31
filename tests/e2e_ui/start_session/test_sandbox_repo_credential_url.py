@@ -10,8 +10,8 @@ token can be stopped BEFORE it leaves the browser, so the field must refuse
 such a URL inline: Add stays disabled, Enter adds nothing, and no request
 ever carries the token.
 
-The managed-sandbox capability is stubbed (``/v1/info`` + zero connected
-hosts), the same way the rest of the suite fakes it — the harness runs no
+The managed-sandbox capability is stubbed (``/v1/info`` + one ready provider
+probe and zero manual hosts), the same way the rest of the suite fakes it — the harness runs no
 sandbox provider. The create ``POST /v1/sessions`` is NOT stubbed: when the
 client gate fails, the request really leaves the browser and the live server
 answers it, which is exactly the leak under test.
@@ -62,7 +62,7 @@ def _agents_body() -> str:
                     "name": "claude-native-ui",
                     "display_name": "Claude Code",
                     "description": "Anthropic's coding agent",
-                    "harness": None,
+                    "harness": "claude-native",
                     "skills": [],
                 }
             ]
@@ -89,7 +89,22 @@ def _route_managed_sandbox_deployment(page: Page) -> None:
     page.route(
         "**/v1/hosts",
         lambda route: route.fulfill(
-            status=200, content_type="application/json", body=json.dumps({"hosts": []})
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "hosts": [
+                        {
+                            "host_id": "managed-modal-readiness-probe",
+                            "name": "Modal runtime",
+                            "owner": "managed-sandbox",
+                            "status": "online",
+                            "sandbox_provider": "modal",
+                            "configured_harnesses": {"claude-native": True},
+                        }
+                    ]
+                }
+            ),
         ),
     )
     page.route(

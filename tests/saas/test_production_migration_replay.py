@@ -826,12 +826,14 @@ def test_real_fenced_t_runtime_rebinding_commit_and_complete_facts(production_re
 
 
 @pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
-def test_real_fenced_t_inverse_and_same_oid_reattach(production_replay, tmp_path):
-    """Derive clean original T gold; fixture callbacks do not qualify old images."""
+def test_real_fenced_t_new_schema_inverse_refuses_before_mutation(production_replay, tmp_path):
+    """New official columns cannot enter the original destructive T downgrade."""
     from tests.saas.test_runtime_maintenance_postgresql import (
         assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold,
     )
 
     assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
-        production_replay, tmp_path
+        production_replay,
+        tmp_path,
+        expected_inverse_refusal=r"^official_schema_inverse_not_source_qualified$",
     )

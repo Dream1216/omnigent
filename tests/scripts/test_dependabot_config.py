@@ -172,12 +172,19 @@ def test_app_refresh_permissions_cover_optional_and_reusable_workflows(monkeypat
         for workflow in (REPO_ROOT / ".github/workflows").iterdir()
         if workflow.suffix in {".yml", ".yaml"}
     }
+    # Keep the upstream unprivileged-workflow contract independent of this
+    # fork's production publication jobs, which must block automatic refresh.
+    upstream_workflows = {
+        name: text for name, text in workflows.items() if not Path(name).name.startswith("saas-")
+    }
     if allowed:
-        require_refresh_permissions(workflows, {path}, "dependabot/uv/ruff")
+        require_refresh_permissions(upstream_workflows, {path}, "dependabot/uv/ruff")
     else:
         with pytest.raises(NeedsReview, match="automatic branch refresh") as raised:
-            require_refresh_permissions(workflows, {path}, "dependabot/uv/ruff")
+            require_refresh_permissions(upstream_workflows, {path}, "dependabot/uv/ruff")
         assert path in str(raised.value)
+    with pytest.raises(NeedsReview, match="automatic branch refresh"):
+        require_refresh_permissions(workflows, {path}, "dependabot/uv/ruff")
 
 
 @pytest.mark.parametrize("name", ["oss-regen-on-comment.yml", "oss-regenerate-and-smoke.yml"])
