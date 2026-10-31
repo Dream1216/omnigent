@@ -2082,15 +2082,18 @@ async def test_message_relaunch_pre_connect_exit_withholds_log_tail_from_non_own
 
 
 @pytest.mark.parametrize("connect_late", [True, False])
+@pytest.mark.parametrize("runner_phase", ["starting", "host_reconnected", "stalled"])
 async def test_alive_runner_is_preserved_after_its_initial_connect_grace(
     client: httpx.AsyncClient,
     app: FastAPI,
     db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
     connect_late: bool,
+    runner_phase: str,
 ) -> None:
-    """A delayed live process is reused or refused without replacing its binding."""
+    """Preserve reconnecting processes while replacing an established hung runner."""
     from omnigent.runtime import set_runner_client
+    from omnigent.server import session_live_state
     from omnigent.server.routes import sessions as sessions_module
     from omnigent.server.routes.sessions import routes_events
 
@@ -2099,6 +2102,12 @@ async def test_alive_runner_is_preserved_after_its_initial_connect_grace(
     comm = await _connect_host(app)
     session = await _inline_launch_session(client, comm)
     sid, runner_id = session["id"], session["runner_id"]
+    host = app.state.host_registry.get(_HOST_ID)
+    assert host is not None
+    stamp = int(host.connected_at) - 30 if runner_phase == "host_reconnected" else None
+    if runner_phase == "stalled":
+        stamp = int(host.connected_at)
+    monkeypatch.setattr(session_live_state, "last_liveness_stamp", lambda _: stamp)
     status_seen = asyncio.Event()
     launches: list[HostLaunchRunnerFrame] = []
     waits: list[str] = []
@@ -2155,13 +2164,16 @@ async def test_alive_runner_is_preserved_after_its_initial_connect_grace(
             },
         )
         assert response.status_code == (202 if connect_late else 503), response.text
-        assert not launches
+        preserved = runner_phase != "stalled"
+        assert len(launches) == int(not preserved)
         conversation = SqlAlchemyConversationStore(db_uri).get_conversation(sid)
-        assert conversation is not None and conversation.runner_id == runner_id
-        assert all(value == runner_id for value in waits)
+        assert conversation is not None
+        assert (conversation.runner_id == runner_id) is preserved
+        assert waits[0] == runner_id
+        assert all(value == conversation.runner_id for value in waits[1:])
         if connect_late:
             assert f"/v1/sessions/{sid}/events" in forwarded
-        else:
+        elif preserved:
             items = (await client.get(f"/v1/sessions/{sid}/items")).json()["data"]
             assert not [item for item in items if item["type"] in {"message", "error"}]
     finally:

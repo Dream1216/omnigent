@@ -266,3 +266,9 @@ claimed. Remove this extension once the pinned upstream implements these
 reconnect and acknowledgement contracts and the strict 20/150-second native
 matrix passes without the extension. Local mock-model fault coverage does not
 qualify an Aliyun Host deployment or waive release gates.
+
+The Aliyun Host recovery followup distinguishes a process starting or reconnecting
+after its Host tunnel from a previously connected Runner that has become
+unresponsive. The latter remains eligible for replacement and superseded-process
+reaping after the ordinary connect grace; live startup and Host reconnect cases
+retain their bounded preservation behavior. Patch 0010 carries this distinction.
