@@ -853,6 +853,35 @@ class SaasAuthContextMiddleware:
             return None
         tenant_raw = connection.headers.get("x-saas-tenant-id")
         space_raw = connection.headers.get("x-saas-space-id")
+        download_scope = None
+        if (
+            connection.scope.get("method") == "GET"
+            and re.fullmatch(
+                r"/v1/sessions/(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}"
+                r"-[0-9a-f]{12})/artifacts/content",
+                path,
+            )
+            is not None
+        ):
+            query_tenant = connection.query_params.get("tenant_id")
+            query_space = connection.query_params.get("space_id")
+            if query_tenant is not None or query_space is not None:
+                if not query_tenant or not query_space:
+                    raise LifecycleError("runtime_context_required", "both selectors are required")
+                download_scope = (UUID(query_tenant), UUID(query_space))
+                if tenant_raw or space_raw:
+                    if (
+                        not tenant_raw
+                        or not space_raw
+                        or download_scope
+                        != (
+                            UUID(tenant_raw),
+                            UUID(space_raw),
+                        )
+                    ):
+                        raise LifecycleError("runtime_context_mismatch", "scope selectors differ")
+                else:
+                    tenant_raw, space_raw = query_tenant, query_space
         verified: VerifiedContextSnapshot | None = None
         snapshot_token = connection.headers.get("x-saas-context-snapshot")
         if snapshot_token:
@@ -863,6 +892,11 @@ class SaasAuthContextMiddleware:
             verified = self._context_snapshots.verify(token=snapshot_token, auth_token=token)
             self._validate_live_snapshot_session(verified, session)
             self._validate_selector_headers(connection, verified.runtime_context)
+            if download_scope is not None and download_scope != (
+                verified.runtime_context.tenant_id,
+                verified.runtime_context.space_id,
+            ):
+                raise LifecycleError("runtime_context_mismatch", "scope selectors differ")
             tenant_id = verified.runtime_context.tenant_id
             space_id = verified.runtime_context.space_id
         elif tenant_raw and space_raw:

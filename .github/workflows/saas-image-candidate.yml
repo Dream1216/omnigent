@@ -356,7 +356,7 @@ jobs:
                       "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
                       "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
                       "--entrypoint", "/opt/venv/bin/python", root, "-B", "-I", "-c",
-                      'import os,sys,kubernetes;from pathlib import Path;from importlib.metadata import version;from omnigent import _build_info;import saas.production.aliyun_server_profile as profile;import saas.production.aliyun_model_ingress;assert version("e2b")=="2.31.0";assert version("alibabacloud-sandbox20260820")=="1.2.0";assert version("alibabacloud-sts20150401")=="1.2.0";import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert Path(profile.__file__).resolve().is_relative_to(Path("/opt/venv"))',
+                      'import os,sys,kubernetes;from pathlib import Path;from importlib.metadata import version;from omnigent import _build_info;import saas.production.aliyun_server_profile as profile;import saas.production.aliyun_model_ingress;assert version("e2b")=="2.31.0";assert version("alibabacloud-sandbox20260820")=="1.2.0";assert version("alibabacloud-sts20150401")=="1.2.0";assert version("alibabacloud-oss-v2")=="1.4.0";assert version("defusedxml")=="0.7.1";import saas.production.aliyun_artifacts;import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert Path(profile.__file__).resolve().is_relative_to(Path("/opt/venv"))',
                       revision,
                   ], check=True, timeout=180)
                   verified.append({"platform": platform, "config_digest": expected["config_digest"], "manifest_digest": expected["manifest_digest"]})
@@ -671,7 +671,7 @@ jobs:
           done
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$SERVER_IMAGE" -B -I -c \
-            'import kubernetes; from importlib.metadata import version; assert version("e2b") == "2.31.0"; assert version("alibabacloud-sandbox20260820") == "1.2.0"; assert version("alibabacloud-sts20150401") == "1.2.0"; import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer; import saas.production.aliyun_server_profile; import saas.production.platform_model_sandbox_host'
+            'import kubernetes; from importlib.metadata import version; assert version("e2b") == "2.31.0"; assert version("alibabacloud-sandbox20260820") == "1.2.0"; assert version("alibabacloud-sts20150401") == "1.2.0"; assert version("alibabacloud-oss-v2") == "1.4.0"; assert version("defusedxml") == "0.7.1"; import saas.production.aliyun_artifacts; import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer; import saas.production.aliyun_server_profile; import saas.production.platform_model_sandbox_host'
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'import saas.production.platform_model_sandbox_host'

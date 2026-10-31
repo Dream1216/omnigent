@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import MappingProxyType
 from uuid import UUID
@@ -75,6 +77,7 @@ class AliyunServerProfile:
     authority_files: tuple[tuple[Path, str], ...] = field(repr=False)
     storage_configs: tuple[AliyunOssStorageConfig, ...] = ()
     storage_credential_file: Path | None = field(default=None, repr=False)
+    artifact_credential_file: Path | None = field(default=None, repr=False)
 
     def assert_ready(self) -> None:
         """Check installed SDK and local credentials without making a cloud API call."""
@@ -104,6 +107,28 @@ class AliyunServerProfile:
             AliyunVolumeControlClient(
                 team_id=self.team_id, credential_file=self.storage_credential_file
             ).prepare()
+        if self.artifact_credential_file is not None:
+            from saas.production.aliyun_sts import read_sts_document
+
+            try:
+                qualified = version("alibabacloud-oss-v2") == "1.4.0"
+            except PackageNotFoundError:
+                qualified = False
+            if (
+                not self.storage_configs
+                or self.storage_credential_file is None
+                or self.artifact_credential_file == self.storage_credential_file
+                or not qualified
+            ):
+                raise ValueError("Aliyun output read authority must be independent")
+            read_id = read_sts_document(self.artifact_credential_file, now=time.time())[
+                "access_key_id"
+            ]
+            control_id = read_sts_document(self.storage_credential_file, now=time.time())[
+                "access_key_id"
+            ]
+            if read_id == control_id:
+                raise ValueError("Aliyun output read authority must be independent")
 
 
 def load_aliyun_server_profile(
@@ -136,9 +161,9 @@ def load_aliyun_server_profile(
             raw != canonical
             or not isinstance(document, dict)
             or set(document)
-            != _FIELDS | ({"storage"} if document.get("schema_version") == 2 else set())
+            != _FIELDS | ({"storage"} if document.get("schema_version") in (2, 3) else set())
             or type(document["schema_version"]) is not int
-            or document["schema_version"] not in (1, 2)
+            or document["schema_version"] not in (1, 2, 3)
             or document["product_revision"] != product_revision
             or document["server_image_digest"] != server_image_digest
             or document["region"] != "cn-hangzhou"
@@ -203,11 +228,14 @@ def load_aliyun_server_profile(
             authority_files.append((key_file, row["gateway_key_sha256"]))
         storage_configs = []
         storage_credential_file = None
-        if document["schema_version"] == 2:
+        artifact_credential_file = None
+        if document["schema_version"] in (2, 3):
             storage = document["storage"]
             if (
                 not isinstance(storage, dict)
-                or set(storage) != {"credential_file", "tenants"}
+                or set(storage)
+                != {"credential_file", "tenants"}
+                | ({"artifact_credential_file"} if document["schema_version"] == 3 else set())
                 or not isinstance(storage["tenants"], list)
                 or len(storage["tenants"]) != len(scopes)
             ):
@@ -215,6 +243,11 @@ def load_aliyun_server_profile(
             storage_credential_file = _path(storage["credential_file"])
             if storage_credential_file in paths:
                 raise ValueError
+            paths.add(storage_credential_file)
+            if document["schema_version"] == 3:
+                artifact_credential_file = _path(storage["artifact_credential_file"])
+                if artifact_credential_file in paths:
+                    raise ValueError
             workspaces = {scope.tenant_id: scope.workspace_id for scope in scopes}
             seen = set()
             for row in storage["tenants"]:
@@ -237,6 +270,7 @@ def load_aliyun_server_profile(
                         row["bucket"],
                         row["role_arn"],
                         row["prefix"],
+                        project_scoped=document["schema_version"] == 3,
                     )
                 )
         managed = AliyunManagedSandbox(
@@ -259,6 +293,7 @@ def load_aliyun_server_profile(
             tuple(authority_files),
             tuple(storage_configs),
             storage_credential_file,
+            artifact_credential_file,
         )
         profile.assert_ready()
         return profile

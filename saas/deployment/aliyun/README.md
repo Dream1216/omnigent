@@ -87,7 +87,9 @@ acceptance remain required.
 
 The opt-in [session storage candidate](storage.md) adds immutable Volume
 planning, an STS-only control adapter and real Server/launcher admission behind
-profile version 2. Real cloud mounts, persistence, download authorization, STS
+profile version 2; version 3 adds Project-scoped saved output listing and
+authenticated download in desktop/mobile Files and Changes. Real cloud mounts,
+persistence, deployed download authorization, STS
 issuance and P4 acceptance remain pending.
 
 The separate [STS issuer candidate](sts-issuer.md) supplies 15-minute,

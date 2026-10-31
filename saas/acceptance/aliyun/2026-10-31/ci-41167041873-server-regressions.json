@@ -1,0 +1,63 @@
+{
+  "conclusion": "failure",
+  "failed_cases": [
+    {
+      "classname": "tests.saas.test_legacy_domain_discovery",
+      "name": "test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged"
+    },
+    {
+      "classname": "tests.saas.test_n1_merge_gate_candidate",
+      "name": "test_all_trusted_candidate_inputs_match_main_policy_hashes"
+    }
+  ],
+  "image_built": false,
+  "migration_replay": [
+    {
+      "errors": 0,
+      "failures": 0,
+      "job_index": 0,
+      "junit_sha256": "0247ad1568e96004211a2968171b747de67b649da7561957127878b07afe5afa",
+      "passed": 1,
+      "skipped": 0,
+      "tests": 1
+    },
+    {
+      "errors": 0,
+      "failures": 0,
+      "job_index": 1,
+      "junit_sha256": "4aed5a0b7b78482f05fd634f0e144b3c1717c47c6681f7aeeba4c3bd9a332a29",
+      "passed": 1,
+      "skipped": 0,
+      "tests": 1
+    }
+  ],
+  "observed_at": "2026-10-31T04:54:04.607818+00:00",
+  "output_read_admission": {
+    "executed_cases": 14,
+    "passed": 14,
+    "scope": "Real local stores; authorization only at this source, no OSS HTTP reader/UI"
+  },
+  "production_ready": false,
+  "published": false,
+  "regressions": {
+    "errors": 0,
+    "failures": 2,
+    "junit_sha256": "27f3ebb6b74e79edd8b8bf1f0ef456bf3cff411343095aca1ac37a6517f6f433",
+    "passed": 5035,
+    "skipped": 13,
+    "tests": 5050
+  },
+  "run_id": 41167041873,
+  "source_revision": "917296883ee7a1418617e9995f1407231f7962d0",
+  "status": "completed",
+  "storage_inventory_rls": {
+    "executed_cases": 1,
+    "passed": 1,
+    "scope": "Real PostgreSQL app-login Space inventory/RLS, not deployment or OSS"
+  },
+  "sts_issuer": {
+    "executed_cases": 58,
+    "passed": 58,
+    "scope": "Pinned SDK and mocked cloud/metadata HTTP, not live IAM or renewal"
+  }
+}

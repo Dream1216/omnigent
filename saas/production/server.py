@@ -1460,12 +1460,9 @@ def _install_aliyun_storage(
     profile = config.aliyun_profile
     if profile is None or not profile.storage_configs:
         return official
-    from omnigent.db.utils import make_named_managed_session_maker
     from omnigent.server.managed_hosts import ManagedSandboxDeployment
-    from saas.control_plane.authorization import ProjectAuthorizer
     from saas.production.aliyun_storage_admission import (
         AliyunCurrentSessionStorage,
-        AliyunStorageSessionAuthorizer,
     )
     from saas.production.aliyun_tenant_sandbox import build_aliyun_managed_config
     from saas.production.aliyun_volume_control import AliyunVolumeControlClient
@@ -1479,18 +1476,7 @@ def _install_aliyun_storage(
         != {(c.tenant_id, c.workspace_id) for c in profile.managed.scopes}
     ):
         raise ProductionServerCompositionError("Aliyun storage configuration is incomplete")
-    authorizer = AliyunStorageSessionAuthorizer(
-        sessions=make_named_managed_session_maker(
-            sessions.engines["app"], query_name_prefix="saas.aliyun_storage"
-        ),
-        resolver=SqlAlchemyContextResolver(
-            sessions.app,
-            _runtime_compatibility_policy(config),
-            project_authorizer=ProjectAuthorizer(sessions.app),
-        ),
-        conversations=official.conversation_store,
-        permissions=official.permission_store,
-    )
+    authorizer = _aliyun_storage_authorizer(config, sessions, official)
     storage = AliyunCurrentSessionStorage(
         profile.storage_configs,
         AliyunVolumeControlClient(
@@ -1510,6 +1496,56 @@ def _install_aliyun_storage(
         ),
     )
     return replace(official, sandbox_config=configured)
+
+
+def _aliyun_storage_authorizer(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+):
+    from omnigent.db.utils import make_named_managed_session_maker
+    from saas.control_plane.authorization import ProjectAuthorizer
+    from saas.production.aliyun_storage_admission import AliyunStorageSessionAuthorizer
+
+    return AliyunStorageSessionAuthorizer(
+        sessions=make_named_managed_session_maker(
+            sessions.engines["app"], query_name_prefix="saas.aliyun_storage"
+        ),
+        resolver=SqlAlchemyContextResolver(
+            sessions.app,
+            _runtime_compatibility_policy(config),
+            project_authorizer=ProjectAuthorizer(sessions.app),
+        ),
+        conversations=official.conversation_store,
+        permissions=official.permission_store,
+    )
+
+
+def _install_aliyun_artifacts(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+    services: ProductionSaasServices,
+    router: APIRouter,
+) -> None:
+    profile = config.aliyun_profile
+    if profile is None or profile.artifact_credential_file is None:
+        return
+    from saas.production.aliyun_artifacts import (
+        AliyunArtifactReader,
+        create_aliyun_artifact_router,
+    )
+
+    authorizer = _aliyun_storage_authorizer(config, sessions, official)
+    reader = AliyunArtifactReader(
+        profile.storage_configs,
+        credential_file=profile.artifact_credential_file,
+        authorize=authorizer.read,
+    )
+    reader.prepare()
+    router.include_router(
+        create_aliyun_artifact_router(reader, services.integration.auth_provider)
+    )
 
 
 def _install_aliyun_model_broker(
@@ -1621,6 +1657,9 @@ def build_production_server(
             )
         )
         _install_aliyun_model_broker(
+            config, sessions, official_dependencies, services, execution_readiness_router
+        )
+        _install_aliyun_artifacts(
             config, sessions, official_dependencies, services, execution_readiness_router
         )
     except Exception:

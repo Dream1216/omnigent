@@ -174,7 +174,7 @@ class AliyunStorageSessionAuthorizer:
                 raise AliyunStorageError("Aliyun storage binding identity changed")
         if current_runtime_context() != runtime:
             raise AliyunStorageError("Aliyun storage runtime changed")
-        return runtime
+        return effective_runtime if project_action == "run.read_content" else runtime
 
 
 class AliyunCurrentSessionStorage:

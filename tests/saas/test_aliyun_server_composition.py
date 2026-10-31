@@ -26,7 +26,7 @@ from saas.production.server import (
 )
 from saas.production.tenant_sandbox import parse_tenant_sandbox_config
 from tests.saas.test_aliyun_model_broker import broker_case as broker_case
-from tests.saas.test_aliyun_server_profile import _enable_storage
+from tests.saas.test_aliyun_server_profile import _enable_artifacts, _enable_storage
 from tests.saas.test_aliyun_server_profile import profile_case as profile_case
 from tests.saas.test_control_plane_resolver import COMPATIBILITY_POLICY
 from tests.saas.test_control_plane_resolver import control_plane as control_plane
@@ -67,10 +67,12 @@ def composition_case(broker_case, profile_case, tmp_path, monkeypatch, request):
     c.model_requests = []
     c.volume_requests = []
     c.volumes = {}
-    if getattr(request, "param", None) == "storage":
+    if getattr(request, "param", None) in {"storage", "artifacts"}:
         from saas.production import aliyun_volume_control as control_module
 
         _enable_storage(p)
+        if getattr(request, "param", None) == "artifacts":
+            _enable_artifacts(p)
         original_control = control_module.AliyunVolumeControlClient
 
         def volume_api(api_request):
@@ -170,6 +172,24 @@ def test_server_composition_mounts_scoped_broker_and_preserves_authentication(co
         )
         denied = client.post(c.path, headers={**c.headers, "X-Omnigent-Workspace-Id": "92"})
         assert denied.status_code == 403
+
+
+@pytest.mark.parametrize("composition_case", ["artifacts"], indirect=True)
+def test_actual_server_mounts_output_routes_only_with_explicit_reader_authority(composition_case):
+    c = composition_case
+    path = f"/v1/sessions/{c.session_id.hex}/artifacts"
+    routes = {getattr(route, "path", "") for route in c.built.app.routes}
+    assert "/v1/sessions/{session_id}/artifacts/content" in routes
+    assert "/v1/sessions/{session_id}/artifacts/availability" in routes
+    with TestClient(c.built.app, base_url=c.config.public_origin) as client:
+        assert client.get(path + "/availability").status_code == 401
+        assert client.get(path, headers=c.headers).status_code == 403
+    assert c.volume_requests == []
+
+
+def test_older_profile_does_not_mount_output_reader_routes(composition_case):
+    routes = {getattr(route, "path", "") for route in composition_case.built.app.routes}
+    assert "/v1/sessions/{session_id}/artifacts/content" not in routes
 
 
 @pytest.mark.parametrize("composition_case", ["storage"], indirect=True)

@@ -29,7 +29,7 @@ vi.mock("@/hooks/useWorkspaceChangedFiles", () => ({
 }));
 vi.mock("@/store/chatStore", () => ({ useChatStore: () => undefined }));
 
-import { downloadWorkspaceFile } from "./useFileContent";
+import { downloadAuthenticatedFile, downloadWorkspaceFile } from "./useFileContent";
 
 const RAW_URL =
   "/v1/sessions/sess_abc/resources/environments/default/filesystem/src/main.py?download=true";
@@ -72,5 +72,32 @@ describe("downloadWorkspaceFile base-path handling", () => {
     await downloadWorkspaceFile("sess_abc", "src/main.py");
 
     expect(authenticatedFetch).toHaveBeenCalledWith(RAW_URL);
+  });
+});
+
+describe("application attachment download addresses", () => {
+  it.each([
+    "https://example.test/v1/outputs",
+    "//example.test/v1/outputs",
+    "/saas/outputs",
+    "/v1/outputs\r\nInjected: value",
+    "/v1/outputs\\other",
+  ])("rejects an invalid download address: %s", async (url) => {
+    await expect(downloadAuthenticatedFile(url, "output.txt")).rejects.toThrow(
+      "Invalid download address",
+    );
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+    expect(authenticatedFetch).not.toHaveBeenCalled();
+  });
+
+  it("preserves scoped attachment parameters and the configured deployment base path", async () => {
+    window.__OMNIGENT_BASE_PATH__ = "/proxy/6767";
+    isDatabricksWorkspace.mockReturnValue(false);
+    const append = vi.spyOn(document.body, "append").mockImplementation(() => {});
+    const url = "/v1/sessions/session/artifacts/content?path=report.txt&scope=abc";
+    await downloadAuthenticatedFile(url, "report.txt");
+    const anchor = append.mock.calls[0]?.[0] as HTMLAnchorElement;
+    expect(anchor.getAttribute("href")).toBe(`/proxy/6767${url}`);
+    expect(authenticatedFetch).not.toHaveBeenCalled();
   });
 });

@@ -264,7 +264,7 @@ def test_output_read_uses_content_permission_and_authoritative_project_binding(
         member.version += 1
     runtime = replace(c.runtime, project_id=project) if project_context else c.runtime
     with bind_runtime_context(runtime):
-        assert c.authorize.read(c.session_id) == runtime
+        assert c.authorize.read(c.session_id) == replace(runtime, project_id=project)
         with pytest.raises(AliyunStorageError):
             c.authorize(c.session_id)
     assert c.control.creates == []
@@ -292,7 +292,7 @@ def test_output_read_rechecks_current_authority_on_every_request(storage_case, r
     project = _project(c)
     binding = _binding(c, project_id=project)
     with bind_runtime_context(c.runtime):
-        assert c.authorize.read(c.session_id) == c.runtime
+        assert c.authorize.read(c.session_id) == replace(c.runtime, project_id=project)
         if revocation == "session":
             c.permissions.revoke(c.runtime.runtime_user_key, c.session_id.hex)
         else:

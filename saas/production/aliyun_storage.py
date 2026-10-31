@@ -30,6 +30,7 @@ class AliyunOssStorageConfig:
     bucket: str
     role_arn: str
     prefix: str = "omnigent/aliyun/v1"
+    project_scoped: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -44,6 +45,7 @@ class AliyunOssStorageConfig:
             or not isinstance(self.prefix, str)
             or len(self.prefix) > 128
             or re.fullmatch(r"[a-z0-9-]+(?:/[a-z0-9-]+)*", self.prefix) is None
+            or type(self.project_scoped) is not bool
         ):
             raise AliyunStorageError("Aliyun storage configuration is invalid")
 
@@ -55,11 +57,16 @@ class AliyunOssStorageConfig:
             or session_id.int == 0
             or not isinstance(runtime.space_id, UUID)
             or runtime.space_id.int == 0
+            or (
+                runtime.project_id is not None
+                and (not isinstance(runtime.project_id, UUID) or runtime.project_id.int == 0)
+            )
         ):
             raise AliyunStorageError("Aliyun storage session scope is invalid")
         path = (
             f"/{self.prefix}/tenants/{self.tenant_id}/spaces/{runtime.space_id}"
-            f"/sessions/{session_id}"
+            + (f"/projects/{runtime.project_id or 'unbound'}" if self.project_scoped else "")
+            + f"/sessions/{session_id}"
         )
         return AliyunOssSession(
             session_id,
@@ -100,6 +107,7 @@ class AliyunOssVolumeSpec:
         match = re.fullmatch(
             rf"/([a-z0-9-]+(?:/[a-z0-9-]+)*)/tenants/{self.tenant_id}"
             rf"/spaces/([0-9a-f]{{8}}(?:-[0-9a-f]{{4}}){{3}}-[0-9a-f]{{12}})"
+            rf"(?:/projects/(unbound|[0-9a-f]{{8}}(?:-[0-9a-f]{{4}}){{3}}-[0-9a-f]{{12}}))?"
             rf"/sessions/{self.session_id}/{directory}/",
             self.bucket_path if isinstance(self.bucket_path, str) else "",
         )
@@ -110,15 +118,35 @@ class AliyunOssVolumeSpec:
             or self.mount_path != (INPUT_MOUNT if self.read_only else OUTPUT_MOUNT)
             or match is None
             or UUID(match[2]).int == 0
+            or (match[3] not in (None, "unbound") and UUID(match[3]).int == 0)
         ):
             raise AliyunStorageError("Aliyun volume specification is invalid")
         AliyunOssStorageConfig(
-            self.team_id, self.tenant_id, self.workspace_id, self.bucket, self.role_arn, match[1]
+            self.team_id,
+            self.tenant_id,
+            self.workspace_id,
+            self.bucket,
+            self.role_arn,
+            match[1],
+            project_scoped=match[3] is not None,
         )
 
     @property
     def space_id(self) -> UUID:
-        return UUID(self.bucket_path.rsplit("/", 5)[1])
+        return UUID(self.bucket_path.rsplit("/spaces/", 1)[1].split("/", 1)[0])
+
+    @property
+    def project_scoped(self) -> bool:
+        return self.bucket_path.rsplit(f"/spaces/{self.space_id}/", 1)[1].startswith("projects/")
+
+    @property
+    def project_id(self) -> UUID | None:
+        if not self.project_scoped:
+            return None
+        value = self.bucket_path.rsplit(f"/spaces/{self.space_id}/projects/", 1)[1].split("/", 1)[
+            0
+        ]
+        return None if value == "unbound" else UUID(value)
 
     @property
     def name(self) -> str:

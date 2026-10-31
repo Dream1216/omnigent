@@ -1,8 +1,9 @@
 # Session storage candidate
 
-The P4 storage modules are an opt-in candidate. Profile version 2 wires them
-into the real Server builder and managed Host launcher. Version 1 leaves
-storage disabled. No production profile is activated, and cloud storage
+The P4 storage modules are an opt-in candidate. Profile versions 2 and 3 wire
+them into the real Server builder and managed Host launcher. Version 3 also
+enables persisted output browsing and download. Version 1 leaves storage
+disabled. No production profile is activated, and cloud storage
 acceptance is still pending. Installing the code creates no cloud resources.
 
 `saas/production/aliyun_storage.py` defines immutable, deterministic OSS Volume
@@ -33,8 +34,7 @@ the content-blind `manage` and `operate` roles cannot. For a browser's Space-onl
 context, the logical Project comes only from matching active Session/native
 Project bindings. Conflicting Projects, revoked grants, stale membership or
 placement fail closed. Deriving the Project does not mutate the request context
-or change execution admission. This entry creates no Volumes and currently has
-no OSS reader or HTTP download route attached.
+or change execution admission. Reading creates no Volumes or execution processes.
 
 Startup and command/file transport recheck Session metadata and authorization.
 Reattachment admission does not create Volumes. A launcher without storage
@@ -89,8 +89,8 @@ Before enabling storage:
    Session/Tenant cannot list, read or write its objects.
 5. Write and close outputs, verify durable upload, terminate the VM and read
    identical bytes from a second VM. Test cancellation and upload failure.
-6. Implement authenticated artifact download and test permission revocation,
-   path traversal and cross-session denial. A raw public OSS URL is insufficient.
+6. Validate the version 3 download path against the real deployment and OSS,
+   including revocation and cross-session denial. A raw public OSS URL is insufficient.
 7. Run the same checks through the complete Host/Runner, including its inner
    filesystem isolation, before marking P4 accepted.
 
@@ -101,6 +101,7 @@ uv run pytest tests/saas/test_aliyun_storage.py \
   tests/saas/test_aliyun_volume_control.py \
   tests/saas/test_aliyun_sts_issuer.py \
   tests/saas/test_aliyun_storage_admission.py \
+  tests/saas/test_aliyun_artifacts.py \
   tests/saas/test_aliyun_storage_launch.py \
   tests/saas/test_aliyun_server_profile.py \
   tests/saas/test_aliyun_server_composition.py -q
@@ -112,14 +113,85 @@ disposable PostgreSQL test service. It uses an actual NOSUPERUSER/NOBYPASSRLS
 login to verify Space binding inventory, including Project-bearing rows, and
 transaction context clearing. A local skip is not RLS acceptance.
 
-The native filesystem download path currently needs a live Runner. Its file
-panel also disables reads when both Runner and Host are unavailable. Uploaded
-attachments use a different FileStore/artifact-store path; mounting OSS outputs
-does not register them there. A complete persisted-output implementation must
-connect discovery, application authorization and streaming to a reachable UI
-entry, then prove it after the VM is gone. The read-admission tests alone do not
-provide this proof. Server-side OSS access needs a separately scoped read
-authority; the Volume-control STS issuer has no `oss:GetObject` permission.
+## Version 3 saved outputs
+
+Version 3 retains the version 2 profile fields and requires the additional
+`storage.artifact_credential_file` absolute path. The file uses the existing
+canonical STS JSON format, must be private (0600), and must contain a separate
+short-lived read credential. It cannot share a path or access key ID with
+Volume control. The frozen Server extra pins `alibabacloud-oss-v2==1.4.0` and
+`defusedxml==0.7.1`; both candidate and published runtime gates require them.
+Version 1/2 profiles do not install the artifact HTTP routes.
+
+The Server read role needs only OSS listing under admitted output prefixes and
+`oss:GetObject` for their objects. It must not gain input access, writes,
+deletes, Bucket administration or sandbox control. Its trust must authorize the
+Server's actual workload identity. The FC service trust used by mounted Volumes
+does not automatically authorize a Server to assume this role. The current
+Volume-control issuer grants no OSS reads and cannot supply this credential.
+A dedicated read-role policy, issuer, deployment and unattended rotation still
+need real IAM and lifecycle acceptance before production activation.
+
+Version 3 namespaces include the effective logical Project:
+
+```text
+<prefix>/tenants/<tenant>/spaces/<space>/projects/<project-or-unbound>/sessions/<session>/outputs/
+```
+
+Inputs use the corresponding `inputs/` suffix. Unbound, Project A and Project B
+produce different Volume names and object prefixes. Moving a Session between
+Projects therefore does not expose its previous Project's objects under the
+new Project's permission. Version 2 names and paths remain unchanged; version 3
+does not migrate or automatically expose existing version 2 objects. Any data
+migration requires a separate reviewed, authorized operation.
+
+The application endpoints are:
+
+- `GET /v1/sessions/{id}/artifacts/availability`: authenticated capability probe;
+  no OSS request or process launch.
+- `GET /v1/sessions/{id}/artifacts`: list immediate children with relative
+  `prefix`, opaque `cursor`, bounded `limit` and optional `scope` fingerprint.
+- `GET /v1/sessions/{id}/artifacts/content`: attachment stream selected by
+  relative `path`, listed `etag` and optional `scope` fingerprint.
+
+Native browser downloads additionally carry `tenant_id` and `space_id` query
+selectors because browser navigation cannot attach the UI's custom headers.
+These selectors apply only to GET artifact content and select routing; current
+login, memberships, Session ownership, Project content permission and placement
+remain mandatory. Conflicting headers or snapshot context are rejected.
+
+Each operation freshly authorizes access before OSS and after opening the
+response. Streaming rechecks authority per 64 KiB chunk and is bounded by its
+original STS expiration, including a stalled downstream. Paths cannot select a
+Bucket, endpoint or another namespace. The reader uses signed conditional GET,
+disables proxies, redirects, compression and automatic replay, bounds listing
+XML and forces private, non-inline attachment responses. Provider diagnostics
+and credentials are never returned. Download failures after response headers
+terminate the stream; the client must not treat a short file as complete.
+
+The existing Files and Changes panels show a collapsible **Saved outputs**
+section when capability admission succeeds, including both desktop rail and
+mobile drawer. It lists lazily, navigates folders, pages and downloads through
+the application independently of Runner/Host liveness. Unsupported version 1/2
+servers keep the section hidden. The native workspace and uploaded attachment
+FileStore paths remain separate from these saved OSS outputs.
+
+To inspect the UI, use a version 3 test deployment with an admitted Session and
+confirmed uploaded output, then open Files and Changes on desktop and mobile.
+Stop both Runner and Host, expand Saved outputs, navigate a folder and download.
+Compare the downloaded bytes with OSS, revoke access, refresh and verify that
+rows disappear and a saved link fails. The sealed Chromium contract tests prove
+these UI paths using explicit fixtures, not real OSS persistence or cloud IAM:
+
+```bash
+pnpm --filter web run build
+uv run pytest tests/browser_ui/files/test_saved_outputs.py \
+  --browser-ui-skip-build --video=on --screenshot=on --output=/tmp/omnigent-output-proof
+```
+
+Production readiness currently still includes provider credential checks.
+Provider-failure isolation, actual IAM/renewal, cloud mounting, cross-VM
+persistence and the final deployed permission path remain P4/P5 work.
 
 Primary references:
 

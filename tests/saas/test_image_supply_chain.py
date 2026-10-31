@@ -1372,6 +1372,18 @@ def test_candidate_composite_build_contract_rejects_timestamp_rewrite_drift(
         ),
         (
             ".github/workflows/saas-image-candidate.yml",
+            'assert version("alibabacloud-oss-v2") == "1.4.0"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("defusedxml") == "0.7.1"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
             "--group dev --extra saas --extra e2b",
             "--group dev --extra saas",
             "candidate test jobs must install the qualified sandbox SDK",
@@ -1397,6 +1409,9 @@ def test_server_candidate_requires_the_qualified_sandbox_sdk(
         'assert version("e2b")=="2.31.0"',
         'assert version("alibabacloud-sandbox20260820")=="1.2.0"',
         'assert version("alibabacloud-sts20150401")=="1.2.0"',
+        'assert version("alibabacloud-oss-v2")=="1.4.0"',
+        'assert version("defusedxml")=="0.7.1"',
+        "import saas.production.aliyun_artifacts",
         "import saas.production.aliyun_storage_admission",
         "import saas.production.aliyun_sts_issuer",
         '"--network", "none"',

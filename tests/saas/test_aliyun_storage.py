@@ -94,6 +94,29 @@ def test_storage_namespace_and_names_are_stable_and_session_scoped():
     assert first.metadata["omnigent-storage-session"] == str(session)
 
 
+def test_project_namespaces_separate_unbound_and_moved_sessions_without_changing_v2_names():
+    runtime = _runtime()
+    config, session_id = _config(runtime), uuid4()
+    legacy = config.session(runtime, session_id)
+    first_project, second_project = uuid4(), uuid4()
+    assert legacy == config.session(replace(runtime, project_id=first_project), session_id)
+    current = replace(config, project_scoped=True)
+    plans = [
+        current.session(replace(runtime, project_id=project), session_id)
+        for project in (None, first_project, second_project)
+    ]
+    names = set(legacy.mount_points.values())
+    for project, plan in zip((None, first_project, second_project), plans, strict=True):
+        assert names.isdisjoint(plan.mount_points.values())
+        names.update(plan.mount_points.values())
+        for spec in plan.volumes:
+            assert spec.project_scoped and spec.project_id == project
+            assert spec.space_id == runtime.space_id
+            assert f"/projects/{project or 'unbound'}/sessions/{session_id}/" in spec.bucket_path
+            assert spec.verify(_volume(spec))
+    assert all(not spec.project_scoped and spec.project_id is None for spec in legacy.volumes)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

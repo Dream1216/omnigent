@@ -118,6 +118,77 @@ def _enable_storage(case):
     return case.document["storage"]
 
 
+def _enable_artifacts(case):
+    storage = _enable_storage(case)
+    case.document["schema_version"] = 3
+    now = int(time.time())
+    storage["artifact_credential_file"] = case.secret(
+        "artifact-reader.json",
+        (
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "issued_at": now - 1,
+                    "expires_at": now + 1800,
+                    "access_key_id": "STS." + "r" * 24,
+                    "access_key_secret": "s" * 32,
+                    "security_token": "t" * 64,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode(),
+    )
+    return storage
+
+
+def test_v3_explicitly_adds_independent_output_read_credentials(profile_case):
+    c = profile_case
+    storage = _enable_artifacts(c)
+    c.save()
+    profile = c.load()
+    assert profile is not None
+    assert str(profile.artifact_credential_file) == storage["artifact_credential_file"]
+    assert profile.artifact_credential_file != profile.storage_credential_file
+    profile.assert_ready()
+
+
+@pytest.mark.parametrize("change", ["v2", "missing", "alias", "same_identity", "unknown"])
+def test_output_read_authority_requires_explicit_v3_and_independent_sts(profile_case, change):
+    c = profile_case
+    storage = _enable_artifacts(c)
+    if change == "v2":
+        c.document["schema_version"] = 2
+    elif change == "missing":
+        del storage["artifact_credential_file"]
+    elif change == "alias":
+        storage["artifact_credential_file"] = storage["credential_file"]
+    elif change == "same_identity":
+        Path(storage["artifact_credential_file"]).write_bytes(
+            Path(storage["credential_file"]).read_bytes()
+        )
+    else:
+        storage["artifact_access_key"] = "must-not-be-inline"
+    c.save()
+    with pytest.raises(ValueError, match="profile configuration"):
+        c.load()
+
+
+def test_output_readiness_reloads_independent_expired_reader_file(profile_case):
+    c = profile_case
+    storage = _enable_artifacts(c)
+    c.save()
+    profile = c.load()
+    assert profile is not None
+    path = Path(storage["artifact_credential_file"])
+    document = json.loads(path.read_text())
+    document["expires_at"] = document["issued_at"] + 1
+    path.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n")
+    with pytest.raises(ValueError, match="expired"):
+        profile.assert_ready()
+
+
 def test_v2_profile_explicitly_enables_team_and_workspace_bound_storage(profile_case):
     c = profile_case
     storage = _enable_storage(c)

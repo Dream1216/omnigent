@@ -135,6 +135,14 @@ function clickDownloadLink(href: string, filename: string): void {
 export async function downloadWorkspaceFile(conversationId: string, path: string): Promise<void> {
   const url = workspaceFileUrl(conversationId, path, { download: "true" });
   const filename = path.split("/").pop() ?? path;
+  return downloadAuthenticatedFile(url, filename);
+}
+
+/** Download a same-origin application attachment through the current platform transport. */
+export async function downloadAuthenticatedFile(url: string, filename: string): Promise<void> {
+  if (!url.startsWith("/v1/") || url.startsWith("//") || /[\r\n\\]/.test(url)) {
+    throw new Error("Invalid download address");
+  }
   if (!isDatabricksWorkspace() && !isIOSShell() && !isAndroidShell()) {
     // A direct anchor navigation, so it must carry the deployment subpath the
     // fetch paths get for free via hostFetch/authenticatedFetch. Without it a
