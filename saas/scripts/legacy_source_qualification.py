@@ -22,8 +22,12 @@ from saas.scripts.legacy_check_history import (
     verify_required_job_bindings,
 )
 from saas.scripts.legacy_domain_eligibility import (
+    BOOTSTRAP_KIND,
     MAIN_WORKFLOW,
+    BootstrapPositiveOrigin,
     DomainEligibility,
+    bootstrap_registration,
+    collect_bootstrap_positive_origin,
     collect_domain_eligibility,
     validate_domain_rules,
 )
@@ -115,6 +119,7 @@ def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[st
         isinstance(policy, dict)
         and set(policy)
         - {
+            "bootstrap_positive_origin",
             "domain_non_execution",
             "domain_infrastructure_cancellation",
             "domain_refusal_cancellation",
@@ -777,6 +782,12 @@ def _qualify_source_ci(
     policy = load_qualification_policy(control, profile)
     catalog = workflow_catalog(product, profile["product_revision"])
     validate_qualification_policy(policy, identity, catalog)
+    bootstrap = "bootstrap_positive_origin" in policy
+    registration = bootstrap_registration(control, profile, policy) if bootstrap else None
+    if bootstrap:
+        evidence.enable_bootstrap_limits()
+        evidence.observe_bootstrap_rate_limit()
+    collector = collect_bootstrap_positive_origin if bootstrap else collect_domain_eligibility
     evidence.stage = "initial-PR-and-checks"
     endpoint = f"repos/{REPOSITORY}/pulls/{identity['validation_pr']}"
     initial_pull = api(endpoint)
@@ -798,16 +809,25 @@ def _qualify_source_ci(
     before = {role: collect_snapshot(revision) for role, revision in revisions.items()}
     (destination / "native-checks-before.json").write_text(json.dumps(before, indent=2) + "\n")
     evidence.stage = "main-domain-native-eligibility"
-    domain_eligibility = collect_domain_eligibility(
-        profile, identity, policy, destination / "main-domain"
-    )
+    domain_eligibility = collector(profile, identity, policy, destination / "main-domain")
+    if bootstrap:
+        require(
+            isinstance(domain_eligibility, BootstrapPositiveOrigin)
+            and isinstance(registration, dict)
+            and domain_eligibility.source_bundle_sha256 == registration["source_bundle_sha256"],
+            "source qualification requires authenticated typed native domain proof",
+        )
     require(
-        isinstance(domain_eligibility, DomainEligibility)
+        isinstance(domain_eligibility, BootstrapPositiveOrigin if bootstrap else DomainEligibility)
         and domain_eligibility.product_revision == profile["product_revision"]
         and domain_eligibility.product_tree == profile["product_tree"]
         and domain_eligibility.validation_pr == identity["validation_pr"]
         and domain_eligibility.validation_base_ref == identity["validation_base_ref"]
-        and (not domain_eligibility.refusals or domain_eligibility.discovery_sha256 is not None)
+        and (
+            bootstrap
+            or not domain_eligibility.refusals
+            or domain_eligibility.discovery_sha256 is not None
+        )
         and (not domain_eligibility.observations or bool(domain_eligibility.refusals)),
         "source qualification requires authenticated typed native domain proof",
     )
@@ -922,7 +942,7 @@ def _qualify_source_ci(
     )
     evidence.stage = "final-main-domain-native-eligibility"
     require(
-        collect_domain_eligibility(profile, identity, policy, destination / "main-domain-after")
+        collector(profile, identity, policy, destination / "main-domain-after")
         == domain_eligibility,
         "native main-domain contexts changed during source qualification",
     )
@@ -943,7 +963,7 @@ def _qualify_source_ci(
         base_ref=identity["validation_base_ref"],
     )
     verify_source_delta(product, profile)
-    complete_domain_discovery = (
+    complete_domain_discovery = not bootstrap and (
         not domain_receipts or domain_eligibility.discovery_sha256 is not None
     )
     if all_apps["all_original_governance_clear"]:
@@ -962,7 +982,9 @@ def _qualify_source_ci(
         "status": status,
         "source_ci_pass": status == "pass",
         "complete_domain_discovery": complete_domain_discovery,
-        "domain_qualification_kind": "legacy_authenticated_domain_eligibility/v2",
+        "domain_qualification_kind": BOOTSTRAP_KIND
+        if bootstrap
+        else "legacy_authenticated_domain_eligibility/v2",
         "domain_discovery_sha256": domain_eligibility.discovery_sha256,
         "domain_zero_execution_observations": [
             row.receipt
@@ -985,6 +1007,19 @@ def _qualify_source_ci(
         "image_admission": False,
         "production_admission": False,
     }
+    if bootstrap:
+        result.update(
+            positive_origin_complete=True,
+            global_history="NOT_ASSERTED_NOT_NA",
+            bootstrap_positive_origin=registration,
+            # Observed counters/quota change between revalidation jobs. Keep
+            # them in native evidence, never in the signed stable input body.
+            request_safety={
+                key: value
+                for key, value in evidence.bootstrap_usage().items()
+                if key in {"kind", "metadata_limit", "direct_download_limit"}
+            },
+        )
     evidence.stage = result["status"]
     (destination / "source-qualification.json").write_text(json.dumps(result, indent=2) + "\n")
     return result

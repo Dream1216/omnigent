@@ -521,3 +521,215 @@ def test_registered_head_evidence_never_qualifies_with_undiscovered_later_domain
     assert later["id"] in receipt["discovered_run_ids"]
     assert receipt["complete_discovery"] is False
     assert receipt["source_ci_pass"] is False
+
+
+@pytest.mark.parametrize("component", ["Core", "Gateway", "Model"])
+def test_bootstrap_registration_binds_only_original_six_tables(component):
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    profile = load_profile(ROOT, component)
+    policy = json.loads(
+        (ROOT / "saas/supply_chain/legacy-source-qualification-profiles.json").read_text()
+    )["profiles"][component]
+    registration = domain.bootstrap_registration(ROOT, profile, policy)
+    assert registration["kind"] == domain.BOOTSTRAP_KIND
+    assert registration["source_bundle_sha256"] == domain._BOOTSTRAP_ORIGINS[component][4]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "unknown-component",
+        "source",
+        "tree",
+        "kind",
+        "hash",
+        "extra-mode",
+        *domain._BOOTSTRAP_STORES,
+    ],
+)
+def test_bootstrap_registration_rejects_unknown_or_changed_origin(fault):
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    profile = load_profile(ROOT, "Core")
+    entries = {}
+    for name in domain._BOOTSTRAP_STORES:
+        store = json.loads((ROOT / "saas/supply_chain" / name).read_text())
+        entries[name] = store["inputs" if "original-inputs" in name else "profiles"]["Core"]
+    policy = entries["legacy-source-qualification-profiles.json"]
+    if fault == "unknown-component":
+        profile["component"] = "Future"
+    elif fault in {"source", "tree"}:
+        profile["product_revision" if fault == "source" else "product_tree"] = "a" * 40
+    elif fault in {"kind", "hash", "extra-mode"}:
+        registration = policy["bootstrap_positive_origin"]
+        registration[
+            {"kind": "kind", "hash": "source_bundle_sha256", "extra-mode": "mode"}[fault]
+        ] = "unapproved"
+    else:
+        entries[fault]["unapproved"] = True
+    with pytest.raises(ValueError):
+        domain.bootstrap_registration(ROOT, profile, policy, entries=entries)
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+def test_bootstrap_positive_collector_reuses_native_refusal_without_global_claim(
+    scenario, native_domain, tmp_path, monkeypatch
+):
+    scenario["policy"]["bootstrap_positive_origin"] = {
+        "kind": domain.BOOTSTRAP_KIND,
+        "source_bundle_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        domain,
+        "discover_main_domain",
+        lambda *_a, **_kw: pytest.fail("global discovery was called"),
+    )
+    result = domain.collect_bootstrap_positive_origin(
+        scenario["profile"], scenario["identity"], scenario["policy"], tmp_path / "positive"
+    )
+    assert type(result) is domain.BootstrapPositiveOrigin
+    assert result.discovery_sha256 is None and len(result.refusals) == 1
+    receipt = json.loads((tmp_path / "positive/positive-origin.json").read_text())
+    assert receipt["complete_domain_discovery"] is False
+    assert receipt["global_history"] == "NOT_ASSERTED_NOT_NA"
+    assert not any("/actions/workflows/" in endpoint for endpoint in native_domain["calls"])
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("run_attempt", 2),
+        ("head_sha", "b" * 40),
+        ("actor", {"login": "wrong-actor"}),
+        ("path", ".github/workflows/unapproved.yml"),
+    ],
+)
+def test_bootstrap_positive_rejects_changed_native_actor_attempt_source_or_workflow(
+    scenario, native_domain, tmp_path, field, value
+):
+    scenario["policy"]["bootstrap_positive_origin"] = {
+        "kind": domain.BOOTSTRAP_KIND,
+        "source_bundle_sha256": "a" * 64,
+    }
+    native_domain["run"][field] = value
+    with pytest.raises(ValueError):
+        domain.collect_bootstrap_positive_origin(
+            scenario["profile"], scenario["identity"], scenario["policy"], tmp_path / "positive"
+        )
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+def test_bootstrap_complete_source_join_keeps_technical_and_all_app_checks(
+    scenario, native_domain, tmp_path, monkeypatch
+):
+    registration = {"kind": domain.BOOTSTRAP_KIND, "source_bundle_sha256": "a" * 64}
+    scenario["policy"]["bootstrap_positive_origin"] = registration
+    # The existing fixture has one tiny ZIP; real six-table registration/20
+    # artifacts are independently exercised above, never synthesized here.
+    monkeypatch.setattr(qualifier, "bootstrap_registration", lambda *_a: registration)
+    result = invoke(scenario, tmp_path)
+    assert result["technical_workflows"] == 16 and result["technical_source_ci"] == "pass"
+    assert result["source_ci_pass"] is True and result["complete_domain_discovery"] is False
+    assert result["domain_qualification_kind"] == domain.BOOTSTRAP_KIND
+    assert result["positive_origin_complete"] is True and result["domain_discovery_sha256"] is None
+    assert result["exact_product_PG_pass"] is result["production_admission"] is False
+    assert set(result["request_safety"]) == {"kind", "metadata_limit", "direct_download_limit"}
+    assert (
+        result["request_safety"]["kind"] == "proposal-failclosed-safety-cap-not-success-capacity"
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "global-claim",
+        "no-positive",
+        "unknown-mode",
+        "missing-registration",
+        "changed-source",
+        "changed-policy",
+        "unknown-history",
+    ],
+)
+def test_bootstrap_consumers_reject_incomplete_or_forged_typed_claims(fault):
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    profile = load_profile(ROOT, "Core")
+    entries = {
+        name: json.loads((ROOT / "saas/supply_chain" / name).read_text())[
+            "inputs" if "original-inputs" in name else "profiles"
+        ]["Core"]
+        for name in domain._BOOTSTRAP_STORES
+    }
+    policy = entries["legacy-source-qualification-profiles.json"]
+    result = {
+        "component": "Core",
+        "product_revision": profile["product_revision"],
+        "product_tree": profile["product_tree"],
+        "domain_qualification_kind": domain.BOOTSTRAP_KIND,
+        "complete_domain_discovery": False,
+        "positive_origin_complete": True,
+        "global_history": "NOT_ASSERTED_NOT_NA",
+        "domain_discovery_sha256": None,
+        "bootstrap_positive_origin": policy["bootstrap_positive_origin"],
+        "qualification_policy_sha256": domain.native_digest(policy),
+    }
+    domain.require_publication_source_origin(ROOT, profile, result, entries=entries)
+    key, value = {
+        "global-claim": ("complete_domain_discovery", True),
+        "no-positive": ("positive_origin_complete", False),
+        "unknown-mode": ("domain_qualification_kind", "future-mode"),
+        "missing-registration": ("bootstrap_positive_origin", None),
+        "changed-source": ("product_revision", "a" * 40),
+        "changed-policy": ("qualification_policy_sha256", "b" * 64),
+        "unknown-history": ("global_history", "N/A"),
+    }[fault]
+    result[key] = value
+    with pytest.raises(ValueError):
+        domain.require_publication_source_origin(ROOT, profile, result, entries=entries)
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+def test_bootstrap_counts_two_actual_positive_collections_without_history_enumeration(
+    scenario, native_domain, tmp_path, monkeypatch
+):
+    from saas.scripts import legacy_native_evidence as capture
+    from saas.scripts import legacy_source_ci as source
+
+    original_api = domain.api
+    original_log = domain.download_job_log
+
+    def wire(endpoint):
+        if "/jobs?" in endpoint:
+            return {"total_count": 1, "jobs": [copy.deepcopy(native_domain["job"])]}
+        return original_api(endpoint)
+
+    def log(job_id, destination):
+        capture.reserve_native_download(f"repos/{domain.REPOSITORY}/actions/jobs/{job_id}/logs")
+        original_log(job_id, destination)
+
+    monkeypatch.setattr(capture, "_native_api", wire)
+    monkeypatch.setattr(domain, "api", capture.api)
+    monkeypatch.setattr(domain, "_job_pages", source._job_pages)
+    monkeypatch.setattr(source, "api", capture.api)
+    monkeypatch.setattr(domain, "download_job_log", log)
+    scenario["policy"]["bootstrap_positive_origin"] = {
+        "kind": domain.BOOTSTRAP_KIND,
+        "source_bundle_sha256": "a" * 64,
+    }
+    with capture.preserve_native_evidence(
+        tmp_path / "counted", evidence_root=tmp_path
+    ) as evidence:
+        evidence.enable_bootstrap_limits()
+        first = domain.collect_bootstrap_positive_origin(
+            scenario["profile"], scenario["identity"], scenario["policy"], tmp_path / "before"
+        )
+        second = domain.collect_bootstrap_positive_origin(
+            scenario["profile"], scenario["identity"], scenario["policy"], tmp_path / "after"
+        )
+        assert first == second
+        assert evidence.bootstrap_usage()["metadata_started"] == 14
+        assert evidence.bootstrap_usage()["direct_downloads_started"] == 2
+        assert not any("/actions/workflows/" in endpoint for endpoint in native_domain["calls"])
