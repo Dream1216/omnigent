@@ -45,6 +45,7 @@ from saas.production.aliyun_sdk import (
     read_sandbox_details,
     require_qualified_sdk,
 )
+from saas.production.aliyun_storage import AliyunOssSession, AliyunStorageMounts
 from saas.production.platform_model_relay import validated_model_gateway_url
 from saas.production.tenant_model_keys import _read_file
 
@@ -119,6 +120,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         lifetime_s: int = 1800,
         model_leases: HostModelLeaseAuthority | None = None,
         model_gateway_url: str | None = None,
+        storage: AliyunStorageMounts | None = None,
     ) -> None:
         if (
             not isinstance(template, str)
@@ -147,6 +149,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
                 raise ValueError("Aliyun Host model gateway requires TLS")
         self._model_leases = model_leases
         self._model_gateway_url = model_gateway_url
+        self._storage = storage
 
     @property
     def scope(self) -> AliyunSandboxScope:
@@ -206,6 +209,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         info = self._scoped_info(sandbox_id)
         assert info is not None
         self._remaining_lifetime(info)
+        storage = self._admit_storage(info)
         admitted_lifetime = self._admitted_lifetime_s(info)
         lease = self._model_leases.issue(
             host_id=host_id,
@@ -220,12 +224,15 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         workspace = f"{home}/workspace"
         self.run(sandbox_id, f"mkdir -p -- {shlex.quote(workspace)}")
         if repos:
+            repository_root = f"{workspace}/repos" if storage is not None else workspace
+            if storage is not None:
+                self.run(sandbox_id, f"mkdir -p -- {shlex.quote(repository_root)}")
             if on_stage is not None:
                 on_stage("cloning")
             checkouts = [
                 self.materialize_workspace(
                     sandbox_id,
-                    workspace=workspace,
+                    workspace=repository_root,
                     repo_url=repo.url,
                     repo_branch=repo.branch,
                     repo_name=directory,
@@ -233,7 +240,8 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
                 )
                 for repo, directory in zip(repos, clone_dir_names(repos), strict=True)
             ]
-            workspace = checkouts[0] if len(checkouts) == 1 else workspace
+            if storage is None and len(checkouts) == 1:
+                workspace = checkouts[0]
         if host_config is not None:
             self.run(sandbox_id, render_host_config_write_command(host_config))
         private = f"{home}/.omnigent/runtime/aliyun-host-{host_id}-{secrets.token_hex(12)}"
@@ -310,6 +318,9 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         env = self._resolve_sandbox_env()
         if not isinstance(name, str) or _IDENTIFIER.fullmatch(name) is None:
             raise ValueError("Aliyun sandbox launch name is invalid")
+        storage = self._storage.ensure() if self._storage is not None else None
+        if storage is not None:
+            self._check_storage_scope(storage)
         try:
             handle = Sandbox.create(
                 template=self._resolved_template(),
@@ -318,8 +329,10 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
                     **self.scope.metadata(),
                     "omnigent-name": name,
                     _LIFETIME_METADATA: str(self.lifetime_s),
+                    **(storage.metadata if storage is not None else {}),
                 },
                 envs=env,
+                volume_mounts=dict(storage.mount_points) if storage is not None else None,
                 **self._sdk_options(),
             )
         except (AuthenticationException, SandboxException, httpx.HTTPError):
@@ -327,6 +340,33 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         sandbox_id = str(handle.sandbox_id)
         self._sandboxes[sandbox_id] = handle
         return sandbox_id
+
+    def _check_storage_scope(self, session: AliyunOssSession) -> None:
+        runtime = current_runtime_context()
+        if not isinstance(session, AliyunOssSession) or any(
+            volume.tenant_id != self.scope.tenant_id
+            or volume.workspace_id != self.scope.workspace_id
+            or volume.space_id != runtime.space_id
+            for volume in session.volumes
+        ):
+            raise ValueError("Aliyun storage scope is invalid")
+
+    def _admit_storage(self, info: SandboxDetail) -> AliyunOssSession | None:
+        metadata = info.metadata
+        if not isinstance(metadata, dict):
+            raise ValueError("Aliyun storage metadata is unavailable")
+        if self._storage is None:
+            if any(
+                key in metadata
+                for key in ("omnigent-storage-session", "omnigent-storage-bindings")
+            ):
+                raise ValueError("Aliyun storage authority is unavailable")
+            return None
+        session = self._storage.admit()
+        self._check_storage_scope(session)
+        if any(metadata.get(key) != value for key, value in session.metadata.items()):
+            raise ValueError("Aliyun storage metadata does not match its Session")
+        return session
 
     def _scoped_info(self, sandbox_id: str, *, missing_ok: bool = False) -> SandboxDetail | None:
         from e2b.exceptions import AuthenticationException, NotFoundException, SandboxException
@@ -381,6 +421,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         info = self._scoped_info(sandbox_id)
         assert info is not None
         self._remaining_lifetime(info)
+        self._admit_storage(info)
         handle = self._sandboxes.get(sandbox_id)
         if handle is None:
             handle = attach_running_sandbox(info, self._sdk_options())

@@ -1452,6 +1452,66 @@ def build_production_saas_services(
     )
 
 
+def _install_aliyun_storage(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+) -> OfficialRuntimeDependencies:
+    profile = config.aliyun_profile
+    if profile is None or not profile.storage_configs:
+        return official
+    from omnigent.db.utils import make_named_managed_session_maker
+    from omnigent.server.managed_hosts import ManagedSandboxDeployment
+    from saas.control_plane.authorization import ProjectAuthorizer
+    from saas.production.aliyun_storage_admission import (
+        AliyunCurrentSessionStorage,
+        AliyunStorageSessionAuthorizer,
+    )
+    from saas.production.aliyun_tenant_sandbox import build_aliyun_managed_config
+    from saas.production.aliyun_volume_control import AliyunVolumeControlClient
+
+    deployment = official.sandbox_config
+    if (
+        not isinstance(deployment, ManagedSandboxDeployment)
+        or sum(entry.provider == "e2b" for entry in deployment.configs) != 1
+        or profile.storage_credential_file is None
+        or {(c.tenant_id, c.workspace_id) for c in profile.storage_configs}
+        != {(c.tenant_id, c.workspace_id) for c in profile.managed.scopes}
+    ):
+        raise ProductionServerCompositionError("Aliyun storage configuration is incomplete")
+    authorizer = AliyunStorageSessionAuthorizer(
+        sessions=make_named_managed_session_maker(
+            sessions.engines["app"], query_name_prefix="saas.aliyun_storage"
+        ),
+        resolver=SqlAlchemyContextResolver(
+            sessions.app,
+            _runtime_compatibility_policy(config),
+            project_authorizer=ProjectAuthorizer(sessions.app),
+        ),
+        conversations=official.conversation_store,
+        permissions=official.permission_store,
+    )
+    storage = AliyunCurrentSessionStorage(
+        profile.storage_configs,
+        AliyunVolumeControlClient(
+            team_id=profile.team_id, credential_file=profile.storage_credential_file
+        ),
+        authorize=authorizer,
+    )
+    configured = replace(
+        deployment,
+        configs=tuple(
+            build_aliyun_managed_config(
+                profile.managed, host_config=entry.host_config, storage=storage
+            )
+            if entry.provider == "e2b"
+            else entry
+            for entry in deployment.configs
+        ),
+    )
+    return replace(official, sandbox_config=configured)
+
+
 def _install_aliyun_model_broker(
     config: ProductionServerConfig,
     sessions: RoleSessionFactories,
@@ -1518,6 +1578,11 @@ def build_production_server(
     """Build the app only after every mandatory dependency passes readiness."""
 
     official_dependencies = official or build_official_runtime_dependencies(config)
+    try:
+        official_dependencies = _install_aliyun_storage(config, sessions, official_dependencies)
+    except Exception:
+        official_dependencies.close()
+        raise
     readiness_checks = dict(extra_readiness_checks or {})
     if "artifact_store" in readiness_checks:
         raise ProductionServerCompositionError(

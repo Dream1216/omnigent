@@ -686,7 +686,9 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         ),
         '"$PRODUCT_REVISION"',
         'assert version("e2b") == "2.31.0"',
+        'assert version("alibabacloud-sandbox20260820") == "1.2.0"',
         "import saas.production.aliyun_server_profile",
+        "import saas.production.aliyun_storage_admission",
     }
     if (
         runtime_verification is None
@@ -713,7 +715,9 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         '"--network", "none"',
         '"--pull", "never"',
         'assert version("e2b")=="2.31.0"',
+        'assert version("alibabacloud-sandbox20260820")=="1.2.0"',
         "import saas.production.aliyun_model_ingress",
+        "import saas.production.aliyun_storage_admission",
         "assert _build_info.COMMIT_SHA==sys.argv[1]",
         'Path("artifacts/server-candidate-runtime.json")',
     }
@@ -750,7 +754,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         ),
         "server:runtime|host:host",
         "1|2)",
-        "OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && 'kubernetes,e2b' || '' }}",
+        (
+            "OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && "
+            "'kubernetes,e2b,aliyun-sandbox-control' || '' }}"
+        ),
     }
     if any(fragment not in action for fragment in required_action_fragments):
         violations.append("candidate composite build action weakens the approved build contract")

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from unittest.mock import Mock
 from uuid import uuid4
 
+import click
 import httpx
 import pytest
 import sqlalchemy as sa
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from omnigent.debug_logging import runner_log_scope
+from saas.compatibility.runtime_partition import bind_runtime_context
 from saas.control_plane.db_models import ProjectMembershipRecord, ProjectRecord
 from saas.control_plane.http_auth import SaasAuthContextMiddleware
 from saas.production import server as server_module
@@ -20,6 +26,7 @@ from saas.production.server import (
 )
 from saas.production.tenant_sandbox import parse_tenant_sandbox_config
 from tests.saas.test_aliyun_model_broker import broker_case as broker_case
+from tests.saas.test_aliyun_server_profile import _enable_storage
 from tests.saas.test_aliyun_server_profile import profile_case as profile_case
 from tests.saas.test_control_plane_resolver import COMPATIBILITY_POLICY
 from tests.saas.test_control_plane_resolver import control_plane as control_plane
@@ -58,6 +65,38 @@ def composition_case(broker_case, profile_case, tmp_path, monkeypatch, request):
         }
     )
     c.model_requests = []
+    c.volume_requests = []
+    c.volumes = {}
+    if getattr(request, "param", None) == "storage":
+        from saas.production import aliyun_volume_control as control_module
+
+        _enable_storage(p)
+        original_control = control_module.AliyunVolumeControlClient
+
+        def volume_api(api_request):
+            c.volume_requests.append(api_request)
+            if api_request.method == "POST":
+                volume = {
+                    **json.loads(api_request.content),
+                    "volumeID": str(uuid4()),
+                    "storageClass": "OSS",
+                    "status": "AVAILABLE",
+                }
+                c.volumes[volume["volumeName"]] = volume
+                return httpx.Response(200, json={"volume": volume})
+            name = api_request.url.params["volumeName"]
+            return httpx.Response(
+                200, json={"volumes": [c.volumes[name]] if name in c.volumes else []}
+            )
+
+        monkeypatch.setattr(
+            control_module,
+            "AliyunVolumeControlClient",
+            lambda **kwargs: original_control(
+                **kwargs,
+                client_factory=lambda: httpx.Client(transport=httpx.MockTransport(volume_api)),
+            ),
+        )
     if getattr(request, "param", None) == "ingress":
         from saas.production import aliyun_model_ingress as ingress_module
 
@@ -131,6 +170,84 @@ def test_server_composition_mounts_scoped_broker_and_preserves_authentication(co
         )
         denied = client.post(c.path, headers={**c.headers, "X-Omnigent-Workspace-Id": "92"})
         assert denied.status_code == 403
+
+
+@pytest.mark.parametrize("composition_case", ["storage"], indirect=True)
+def test_storage_is_wired_into_the_actual_server_managed_launcher(composition_case, monkeypatch):
+    c = composition_case
+    sdk = Mock()
+    sdk.create.return_value.sandbox_id = "sbx-composed-storage"
+    monkeypatch.setattr("e2b.Sandbox", sdk)
+    entry = next(e for e in c.built.official.sandbox_config.configs if e.provider == "e2b")
+    with bind_runtime_context(c.runtime), runner_log_scope(c.session_id.hex, None):
+        first = entry.launcher_factory()
+        assert first.provision("managed-storage") == "sbx-composed-storage"
+        values = sdk.create.call_args.kwargs
+        assert values["metadata"]["omnigent-storage-session"] == str(c.session_id)
+        assert set(values["volume_mounts"]) == {
+            "/home/user/workspace/inputs",
+            "/home/user/workspace/artifacts",
+        }
+        assert len(c.volumes) == 2
+        assert sorted(v["ossVolumeConfig"]["readOnly"] for v in c.volumes.values()) == [
+            False,
+            True,
+        ]
+        assert entry.launcher_factory().provision("managed-rebuild") == "sbx-composed-storage"
+        assert sum(r.method == "POST" for r in c.volume_requests) == 2
+        c.permissions.revoke(c.runtime.runtime_user_key, c.session_id.hex)
+        with pytest.raises(ValueError):
+            entry.launcher_factory().provision("managed-after-revoke")
+    assert sdk.create.call_count == 2
+
+
+@pytest.mark.parametrize("composition_case", ["storage"], indirect=True)
+def test_composed_storage_requires_session_admission_before_any_cloud_call(
+    composition_case, monkeypatch
+):
+    c = composition_case
+    sdk = Mock()
+    monkeypatch.setattr("e2b.Sandbox", sdk)
+    entry = next(e for e in c.built.official.sandbox_config.configs if e.provider == "e2b")
+    with bind_runtime_context(c.runtime), pytest.raises(ValueError):
+        entry.launcher_factory().provision("managed-no-session")
+    assert c.volume_requests == []
+    sdk.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("composition_case", ["storage"], indirect=True)
+async def test_real_managed_launch_failure_recycles_vm_and_host_but_retains_volumes(
+    composition_case, monkeypatch
+):
+    from omnigent.server.managed_hosts import launch_managed_host
+    from saas.production.aliyun_sandbox import AliyunSandboxLauncher
+
+    c = composition_case
+    sdk = Mock()
+    sdk.create.return_value.sandbox_id = "sbx-failed-storage-start"
+    monkeypatch.setattr("e2b.Sandbox", sdk)
+
+    def fail_start(self, sandbox_id, **kwargs):
+        raise click.ClickException("forced storage Host startup failure")
+
+    cleanup = Mock()
+    monkeypatch.setattr(AliyunSandboxLauncher, "start_host", fail_start)
+    monkeypatch.setattr(AliyunSandboxLauncher, "terminate", cleanup)
+    with bind_runtime_context(c.runtime), runner_log_scope(c.session_id.hex, None):
+        before = {h.host_id for h in c.hosts.list_hosts(c.runtime.runtime_user_key)}
+        with pytest.raises(HTTPException) as raised:
+            await launch_managed_host(
+                config=c.built.official.sandbox_config,
+                owner=c.runtime.runtime_user_key,
+                host_store=c.hosts,
+                provider="e2b",
+            )
+        assert raised.value.status_code == 502
+        assert {h.host_id for h in c.hosts.list_hosts(c.runtime.runtime_user_key)} == before
+    cleanup.assert_called_once_with("sbx-failed-storage-start")
+    assert len(c.volumes) == 2
+    assert {request.method for request in c.volume_requests} == {"GET", "POST"}
 
 
 @pytest.mark.parametrize("revocation", ["project", "membership"])

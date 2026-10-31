@@ -1348,13 +1348,19 @@ def test_candidate_composite_build_contract_rejects_timestamp_rewrite_drift(
     [
         (
             "saas/actions/build-oci-candidate/action.yml",
-            "'kubernetes,e2b'",
+            "'kubernetes,e2b,aliyun-sandbox-control'",
             "'kubernetes'",
             "candidate composite build action weakens the approved build contract",
         ),
         (
             ".github/workflows/saas-image-candidate.yml",
             'assert version("e2b") == "2.31.0"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("alibabacloud-sandbox20260820") == "1.2.0"',
             "pass",
             "protected release must verify both published runtime revisions before signing",
         ),
@@ -1383,6 +1389,8 @@ def test_server_candidate_requires_the_qualified_sandbox_sdk(
         'actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]',
         'for arch in ("amd64", "arm64"):',
         'assert version("e2b")=="2.31.0"',
+        'assert version("alibabacloud-sandbox20260820")=="1.2.0"',
+        "import saas.production.aliyun_storage_admission",
         '"--network", "none"',
     ],
 )

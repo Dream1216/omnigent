@@ -14,6 +14,7 @@ from uuid import UUID
 from saas.production.aliyun_model_client import validated_server_origin
 from saas.production.aliyun_model_lease import HostModelLeaseAuthority
 from saas.production.aliyun_sandbox import AliyunSandboxLauncher, AliyunSandboxScope
+from saas.production.aliyun_storage import AliyunOssStorageConfig
 from saas.production.aliyun_tenant_sandbox import AliyunManagedSandbox
 from saas.production.platform_model_relay import validated_model_gateway_url
 from saas.production.tenant_model_keys import _read_file
@@ -72,6 +73,8 @@ class AliyunServerProfile:
     managed: AliyunManagedSandbox = field(repr=False)
     authorities: Mapping[UUID, PlatformModelGatewayTokenAuthority] = field(repr=False)
     authority_files: tuple[tuple[Path, str], ...] = field(repr=False)
+    storage_configs: tuple[AliyunOssStorageConfig, ...] = ()
+    storage_credential_file: Path | None = field(default=None, repr=False)
 
     def assert_ready(self) -> None:
         """Check installed SDK and local credentials without making a cloud API call."""
@@ -93,6 +96,14 @@ class AliyunServerProfile:
             raise ValueError("Aliyun management and signing authorities must be independent")
         for path, expected in self.authority_files:
             _secret(path, expected)
+        if self.storage_configs:
+            from saas.production.aliyun_volume_control import AliyunVolumeControlClient
+
+            if self.storage_credential_file is None:
+                raise ValueError("Aliyun storage control credential is unavailable")
+            AliyunVolumeControlClient(
+                team_id=self.team_id, credential_file=self.storage_credential_file
+            ).prepare()
 
 
 def load_aliyun_server_profile(
@@ -124,9 +135,10 @@ def load_aliyun_server_profile(
         if (
             raw != canonical
             or not isinstance(document, dict)
-            or set(document) != _FIELDS
+            or set(document)
+            != _FIELDS | ({"storage"} if document.get("schema_version") == 2 else set())
             or type(document["schema_version"]) is not int
-            or document["schema_version"] != 1
+            or document["schema_version"] not in (1, 2)
             or document["product_revision"] != product_revision
             or document["server_image_digest"] != server_image_digest
             or document["region"] != "cn-hangzhou"
@@ -189,6 +201,44 @@ def load_aliyun_server_profile(
                 signing_key=key, tenant_id=tenant
             )
             authority_files.append((key_file, row["gateway_key_sha256"]))
+        storage_configs = []
+        storage_credential_file = None
+        if document["schema_version"] == 2:
+            storage = document["storage"]
+            if (
+                not isinstance(storage, dict)
+                or set(storage) != {"credential_file", "tenants"}
+                or not isinstance(storage["tenants"], list)
+                or len(storage["tenants"]) != len(scopes)
+            ):
+                raise ValueError
+            storage_credential_file = _path(storage["credential_file"])
+            if storage_credential_file in paths:
+                raise ValueError
+            workspaces = {scope.tenant_id: scope.workspace_id for scope in scopes}
+            seen = set()
+            for row in storage["tenants"]:
+                if not isinstance(row, dict) or set(row) != {
+                    "tenant_id",
+                    "bucket",
+                    "role_arn",
+                    "prefix",
+                }:
+                    raise ValueError
+                tenant = UUID(row["tenant_id"])
+                if str(tenant) != row["tenant_id"] or tenant not in workspaces or tenant in seen:
+                    raise ValueError
+                seen.add(tenant)
+                storage_configs.append(
+                    AliyunOssStorageConfig(
+                        team_id,
+                        tenant,
+                        workspaces[tenant],
+                        row["bucket"],
+                        row["role_arn"],
+                        row["prefix"],
+                    )
+                )
         managed = AliyunManagedSandbox(
             template=document["template_id"],
             credential_file=credential_file,
@@ -207,6 +257,8 @@ def load_aliyun_server_profile(
             managed,
             MappingProxyType(authorities),
             tuple(authority_files),
+            tuple(storage_configs),
+            storage_credential_file,
         )
         profile.assert_ready()
         return profile

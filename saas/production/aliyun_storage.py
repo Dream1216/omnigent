@@ -8,6 +8,7 @@ import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from typing import Protocol
 from uuid import UUID
 
 from saas.compatibility.runtime_partition import RuntimeContext, current_runtime_context
@@ -114,6 +115,10 @@ class AliyunOssVolumeSpec:
         AliyunOssStorageConfig(
             self.team_id, self.tenant_id, self.workspace_id, self.bucket, self.role_arn, match[1]
         )
+
+    @property
+    def space_id(self) -> UUID:
+        return UUID(self.bucket_path.rsplit("/", 5)[1])
 
     @property
     def name(self) -> str:
@@ -235,6 +240,12 @@ class AliyunVolumeControl:
         raise NotImplementedError
 
 
+class AliyunStorageMounts(Protocol):
+    def admit(self) -> AliyunOssSession: ...
+
+    def ensure(self) -> AliyunOssSession: ...
+
+
 class AliyunSessionVolumeManager:
     """Reuse immutable metadata after scope checks; retain OSS data on VM cleanup."""
 
@@ -250,6 +261,12 @@ class AliyunSessionVolumeManager:
         self._control = control
         self._authorize = authorize
         self._wait = wait
+
+    def admit(self, session_id: UUID) -> AliyunOssSession:
+        runtime = self._authorize(session_id)
+        if runtime != current_runtime_context():
+            raise AliyunStorageError("Aliyun storage authorization changed")
+        return self.config.session(runtime, session_id)
 
     def ensure(self, session_id: UUID) -> AliyunOssSession:
         runtime = self._authorize(session_id)

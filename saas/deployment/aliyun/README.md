@@ -85,9 +85,10 @@ gateway. It is disabled unless the profile selects that exact path. Actual
 image/deployment, public streaming, cloud Host/Runner, storage and release
 acceptance remain required.
 
-The inactive [session storage candidate](storage.md) adds immutable Volume
-planning and an STS-only control adapter. Server/launcher admission, real cloud
-mounts, persistence, download authorization and P4 acceptance remain pending.
+The opt-in [session storage candidate](storage.md) adds immutable Volume
+planning, an STS-only control adapter and real Server/launcher admission behind
+profile version 2. Real cloud mounts, persistence, download authorization, STS
+issuance and P4 acceptance remain pending.
 
 `.github/workflows/saas-aliyun-host-candidate.yml` builds two independent amd64
 archives, checks non-root runtime against their exact OCI config/rootfs, requires

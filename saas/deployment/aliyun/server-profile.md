@@ -80,11 +80,52 @@ itself may be readable but must not be group/other writable.
 Readiness checks SDK `2.31.0`, the management file and the expected signing-key
 hashes locally, including independence after management-key rotation. Readiness
 does not make a cloud API call and does not prove API-key validity or network
-reachability. The candidate Server recipe includes `kubernetes,e2b`; protected
-publication checks the installed E2B version before signing.
+reachability. The candidate Server recipe includes
+`kubernetes,e2b,aliyun-sandbox-control`; protected publication checks E2B 2.31.0
+and the storage management SDK 1.2.0 before signing.
 The candidate workflow also imports and executes the exact OCI archive on both
 architectures before its scan, checking source revision, layer identities,
 non-root execution, SDK version and profile/ingress imports without network access.
+
+## Opt-in Session storage
+
+Profile version 1 disables storage. To opt in, use `schema_version: 2` and add
+the following `storage` field to the same canonical profile. This fragment uses
+placeholders; it does not create a Bucket, role or credential:
+
+```json
+{
+  "storage": {
+    "credential_file": "/run/omnigent-aliyun/storage-sts.json",
+    "tenants": [
+      {
+        "tenant_id": "<same-canonical-tenant-uuid>",
+        "bucket": "<dedicated-storage-bucket>",
+        "role_arn": "acs:ram::<account-id>:role/<restricted-mount-role>",
+        "prefix": "omnigent/aliyun/v1"
+      }
+    ]
+  }
+}
+```
+
+The storage allowlist must cover exactly the admitted profile tenants; Workspace
+IDs come from the existing tenant bindings. The control STS file must be separate
+from the E2B and signing-key files. Readiness requires the exact control SDK and a
+canonical, private, currently valid STS file. The credential is reread per cloud
+operation and must be rotated by an authorized issuer; that issuer is still
+pending. Long-term AccessKeys and projected-secret symlinks are rejected.
+
+The Server builder supplies live Session authorization to the launcher, and the
+qualified E2B SDK receives two immutable named mounts. Inputs are read-only;
+outputs are read-write. The logging Session ID selects a candidate Session only:
+real OWNER access, fresh membership, runtime placement and any Project binding
+must also pass. Runtime commands and reattachment verify the stored Session,
+mount hash and role before proceeding. Cleanup retains its persisted scope.
+
+See [storage qualification](storage.md) for workspace layout, real-role PostgreSQL
+checks and remaining mount, persistence, download and STS acceptance requirements.
+No storage-enabled production profile has been activated.
 
 Only the Host's own launch token and signed model lease are delivered to a VM.
 The model lease uses the VM's cloud creation time and admitted lifetime, so

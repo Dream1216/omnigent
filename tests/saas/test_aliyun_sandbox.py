@@ -75,6 +75,7 @@ def test_create_ignores_ambient_cloud_credentials_and_runtime_identity(cloud, mo
     assert values == {
         "template": "host-template",
         "timeout": 1800,
+        "volume_mounts": None,
         "metadata": {
             **cloud.scope.metadata(),
             "omnigent-name": "managed-123",

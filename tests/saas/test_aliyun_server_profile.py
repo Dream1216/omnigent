@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -87,6 +88,87 @@ def profile_case(tmp_path):
         secret=secret,
         tenant=tenant,
     )
+
+
+def _enable_storage(case):
+    now = int(time.time())
+    credential = {
+        "schema_version": 1,
+        "issued_at": now - 1,
+        "expires_at": now + 1800,
+        "access_key_id": "STS." + "a" * 24,
+        "access_key_secret": "s" * 32,
+        "security_token": "t" * 64,
+    }
+    case.document["schema_version"] = 2
+    case.document["storage"] = {
+        "credential_file": case.secret(
+            "storage-sts.json",
+            (json.dumps(credential, sort_keys=True, separators=(",", ":")) + "\n").encode(),
+        ),
+        "tenants": [
+            {
+                "tenant_id": case.document["tenants"][0]["tenant_id"],
+                "bucket": "omnigent-storage-test",
+                "role_arn": "acs:ram::1000000000000000:role/omnigent-storage-test",
+                "prefix": "omnigent/aliyun/v1",
+            }
+        ],
+    }
+    return case.document["storage"]
+
+
+def test_v2_profile_explicitly_enables_team_and_workspace_bound_storage(profile_case):
+    c = profile_case
+    storage = _enable_storage(c)
+    c.save()
+    profile = c.load()
+    assert profile is not None and len(profile.storage_configs) == 1
+    config = profile.storage_configs[0]
+    assert str(config.team_id) == c.document["team_id"]
+    assert str(config.tenant_id) == c.document["tenants"][0]["tenant_id"]
+    assert config.workspace_id == c.document["tenants"][0]["workspace_id"]
+    assert str(profile.storage_credential_file) == storage["credential_file"]
+    profile.assert_ready()
+
+
+@pytest.mark.parametrize(
+    "change", ["v1", "missing", "credential_alias", "unknown_tenant", "bucket", "role", "prefix"]
+)
+def test_storage_profile_rejects_implicit_enablement_and_scope_drift(profile_case, change):
+    c = profile_case
+    storage = _enable_storage(c)
+    if change == "v1":
+        c.document["schema_version"] = 1
+    elif change == "missing":
+        del c.document["storage"]
+    elif change == "credential_alias":
+        storage["credential_file"] = c.document["lease_key_file"]
+    else:
+        key, value = {
+            "unknown_tenant": ("tenant_id", str(uuid4())),
+            "bucket": ("bucket", "bucket/*"),
+            "role": ("role_arn", "acs:ram::*:role/admin"),
+            "prefix": ("prefix", "a/../b"),
+        }[change]
+        storage["tenants"][0][key] = value
+    c.save()
+    with pytest.raises(ValueError, match="profile configuration"):
+        c.load()
+
+
+def test_storage_readiness_reloads_sts_credentials_after_startup(profile_case):
+    c = profile_case
+    storage = _enable_storage(c)
+    c.save()
+    profile = c.load()
+    assert profile is not None
+    path = Path(storage["credential_file"])
+    data = json.loads(path.read_text())
+    data["expires_at"] = data["issued_at"] + 1
+    path.write_text(json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n")
+    with pytest.raises(ValueError, match="expired"):
+        profile.assert_ready()
 
 
 def test_absent_profile_keeps_provider_disabled_without_reading_credentials():

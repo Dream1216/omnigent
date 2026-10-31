@@ -13,6 +13,7 @@ from saas.compatibility.runtime_partition import current_runtime_context
 from saas.production.aliyun_model_client import validated_server_origin
 from saas.production.aliyun_model_lease import HostModelLeaseAuthority
 from saas.production.aliyun_sandbox import AliyunSandboxLauncher, AliyunSandboxScope
+from saas.production.aliyun_storage import AliyunStorageMounts
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,10 @@ class AliyunManagedSandbox:
 
 
 def build_aliyun_managed_config(
-    settings: AliyunManagedSandbox, *, host_config: dict[str, object] | None
+    settings: AliyunManagedSandbox,
+    *,
+    host_config: dict[str, object] | None,
+    storage: AliyunStorageMounts | None = None,
 ) -> ManagedSandboxConfig:
     """Append only when Server composition has admitted its explicit release profile."""
 
@@ -76,6 +80,7 @@ def build_aliyun_managed_config(
             lifetime_s=settings.lifetime_s,
             model_leases=settings.model_leases,
             model_gateway_url=settings.model_gateway_url,
+            storage=storage,
         )
 
     def factory() -> AliyunSandboxLauncher:
