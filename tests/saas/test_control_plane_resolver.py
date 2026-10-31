@@ -611,3 +611,12 @@ def test_project_scoped_host_model_lease_requires_current_project_admission(cont
         resolver.revalidate_host_model_scope(runtime)
     assert denied.value.code == "host_model_project_denied"
     assert project_authorizer.evaluate.call_args.kwargs["action"] == "run.create"
+
+
+@pytest.mark.parametrize("action", ["run.read_metadata", "secret.manage", "", "run.cancel"])
+def test_runtime_revalidation_rejects_unrecognized_project_actions(control_plane, action) -> None:
+    resolver, _factory, scope = _resolver(control_plane)
+    runtime = _host_model_runtime(resolver, scope)
+    with pytest.raises(ControlPlaneResolutionError) as error:
+        resolver.revalidate_runtime_scope(runtime, project_action=action)
+    assert error.value.code == "host_model_action_invalid"

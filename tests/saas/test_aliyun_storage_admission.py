@@ -236,3 +236,118 @@ def test_database_workspace_mismatch_is_denied_before_cloud_access(storage_case)
     with bind_runtime_context(c.runtime), workspace_scope(92), pytest.raises(AliyunStorageError):
         c.authorize(c.session_id)
     assert c.control.creates == []
+
+
+@pytest.mark.parametrize("binding_kind", ["session", "native_project"])
+@pytest.mark.parametrize("project_context", [False, True])
+def test_output_read_uses_content_permission_and_authoritative_project_binding(
+    storage_case, binding_kind, project_context
+):
+    c = storage_case
+    project = _project(c)
+    if binding_kind == "session":
+        _binding(c, project_id=project)
+    else:
+        native = uuid4()
+        _binding(
+            c,
+            resource_type="project",
+            runtime_resource_id=native.hex,
+            saas_resource_id=project,
+            project_id=project,
+        )
+        with bind_runtime_context(c.runtime):
+            c.conversations.set_conversation_project(c.session_id.hex, native.hex)
+    with c.factory.begin() as db:
+        member = db.query(ProjectMembershipRecord).filter_by(project_id=project).one()
+        member.role = "read"
+        member.version += 1
+    runtime = replace(c.runtime, project_id=project) if project_context else c.runtime
+    with bind_runtime_context(runtime):
+        assert c.authorize.read(c.session_id) == runtime
+        with pytest.raises(AliyunStorageError):
+            c.authorize(c.session_id)
+    assert c.control.creates == []
+
+
+@pytest.mark.parametrize("role", ["operate", "manage"])
+def test_content_blind_project_roles_cannot_read_outputs(storage_case, role):
+    c = storage_case
+    project = _project(c)
+    _binding(c, project_id=project)
+    with c.factory.begin() as db:
+        member = db.query(ProjectMembershipRecord).filter_by(project_id=project).one()
+        member.role = role
+        member.version += 1
+    with bind_runtime_context(c.runtime), pytest.raises(AliyunStorageError):
+        c.authorize.read(c.session_id)
+    assert c.control.creates == []
+
+
+@pytest.mark.parametrize("revocation", ["project", "session", "binding", "membership"])
+def test_output_read_rechecks_current_authority_on_every_request(storage_case, revocation):
+    from saas.control_plane.db_models import SpaceMembership
+
+    c = storage_case
+    project = _project(c)
+    binding = _binding(c, project_id=project)
+    with bind_runtime_context(c.runtime):
+        assert c.authorize.read(c.session_id) == c.runtime
+        if revocation == "session":
+            c.permissions.revoke(c.runtime.runtime_user_key, c.session_id.hex)
+        else:
+            with c.factory.begin() as db:
+                if revocation == "project":
+                    row = db.query(ProjectMembershipRecord).filter_by(project_id=project).one()
+                    row.status = "revoked"
+                    row.version += 1
+                elif revocation == "binding":
+                    db.get(RuntimeResourceBindingRecord, binding).status = "retired"
+                else:
+                    row = db.get(
+                        SpaceMembership,
+                        (c.runtime.tenant_id, c.runtime.space_id, c.runtime.actor_id),
+                    )
+                    row.status = "suspended"
+                    row.version += 1
+        with pytest.raises(AliyunStorageError):
+            c.authorize.read(c.session_id)
+    assert c.control.creates == []
+
+
+def test_output_read_cannot_choose_between_conflicting_session_and_project_bindings(storage_case):
+    c = storage_case
+    project = _project(c)
+    other_project = _project(c)
+    native = uuid4()
+    _binding(c, project_id=project)
+    _binding(
+        c,
+        resource_type="project",
+        runtime_resource_id=native.hex,
+        saas_resource_id=other_project,
+        project_id=other_project,
+    )
+    with bind_runtime_context(c.runtime):
+        c.conversations.set_conversation_project(c.session_id.hex, native.hex)
+        with pytest.raises(AliyunStorageError, match="ambiguous"):
+            c.authorize.read(c.session_id)
+    assert c.control.creates == []
+
+
+@pytest.mark.parametrize("change", ["space", "workspace", "project"])
+def test_output_read_rejects_forged_runtime_scope(storage_case, change):
+    c = storage_case
+    project = _project(c)
+    _binding(c, project_id=project)
+    runtime = replace(
+        c.runtime,
+        **{
+            "space": {"space_id": uuid4()},
+            "workspace": {"physical_workspace_id": c.runtime.physical_workspace_id + 1},
+            "project": {"project_id": _project(c)},
+        }[change],
+    )
+    with bind_runtime_context(runtime), pytest.raises(AliyunStorageError):
+        c.authorize.read(c.session_id)
+    assert c.control.creates == []

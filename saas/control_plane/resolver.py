@@ -473,6 +473,15 @@ class SqlAlchemyContextResolver:
 
     def revalidate_host_model_scope(self, runtime: RuntimeContext) -> RuntimeContext:
         """Recheck actor rights and placement from a previously signed Host lease."""
+        return self.revalidate_runtime_scope(runtime, project_action="run.create")
+
+    def revalidate_runtime_scope(
+        self, runtime: RuntimeContext, *, project_action: str
+    ) -> RuntimeContext:
+        """Recheck actor rights and placement for an explicit execution or content read."""
+
+        if project_action not in {"run.create", "run.read_content"}:
+            self._deny("host_model_action_invalid", "Runtime scope action is not supported")
 
         request = self.resolve_request_context(
             actor_id=runtime.actor_id,
@@ -494,7 +503,7 @@ class SqlAlchemyContextResolver:
                 )
             request = replace(request, project_id=runtime.project_id)
             decision = self._project_authorizer.evaluate(
-                request, action="run.create", project_id=runtime.project_id, mode="enforce"
+                request, action=project_action, project_id=runtime.project_id, mode="enforce"
             )
             if not decision.allowed:
                 self._deny("host_model_project_denied", "Host model Project access was revoked")

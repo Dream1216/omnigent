@@ -26,6 +26,16 @@ fall back to an unbound native Session; no Project authority is inferred from
 the logging hint. Before cloud operations and after readiness waits, the manager
 rechecks authorization. The final check precedes returning the mount plan.
 
+The authorizer's separate `read(session_id)` entry validates `run.read_content`
+for existing outputs. The caller must still own the native Session. A Project
+`read` role can pass this content check while remaining unable to start work;
+the content-blind `manage` and `operate` roles cannot. For a browser's Space-only
+context, the logical Project comes only from matching active Session/native
+Project bindings. Conflicting Projects, revoked grants, stale membership or
+placement fail closed. Deriving the Project does not mutate the request context
+or change execution admission. This entry creates no Volumes and currently has
+no OSS reader or HTTP download route attached.
+
 Startup and command/file transport recheck Session metadata and authorization.
 Reattachment admission does not create Volumes. A launcher without storage
 authority cannot execute in an old storage VM. Persisted Tenant/Workspace cleanup
@@ -101,6 +111,15 @@ separate `test_aliyun_storage_admission_postgresql.py` must run against a
 disposable PostgreSQL test service. It uses an actual NOSUPERUSER/NOBYPASSRLS
 login to verify Space binding inventory, including Project-bearing rows, and
 transaction context clearing. A local skip is not RLS acceptance.
+
+The native filesystem download path currently needs a live Runner. Its file
+panel also disables reads when both Runner and Host are unavailable. Uploaded
+attachments use a different FileStore/artifact-store path; mounting OSS outputs
+does not register them there. A complete persisted-output implementation must
+connect discovery, application authorization and streaming to a reachable UI
+entry, then prove it after the VM is gone. The read-admission tests alone do not
+provide this proof. Server-side OSS access needs a separately scoped read
+authority; the Volume-control STS issuer has no `oss:GetObject` permission.
 
 Primary references:
 

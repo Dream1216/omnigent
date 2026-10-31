@@ -44,12 +44,19 @@ class AliyunStorageSessionAuthorizer:
         self._permissions = permissions
 
     def __call__(self, session_id: UUID) -> RuntimeContext:
+        return self._authorize(session_id, project_action="run.create")
+
+    def read(self, session_id: UUID) -> RuntimeContext:
+        """Authorize existing output bytes without granting execution or Volume creation."""
+        return self._authorize(session_id, project_action="run.read_content")
+
+    def _authorize(self, session_id: UUID, *, project_action: str) -> RuntimeContext:
         try:
-            return self._admit(session_id)
+            return self._admit(session_id, project_action=project_action)
         except (ControlPlaneResolutionError, SQLAlchemyError):
             raise AliyunStorageError("Aliyun storage session authority is unavailable") from None
 
-    def _admit(self, session_id: UUID) -> RuntimeContext:
+    def _admit(self, session_id: UUID, *, project_action: str) -> RuntimeContext:
         runtime = current_runtime_context()
         if (
             not isinstance(session_id, UUID)
@@ -58,7 +65,7 @@ class AliyunStorageSessionAuthorizer:
             or runtime.physical_workspace_id <= 0
         ):
             raise AliyunStorageError("Aliyun storage session scope is invalid")
-        self._resolver.revalidate_host_model_scope(runtime)
+        self._resolver.revalidate_runtime_scope(runtime, project_action=project_action)
         conversation = self._conversations.get_conversation(session_id.hex)
         if conversation is None or not check_session_access(
             runtime.runtime_user_key,
@@ -119,6 +126,12 @@ class AliyunStorageSessionAuthorizer:
                 raise AliyunStorageError("Aliyun storage binding is ambiguous")
             if runtime.project_id is not None and not rows:
                 raise AliyunStorageError("Aliyun storage Project binding is unavailable")
+            effective_runtime = runtime
+            if project_action == "run.read_content" and runtime.project_id is None and rows:
+                projects = {row.project_id for row in rows}
+                if len(projects) != 1:
+                    raise AliyunStorageError("Aliyun storage Project binding is ambiguous")
+                effective_runtime = replace(runtime, project_id=next(iter(projects)))
             bindings = [
                 (row.resource_type, row.saas_resource_id, row.project_id)
                 for row in rows
@@ -126,11 +139,18 @@ class AliyunStorageSessionAuthorizer:
                 and row.runtime_partition_id == runtime.runtime_partition_id
                 and row.partition_generation == runtime.placement_generation
                 and row.binding_generation >= 1
-                and row.project_id == runtime.project_id
-                and (row.resource_type != "project" or row.saas_resource_id == runtime.project_id)
+                and row.project_id == effective_runtime.project_id
+                and (
+                    row.resource_type != "project"
+                    or row.saas_resource_id == effective_runtime.project_id
+                )
             ]
             if len(bindings) != len(rows):
                 raise AliyunStorageError("Aliyun storage binding scope changed")
+        if effective_runtime != runtime:
+            self._resolver.revalidate_runtime_scope(
+                effective_runtime, project_action=project_action
+            )
         request = replace(
             self._resolver.resolve_request_context(
                 actor_id=runtime.actor_id,
@@ -138,13 +158,19 @@ class AliyunStorageSessionAuthorizer:
                 space_id=runtime.space_id,
                 trace_id=runtime.trace_id,
             ),
-            project_id=runtime.project_id,
+            project_id=effective_runtime.project_id,
         )
         for kind, logical_id, _ in bindings:
             resolved = self._resolver.resolve_existing_resource(
-                request, resource_type=kind, saas_resource_id=logical_id, action="run.create"
+                request,
+                resource_type=kind,
+                saas_resource_id=logical_id,
+                action=project_action,
             )
-            if replace(resolved, binding_generation=runtime.binding_generation) != runtime:
+            if (
+                replace(resolved, binding_generation=runtime.binding_generation)
+                != effective_runtime
+            ):
                 raise AliyunStorageError("Aliyun storage binding identity changed")
         if current_runtime_context() != runtime:
             raise AliyunStorageError("Aliyun storage runtime changed")
