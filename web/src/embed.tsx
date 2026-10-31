@@ -230,7 +230,7 @@ function OmnigentProviders({
         style={{ height: "100%", width: "100%", colorScheme: isDarkMode ? "dark" : "light" }}
       >
         <I18nProvider>
-          <EmbeddedProvider>
+          <EmbeddedProvider isDarkMode={isDarkMode}>
             {/* next-themes is kept as the JS source of truth for `resolvedTheme`
               (Monaco + the xterm terminal read it via `useTheme()`); the host
               drives the value via `forcedTheme`. A private attribute +
