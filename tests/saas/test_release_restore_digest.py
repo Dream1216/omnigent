@@ -14,6 +14,14 @@ _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
 _T = "lm2t00000001"
+_CASDOOR = "cd2a00000001"
+_IDENTITY_TABLES = {
+    "saas_oidc_login_transactions",
+    "saas_oidc_session_fences",
+    "saas_identity_conflicts",
+    "saas_membership_invitations",
+    "saas_tenant_creation_intents",
+}
 _R_TABLES = {
     "saas_model_connections",
     "saas_model_credential_versions",
@@ -71,7 +79,7 @@ def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope(head
     assert len(new) == len(set(new)) == len(old) + 15
 
 
-@pytest.mark.parametrize("head", [_P0, _R, _S, _T])
+@pytest.mark.parametrize("head", [_P0, _R, _S, _T, _CASDOOR])
 def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_connection, head):
     _populate(digest_connection, head)
     digest, counts = restore._digest_on_connection(digest_connection)
@@ -87,6 +95,28 @@ def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_c
     ).hexdigest()
     assert digest == expected and set(counts.values()) == {1}
     assert set(counts) == set(canonical)
+
+
+def test_casdoor_digest_retains_old_scope_and_adds_identity_recovery_state():
+    old = restore._digest_tables_for_schema(_T)
+    new = restore._digest_tables_for_schema(_CASDOOR)
+    assert new[: len(old)] == old
+    assert set(new) - set(old) == _IDENTITY_TABLES
+    assert len(new) == len(set(new)) == len(old) + len(_IDENTITY_TABLES)
+
+
+@pytest.mark.parametrize("table", sorted(_IDENTITY_TABLES))
+def test_casdoor_security_state_changes_or_missing_tables_cannot_pass_restore_digest(
+    digest_connection, table
+):
+    _populate(digest_connection, _CASDOOR)
+    before, counts = restore._digest_on_connection(digest_connection)
+    digest_connection.exec_driver_sql(f"UPDATE public.\"{table}\" SET value='changed'")
+    after, changed_counts = restore._digest_on_connection(digest_connection)
+    assert before != after and counts == changed_counts
+    digest_connection.exec_driver_sql(f'DROP TABLE public."{table}"')
+    with pytest.raises(restore.PostgreSqlRestoreContractError, match="missing hash table"):
+        restore._digest_on_connection(digest_connection)
 
 
 @pytest.mark.parametrize("head", [_R, _S, _T])

@@ -100,6 +100,39 @@ def test_r_packaged_image_uses_its_own_migrations_without_a_cross_head_override(
     ]
 
 
+@pytest.mark.parametrize("mode", ["stage", "final"])
+def test_casdoor_packaged_release_preserves_the_full_model_profile(tmp_path, monkeypatch, mode):
+    original = migration._expected_head
+
+    def head(kind):
+        return "cd2a00000001" if kind == "saas" else original(kind)
+
+    monkeypatch.setattr(migration, "_expected_head", head)
+    monkeypatch.setattr(renderer, "_expected_head", head)
+    document = _spec_document(mode=mode)
+    document["control_plane_schema_revision"] = "cd2a00000001"
+    document["service_logins"] = {
+        service: f"login_{index:02d}"
+        for index, service in enumerate(renderer._RELEASE_SERVICE_ROLES, start=1)
+    }
+    spec = tmp_path / "release.json"
+    spec.write_bytes(_canonical_json(document))
+    spec.chmod(0o600)
+    output = tmp_path / "rendered"
+    renderer.render_kubernetes_release(spec, _copy_sources(tmp_path), output)
+    parsed = renderer.load_public_release_spec(spec)
+    assert renderer._migration_args(parsed) == [
+        "--product-revision",
+        "$(OMNIGENT_SAAS_SOURCE_SHA)",
+    ]
+    release = _resource(
+        _document(output / "kubernetes.production.yaml"),
+        kind="ConfigMap",
+        data_key="OMNIGENT_SAAS_IMAGE_DIGEST",
+    )
+    assert release["data"]["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] == "cd2a00000001"
+
+
 @pytest.mark.parametrize("head", ["lm2r00000001", "lm2t00000001"])
 def test_renderer_never_authorizes_a_mutating_argument_added_to_a_rollback(
     tmp_path, monkeypatch, head

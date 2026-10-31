@@ -6,6 +6,7 @@
     ".github/scripts/e2e-ui-required/",
     ".github/workflows/e2e-ui-required.yml",
     ".github/workflows/saas-",
+    "feature-map/saas-customer-auth.md",
     "saas/",
     "sdks/saas-",
     "tests/ci/test_e2e_ui_required_gate.py",
@@ -119,6 +120,11 @@
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "casdoor_feature_recipe_ownership": {
+      "path": "feature-map/saas-customer-auth.md",
+      "reason": "This additive recipe documents only the downstream SaaS identity and workspace services. The shared feature-map index and main-application entry points remain counted as upstream changes.",
+      "budget_limits_changed": false
+    },
     "reviewed_complete_security_budget_followup": {
       "approved_at": "2026-10-25",
       "previous_max_direct_upstream_files": 158,

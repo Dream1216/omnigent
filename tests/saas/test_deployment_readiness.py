@@ -339,6 +339,7 @@ def _seccomp_observation(placement: dict, image: str) -> dict:
 
 def _v2_record() -> dict:
     record = _record()
+    record["revision_contract"]["control_plane_schema_revision"] = "lm2t00000001"
     record["schema_version"] = 2
     runner = record["components"]["runner"]
     runner["seccomp_profile"] = "RuntimeDefault"
@@ -350,6 +351,7 @@ def _v2_record() -> dict:
 
 def test_v2_record_bytes_and_runtime_default_semantics_are_preserved() -> None:
     policy = _policy()
+    policy["revision_contract"]["control_plane_schema_revision"] = "lm2t00000001"
     policy["schema_version"] = 2
     del policy["runner_seccomp"]
     record = _v2_record()
@@ -363,14 +365,26 @@ def test_v2_record_bytes_and_runtime_default_semantics_are_preserved() -> None:
         ).hexdigest()
         == "8407f0cfcba5a327247a369be098aee661c9ddec188e46de477c273f86a65586"
     )
-    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    baseline = json.loads((_repo() / "saas/production/baseline.json").read_text())
+    baseline["revision_contract"]["control_plane_schema_revision"] = "lm2t00000001"
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW, baseline=baseline)
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
     record["components"]["runner"]["seccomp_profile"] = "Localhost"
     _resign(record)
-    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW, baseline=baseline)
     assert report["production_readiness"] == "blocked"
     assert any("does not use RuntimeDefault" in item for item in report["blockers"])
+
+
+def test_current_schema_policy_rejects_a_historical_v2_record() -> None:
+    policy = _policy()
+    policy["schema_version"] = 2
+    del policy["runner_seccomp"]
+    report = validate_deployment_readiness(_repo(), policy, [_v2_record()], now=_NOW)
+    assert report["status"] == "pass"
+    assert report["production_readiness"] == "blocked"
+    assert any("revision contract" in item for item in report["blockers"])
 
 
 @pytest.mark.parametrize("policy_version,record_version", [(2, 3), (3, 2), (3, True)])

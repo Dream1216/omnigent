@@ -145,6 +145,13 @@ _R_MODEL_HASH_TABLES = (
     "saas_model_verification_receipts",
 )
 _MAX_DIGEST_ROWS_PER_TABLE = 512
+_CASDOOR_HASH_TABLES = (
+    "saas_oidc_login_transactions",
+    "saas_oidc_session_fences",
+    "saas_identity_conflicts",
+    "saas_membership_invitations",
+    "saas_tenant_creation_intents",
+)
 
 
 class PostgreSqlRestoreContractError(RuntimeError):
@@ -2114,6 +2121,8 @@ def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
         return _SELECTED_HASH_TABLES
     if head in {"lm2r00000001", "lm2s00000001", "lm2t00000001"}:
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
+    if head == "cd2a00000001":
+        return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES, *_CASDOOR_HASH_TABLES)
     raise PostgreSqlRestoreContractError("unsupported restore hash schema")
 
 

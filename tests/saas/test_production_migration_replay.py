@@ -325,7 +325,10 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         assert final.catalog_sha256 == first.catalog_sha256
     finally:
         owner.dispose()
-    if final.saas_head == "lm2t00000001":
+    if final.saas_head in {"lm2t00000001", "cd2a00000001"} and profile in {
+        "admin",
+        "projection",
+    }:
         from tests.saas.test_model_budget_owner_settlement_postgresql import (
             verify_non_bypass_budget_owner_settlement,
         )

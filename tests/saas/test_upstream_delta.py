@@ -50,6 +50,28 @@ def test_isolated_downstream_change_passes_budget() -> None:
     assert report["metrics"]["isolated_custom_code_ratio"] == 1.0
 
 
+def test_saas_feature_recipe_ownership_keeps_shared_docs_and_app_changes_in_budget() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    manifest = json.loads((repo / "saas/upstream-baseline.json").read_text())
+    report = evaluate_delta(
+        [
+            FileDelta("feature-map/saas-customer-auth.md", 1000, 0),
+            FileDelta("feature-map/README.md", 4, 0),
+            FileDelta("feature-map/login-and-host-auth.md", 100, 0),
+            FileDelta("web/src/pages/SettingsPage.tsx", 10, 0),
+        ],
+        manifest,
+        active_patch_count=0,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+    )
+    assert report["status"] == "pass"
+    assert report["metrics"]["direct_upstream_file_count"] == 3
+    assert report["metrics"]["upstream_net_added_loc"] == 114
+    assert "feature-map/" not in manifest["downstream_owned_prefixes"]
+
+
 def test_saas_workflows_and_sdks_are_owned_without_hiding_official_source() -> None:
     report = evaluate_delta(
         [

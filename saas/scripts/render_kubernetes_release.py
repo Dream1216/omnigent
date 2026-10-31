@@ -947,8 +947,9 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
+        "cd2a00000001",
     }:
-        raise ReleaseRenderError("model projection profile requires the R, S or T schema")
+        raise ReleaseRenderError("model projection profile requires a reviewed model schema")
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
         for service in sorted(login_rows)
