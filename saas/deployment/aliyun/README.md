@@ -64,7 +64,8 @@ Remaining qualification:
   qualify the complete Host. The remaining Debian Perl, Expat and Kerberos
   findings have no fixed version in that scan. The raw zero-High/zero-Critical
   and no-ignored gates remain unchanged.
-- CI runs 41143681301 (`0d9b444bc`) and 41148992698 (`1f19ebd3a`)
+- CI runs 41143681301 (`0d9b444bc`), 41148992698 (`1f19ebd3a`) and
+  41151484102 (`73b992158`)
   passed repeat-build equality, provenance/SPDX and runtime checks for the
   complete minimal Host image. The latest raw scan has
   zero Critical, 10 High matches for four CVEs, and zero ignored matches. The
@@ -83,6 +84,10 @@ Server HTTPS origin with short bearer authentication and a fixed internal
 gateway. It is disabled unless the profile selects that exact path. Actual
 image/deployment, public streaming, cloud Host/Runner, storage and release
 acceptance remain required.
+
+The inactive [session storage candidate](storage.md) adds immutable Volume
+planning and an STS-only control adapter. Server/launcher admission, real cloud
+mounts, persistence, download authorization and P4 acceptance remain pending.
 
 `.github/workflows/saas-aliyun-host-candidate.yml` builds two independent amd64
 archives, checks non-root runtime against their exact OCI config/rootfs, requires

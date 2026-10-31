@@ -281,6 +281,7 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
+          --junitxml=artifacts/server-regressions.junit.xml
       - name: Set up isolated candidate Docker runtime
         uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
         with:
@@ -455,6 +456,7 @@ jobs:
         with:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
+            artifacts/server-regressions.junit.xml
             artifacts/saas-image-candidate.json
             artifacts/server-candidate-runtime.json
             artifacts/oci-promotion-manifest.json
