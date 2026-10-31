@@ -1726,12 +1726,12 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
         16,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "4ffa029ba05ac4ae44d4f5ca56e10511f29eac8577ff7cbeddb419df33bc856c",
+    ): "8f8c01a48edfb8764be4df68a84e6e3ee7983c21e19ae4becf885f3ea7374b28",
     (
         18,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "e1df6abf519b7cdb0f4c871153e568f437617c4ae5ffd71058a41324fb5d3a59",
+    ): "d2780cebc83cc24cc84d67e1b93d4a3dc59cbf439f46d02115138fee7f1e692a",
     # Independently old-anchor-verified clean PG16/18 P17 replay.
     (
         16,
@@ -2081,12 +2081,12 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
         16,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "fcaea480e5a4075b7849fa1a2b6c5557a006e5407f3b4a0f8c39d533cedf4b09",
+    ): "50e2e495a905232119a791fabe95df60549d2f25599ea242137d38c7ccb07ec6",
     (
         18,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "c2024488347eb9f9743594284ff0fbbe6fc566f22aa0a22ef6c441e4358da507",
+    ): "e21882721a211ebba9a21300a061a9f985af9b53427c5a85bb249cf0c2523aa5",
     # Independently old-anchor-verified clean PG16/18 P17 replay.
     (
         16,
@@ -2719,12 +2719,12 @@ _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
         16,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "299a0f9ebcdc0a1ed1e2794e93c371e61e39d4e2f2b49f6eb507ebb8949b371e",
+    ): "3313a5d25463e08c44b731dc9ce27689e4082342886c1215f4d18fd07de4dd0e",
     (
         18,
         "d0a1f879a01d",
         "p0s000000018",
-    ): "c4e532666ffd8e1989cb4f3050c5fe2a9a1f549d39d7e7ffa750276e6b573d5f",
+    ): "ce25ed058300e9f0c3ad4d5f8501566e82f661812862d630387f52a241b88391",
     (
         16,
         "mm1a2b3c4d5e",
