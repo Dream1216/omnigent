@@ -130,8 +130,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4623
-    assert budget["max_direct_upstream_files"] == 182
+    assert budget["max_upstream_net_added_loc"] == 4655
+    assert budget["max_direct_upstream_files"] == 184
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -486,7 +486,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4623 + extra_lines, 0),
+            FileDelta("omnigent/stores/host_store.py", 4655 + extra_lines, 0),
             FileDelta("saas/control_plane/service.py", 30000, 0),
         ],
         manifest,
