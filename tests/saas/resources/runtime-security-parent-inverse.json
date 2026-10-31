@@ -1,0 +1,44 @@
+{
+  "saas/scripts/oci_promotion.py": {
+    "parent_sha256": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
+    "corrected_sha256": "a5ce2c606c7b7f9e16c22571e501ae62212eba7ad6b5ab2a7a3c4d39af797fa9",
+    "inverse_fragments": [
+      {
+        "before": "    parse_database_status,\n    scan_report,\n)\n\n",
+        "after": "    parse_database_status,\n    scan_report,\n    validate_scan_configuration,\n)\n\n"
+      },
+      {
+        "before": "        database_built = parse_database_status(descriptor[\"db\"][\"status\"], now=now)\n        require(database_built == summary.get(\"database_built_at\"), \"scan database differs\")\n        config = descriptor.get(\"configuration\", {})\n        require(\n            config.get(\"only-fixed\") is False\n            and config.get(\"only-notfixed\") is False\n            and config.get(\"exclude\", []) == []\n            and config.get(\"vex-documents\", []) == [],\n            \"raw scan must not filter findings\",\n        )\n        parsed = scan_report(report)\n        require(not any(parsed[\"counts\"].values()), \"Critical or High finding blocks promotion\")\n",
+        "after": "        database_built = parse_database_status(descriptor[\"db\"][\"status\"], now=now)\n        require(database_built == summary.get(\"database_built_at\"), \"scan database differs\")\n        validate_scan_configuration(report)\n        parsed = scan_report(report)\n        require(not any(parsed[\"counts\"].values()), \"Critical or High finding blocks promotion\")\n"
+      }
+    ]
+  },
+  "saas/scripts/check_image_supply_chain.py": {
+    "parent_sha256": "ded133dddef0e5185a396a936b83e66eecd3cd2532abb24c258f21f5e1dd95ca",
+    "corrected_sha256": "3db9bb4e774b28a452fddd0352dff063887bfe2948b3fe60508141619d58c3f4",
+    "inverse_fragments": [
+      {
+        "before": "        \"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt\",\n        \"apk add --no-cache\",\n        \"python-3.12=3.12.15-r3\",\n        \"ln -s /usr/bin/python3.12 /usr/local/bin/python\",\n        \"ln -s /usr/bin/python3.12 /usr/local/bin/python3\",\n",
+        "after": "        \"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt\",\n        \"apk add --no-cache\",\n        \"python-3.12=3.12.16-r3\",\n        \"ln -s /usr/bin/python3.12 /usr/local/bin/python\",\n        \"ln -s /usr/bin/python3.12 /usr/local/bin/python3\",\n"
+      }
+    ]
+  },
+  "saas/scripts/scan_oci_candidates.py": {
+    "parent_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
+    "corrected_sha256": "a82fd61bf12f171c766014bfa4f6cdee2991cb2a142d0a997ad3fe8d0a727312",
+    "inverse_fragments": [
+      {
+        "before": "\n\ndef validate_image_scope(images: dict[str, Path], scope: str) -> None:\n    expected = SCAN_SCOPES[scope]\n",
+        "after": "\n\ndef validate_scan_configuration(data: dict[str, object]) -> None:\n    \"\"\"Reject filtered current scans, including Grype's default kernel ignores.\"\"\"\n    descriptor = data.get(\"descriptor\")\n    configuration = descriptor.get(\"configuration\") if isinstance(descriptor, dict) else None\n    if not isinstance(configuration, dict):\n        raise ValueError(\"raw scan configuration is incomplete\")\n    database = configuration.get(\"db\")\n    if (\n        any(\n            configuration.get(key) != []\n            for key in (\"ignore\", \"exclude\", \"vex-documents\", \"vex-add\")\n        )\n        or configuration.get(\"ignore-wontfix\") != \"\"\n        or configuration.get(\"only-fixed\") is not False\n        or configuration.get(\"only-notfixed\") is not False\n        or configuration.get(\"match-upstream-kernel-headers\") is not True\n        or configuration.get(\"fail-on-severity\") != \"high\"\n        or not isinstance(database, dict)\n        or database.get(\"validate-age\") is not True\n        or database.get(\"max-allowed-built-age\") != 86_400_000_000_000\n    ):\n        raise ValueError(\n            \"raw scan configuration must not filter findings or relax the 24-hour policy\"\n        )\n\n\ndef validate_image_scope(images: dict[str, Path], scope: str) -> None:\n    expected = SCAN_SCOPES[scope]\n"
+      },
+      {
+        "before": "        config = scanner_root / \"grype.yaml\"\n        config.write_text(\n            \"ignore: []\\nvex-documents: []\\ndb:\\n\"\n            f\"  cache-dir: {scanner_root / 'grype-db'}\\n\"\n            \"  auto-update: true\\n  validate-age: true\\n\"\n",
+        "after": "        config = scanner_root / \"grype.yaml\"\n        config.write_text(\n            \"ignore: []\\nexclude: []\\nvex-documents: []\\nvex-add: []\\n\"\n            \"ignore-wontfix: ''\\nonly-fixed: false\\nonly-notfixed: false\\n\"\n            \"match-upstream-kernel-headers: true\\ndb:\\n\"\n            f\"  cache-dir: {scanner_root / 'grype-db'}\\n\"\n            \"  auto-update: true\\n  validate-age: true\\n\"\n"
+      },
+      {
+        "before": "                if result.returncode not in (0, 2) or not output.is_file():\n                    raise RuntimeError(f\"Grype failed to scan {name} {platform}\")\n                parsed = scan_report(json.loads(output.read_text()))\n                counts = parsed[\"counts\"]\n                blocked |= result.returncode == 2 or any(counts.values())\n",
+        "after": "                if result.returncode not in (0, 2) or not output.is_file():\n                    raise RuntimeError(f\"Grype failed to scan {name} {platform}\")\n                raw = json.loads(output.read_text())\n                validate_scan_configuration(raw)\n                parsed = scan_report(raw)\n                counts = parsed[\"counts\"]\n                blocked |= result.returncode == 2 or any(counts.values())\n"
+      }
+    ]
+  }
+}

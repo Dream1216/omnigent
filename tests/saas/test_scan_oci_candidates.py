@@ -10,6 +10,7 @@ from saas.scripts.scan_oci_candidates import (
     parse_database_status,
     scan_report,
     validate_image_scope,
+    validate_scan_configuration,
 )
 
 
@@ -46,6 +47,57 @@ def test_report_keeps_each_high_finding_and_rejects_ignores() -> None:
         scan_report({"matches": [], "ignoredMatches": [match]})
     with pytest.raises(ValueError, match="incomplete"):
         scan_report({"matches": "not-a-list"})
+
+
+def _current_scan_configuration() -> dict[str, object]:
+    return {
+        "ignore": [],
+        "exclude": [],
+        "vex-documents": [],
+        "vex-add": [],
+        "ignore-wontfix": "",
+        "only-fixed": False,
+        "only-notfixed": False,
+        "match-upstream-kernel-headers": True,
+        "fail-on-severity": "high",
+        "db": {"validate-age": True, "max-allowed-built-age": 86_400_000_000_000},
+    }
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"ignore": [{"package": {"name": "kernel-headers"}}]},
+        {"exclude": ["/usr/lib/**"]},
+        {"vex-documents": ["exception.json"]},
+        {"vex-add": ["fixed"]},
+        {"ignore-wontfix": "all"},
+        {"only-fixed": True},
+        {"only-notfixed": True},
+        {"match-upstream-kernel-headers": False},
+        {"fail-on-severity": "critical"},
+        {"db": {"validate-age": False, "max-allowed-built-age": 86_400_000_000_000}},
+        {"db": {"validate-age": True, "max-allowed-built-age": 604_800_000_000_000}},
+    ],
+)
+def test_current_scan_rejects_inactive_ignores_and_policy_relaxation(
+    override: dict[str, object],
+) -> None:
+    configuration = _current_scan_configuration()
+    report: dict[str, object] = {
+        "matches": [],
+        "ignoredMatches": [],
+        "descriptor": {"configuration": configuration},
+    }
+    validate_scan_configuration(report)
+    configuration.update(override)
+    with pytest.raises(ValueError, match="raw scan configuration"):
+        validate_scan_configuration(report)
+
+
+def test_current_scan_requires_raw_configuration() -> None:
+    with pytest.raises(ValueError, match="configuration is incomplete"):
+        validate_scan_configuration({"matches": [], "ignoredMatches": []})
 
 
 def test_preflight_scope_cannot_replace_complete_four_report_scan() -> None:
@@ -95,5 +147,10 @@ def test_signed_release_checks_raw_findings_before_signing() -> None:
     command = steps[scan_index]["run"]
     assert "${prefix}.raw.grype.json" in command
     assert ".ignoredMatches // []) == []" in command
+    assert "'match-upstream-kernel-headers: true'" in command
+    assert "--fail-on high" in command
+    assert ".descriptor.configuration.ignore == []" in command
+    assert '.descriptor.configuration."match-upstream-kernel-headers" == true' in command
+    assert '.descriptor.configuration.db."max-allowed-built-age" == 86400000000000' in command
     assert "--vex" not in command
     assert "admitted.grype.json" not in command

@@ -3491,7 +3491,7 @@ requires-dist = [
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.180,<1" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.26,<3" },
     { name = "fastapi", specifier = ">=0.100,<1" },
-    { name = "filelock", specifier = ">=3.0" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "ftfy", specifier = ">=6.0" },
     { name = "github-copilot-sdk", marker = "extra == 'copilot'", specifier = ">=1,<2" },
     { name = "google-antigravity", marker = "extra == 'antigravity'", specifier = ">=0.1,<1" },
@@ -3568,7 +3568,7 @@ provides-extras = ["claude-sdk", "openai-agents", "cockroachdb", "all", "bedrock
 dev = [
     { name = "boto3", specifier = ">=1.30,<2" },
     { name = "build", specifier = ">=1.2" },
-    { name = "filelock", specifier = ">=3.0" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "grpcio-tools", specifier = ">=1.68,<=1.81.1" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
     { name = "kubernetes", specifier = ">=36,<37" },
@@ -3599,7 +3599,7 @@ lint = [
 test = [
     { name = "boto3", specifier = ">=1.30,<2" },
     { name = "build", specifier = ">=1.2" },
-    { name = "filelock", specifier = ">=3.0" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
     { name = "kubernetes", specifier = ">=36,<37" },
     { name = "moto", extras = ["s3"], specifier = ">=5,<6" },

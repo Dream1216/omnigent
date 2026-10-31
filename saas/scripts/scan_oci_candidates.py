@@ -68,6 +68,32 @@ def scan_report(data: dict[str, object]) -> ScanReport:
     return {"counts": counts, "findings": findings}
 
 
+def validate_scan_configuration(data: dict[str, object]) -> None:
+    """Reject filtered current scans, including Grype's default kernel ignores."""
+    descriptor = data.get("descriptor")
+    configuration = descriptor.get("configuration") if isinstance(descriptor, dict) else None
+    if not isinstance(configuration, dict):
+        raise ValueError("raw scan configuration is incomplete")
+    database = configuration.get("db")
+    if (
+        any(
+            configuration.get(key) != []
+            for key in ("ignore", "exclude", "vex-documents", "vex-add")
+        )
+        or configuration.get("ignore-wontfix") != ""
+        or configuration.get("only-fixed") is not False
+        or configuration.get("only-notfixed") is not False
+        or configuration.get("match-upstream-kernel-headers") is not True
+        or configuration.get("fail-on-severity") != "high"
+        or not isinstance(database, dict)
+        or database.get("validate-age") is not True
+        or database.get("max-allowed-built-age") != 86_400_000_000_000
+    ):
+        raise ValueError(
+            "raw scan configuration must not filter findings or relax the 24-hour policy"
+        )
+
+
 def validate_image_scope(images: dict[str, Path], scope: str) -> None:
     expected = SCAN_SCOPES[scope]
     if set(images) != expected:
@@ -130,7 +156,9 @@ def main() -> int:
         scanner = install_grype(scanner_root)
         config = scanner_root / "grype.yaml"
         config.write_text(
-            "ignore: []\nvex-documents: []\ndb:\n"
+            "ignore: []\nexclude: []\nvex-documents: []\nvex-add: []\n"
+            "ignore-wontfix: ''\nonly-fixed: false\nonly-notfixed: false\n"
+            "match-upstream-kernel-headers: true\ndb:\n"
             f"  cache-dir: {scanner_root / 'grype-db'}\n"
             "  auto-update: true\n  validate-age: true\n"
             "  max-allowed-built-age: 24h\n"
@@ -167,7 +195,9 @@ def main() -> int:
                 )
                 if result.returncode not in (0, 2) or not output.is_file():
                     raise RuntimeError(f"Grype failed to scan {name} {platform}")
-                parsed = scan_report(json.loads(output.read_text()))
+                raw = json.loads(output.read_text())
+                validate_scan_configuration(raw)
+                parsed = scan_report(raw)
                 counts = parsed["counts"]
                 blocked |= result.returncode == 2 or any(counts.values())
                 summaries.append(

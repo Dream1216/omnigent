@@ -70,7 +70,7 @@ dependencies = [
     "alembic>=1.0,<2",
     "anyio>=4.0,<5",
     "cachetools>=5.0,<7",
-    "filelock>=3.0",
+    "filelock>=4.2.1",
     # _HostGroup (omnigent/cli.py) rewrites a leading positional server URL
     # into `--server` before Click parses it, so it no longer depends on
     # Click's internal `protected_args` (made read-only in click 8.2, slated
@@ -398,7 +398,7 @@ test = [
     # on the same xdist worker and flaked the WS-tunnel suite (the
     # "Runner stream relay exited before becoming ready" 503s).
     "pytest-rerunfailures==16.3",
-    "filelock>=3.0",
+    "filelock>=4.2.1",
     # Cloud-service mocks for the artifact-store / Cloudflare integration
     # tests: moto is the standard S3-compatible mock (used for R2), respx is
     # the standard HTTPX mock (used to back the Cloudflare D1 REST API with an

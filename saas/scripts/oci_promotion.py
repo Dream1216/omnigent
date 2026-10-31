@@ -20,6 +20,7 @@ from saas.scripts.scan_oci_candidates import (
     file_sha256,
     parse_database_status,
     scan_report,
+    validate_scan_configuration,
 )
 
 IMAGES = ("server", "host")
@@ -108,14 +109,7 @@ def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict
         )
         database_built = parse_database_status(descriptor["db"]["status"], now=now)
         require(database_built == summary.get("database_built_at"), "scan database differs")
-        config = descriptor.get("configuration", {})
-        require(
-            config.get("only-fixed") is False
-            and config.get("only-notfixed") is False
-            and config.get("exclude", []) == []
-            and config.get("vex-documents", []) == [],
-            "raw scan must not filter findings",
-        )
+        validate_scan_configuration(report)
         parsed = scan_report(report)
         require(not any(parsed["counts"].values()), "Critical or High finding blocks promotion")
         facts = images[name]["facts"]["platforms"][platform]

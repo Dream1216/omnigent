@@ -116,7 +116,21 @@ def candidate(root: Path) -> tuple[dict[str, str], datetime]:
                                 "valid": True,
                             }
                         },
-                        "configuration": {"only-fixed": False, "only-notfixed": False},
+                        "configuration": {
+                            "only-fixed": False,
+                            "only-notfixed": False,
+                            "ignore": [],
+                            "exclude": [],
+                            "vex-documents": [],
+                            "vex-add": [],
+                            "ignore-wontfix": "",
+                            "match-upstream-kernel-headers": True,
+                            "fail-on-severity": "high",
+                            "db": {
+                                "validate-age": True,
+                                "max-allowed-built-age": 86_400_000_000_000,
+                            },
+                        },
                     },
                     "source": {
                         "target": {
@@ -170,6 +184,23 @@ def candidate(root: Path) -> tuple[dict[str, str], datetime]:
 
 def seal(root: Path, labels: dict[str, str], now: datetime) -> dict[str, Any]:
     return seal_candidate(root, labels=labels, source_date_epoch=EPOCH, now=now)
+
+
+def test_zero_findings_cannot_hide_default_kernel_ignore_rules(tmp_path: Path) -> None:
+    labels, now = candidate(tmp_path)
+    report_path = tmp_path / "grype/server-amd64-grype.json"
+    report = json.loads(report_path.read_text())
+    report["descriptor"]["configuration"]["ignore"] = [{"package": {"name": "kernel-headers"}}]
+    report["descriptor"]["configuration"]["match-upstream-kernel-headers"] = False
+    write_json(report_path, report)
+    summary_path = tmp_path / "grype/candidate-scan-summary.json"
+    summary = json.loads(summary_path.read_text())
+    for row in summary["images"]:
+        if row["image"] == "server" and row["platform"] == "linux/amd64":
+            row["report_sha256"] = file_sha256(report_path)
+    write_json(summary_path, summary)
+    with pytest.raises(ValueError, match="raw scan configuration"):
+        seal(tmp_path, labels, now)
 
 
 def test_seal_transfer_prepare_and_readback_keep_original_digest(tmp_path: Path) -> None:

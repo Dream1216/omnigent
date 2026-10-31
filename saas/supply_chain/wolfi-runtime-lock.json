@@ -3,7 +3,7 @@
   "distribution": "wolfi",
   "image": "cgr.dev/chainguard/wolfi-base:latest",
   "manifest_digest": "sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e",
-  "resolved_at": "2026-10-11",
+  "resolved_at": "2026-10-31",
   "production_admission": true,
   "runtime_contract": {
     "architectures": [
@@ -26,9 +26,9 @@
       "mpdecimal": "4.0.1-r4",
       "ncurses": "6.6.20260926-r0",
       "ncurses-terminfo-base": "6.6.20260926-r0",
-      "py3-pip-wheel": "26.2.1-r3",
-      "python-3.12": "3.12.15-r3",
-      "python-3.12-base": "3.12.15-r3",
+      "py3-pip-wheel": "26.2.2-r2",
+      "python-3.12": "3.12.16-r3",
+      "python-3.12-base": "3.12.16-r3",
       "readline": "8.3-r3",
       "sqlite-libs": "3.53.4-r2",
       "xz": "5.8.4-r0",
