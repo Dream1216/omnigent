@@ -21,7 +21,7 @@ import stat
 from collections.abc import Callable, Mapping, MutableMapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from threading import Lock
@@ -1129,6 +1129,7 @@ def build_official_runtime_dependencies(
             if tenant_model_bindings
             else None
         ),
+        aliyun=config.aliyun_profile.managed if config.aliyun_profile is not None else None,
     )
     cache = open_private_artifact_cache_directory(
         config.artifact_cache_dir,
@@ -1237,6 +1238,16 @@ def _production_router(
     return router
 
 
+def _runtime_compatibility_policy(config: ProductionServerConfig) -> RuntimeCompatibilityPolicy:
+    return RuntimeCompatibilityPolicy(
+        runtime_type="omnigent",
+        allowed_runtime_versions=frozenset({config.runtime_version}),
+        allowed_source_revisions=frozenset({config.upstream_revision}),
+        allowed_schema_revisions=frozenset({config.official_schema_revision}),
+        adapter_contract_version=config.adapter_contract_version,
+    )
+
+
 def build_production_saas_services(
     config: ProductionServerConfig,
     sessions: RoleSessionFactories,
@@ -1262,6 +1273,16 @@ def build_production_saas_services(
         f"database.{role}": _runtime_database_check(engine)
         for role, engine in sessions.readiness_engines.items()
     }
+    if config.aliyun_profile is not None:
+        profile = config.aliyun_profile
+        if (
+            profile.product_revision != config.product_revision
+            or profile.server_image_digest != config.image_digest
+            or profile.managed.server_url != config.public_origin
+            or "run" not in config.capabilities
+        ):
+            raise ProductionServerCompositionError("Aliyun profile release binding is invalid")
+        checks["external.aliyun_configuration"] = profile.assert_ready
     if delivery_client is not None:
         checks["external.delivery_contract"] = delivery_client.assert_ready
     for capability, adapter in (("runner", adapters.runner), ("preview", adapters.preview)):
@@ -1282,13 +1303,7 @@ def build_production_saas_services(
     lifecycle = MembershipLifecycleService(sessions.authenticator)
     identities = IdentityManagementService(sessions.authenticator)
     passwords = PasswordCredentialService(sessions.authenticator)
-    policy = RuntimeCompatibilityPolicy(
-        runtime_type="omnigent",
-        allowed_runtime_versions=frozenset({config.runtime_version}),
-        allowed_source_revisions=frozenset({config.upstream_revision}),
-        allowed_schema_revisions=frozenset({config.official_schema_revision}),
-        adapter_contract_version=config.adapter_contract_version,
-    )
+    policy = _runtime_compatibility_policy(config)
     context_resolver = SqlAlchemyContextResolver(sessions.app, policy)
     context_snapshots = ContextSnapshotService(
         ContextSnapshotPolicy(
@@ -1437,6 +1452,45 @@ def build_production_saas_services(
     )
 
 
+def _install_aliyun_model_broker(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+    services: ProductionSaasServices,
+    router: APIRouter,
+) -> None:
+    profile = config.aliyun_profile
+    if profile is None:
+        return
+    from omnigent.server.managed_hosts import ManagedSandboxDeployment
+    from saas.control_plane.authorization import ProjectAuthorizer
+    from saas.production.aliyun_model_broker import (
+        AliyunHostModelBroker,
+        create_aliyun_host_model_router,
+    )
+
+    deployment = official.sandbox_config
+    if not isinstance(deployment, ManagedSandboxDeployment) or not any(
+        entry.provider == "e2b" for entry in deployment.configs
+    ):
+        raise ProductionServerCompositionError("Aliyun profile requires its managed provider")
+    broker = AliyunHostModelBroker(
+        leases=profile.managed.model_leases,
+        resolver=SqlAlchemyContextResolver(
+            sessions.app,
+            _runtime_compatibility_policy(config),
+            project_authorizer=ProjectAuthorizer(sessions.app),
+        ),
+        host_store=official.host_store,
+        conversation_store=official.conversation_store,
+        permission_store=official.permission_store,
+        authorities=profile.authorities,
+        workspaces={scope.tenant_id: scope.workspace_id for scope in profile.managed.scopes},
+    )
+    router.include_router(create_aliyun_host_model_router(broker))
+    services.integration = replace(services.integration, host_model_broker_enabled=True)
+
+
 def build_production_server(
     config: ProductionServerConfig,
     sessions: RoleSessionFactories,
@@ -1467,6 +1521,7 @@ def build_production_server(
         agent_cache=official_dependencies.agent_cache,
     )
     execution_readiness_router = APIRouter()
+    services = None
     try:
         services = build_production_saas_services(
             config,
@@ -1485,9 +1540,14 @@ def build_production_server(
                 host_store=official_dependencies.host_store,
             )
         )
+        _install_aliyun_model_broker(
+            config, sessions, official_dependencies, services, execution_readiness_router
+        )
     except Exception:
         official_dependencies.close()
-        if onboarding is not None:
+        if services is not None:
+            services.close()
+        elif onboarding is not None:
             onboarding.close()
         raise
     app_dependencies = official_dependencies.as_app_dependencies()

@@ -203,11 +203,16 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             raise ValueError("Aliyun Host identity is invalid")
         if any(ord(c) < 32 or ord(c) == 127 for c in host_name):
             raise ValueError("Aliyun Host name is invalid")
+        info = self._scoped_info(sandbox_id)
+        assert info is not None
+        self._remaining_lifetime(info)
+        admitted_lifetime = self._admitted_lifetime_s(info)
         lease = self._model_leases.issue(
             host_id=host_id,
             launch_token=token,
             runtime=current_runtime_context(),
-            ttl_seconds=self.token_ttl_s,
+            ttl_seconds=admitted_lifetime,
+            now=int(info.started_at.timestamp()),
         )
         home = self.run(sandbox_id, 'printf %s "$HOME"').stdout.strip()
         if home != "/home/user":
@@ -346,7 +351,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             raise ValueError("Aliyun sandbox ownership does not match")
         return info
 
-    def _remaining_lifetime(self, info: SandboxDetail) -> int:
+    def _admitted_lifetime_s(self, info: SandboxDetail) -> int:
         metadata = info.metadata if isinstance(info.metadata, dict) else {}
         raw = metadata.get(_LIFETIME_METADATA)
         if (
@@ -358,10 +363,14 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             or info.started_at.utcoffset() is None
         ):
             raise ValueError("Aliyun sandbox lifetime evidence is invalid")
+        return min(self.lifetime_s, int(raw))
+
+    def _remaining_lifetime(self, info: SandboxDetail) -> int:
+        lifetime = self._admitted_lifetime_s(info)
         elapsed = (_now() - info.started_at).total_seconds()
         if elapsed < -30:
             raise ValueError("Aliyun sandbox start time is invalid")
-        remaining = math.floor(min(self.lifetime_s, int(raw)) - max(0, elapsed))
+        remaining = math.floor(lifetime - max(0, elapsed))
         if remaining <= 0:
             raise click.ClickException("Aliyun sandbox absolute lifetime has expired")
         if info.state != "running":

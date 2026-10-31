@@ -681,6 +681,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             '"opencode", "gemini", "devin", "jcode")'
         ),
         '"$PRODUCT_REVISION"',
+        'assert version("e2b") == "2.31.0"',
+        "import saas.production.aliyun_server_profile",
     }
     if (
         runtime_verification is None
@@ -713,6 +715,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         ),
         "server:runtime|host:host",
         "1|2)",
+        "OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && 'kubernetes,e2b' || '' }}",
     }
     if any(fragment not in action for fragment in required_action_fragments):
         violations.append("candidate composite build action weakens the approved build contract")

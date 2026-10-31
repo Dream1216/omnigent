@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
@@ -67,9 +68,15 @@ def test_cloud_launch_stages_only_its_host_token_and_bound_lease_without_command
     lease_path, lease = writes[1].args
     assert token_path.endswith("/host-token") and lease_path.endswith("/model-lease")
     assert token == c.token
-    admitted = c.leases.verify(lease, host_id=c.host_id, launch_token=c.token)
+    admitted = c.leases.verify(
+        lease,
+        host_id=c.host_id,
+        launch_token=c.token,
+        now=int(c.cloud.clock.now.timestamp()),
+    )
     assert admitted.runtime == c.cloud.runtime
-    assert admitted.expires_at - admitted.issued_at == c.launcher.token_ttl_s == 5400
+    assert admitted.expires_at == int(c.cloud.info.started_at.timestamp()) + c.launcher.lifetime_s
+    assert admitted.expires_at - admitted.issued_at == 1800 < c.launcher.token_ttl_s
     command = c.launcher.run_background.call_args.args[1]
     assert "/opt/venv/bin/python -I -m saas.production.aliyun_host" in command
     assert "OMNIGENT_HOST_TOKEN_FILE=" in command and "OMNIGENT_HOST_TOKEN=" not in command
@@ -77,6 +84,30 @@ def test_cloud_launch_stages_only_its_host_token_and_bound_lease_without_command
     all_commands = "\n".join(call.args[1] for call in c.launcher.run.call_args_list)
     assert c.token not in all_commands and lease not in all_commands
     assert "e2b_" not in all_commands and "e2b_" not in str(writes)
+
+
+def test_delayed_host_start_cannot_extend_model_access_beyond_the_vm_deadline(host_launch):
+    c = host_launch
+    c.cloud.info.started_at -= timedelta(seconds=600)
+    with bind_runtime_context(c.cloud.runtime):
+        _start(c)
+    lease = c.cloud.handle.files.write.call_args_list[1].args[1]
+    admitted = c.leases.verify(
+        lease,
+        host_id=c.host_id,
+        launch_token=c.token,
+        now=int(c.cloud.clock.now.timestamp()),
+    )
+    assert admitted.expires_at == int(c.cloud.clock.now.timestamp()) + 1200
+
+
+def test_expired_vm_does_not_receive_a_new_host_token_or_model_lease(host_launch):
+    c = host_launch
+    c.cloud.clock.now += timedelta(seconds=1800)
+    with bind_runtime_context(c.cloud.runtime), pytest.raises(click.ClickException):
+        _start(c)
+    c.launcher.run.assert_not_called()
+    c.cloud.handle.files.write.assert_not_called()
 
 
 def test_repositories_use_canonical_clone_options_and_collision_free_directories(host_launch):

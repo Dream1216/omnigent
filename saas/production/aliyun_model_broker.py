@@ -49,11 +49,20 @@ class AliyunHostModelBroker:
         conversation_store: ConversationStore,
         permission_store: PermissionStore,
         authorities: Mapping[UUID, PlatformModelGatewayTokenAuthority],
+        workspaces: Mapping[UUID, int],
         clock: Callable[[], float] = time.time,
     ) -> None:
-        if not 1 <= len(authorities) <= 32 or any(
-            tenant.int == 0 or authority.tenant_id != tenant
-            for tenant, authority in authorities.items()
+        if (
+            not 1 <= len(authorities) <= 32
+            or set(workspaces) != set(authorities)
+            or len(set(workspaces.values())) != len(workspaces)
+            or any(
+                type(value) is not int or not 0 < value < 2**63 for value in workspaces.values()
+            )
+            or any(
+                tenant.int == 0 or authority.tenant_id != tenant
+                for tenant, authority in authorities.items()
+            )
         ):
             raise ValueError("Host model authorities are invalid")
         self._leases = leases
@@ -62,6 +71,7 @@ class AliyunHostModelBroker:
         self._conversations = conversation_store
         self._permissions = permission_store
         self._authorities = MappingProxyType(dict(authorities))
+        self._workspaces = MappingProxyType(dict(workspaces))
         self._clock = clock
 
     def issue(
@@ -77,6 +87,7 @@ class AliyunHostModelBroker:
             type(workspace_id) is not int
             or workspace_id <= 0
             or (lease.runtime.physical_workspace_id != workspace_id)
+            or self._workspaces.get(lease.runtime.tenant_id) != workspace_id
         ):
             raise HostModelAdmissionDenied("Host model workspace is invalid")
         host = self._hosts.resolve_launch_token(host_id, launch_token)

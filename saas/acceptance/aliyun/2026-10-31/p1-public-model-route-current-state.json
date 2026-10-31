@@ -1,0 +1,20 @@
+{
+  "configuration_changed": false,
+  "deployment_node_listener_ports_80_443_present": false,
+  "model_gateway_service": {
+    "external_address_present": false,
+    "port": 8090,
+    "type": "ClusterIP"
+  },
+  "model_https_endpoint_verified": false,
+  "next_action": "verify the actual public TLS frontend and implement a controlled model route; do not assume a node-local Nginx listener",
+  "public_dns_from_deployment_node_address_count": 2,
+  "schema_version": 1,
+  "scope": "read-only deployment-node inventory; no ingress change",
+  "server_service": {
+    "node_port": 30800,
+    "port": 80,
+    "type": "NodePort"
+  },
+  "target": "https://next.jxhh.com"
+}

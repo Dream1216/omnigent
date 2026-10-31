@@ -64,12 +64,21 @@ Remaining qualification:
   qualify the complete Host. The remaining Debian Perl, Expat and Kerberos
   findings have no fixed version in that scan. The raw zero-High/zero-Critical
   and no-ignored gates remain unchanged.
+- CI run 41143681301 passed repeat-build equality, provenance/SPDX and runtime
+  checks for the complete minimal Host image at `0d9b444bc`. Its raw scan has
+  zero Critical, 10 High matches for four CVEs, and zero ignored matches. The
+  same Perl, Expat and Kerberos findings block release; the complete image has
+  not passed P2 admission.
 - Run real Host and bubblewrap checks in an Aliyun MicroVM.
 - Check all linked libraries and the target harness under the non-root identity.
 - Produce the required SBOM, scan, source provenance and repeat-build evidence.
 - Publish to a reachable, appropriately scoped registry and verify digest.
 - Create a new Host template; preserve the already-tested Base template.
 - Complete SaaS provider/tenant/model-channel integration before production use.
+
+The candidate [Server profile](server-profile.md) wires the scoped provider and
+model broker into the production builder. Actual image/deployment, gateway,
+cloud Host/Runner, storage and release acceptance remain required.
 
 `.github/workflows/saas-aliyun-host-candidate.yml` builds two independent amd64
 archives, checks non-root runtime against their exact OCI config/rootfs, requires

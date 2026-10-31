@@ -1330,6 +1330,34 @@ def test_candidate_composite_build_contract_rejects_timestamp_rewrite_drift(
     assert "candidate composite build action weakens the approved build contract" in violations
 
 
+@pytest.mark.parametrize(
+    ("relative", "target", "replacement", "violation"),
+    [
+        (
+            "saas/actions/build-oci-candidate/action.yml",
+            "'kubernetes,e2b'",
+            "'kubernetes'",
+            "candidate composite build action weakens the approved build contract",
+        ),
+        (
+            ".github/workflows/saas-image-candidate.yml",
+            'assert version("e2b") == "2.31.0"',
+            "pass",
+            "protected release must verify both published runtime revisions before signing",
+        ),
+    ],
+)
+def test_server_candidate_requires_the_qualified_sandbox_sdk(
+    tmp_path, relative, target, replacement, violation
+):
+    repo = _candidate_contract_repo(tmp_path)
+    path = repo / relative
+    source = path.read_text()
+    assert target in source
+    path.write_text(source.replace(target, replacement, 1))
+    assert violation in validate_candidate_build_contract(repo)
+
+
 def test_n1_candidate_build_contract_rejects_shared_rebuild_cache(tmp_path: Path) -> None:
     repo = _candidate_contract_repo(tmp_path)
     workflow = repo / ".github/workflows/saas-n1-compat-image.yml"

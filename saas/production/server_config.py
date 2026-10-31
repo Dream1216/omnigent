@@ -21,9 +21,13 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from sqlalchemy.engine import URL, make_url
+
+if TYPE_CHECKING:
+    from saas.production.aliyun_server_profile import AliyunServerProfile
 
 from saas.delivery.client import DeliveryConfig
 from saas.production.service_bindings import (
@@ -227,6 +231,7 @@ class ProductionServerConfig:
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
     )
+    aliyun_profile: AliyunServerProfile | None = field(default=None, repr=False)
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
 
@@ -262,6 +267,11 @@ class ProductionServerConfig:
                     self.artifact_admission_receipt.source_sha256
                 ),
                 "capabilities": sorted(self.capabilities),
+                **(
+                    {"aliyun_sandbox_profile_sha256": self.aliyun_profile.source_sha256}
+                    if self.aliyun_profile is not None
+                    else {}
+                ),
             }
         )
 
@@ -1113,6 +1123,20 @@ def load_production_server_config(
             "OMNIGENT_SAAS_ARTIFACT_READINESS_SHA256 must be SHA-256"
         )
 
+    public_origin = _https_origin(_required(source, "OMNIGENT_SAAS_PUBLIC_ORIGIN"))
+    aliyun_profile = None
+    if any(name.startswith("OMNIGENT_SAAS_ALIYUN_") for name in source):
+        from saas.production.aliyun_server_profile import load_aliyun_server_profile
+
+        try:
+            aliyun_profile = load_aliyun_server_profile(
+                source,
+                product_revision=product_revision,
+                server_image_digest=image_digest,
+                public_origin=public_origin,
+            )
+        except ValueError:
+            raise ProductionServerConfigError("Aliyun sandbox profile is invalid") from None
     return ProductionServerConfig(
         product_revision=product_revision,
         upstream_revision=upstream_revision,
@@ -1122,7 +1146,7 @@ def load_production_server_config(
         official_schema_revision=official_schema_revision,
         control_plane_schema_revision=control_plane_schema_revision,
         adapter_contract_version=adapter_contract_version,
-        public_origin=_https_origin(_required(source, "OMNIGENT_SAAS_PUBLIC_ORIGIN")),
+        public_origin=public_origin,
         capabilities=capabilities,
         artifact_store_uri=artifact_config.store_uri,
         artifact_endpoint_url=artifact_config.endpoint_url,
@@ -1167,6 +1191,7 @@ def load_production_server_config(
         preview_root_domain=preview_root_domain,
         preview_lease_seconds=preview_lease_seconds,
         delivery_config=delivery_config,
+        aliyun_profile=aliyun_profile,
     )
 
 

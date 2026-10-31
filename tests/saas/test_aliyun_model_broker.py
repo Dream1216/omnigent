@@ -75,14 +75,20 @@ def broker_case(control_plane, db_uri):
         signing_key=b"m" * 32, tenant_id=runtime.tenant_id
     )
 
-    def build(resolved=resolver, authorities=None):
+    def build(resolved=resolver, authorities=None, workspaces=None):
+        selected = authorities or {runtime.tenant_id: authority}
         return AliyunHostModelBroker(
             leases=leases,
             resolver=resolved,
             host_store=hosts,
             conversation_store=conversations,
             permission_store=permissions,
-            authorities=authorities or {runtime.tenant_id: authority},
+            authorities=selected,
+            workspaces=(
+                workspaces
+                if workspaces is not None
+                else dict.fromkeys(selected, runtime.physical_workspace_id)
+            ),
             clock=lambda: clock[0],
         )
 
@@ -198,6 +204,13 @@ def test_absent_tenant_authority_does_not_fall_back_to_another_tenant(broker_cas
     c = broker_case
     other = PlatformModelGatewayTokenAuthority(signing_key=b"x" * 32, tenant_id=uuid4())
     c.broker = c.build(authorities={other.tenant_id: other})
+    with workspace_scope(c.runtime.physical_workspace_id), pytest.raises(HostModelAdmissionDenied):
+        _issue(c)
+
+
+def test_current_workspace_allowlist_rejects_an_old_still_signed_lease(broker_case):
+    c = broker_case
+    c.broker = c.build(workspaces={c.runtime.tenant_id: c.runtime.physical_workspace_id + 1})
     with workspace_scope(c.runtime.physical_workspace_id), pytest.raises(HostModelAdmissionDenied):
         _issue(c)
 

@@ -6,7 +6,10 @@ admit a release. Registry selection does not change this model channel.
 The cloud Host must receive only its own launch token and a server-signed model
 lease. The lease binds the Host ID, launch-token digest and authorized Runtime
 Context. Its signing key and tenant model signing keys stay on the Server.
-The maximum lease lifetime is 7200 seconds; it cannot replace the Host token.
+The signing format caps leases at 7200 seconds. Cloud issuance is further bound
+to the VM's original creation time and admitted lifetime, so startup delay and
+Host-token cleanup grace cannot extend model access. A lease cannot replace the
+Host token.
 
 For each credential renewal, the broker checks the current workspace, live Host
 credential, active control-plane memberships, security versions, placement,
@@ -42,10 +45,16 @@ the read-only ownership check followed by direct deletion, including after
 expiry, without a connection or resume. Real cloud expiry remains an acceptance
 check, and longer tasks require a new admitted launch.
 
+An explicit, hash-pinned [Server profile](server-profile.md) now composes the
+tenant provider, Server-only authorities, project-aware resolver and broker in
+the production builder. It binds the product/image/origin and enables only the
+exact machine POST route. The default remains disabled. Renewal also checks
+the profile's current tenant/workspace allowlist.
+
 Remaining integration and acceptance:
 
-- Wire the broker and explicit profile into production Server composition.
-- Admit the opt-in tenant factory through the production release profile.
+- Verify the actual Server image, private credential copies, gateway tenant
+  verifiers and explicit profile through the protected release process.
 - Verify the dedicated cloud Host entrypoint and owner-only file delivery in a
   real MicroVM. The scoped launcher now stages these files through the SDK,
   launches `saas.production.aliyun_host`, and removes its private directory on

@@ -605,7 +605,7 @@ jobs:
           done
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$SERVER_IMAGE" -B -I -c \
-            'import kubernetes; import saas.production.platform_model_sandbox_host'
+            'import kubernetes; from importlib.metadata import version; assert version("e2b") == "2.31.0"; import saas.production.aliyun_server_profile; import saas.production.platform_model_sandbox_host'
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'import saas.production.platform_model_sandbox_host'
