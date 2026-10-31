@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   verify-contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -76,7 +76,7 @@ jobs:
   publish-core:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
     needs: verify-contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production-image
     timeout-minutes: 90
     permissions:
@@ -334,7 +334,7 @@ jobs:
   independent-readback:
     needs: publish-core
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

@@ -7,7 +7,7 @@ import secrets
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
 from typing import Any, cast
@@ -139,7 +139,7 @@ class ScimBulkExecution:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _hash(payload: Mapping[str, object]) -> str:
@@ -238,22 +238,22 @@ def _optional_datetime(payload: Mapping[str, object], key: str) -> datetime | No
         raise LifecycleError("scim_receipt_invalid", f"{key} is invalid") from error
     if parsed.tzinfo is None:
         raise LifecycleError("scim_receipt_invalid", f"{key} is invalid")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _rotation_time(value: datetime, *, code: str) -> datetime:
     if value.tzinfo is None:
         raise LifecycleError(code, "rotation time must include a timezone")
     try:
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
     except (OverflowError, ValueError) as error:
         raise LifecycleError(code, "rotation time is invalid") from error
 
 
 def _stored_rotation_time(value: datetime, *, code: str) -> datetime:
-    stored = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    stored = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     try:
-        return stored.astimezone(timezone.utc)
+        return stored.astimezone(UTC)
     except (OverflowError, ValueError) as error:
         raise LifecycleError(code, "stored rotation time is invalid") from error
 
@@ -262,9 +262,9 @@ def _require_fresh_auth(reauthenticated_at: datetime, now: datetime) -> None:
     authenticated = (
         reauthenticated_at
         if reauthenticated_at.tzinfo is not None
-        else reauthenticated_at.replace(tzinfo=timezone.utc)
+        else reauthenticated_at.replace(tzinfo=UTC)
     )
-    current = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+    current = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     if authenticated > current or current - authenticated > timedelta(minutes=5):
         raise LifecycleError("fresh_auth_required", "recent authentication is required")
 

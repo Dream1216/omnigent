@@ -91,7 +91,7 @@ env:
 
 jobs:
   verify-candidate-preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout immutable preflight candidate
@@ -134,7 +134,7 @@ jobs:
         run: uv run python -m saas.scripts.check_image_supply_chain
 
   verify-production-migration-replay:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -193,7 +193,7 @@ jobs:
     needs:
       - verify-candidate-preflight
       - verify-production-migration-replay
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     outputs:
       oci-artifact-id: ${{ steps.upload-oci.outputs.artifact-id }}
@@ -428,7 +428,7 @@ jobs:
       github.ref == 'refs/heads/main'
     needs: build-candidate
     environment: production-image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       actions: read
@@ -796,7 +796,7 @@ jobs:
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
     needs: [build-candidate, publish-signed]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

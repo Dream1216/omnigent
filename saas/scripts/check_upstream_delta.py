@@ -7,11 +7,10 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-
-import tomllib
 
 
 @dataclass(frozen=True, slots=True)

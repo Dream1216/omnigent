@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -58,21 +58,17 @@ class _InspectedCertificate:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_utc(value: datetime) -> datetime:
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _validate_time(value: datetime, *, field: str) -> datetime:
     if value.tzinfo is None:
         raise ValueError(f"{field} must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _text(value: str, *, field: str, maximum: int) -> str:

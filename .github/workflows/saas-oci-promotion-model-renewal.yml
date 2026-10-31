@@ -38,7 +38,7 @@ env:
 
 jobs:
   verify-resume-contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -62,7 +62,7 @@ jobs:
   admit-original:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha
     needs: verify-resume-contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       actions: read
@@ -102,7 +102,7 @@ jobs:
       github.ref == 'refs/heads/main'
     needs: admit-original
     environment: production-image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       actions: read
@@ -548,7 +548,7 @@ jobs:
       inputs.policy_revision == github.sha &&
       github.ref == 'refs/heads/main'
     needs: [admit-original, publish-signed]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

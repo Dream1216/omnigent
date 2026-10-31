@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -34,7 +34,7 @@ from saas.control_plane import (
     create_saas_http_integration,
 )
 
-_NOW = datetime(2026, 8, 5, 10, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 8, 5, 10, 0, tzinfo=UTC)
 _PEPPER = b"api-credential-test-pepper-material-v1!!"
 
 
@@ -220,7 +220,7 @@ def test_api_key_is_one_time_hashed_scope_bound_and_network_bound() -> None:
         coalesced = db.get(ApiCredentialRecord, issued.credential_id)
         assert coalesced is not None
         assert coalesced.last_used_at is not None
-        assert coalesced.last_used_at.replace(tzinfo=timezone.utc) == _NOW
+        assert coalesced.last_used_at.replace(tzinfo=UTC) == _NOW
         assert coalesced.last_used_ip == "10.20.0.8"
     service.authenticate(
         issued.token,
@@ -231,7 +231,7 @@ def test_api_key_is_one_time_hashed_scope_bound_and_network_bound() -> None:
         refreshed = db.get(ApiCredentialRecord, issued.credential_id)
         assert refreshed is not None
         assert refreshed.last_used_at is not None
-        assert refreshed.last_used_at.replace(tzinfo=timezone.utc) == _NOW + timedelta(minutes=6)
+        assert refreshed.last_used_at.replace(tzinfo=UTC) == _NOW + timedelta(minutes=6)
         assert refreshed.last_used_ip == "10.20.0.10"
     with pytest.raises(ApiCredentialError, match="source network") as network_error:
         service.authenticate(issued.token, source_ip="192.0.2.5", now=_NOW)
@@ -373,7 +373,7 @@ def test_versioned_http_separates_human_management_from_machine_use() -> None:
         app.include_router(router, prefix=prefix, tags=tags)
     integration.install_middleware(app)
     client = TestClient(app)
-    http_now = datetime.now(timezone.utc)
+    http_now = datetime.now(UTC)
     human = lifecycle.issue_auth_session(
         user_id=ids["owner"],
         authn_method="test",

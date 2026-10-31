@@ -652,3 +652,152 @@ def test_cli_remains_nonzero_for_complete_or_failed_discovery(
     assert result["source_ci_pass"] is False
     if failure:
         assert result["status"] == "incomplete-closed" and result["complete_discovery"] is False
+
+
+def test_ordered_parallel_has_four_contexts_ordered_results_and_fatal_cleanup():
+    import threading
+    from contextvars import ContextVar
+
+    marker = ContextVar("owned_discovery_test_marker", default=None)
+    token = marker.set("current-checkpoint")
+    barrier = threading.Barrier(4)
+    lock = threading.Lock()
+    active = peak = 0
+    completed = []
+
+    def work(n):
+        nonlocal active, peak
+        assert marker.get() == "current-checkpoint"
+        marker.set(n)  # Each task owns its Context, including later tasks on the same thread.
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            if n < 4:
+                barrier.wait(5)
+            if n == 1:
+                raise discovery.NativeEvidenceFailure("owned capture failure")
+            return n
+        finally:
+            with lock:
+                completed.append(n)
+                active -= 1
+
+    try:
+        with pytest.raises(discovery.NativeEvidenceFailure, match="owned capture failure"):
+            discovery._ordered_parallel(work, list(range(20)))
+        assert marker.get() == "current-checkpoint"
+    finally:
+        marker.reset(token)
+    assert active == 0 and peak == 4
+    assert 1 in completed and len(completed) < 20
+    assert not any(t.name.startswith("legacy-domain-native") for t in threading.enumerate())
+    assert discovery._ordered_parallel(lambda n: n * n, list(range(10))) == [
+        n * n for n in range(10)
+    ]
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "native-failure", "refresh-change", "fatal-capture"])
+def test_parallel_discovery_owns_typed_results_and_preserves_phase_barriers(
+    scenario, discovery_case, tmp_path, monkeypatch, fault
+):
+    import threading
+
+    # Reuse the original PR/source fixture; substitute only independent native work.
+    data = discovery_case
+    rows = [dict(copy.deepcopy(data["run"]), id=8001 + n) for n in range(4)]
+    calls = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(4)
+    proof_by_id = {}
+    owned_lists = []
+    finished = set()
+    refreshed = set()
+    original_api = discovery.api
+
+    def runs(_created):
+        with lock:
+            calls.append("enumerate")
+            if calls.count("enumerate") == 2:
+                assert finished == {r["id"] for r in rows}
+                assert refreshed == {r["id"] for r in rows} - (
+                    {8002} if fault == "native-failure" else set()
+                )
+        return copy.deepcopy(rows)
+
+    def inspect(
+        run,
+        profile,
+        number,
+        destination,
+        record,
+        identity,
+        rules,
+        observations,
+        infrastructure,
+        unattributed_policy,
+        bootstrap_policy,
+        unattributed,
+        expected,
+        refusal_rules,
+    ):
+        with lock:
+            owned_lists.append((observations, unattributed, expected))
+        barrier.wait(5)
+        try:
+            if run["id"] == 8002 and fault == "fatal-capture":
+                raise discovery.NativeEvidenceFailure("fatal fixture capture")
+            if run["id"] == 8002 and fault == "native-failure":
+                raise ValueError("native fixture failure")
+            proof = discovery.nonexecution.UnattributedZeroExecutionObservation(
+                {"run_id": run["id"], "attempt": 1}
+            )
+            with lock:
+                proof_by_id[run["id"]] = proof
+            unattributed.append(proof)
+            expected.add((run["id"], 1))
+            return {**record, "classification": "audited-unattributed-nonexecution"}
+        finally:
+            with lock:
+                finished.add(run["id"])
+
+    def api(endpoint):
+        if "/actions/runs/" in endpoint:
+            assert finished == {r["id"] for r in rows}
+            return next(copy.deepcopy(r) for r in rows if f"/{r['id']}/" in endpoint)
+        return original_api(endpoint)
+
+    def collect(profile, identity, zero, bootstrap, run, jobs, path):
+        with lock:
+            refreshed.add(run["id"])
+        proof = proof_by_id[run["id"]]
+        if fault == "refresh-change" and run["id"] == 8002:
+            return discovery.nonexecution.UnattributedZeroExecutionObservation(
+                {**proof.receipt, "changed": True}
+            )
+        return proof
+
+    monkeypatch.setattr(discovery, "discover_runs", runs)
+    monkeypatch.setattr(discovery, "_inspect_run", inspect)
+    monkeypatch.setattr(discovery, "api", api)
+    monkeypatch.setattr(discovery, "_job_pages", lambda *_: [])
+    monkeypatch.setattr(discovery.nonexecution, "collect_unattributed_audit", collect)
+    if fault == "fatal-capture":
+        with pytest.raises(discovery.NativeEvidenceFailure, match="fatal fixture capture"):
+            invoke(scenario, data, tmp_path, rules=[])
+        assert calls == ["enumerate"]
+        assert refreshed == set()
+        assert not any(t.name.startswith("legacy-domain-native") for t in threading.enumerate())
+        return
+    result = invoke(scenario, data, tmp_path, rules=[])
+    assert len({id(v) for triple in owned_lists for v in triple}) == 12
+    assert [r["run_id"] for r in result["records"]] == [8001, 8002, 8003, 8004]
+    expected_ids = [8001, 8003, 8004] if fault == "native-failure" else [8001, 8002, 8003, 8004]
+    assert [p.receipt["run_id"] for p in result.unattributed_observations] == expected_ids
+    assert result["complete_discovery"] is (fault is None)
+    if fault:
+        assert result["blockers"]
+    assert result["source_ci_pass"] is result["production_admission"] is False
+    assert result["unattributed_expected_attempts"] == [(n, 1) for n in expected_ids]
+    assert calls == ["enumerate", "enumerate"]

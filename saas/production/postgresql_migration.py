@@ -216,6 +216,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # 2026-11-01: clean target replay after independently validated 0.19/P18 anchor.
+    (
+        16,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "5c10916ab3ca7ddb70bb6f19d9a3c4790799411f4a6586e083e17c9a28c43bcb",
+    (
+        18,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "fcedc5b4b7a20abd45ae4f19011b7a341167cd2380458842b3e2f727e7c3bc77",
     # Independently old-anchor-verified clean PG16/18 P17 replay.
     (
         16,
@@ -1711,6 +1722,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    (
+        16,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "4ffa029ba05ac4ae44d4f5ca56e10511f29eac8577ff7cbeddb419df33bc856c",
+    (
+        18,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "e1df6abf519b7cdb0f4c871153e568f437617c4ae5ffd71058a41324fb5d3a59",
     # Independently old-anchor-verified clean PG16/18 P17 replay.
     (
         16,
@@ -2056,6 +2077,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "05a3b8eca8a8fffccd1ea093c7afa3f7ef62abb845fd9547ceaa0d5ce1eccbf6",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "fcaea480e5a4075b7849fa1a2b6c5557a006e5407f3b4a0f8c39d533cedf4b09",
+    (
+        18,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "c2024488347eb9f9743594284ff0fbbe6fc566f22aa0a22ef6c441e4358da507",
     # Independently old-anchor-verified clean PG16/18 P17 replay.
     (
         16,
@@ -2686,6 +2717,16 @@ _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
 ] = {
     (
         16,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "299a0f9ebcdc0a1ed1e2794e93c371e61e39d4e2f2b49f6eb507ebb8949b371e",
+    (
+        18,
+        "d0a1f879a01d",
+        "p0s000000018",
+    ): "c4e532666ffd8e1989cb4f3050c5fe2a9a1f549d39d7e7ffa750276e6b573d5f",
+    (
+        16,
         "mm1a2b3c4d5e",
         "lm2t00000001",
     ): "40487698730ae66ce5543b0672242b41a5561d15cb16e70a1722269a971f19a2",
@@ -2981,6 +3022,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
     "core": {
         (
             16,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "853572809ee2bdcb29c9d08efea2003a6a8466bc5b55a3586a4a1f5e9dbe8efb",
+        (
+            18,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "ed10d0c64002553b7281274266a22f1d09d216f4587a8adc564103b3664d6f7f",
+        (
+            16,
             "nf12ab34cd56",
             "p0s000000017",
         ): "235f96ec2549ebf6f3b2926f672bea6ef87aa1410dcb61f87a6ee432a41b8643",
@@ -3001,6 +3052,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
         ): "f7989192a42530b9361cdeadad84e2981fdad330705dc7165baeb4b690aaaabb",
     },
     "model": {
+        (
+            16,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "9b5bd028e6ea14be1ab394d8b20c8ff4fc4025ce09f7561e2fe320d0a03f97b3",
+        (
+            18,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "2edaeb0594136245acf82ed23ff24cf4c141d3adb3374d7fbdeec9b10fca5ed2",
         (
             16,
             "nf12ab34cd56",
@@ -3025,6 +3086,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
     "admin": {
         (
             16,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "f49b51432d327eae910a5e717ab4acb2ea2be7458068dec13d6e5c9d18071da3",
+        (
+            18,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "582ad53090ef313a2e8aee2810ef4e39f762f31fdd9bc8a810c9f54cc50543ce",
+        (
+            16,
             "nf12ab34cd56",
             "p0s000000017",
         ): "dad33b5d96b876ec9bae02529028746d0d94fc49c16cf69b49f391d37c496189",
@@ -3045,6 +3116,16 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
         ): "839de6b98bf8f67ea4c3a7c41ab09da91e729bc0ed08f2a280051cd3e6be2b01",
     },
     "projection": {
+        (
+            16,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "218ce8b103bdaa1dae6daf4249153c3e4731e2b4886bee13bdfbf4566de2db80",
+        (
+            18,
+            "d0a1f879a01d",
+            "p0s000000018",
+        ): "fc68deee1a1548eb909d22a291437b357c792fa6cacce39c69ea45d54505ed39",
         (
             16,
             "nf12ab34cd56",

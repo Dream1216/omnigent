@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -36,7 +36,7 @@ from saas.control_plane.notification_templates import (
 )
 from saas.control_plane.platform_models import PlatformStaffPrincipalRecord
 
-NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
 
 
 class Audience:

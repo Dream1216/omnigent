@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -103,7 +103,7 @@ def main() -> int:
     try:
         verify_notification_bootstrap_database_role(engine)
         sessions = sessionmaker(engine, class_=Session, expire_on_commit=False)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         actor = resolve_bootstrap_actor(sessions, principal_id=principal_id, now=now)
         current, previous = notification_digesters(
             {

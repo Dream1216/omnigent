@@ -12,7 +12,7 @@ import struct
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Collection, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -364,7 +364,7 @@ def _utc_timestamp(value: object) -> datetime:
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
         raise ValueError("timestamp has no timezone")
-    normalized = parsed.astimezone(timezone.utc)
+    normalized = parsed.astimezone(UTC)
     if value != normalized.isoformat():
         raise ValueError("timestamp is not canonical UTC")
     return normalized
@@ -575,7 +575,7 @@ def _encoded_request(
     if (
         placement.status not in {"active", "draining"}
         or placement.lease_expires_at.tzinfo is None
-        or placement.lease_expires_at <= datetime.now(timezone.utc)
+        or placement.lease_expires_at <= datetime.now(UTC)
         or route.expires_at.tzinfo is None
         or not route.preview_host
         or route.preview_host != route.preview_host.lower()
@@ -602,7 +602,7 @@ def _encoded_request(
             "query": request.query,
         },
         "route": {
-            "expires_at": route.expires_at.astimezone(timezone.utc).isoformat(),
+            "expires_at": route.expires_at.astimezone(UTC).isoformat(),
             "opaque_preview_key": route.opaque_preview_key,
             "preview_host": route.preview_host,
             "preview_id": str(route.preview_id),
@@ -863,7 +863,7 @@ class MutualTlsPreviewRelayServer:
                     self._router.accept_relay(placement, request),
                     timeout=self._response_head_timeout_seconds,
                 )
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise PreviewRelayTransportError(
                     "preview_relay_owner_timeout",
                     "Preview Relay owner did not produce a response",
@@ -876,7 +876,7 @@ class MutualTlsPreviewRelayServer:
         except PreviewRelayTransportError as exc:
             if not response_started:
                 await self._write_error(writer, exc.code)
-        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError):
+        except (TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             if not response_started:
                 await self._write_error(writer, "preview_relay_request_invalid")
         except Exception:  # noqa: BLE001 - fail closed without peer or topology detail
@@ -942,7 +942,7 @@ class _RelayResponseBody:
                 yield await asyncio.wait_for(
                     self._reader.readexactly(length), timeout=self._idle_timeout_seconds
                 )
-        except (asyncio.IncompleteReadError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, asyncio.IncompleteReadError) as exc:
             raise PreviewRelayTransportError(
                 "preview_relay_response_invalid", "Preview Relay response ended unexpectedly"
             ) from exc
@@ -1053,7 +1053,7 @@ class MutualTlsPreviewRelayClient:
             drain_failure: BaseException | None = None
             try:
                 await asyncio.wait_for(writer.drain(), timeout=self._connect_timeout_seconds)
-            except (OSError, ssl.SSLError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, OSError, ssl.SSLError) as exc:
                 # The owner can reject the client certificate before consuming
                 # the request. Its stable error frame may already be readable
                 # even though the local write side observes the TLS close first.
@@ -1071,10 +1071,10 @@ class MutualTlsPreviewRelayClient:
                     ),
                 )
             except (
+                TimeoutError,
                 OSError,
                 ssl.SSLError,
                 asyncio.IncompleteReadError,
-                asyncio.TimeoutError,
             ) as response_failure:
                 if drain_failure is not None:
                     raise drain_failure from response_failure
@@ -1121,7 +1121,7 @@ class MutualTlsPreviewRelayClient:
             return PreviewTunnelResponse(status_code=status_code, headers=headers, body=body)
         except PreviewRelayTransportError:
             raise
-        except (OSError, ssl.SSLError, asyncio.IncompleteReadError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, OSError, ssl.SSLError, asyncio.IncompleteReadError) as exc:
             raise PreviewRelayTransportError(
                 "preview_relay_unavailable", "Preview Relay is unavailable"
             ) from exc

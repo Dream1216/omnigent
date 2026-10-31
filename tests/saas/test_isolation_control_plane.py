@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -337,7 +337,7 @@ def test_server_chosen_profile_rejects_soft_sandbox_private_egress_and_secret_mi
 def test_launch_grant_uses_retired_bound_profile_and_egress_and_rejects_binding_drift(
     worktree_fixture: WorktreeFixture,  # noqa: F811
 ) -> None:
-    now = datetime.now(timezone.utc) + timedelta(minutes=1)
+    now = datetime.now(UTC) + timedelta(minutes=1)
     _, change_set_id = _repository_and_change_set(worktree_fixture, suffix="profile-drift")
     _configure_worktree_quota(worktree_fixture)
     isolation = IsolationControlPlane(
@@ -408,7 +408,7 @@ def test_one_time_launch_secret_broker_and_official_credential_proxy_are_fenced_
     worktree_fixture: WorktreeFixture,  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    now = datetime.now(timezone.utc) + timedelta(minutes=1)
+    now = datetime.now(UTC) + timedelta(minutes=1)
     _, change_set_id = _repository_and_change_set(worktree_fixture, suffix="isolation")
     _configure_worktree_quota(worktree_fixture)
     isolation = IsolationControlPlane(
@@ -547,7 +547,7 @@ def test_one_time_launch_secret_broker_and_official_credential_proxy_are_fenced_
 def test_runner_reconnect_fences_unredeemed_isolation_grant(
     worktree_fixture: WorktreeFixture,  # noqa: F811
 ) -> None:
-    now = datetime.now(timezone.utc) + timedelta(minutes=1)
+    now = datetime.now(UTC) + timedelta(minutes=1)
     _, change_set_id = _repository_and_change_set(worktree_fixture, suffix="reconnect")
     _configure_worktree_quota(worktree_fixture)
     isolation = IsolationControlPlane(
@@ -595,7 +595,7 @@ def test_runner_reconnect_fences_unredeemed_isolation_grant(
 def test_preview_origin_is_cookie_isolated_exact_host_fenced_and_revocable(
     worktree_fixture: WorktreeFixture,  # noqa: F811
 ) -> None:
-    now = datetime.now(timezone.utc) + timedelta(minutes=1)
+    now = datetime.now(UTC) + timedelta(minutes=1)
     _, change_set_id = _repository_and_change_set(worktree_fixture, suffix="preview")
     _configure_worktree_quota(worktree_fixture)
     leased = _lease_isolated_run(

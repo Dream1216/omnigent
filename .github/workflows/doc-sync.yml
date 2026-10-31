@@ -59,7 +59,7 @@ jobs:
     if: >-
       github.repository == 'omnigent-ai/omnigent' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       # --- Plan: resolve PR + decide classify-vs-draft-vs-skip from the event ---
@@ -252,7 +252,7 @@ jobs:
 
       - name: Install Claude Code CLI
         if: steps.plan.outputs.proceed == 'true' && steps.creds.outputs.available == 'true'
-        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@3fb1e78f1832047cc7b034d60c940fff95ad4686
+        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
         with:
           harness: claude
 

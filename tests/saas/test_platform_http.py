@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -24,7 +24,7 @@ from saas.control_plane import (
 
 ORIGIN = "https://platform-admin.example.test"
 AUDIENCE = "omnigent-platform-admin"
-NOW = datetime(2026, 8, 7, 13, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 7, 13, 0, tzinfo=UTC)
 
 
 @pytest.mark.parametrize("supplied", [None, "wave1-retry-001", "invalid value", "x" * 129])
@@ -47,7 +47,7 @@ def test_platform_request_id_matches_body_for_success_and_failure(supplied):
 
 
 def _app(*, enabled: bool = True):
-    session_now = datetime.now(timezone.utc)
+    session_now = datetime.now(UTC)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},

@@ -93,6 +93,10 @@ def test_host_reconnect_rereads_file_and_never_mixes_bearer(
         "omnigent.cli_auth.databricks_request_headers",
         lambda *_args, **_kwargs: {"Authorization": "Bearer must-not-survive"},
     )
+    monkeypatch.setattr(
+        "omnigent.util.proxy_bearer.read_proxy_bearer",
+        lambda _url: pytest.fail("file-projected machine credentials must not read proxy bearers"),
+    )
     process = HostProcess(
         HostIdentity(host_id="ce5bb44730f64f47ac427f216e64bb33", name="beta-runner"),
         "https://next.jxhh.com",
@@ -108,6 +112,27 @@ def test_host_reconnect_rereads_file_and_never_mixes_bearer(
     assert "Authorization" not in first
     assert "Authorization" not in second
     assert process._current_auth_token() is None
+
+
+def test_inline_managed_launch_keeps_front_door_proxy_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(HOST_TOKEN_FILE_ENV_VAR, raising=False)
+    monkeypatch.delenv(HOST_WORKSPACE_ID_ENV_VAR, raising=False)
+    monkeypatch.setenv(HOST_TOKEN_ENV_VAR, "inline-launch-token")
+    monkeypatch.setattr("omnigent.cli_auth.databricks_request_headers", lambda *_a, **_k: {})
+    monkeypatch.setattr("omnigent.util.proxy_bearer.read_proxy_bearer", lambda _url: "proxy-token")
+    process = HostProcess(
+        HostIdentity(host_id="ce5bb44730f64f47ac427f216e64bb33", name="managed-launch"),
+        "https://workspace.example.test",
+    )
+
+    assert process._build_connect_headers() == {
+        "X-Omnigent-Host-Token": "inline-launch-token",
+        "Authorization": "Bearer proxy-token",
+        "Origin": "omnigent://internal",
+    }
+    assert process._current_auth_token(initialize=False) == "proxy-token"
 
 
 @pytest.mark.asyncio

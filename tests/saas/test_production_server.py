@@ -1267,6 +1267,9 @@ def test_production_composition_forces_context_free_official_jobs_off(
         try:
             assert captured["suppress_context_free_builtin_seed"] is True
             assert captured["scheduled_task_store"] is None
+            from saas.production.release_features import DEFERRED_FEATURES
+
+            assert not captured["feature_flags"].enabled_features & DEFERRED_FEATURES
             assert captured["mcp_registry"] is None
             assert captured["public_sharing_max_level"] == "read"
             assert captured["host_sharded"] is host_sharded

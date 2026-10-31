@@ -898,9 +898,9 @@ def test_image_material_lock_rejects_unbounded_gh_module_download(
             "host CLI layer must normalize and remove volatile installer state",
         ),
         (
-            "ARG UV_VERSION=0.12.1",
-            "ARG UV_VERSION=0.12.2",
-            "production Dockerfile must pin and install uv 0.12.1",
+            "ARG UV_VERSION=0.13.4",
+            "ARG UV_VERSION=0.13.5",
+            "production Dockerfile must pin and install uv 0.13.4",
         ),
         (
             "uv sync --frozen --active --package omnigent --no-dev --no-editable --no-cache",
@@ -923,14 +923,14 @@ def test_image_material_lock_rejects_unbounded_gh_module_download(
             "production Dockerfile must pin pnpm 12.10.1",
         ),
         (
-            "ARG CLAUDE_CODE_VERSION=2.1.283",
-            "ARG CLAUDE_CODE_VERSION=2.1.284",
-            "host image must pin @anthropic-ai/claude-code to 2.1.283",
+            "ARG CLAUDE_CODE_VERSION=2.1.295",
+            "ARG CLAUDE_CODE_VERSION=2.1.296",
+            "host image must pin @anthropic-ai/claude-code to 2.1.295",
         ),
         (
-            "ARG PI_CODING_AGENT_VERSION=1.0.4",
-            "ARG PI_CODING_AGENT_VERSION=1.0.5",
-            "host image must pin @earendil-works/pi-coding-agent to 1.0.4",
+            "ARG PI_CODING_AGENT_VERSION=1.3.0",
+            "ARG PI_CODING_AGENT_VERSION=1.3.1",
+            "host image must pin @earendil-works/pi-coding-agent to 1.3.0",
         ),
         (
             "pnpm install --frozen-lockfile --prod --filter e2e-ci-deps",
@@ -1154,12 +1154,12 @@ def test_image_material_lock_rejects_python_and_node_lock_drift(tmp_path: Path) 
 
     pnpm_lock = repo / "pnpm-lock.yaml"
     pnpm_source = pnpm_lock.read_text(encoding="utf-8")
-    pnpm_target = "'@openai/codex':\n        specifier: 0.139.0\n        version: 0.139.0"
+    pnpm_target = "'@openai/codex':\n        specifier: 0.142.0\n        version: 0.142.0"
     assert pnpm_target in pnpm_source
     pnpm_lock.write_text(
         pnpm_source.replace(
             pnpm_target,
-            "'@openai/codex':\n        specifier: 0.140.0\n        version: 0.140.0",
+            "'@openai/codex':\n        specifier: 0.143.0\n        version: 0.143.0",
             1,
         ),
         encoding="utf-8",
@@ -1168,7 +1168,7 @@ def test_image_material_lock_rejects_python_and_node_lock_drift(tmp_path: Path) 
     violations = validate_image_material_lock(repo)
 
     assert "uv.lock must resolve psycopg exactly to 3.3.4" in violations
-    assert "pnpm-lock.yaml must bind @openai/codex to 0.139.0" in violations
+    assert "pnpm-lock.yaml must bind @openai/codex to 0.142.0" in violations
 
 
 @pytest.mark.parametrize(

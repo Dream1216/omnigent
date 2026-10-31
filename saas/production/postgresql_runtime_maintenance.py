@@ -93,9 +93,9 @@ class FencedTRuntimeOperation(RuntimeMaintenanceOperation):
             raise db.Refused("typed_t_recovery_required")
         db.need(
             self.direction in {"to_t", "to_candidate"}
-            and self.source_official_schema_revision == "nf12ab34cd56"
+            and self.source_official_schema_revision == "d0a1f879a01d"
             and self.official_schema_revision
-            == ("mm1a2b3c4d5e" if self.direction == "to_t" else "nf12ab34cd56"),
+            == ("mm1a2b3c4d5e" if self.direction == "to_t" else "d0a1f879a01d"),
             "fenced_t_runtime_transition_invalid",
         )
         if self.direction == "to_t":
@@ -568,7 +568,7 @@ class FencedTRuntimeRecovery:
                 asdict(item.recovery) == asdict(operation)
                 and item.runtime_version == VERSION
                 and item.upstream_revision == upstream
-                and item.official_schema_revision == "nf12ab34cd56"
+                and item.official_schema_revision == "d0a1f879a01d"
                 and item.adapter_contract_version == "0.2.0",
                 "candidate_runtime_template_mismatch",
             )
@@ -650,7 +650,7 @@ class FencedTRuntimeRecovery:
                 adapter_contract_version=parent.rollback_adapter_contract_version,
             )
         return FencedTRuntimeOperation(
-            **values, direction=direction, source_official_schema_revision="nf12ab34cd56"
+            **values, direction=direction, source_official_schema_revision="d0a1f879a01d"
         )
 
     def _control(self, index, direction, outer):

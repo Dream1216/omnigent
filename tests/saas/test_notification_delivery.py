@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,7 +29,7 @@ from saas.control_plane.notification_models import (
 )
 from saas.control_plane.platform_models import PlatformStaffPrincipalRecord
 
-NOW = datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 9, 0, tzinfo=UTC)
 OLD = NotificationErrorDigester(key_id="notification-old", secret=b"o" * 32)
 NEW = NotificationErrorDigester(key_id="notification-new", secret=b"n" * 32)
 

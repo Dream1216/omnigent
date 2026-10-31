@@ -8,7 +8,7 @@ import json
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import MappingProxyType
 from typing import Any, Never
@@ -70,7 +70,7 @@ class ContextSnapshotPolicy:
     issuer: str
     audience: str
     ttl: timedelta = _MAX_SNAPSHOT_TTL
-    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def __post_init__(self) -> None:
         if not self.active_key_id or self.active_key_id not in self.keys:
@@ -324,7 +324,7 @@ class ContextSnapshotService:
         now = self._policy.clock()
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("context snapshot clock must return a timezone-aware value")
-        return now.astimezone(timezone.utc)
+        return now.astimezone(UTC)
 
     @staticmethod
     def _session_payload(session: ValidatedAuthSession) -> dict[str, object]:
@@ -402,7 +402,7 @@ class ContextSnapshotService:
         if not isinstance(value, int):
             raise ContextSnapshotError(code, "snapshot timestamp is invalid")
         try:
-            return datetime.fromtimestamp(value, timezone.utc)
+            return datetime.fromtimestamp(value, UTC)
         except (OverflowError, OSError, ValueError) as error:
             raise ContextSnapshotError(code, "snapshot timestamp is invalid") from error
 

@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from configparser import Error as ConfigParserError
 from configparser import RawConfigParser
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
@@ -761,7 +761,7 @@ def load_production_artifact_admission_receipt(
         raise ProductionServerConfigError(f"{name} completion time is invalid") from None
     if (
         not completed_at.endswith("+00:00")
-        or completed.utcoffset() != timezone.utc.utcoffset(completed)
+        or completed.utcoffset() != UTC.utcoffset(completed)
         or completed.microsecond != 0
     ):
         raise ProductionServerConfigError(f"{name} completion time is invalid")

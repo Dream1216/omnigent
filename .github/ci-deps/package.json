@@ -4,11 +4,11 @@
   "private": true,
   "description": "Pinned npm CLIs installed in CI and the managed Host image.",
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.283",
-    "@earendil-works/pi-coding-agent": "1.0.4",
+    "@anthropic-ai/claude-code": "2.1.295",
+    "@earendil-works/pi-coding-agent": "1.3.0",
     "@modelcontextprotocol/sdk": "1.32.0",
     "@moonshot-ai/kimi-code": "0.43.1",
-    "@openai/codex": "0.139.0",
+    "@openai/codex": "0.142.0",
     "@qwen-code/qwen-code": "0.23.4",
     "opencode-ai": "1.18.31"
   }

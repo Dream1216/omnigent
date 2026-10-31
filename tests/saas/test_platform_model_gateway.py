@@ -4,7 +4,7 @@ import ast
 import asyncio
 import json
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid4
@@ -87,7 +87,7 @@ class _Budgets:
             released_tokens=0,
             status="reserved",
             rejection_code=None,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
             version=1,
         )
 
@@ -156,13 +156,13 @@ def _client(
             ),
         ),
         client_factory=lambda: httpx.AsyncClient(transport=handler),
-        clock=lambda: datetime(2026, 9, 14, 0, 30, tzinfo=timezone.utc),
+        clock=lambda: datetime(2026, 9, 14, 0, 30, tzinfo=UTC),
         retry_clock=retry_clock,
     )
     return (
         TestClient(create_platform_model_gateway_app(gateway)),
         budgets,
-        authority.issue(session_id=SESSION_ID, now=int(datetime.now(timezone.utc).timestamp())),
+        authority.issue(session_id=SESSION_ID, now=int(datetime.now(UTC).timestamp())),
     )
 
 
@@ -1132,17 +1132,17 @@ def test_packaged_pricing_tracks_current_deepseek_catalog_and_peak_windows() -> 
     assert set(prices) == {"deepseek-flash", "deepseek-v4-pro"}
     assert set(policy.for_catalog(("deepseek-v4-pro",))) == {"deepseek-v4-pro"}
     flash = prices["deepseek-flash"]
-    assert flash.rates_at(datetime(2026, 9, 14, 1, 0, tzinfo=timezone.utc)) == (
+    assert flash.rates_at(datetime(2026, 9, 14, 1, 0, tzinfo=UTC)) == (
         6_000,
         300_000,
         1_200_000,
     )
-    assert flash.rates_at(datetime(2026, 9, 14, 4, 0, tzinfo=timezone.utc)) == (
+    assert flash.rates_at(datetime(2026, 9, 14, 4, 0, tzinfo=UTC)) == (
         3_000,
         150_000,
         600_000,
     )
-    assert flash.rates_at(datetime(2026, 9, 13, 7, 0, tzinfo=timezone.utc)) == (
+    assert flash.rates_at(datetime(2026, 9, 13, 7, 0, tzinfo=UTC)) == (
         3_000,
         150_000,
         600_000,

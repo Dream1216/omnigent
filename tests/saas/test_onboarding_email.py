@@ -4,7 +4,7 @@ import json
 import smtplib
 import traceback
 from collections.abc import Callable, Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
@@ -30,7 +30,7 @@ from saas.onboarding_email import (
     SmtpEmailVerificationSender,
 )
 
-_NOW = datetime(2026, 9, 2, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 9, 2, 0, 0, tzinfo=UTC)
 _REGISTRATION_ID = UUID("ff43beb0-fba1-4ab5-9faa-939524369266")
 _CHALLENGE_ID = UUID("fdad19c9-11bd-4fb8-84ce-85b03105745a")
 _EVENT_ID = UUID("5e5218d2-4fc1-446c-8f03-aa514b3e314e")
@@ -674,7 +674,7 @@ def test_onboarding_publisher_preserves_typed_sender_failure_disposition(
     retryable: bool,
     pre_side_effect: bool,
 ) -> None:
-    message = _message(expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
+    message = _message(expires_at=datetime.now(UTC) + timedelta(hours=1))
     registrations = _RegistrationRecorder()
     publisher = OnboardingOutboxPublisher(
         registrations=cast(SelfServiceOnboardingService, registrations),

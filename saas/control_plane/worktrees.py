@@ -7,7 +7,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import NoReturn
 from uuid import UUID, uuid4
@@ -46,11 +46,11 @@ _RUN_WORKTREE_STATUSES = frozenset(
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _validate_time(value: datetime) -> None:

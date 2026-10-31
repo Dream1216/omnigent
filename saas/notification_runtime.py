@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -77,8 +77,8 @@ class JwtNotificationWorkloadIdentityProvider:
                 options={"require": ["sub", "iat", "exp", "iss", "aud"]},
             )
             subject = str(claims["sub"])
-            authenticated_at = datetime.fromtimestamp(int(claims["iat"]), tz=timezone.utc)
-            expires_at = datetime.fromtimestamp(int(claims["exp"]), tz=timezone.utc)
+            authenticated_at = datetime.fromtimestamp(int(claims["iat"]), tz=UTC)
+            expires_at = datetime.fromtimestamp(int(claims["exp"]), tz=UTC)
         except (OSError, KeyError, TypeError, ValueError, jwt.PyJWTError) as error:
             raise NotificationDeliveryError("notification_workload_identity_invalid") from error
         if (
@@ -537,7 +537,7 @@ def _apply_notification_directory_recipient_rls(
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("notification runtime time must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 __all__ = [

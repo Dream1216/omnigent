@@ -10,7 +10,7 @@ import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -806,13 +806,13 @@ class VerificationEnvelopeKeyring:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _stored_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _hash(value: str) -> str:

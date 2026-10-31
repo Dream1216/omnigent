@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -104,7 +104,7 @@ def _app() -> tuple[TestClient, str, UUID, UUID]:
             trace_id="scim-http",
         ),
         display_name="HTTP Directory",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="http-directory",
     )
     assert issued.bearer_token is not None
@@ -116,7 +116,7 @@ def _app() -> tuple[TestClient, str, UUID, UUID]:
                 session=SimpleNamespace(
                     user_id=owner_id,
                     security_version=1,
-                    authenticated_at=datetime.now(timezone.utc),
+                    authenticated_at=datetime.now(UTC),
                 )
             )
 
@@ -372,7 +372,7 @@ def test_scim_directory_http_rotation_and_disable_destroy_old_authority() -> Non
 def test_scim_directory_http_schedules_one_time_overlap_credential() -> None:
     client, old_token, tenant_id, directory_id = _app()
     path = f"/saas/tenants/{tenant_id}/enterprise/scim-directories/{directory_id}/rotate-overlap"
-    activation = datetime.now(timezone.utc) + timedelta(minutes=2)
+    activation = datetime.now(UTC) + timedelta(minutes=2)
     body = {
         "expected_version": 1,
         "activates_at": activation.isoformat(),

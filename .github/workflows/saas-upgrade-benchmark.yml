@@ -22,7 +22,7 @@ jobs:
   compare:
     name: SaaS base vs candidate performance
     if: github.repository == 'Dream1216/omnigent' && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       OMNIGENT_SKIP_WEB_UI: "true"

@@ -492,7 +492,7 @@ class PreservingPostgreSqlRecovery:
             self._begin("prepare_explicit_t_target_and_drain")
         verified = migration._verify_state(self.plan, dict(self.engines))
         adapter.need(
-            verified.official_head == "nf12ab34cd56" and verified.saas_head == "p0s000000018",
+            verified.official_head == "d0a1f879a01d" and verified.saas_head == "p0s000000018",
             "candidate_heads_required",
         )
         adapter.need(
@@ -747,7 +747,7 @@ class PreservingPostgreSqlRecovery:
             state = {**state, "t_reentry_before": current}
             self._save("t_reentry_fenced_facts_captured", state)
         self._begin("original_nf_p16_reupgrade")
-        _migrate(self.engines["official_owner"], "official", "nf12ab34cd56")
+        _migrate(self.engines["official_owner"], "official", "d0a1f879a01d")
         _migrate(self.engines["saas_owner"], "saas", "p0s000000016")
         native.restore_additive_role_edges(
             self.maintenance, self.gold["old_role_edges"], self.gold["candidate_role_edges"]

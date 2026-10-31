@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import tomllib
 
 from omnigent.harnesses.kimi_native.credentials import (
     KIMI_CODE_HOME_ENV_VAR,

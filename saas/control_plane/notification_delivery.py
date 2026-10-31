@@ -8,7 +8,7 @@ import secrets
 import string
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
@@ -412,11 +412,11 @@ class NotificationDeliveryWorker:
         self._context_resolver = context_resolver
         self._catalog = catalog
         self._provider = provider
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._clock_was_supplied = clock is not None
 
     def deliver_once(self, *, now: datetime | None = None) -> DeliverySettlement | None:
-        delivered_at = _aware(now or datetime.now(timezone.utc))
+        delivered_at = _aware(now or datetime.now(UTC))
         phase_clock = (
             self._clock if self._clock_was_supplied or now is None else lambda: delivered_at
         )
@@ -559,7 +559,7 @@ def _template_fields(value: str) -> set[str]:
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("notification time must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 NOTIFICATION_EVENT_TYPES = frozenset(
@@ -772,7 +772,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         *,
         now: datetime | None = None,
     ) -> tuple[NotificationDeliveryView, ...]:
-        queued_at = _aware(now or datetime.now(timezone.utc))
+        queued_at = _aware(now or datetime.now(UTC))
         _notification_scope(command.realm, command.tenant_id)
         event_type = _event_type(command.event_type)
         if (event_type == "notification.delivery_dead_letter") is not (
@@ -1013,7 +1013,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         idempotency_key: str,
         now: datetime | None = None,
     ) -> NotificationDeliveryView:
-        replayed_at = _aware(now or datetime.now(timezone.utc))
+        replayed_at = _aware(now or datetime.now(UTC))
         key = _bounded(idempotency_key, "idempotency_key", 128)
         with self._sessions.begin() as db:
             platform_replay = (
@@ -1099,7 +1099,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         idempotency_key: str,
         now: datetime | None = None,
     ) -> NotificationDeliveryView:
-        read_at = _aware(now or datetime.now(timezone.utc))
+        read_at = _aware(now or datetime.now(UTC))
         key = _bounded(idempotency_key, "idempotency_key", 128)
         with self._sessions.begin() as db:
             _apply_notification_delivery_rls(
@@ -1192,7 +1192,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         idempotency_key: str,
         now: datetime | None = None,
     ) -> NotificationPreferenceView:
-        updated_at = _aware(now or datetime.now(timezone.utc))
+        updated_at = _aware(now or datetime.now(UTC))
         normalized_locale = normalize_locale(locale)
         key = _bounded(idempotency_key, "idempotency_key", 128)
         with self._sessions.begin() as db:
@@ -1314,7 +1314,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         idempotency_key: str,
         now: datetime | None = None,
     ) -> NotificationTemplateView:
-        created_at = _aware(now or datetime.now(timezone.utc))
+        created_at = _aware(now or datetime.now(UTC))
         _require_platform_permission(actor, PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION)
         key = _bounded(template_key, "template_key", 128)
         normalized_locale = normalize_locale(locale)
@@ -1440,7 +1440,7 @@ class NotificationDeliveryService(NotificationDeliveryAuthority):
         idempotency_key: str,
         now: datetime | None = None,
     ) -> NotificationTemplateView:
-        retired_at = _aware(now or datetime.now(timezone.utc))
+        retired_at = _aware(now or datetime.now(UTC))
         _require_platform_permission(actor, PLATFORM_NOTIFICATION_TEMPLATE_MANAGE_PERMISSION)
         key = _bounded(idempotency_key, "idempotency_key", 128)
         with self._sessions.begin() as db:
@@ -2211,7 +2211,7 @@ def _bounded(value: str, field_name: str, maximum: int) -> str:
 
 
 def _stored_time(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else _aware(value)
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else _aware(value)
 
 
 def _apply_notification_delivery_rls(

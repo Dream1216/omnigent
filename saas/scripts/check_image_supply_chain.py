@@ -7,12 +7,11 @@ import hashlib
 import json
 import re
 import subprocess
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-
-import tomllib
 
 from saas.production.review_exception import apply_review_exception, review_verification_scope
 
@@ -36,14 +35,14 @@ _WOLFI_RUNTIME_LOCK = "saas/supply_chain/wolfi-runtime-lock.json"
 _GITHUB_CLI_SOURCE_LOCK = "saas/supply_chain/github-cli-source-lock.json"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
-_APPROVED_UV_VERSION = "0.12.1"
+_APPROVED_UV_VERSION = "0.13.4"
 _APPROVED_PNPM_VERSION = "12.10.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.283"),
-    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "1.0.4"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.295"),
+    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "1.3.0"),
     "@moonshot-ai/kimi-code": ("KIMI_CODE_VERSION", "0.43.1"),
-    "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
+    "@openai/codex": ("CODEX_CLI_VERSION", "0.142.0"),
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
     "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
@@ -1026,7 +1025,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
         r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
     ):
-        violations.append("production Dockerfile must pin and install uv 0.12.1")
+        violations.append(f"production Dockerfile must pin and install uv {_APPROVED_UV_VERSION}")
     if 'case "$(uv --version)" in "uv ${UV_VERSION}"|"uv ${UV_VERSION} "*' not in dockerfile:
         violations.append("production Dockerfile must verify the installed uv version")
     if "COPY pyproject.toml setup.py uv.lock ./" not in dockerfile:

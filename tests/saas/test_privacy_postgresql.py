@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -205,7 +205,7 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
         f"registration-idempotency:{suffix}".encode()
     ).hexdigest()
     registration_request_hash = sha256(f"registration-request:{suffix}".encode()).hexdigest()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     issuer = "https://privacy-idp.example.test"
     subject = f"subject-{suffix}"
     external_id = f"external-{suffix}"

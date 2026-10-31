@@ -21,7 +21,7 @@ import stat
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -349,7 +349,7 @@ class ProductionPreviewRunnerTunnel:
         await self.supervisor.aclose()
 
     def _endpoint(self, registration: RunnerPreviewTunnelRegistration) -> PreviewRelayEndpoint:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if (
             registration.runner_id != self.config.runner_id
             or registration.connection_generation != self.config.connection_generation

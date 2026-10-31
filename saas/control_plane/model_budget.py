@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -70,7 +70,7 @@ class ModelProviderBudgetAdmissionService:
         ttl: timedelta,
         now: datetime | None = None,
     ) -> ModelProviderBudgetReservationView:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _positive_uuid(tenant_id, "tenant")
         _positive_uuid(run_id, "run")
         _operation_key(operation_key)
@@ -216,7 +216,7 @@ class ModelProviderBudgetAdmissionService:
         actual_tokens: int,
         now: datetime | None = None,
     ) -> ModelProviderBudgetReservationView:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _positive_uuid(reservation_id, "reservation")
         _positive_amount(actual_microusd, "microusd")
         _positive_amount(actual_tokens, "tokens")
@@ -330,7 +330,7 @@ class ModelProviderBudgetAdmissionService:
         limit: int = 100,
         now: datetime | None = None,
     ) -> tuple[ModelProviderBudgetReservationView, ...]:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         if isinstance(limit, bool) or not 1 <= limit <= 1000:
             raise ModelProviderBudgetError(
                 "platform_model_budget_request_invalid",
@@ -370,7 +370,7 @@ class ModelProviderBudgetAdmissionService:
         expired: bool,
         now: datetime | None,
     ) -> ModelProviderBudgetReservationView:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _positive_uuid(reservation_id, "reservation")
         target_status = "expired" if expired else "released"
         with self._sessions.begin() as db:
@@ -575,13 +575,13 @@ def _aware(value: datetime) -> datetime:
             "platform_model_budget_request_invalid",
             "model budget timestamp is invalid",
         )
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _stored_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 __all__ = [

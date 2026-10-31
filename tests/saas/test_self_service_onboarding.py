@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -136,7 +136,7 @@ def onboarding() -> Iterator[_OnboardingHarness]:
         envelopes=envelopes,
         email_sender=sender,
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     harness = _OnboardingHarness(
         sessions=sessions,
         service=service,
@@ -241,8 +241,8 @@ def _digest(payload: object) -> str:
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _rate_calls(onboarding: _OnboardingHarness, action: str) -> list[tuple[str, str, str]]:
@@ -336,7 +336,7 @@ def test_registration_returns_id_with_expire_on_commit_enabled() -> None:
         envelope_keyring=envelopes,
         rate_limiter=_AllowAllRateLimiter(),
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
 
     try:
         accepted = service.request_registration(

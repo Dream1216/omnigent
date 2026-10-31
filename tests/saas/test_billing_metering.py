@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -72,7 +72,7 @@ def metering() -> Iterator[_Fixture]:
     execution = ExecutionControlPlane(factory)
     scheduling = SchedulingControlPlane(factory)
     billing = BillingControlPlane(factory)
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     owner_id, tenant_id, space_id, project_id, placement_id = (
         uuid4(),
         uuid4(),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -62,7 +62,7 @@ def _route(runner_id=None) -> PreviewRouteGrant:
         preview_token_hash="a" * 64,
         upstream_request_headers={},
         response_headers={"Content-Security-Policy": "sandbox"},
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
 
 
@@ -73,7 +73,7 @@ def _free_port() -> int:
 
 
 def _certificate_files(root: Path, gateway_instance_id: str) -> dict[str, Path]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Preview Production CA")])
     ca = (

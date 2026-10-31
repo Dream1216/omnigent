@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from threading import Barrier
@@ -294,7 +294,7 @@ def test_real_postgresql_privacy_dispatcher_is_exact_content_blind_and_immutable
     work_a, work_b = uuid4(), uuid4()
     backup_a, backup_b = uuid4(), uuid4()
     attempt_a, attestation_a = uuid4(), uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     try:
         with admin_engine.connect() as connection:

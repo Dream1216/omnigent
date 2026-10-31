@@ -11,6 +11,8 @@ from omnigent.host.connect import HostProcess
 from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
 from omnigent.host.identity import HostIdentity
 from omnigent.runner._zygote import ZYGOTE_ENABLED_ENV_VAR
+from omnigent.server.feature_flags import FEATURES_ENV_VAR
+from saas.production.release_features import managed_feature_environment
 from saas.runner_adapter import (
     ManagedRunnerProcessPolicyError,
     activate_managed_host_environment,
@@ -32,6 +34,7 @@ def test_managed_environment_disables_upstream_zygote_without_mutating_base() ->
     assert managed == {
         "PATH": "/usr/bin",
         ZYGOTE_ENABLED_ENV_VAR: "0",
+        FEATURES_ENV_VAR: managed_feature_environment(base),
     }
     assert base[ZYGOTE_ENABLED_ENV_VAR] == "false"
 

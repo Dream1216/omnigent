@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -38,7 +38,7 @@ AUDIENCE = "omnigent-platform-admin"
 
 
 def test_platform_governed_support_http_runs_staff_request_approval_session_and_revoke() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -241,7 +241,7 @@ def test_platform_governed_support_http_runs_staff_request_approval_session_and_
 def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_idempotency() -> (
     None
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -414,7 +414,7 @@ def test_platform_user_lifecycle_http_requires_staff_cookie_csrf_permission_and_
 
 
 def test_platform_identity_conflict_http_is_content_blind_and_two_stage() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},

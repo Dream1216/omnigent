@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -80,10 +80,10 @@ class _Provider:
             api_key_configured=self.secret is not None,
             verification_status="verified" if self.verified else "never",
             last_verified_model="deepseek-flash" if self.verified else None,
-            last_verified_at=datetime.now(timezone.utc) if self.verified else None,
+            last_verified_at=datetime.now(UTC) if self.verified else None,
             version=self.version,
             updated_by_principal_id=PRINCIPAL_ID if is_configured else None,
-            updated_at=datetime.now(timezone.utc) if is_configured else None,
+            updated_at=datetime.now(UTC) if is_configured else None,
         )
 
 
@@ -95,7 +95,7 @@ def _client() -> tuple[TestClient, _Provider, str]:
     )
     SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False, class_=Session)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with factory.begin() as db:
         db.add_all(
             [

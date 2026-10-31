@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -31,7 +31,7 @@ from saas.onboarding_email import (
     SmtpEmailVerificationConfig,
 )
 
-_NOW = datetime(2026, 9, 5, 5, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 9, 5, 5, 0, tzinfo=UTC)
 _PASSWORD = "smtp password that must stay secret"
 
 

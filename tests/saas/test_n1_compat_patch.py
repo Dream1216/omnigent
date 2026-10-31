@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from uuid import uuid4
@@ -484,7 +484,7 @@ def test_n1_compat_hides_provider_db_and_dsn_secrets(caplog: pytest.LogCaptureFi
 
         dispatcher._release_failure = release_failure
         with pytest.raises(RuntimeError) as release_error:
-            dispatcher.dispatch_once(now=datetime.now(timezone.utc))
+            dispatcher.dispatch_once(now=datetime.now(UTC))
         assert str(release_error.value) == "outbox_failure_release_failed"
         assert release_error.value.__suppress_context__
         assert provider_secret not in str(release_error.value)

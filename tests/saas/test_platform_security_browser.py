@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -50,7 +50,7 @@ class PlatformBrowserFixture:
 
 def _write_loopback_certificate(directory: Path) -> tuple[Path, Path]:
     key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
     certificate = (
         x509.CertificateBuilder()
@@ -89,7 +89,7 @@ def platform_browser_server(tmp_path: Path) -> Iterator[PlatformBrowserFixture]:
     sock.listen(128)
     port = sock.getsockname()[1]
     origin = f"https://127.0.0.1:{port}"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     engine = sa.create_engine(
         f"sqlite+pysqlite:///{tmp_path / 'platform-browser.sqlite3'}",
         connect_args={"check_same_thread": False},

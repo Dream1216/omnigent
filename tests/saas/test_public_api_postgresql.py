@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -94,7 +94,7 @@ def test_public_api_real_role_rls_provenance_rate_and_idempotency(
     tenant_id, space_id, project_id = uuid4(), uuid4(), uuid4()
     service_account_id, credential_id = uuid4(), uuid4()
     quota_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     scopes = (
         "project.read_metadata",
         "run.create",

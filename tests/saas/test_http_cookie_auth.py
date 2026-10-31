@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -462,7 +462,7 @@ def test_tenant_cookie_support_access_can_approve_and_immediately_revoke() -> No
     factory = app.state.saas_test_sessions
     governed = app.state.saas_test_support_access
     assert governed is not None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     support_id, operator_id = uuid4(), uuid4()
     tenant_id = UUID(scope["tenant_id"])
     with factory.begin() as db:

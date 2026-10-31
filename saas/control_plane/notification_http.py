@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from typing import Any, Literal, Protocol, cast
 from uuid import UUID
@@ -315,7 +315,7 @@ def create_notification_router(
 ) -> APIRouter:
     """Create the independent Tenant approval inbox and notification operations router."""
 
-    clock = now or (lambda: datetime.now(timezone.utc))
+    clock = now or (lambda: datetime.now(UTC))
     router = APIRouter(route_class=_ContentBlindRoute)
 
     def actor_for_request(request: Request) -> ApprovalActor:
@@ -936,7 +936,7 @@ def _time_value(value: object, name: str) -> str | None:
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ApprovalOperationsError("notification_time_invalid")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _console_html(realm: Literal["tenant", "staff"]) -> HTMLResponse:

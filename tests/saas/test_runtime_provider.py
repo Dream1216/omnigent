@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -388,7 +388,7 @@ def _signed_receipt(
         result_hash=result_hash,
         provider_request_id=provider_request_id,
         provider_resource_id=provider_resource_id,
-        observed_at=datetime(2026, 8, 25, tzinfo=timezone.utc),
+        observed_at=datetime(2026, 8, 25, tzinfo=UTC),
         receipt_hash="0" * 64,
         signature_key_id="kms-runtime-receipts-v1",
         signature_hex="0" * 64,

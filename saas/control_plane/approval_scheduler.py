@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
@@ -91,7 +91,7 @@ class ApprovalScheduler:
     def run_once(
         self, *, now: datetime | None = None, limit: int = 100
     ) -> ApprovalSchedulerRunResult:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         if not 1 <= limit <= 500:
             raise ValueError("approval scheduler limit must be between 1 and 500")
         projected = terminal = failed = 0
@@ -390,4 +390,4 @@ def _apply_scheduler_rls(
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("approval scheduler time must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)

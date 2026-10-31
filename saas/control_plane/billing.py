@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from hashlib import sha256
 from typing import TypedDict, cast
@@ -236,7 +236,7 @@ class BillingOverview(TypedDict):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _time(value: datetime, field: str) -> datetime:
@@ -248,7 +248,7 @@ def _time(value: datetime, field: str) -> datetime:
 def _stored_time(value: datetime) -> datetime:
     """Normalize SQLite's timezone-naive round trip to the PostgreSQL UTC contract."""
 
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def _text(value: str, field: str, maximum: int) -> str:

@@ -1568,6 +1568,9 @@ def build_production_server(
             "context-free official lifespan jobs cannot be enabled in production"
         )
     app_dependencies["scheduled_task_store"] = None
+    from saas.production.release_features import production_feature_flags
+
+    app_dependencies["feature_flags"] = production_feature_flags()
     app_dependencies["mcp_registry"] = None
     app_dependencies["public_sharing_max_level"] = "read"
     app_dependencies["host_sharded"] = config.host_sharded

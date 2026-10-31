@@ -4,7 +4,7 @@ import asyncio
 import ipaddress
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -288,7 +288,7 @@ def runtime_fixture():
         factory,
         accepted_trust_bundle_versions=("bundle-v1",),
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     yield engine, factory, directory, certificates, now
     engine.dispose()
 
@@ -344,7 +344,7 @@ def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
 
 
 def test_runtime_leaf_rejects_declared_expiry_that_does_not_match_der() -> None:
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     leaf = _leaf(
         "gateway-runtime-metadata",
         purpose="preview_relay_client",
@@ -665,7 +665,7 @@ async def test_real_postgresql_runtime_two_phase_activation_and_drain() -> None:
         platform_factory,
         accepted_trust_bundle_versions=("bundle-v1",),
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     gateway_id = f"gateway-runtime-pg-{uuid4().hex[:12]}"
     provider = _Provider(
         gateway_id,

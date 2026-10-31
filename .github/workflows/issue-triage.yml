@@ -74,7 +74,7 @@ env:
 jobs:
   triage:
     name: Legacy intake fallback
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Deprecated: remove in 0.12.0 after the seven-day V2 intake canary.
     # This fallback runs only while V2 is disabled.
@@ -233,7 +233,7 @@ jobs:
 
       - name: Install Claude Code CLI
         if: steps.creds.outputs.available == 'true'
-        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@3fb1e78f1832047cc7b034d60c940fff95ad4686
+        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
         with:
           harness: claude
 
@@ -774,6 +774,11 @@ jobs:
   prioritize-v2:
     name: Classify and prioritize issue with v2
     needs: triage
+    # A called workflow cannot exceed this grant; it mirrors priority onto PRs.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     if: >-
       always() &&
       vars.ISSUE_PRIORITIZATION_V2_ENABLED == 'true' &&

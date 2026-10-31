@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
 from uuid import UUID, uuid4
@@ -498,7 +498,7 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
     pool_id = uuid4()
     nonce = uuid4().hex[:10]
     scopes = (_scope_record(f"a{nonce}"), _scope_record(f"b{nonce}"))
-    now = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=1)
+    now = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=1)
 
     with engine.begin() as connection:
         _migrate(connection, root, "head")
@@ -850,7 +850,7 @@ def test_real_postgresql_isolation_issue_and_redeem_use_project_bound_dispatch(
     pool_id = uuid4()
     replacement_profile_id = uuid4()
     scope = _scope_record(f"project-{uuid4().hex[:10]}")
-    now = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=1)
+    now = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=1)
     with engine.begin() as connection:
         _migrate(connection, root, "head")
         connection.exec_driver_sql(

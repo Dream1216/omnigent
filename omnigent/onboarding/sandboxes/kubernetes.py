@@ -64,6 +64,7 @@ from omnigent.host.identity import (
     HOST_NAME_ENV_VAR,
     HOST_TOKEN_ENV_VAR,
 )
+from omnigent.host.identity_env import MANAGED_SANDBOX_ENV_VAR
 from omnigent.onboarding.sandboxes.base import (
     DEFAULT_HOST_IMAGE,
     SandboxHostLauncher,
@@ -263,7 +264,7 @@ _SENSITIVE_KEY_SEGMENTS: frozenset[str] = frozenset(
 _RESERVED_ENV_NAMES: frozenset[str] = frozenset(
     {
         "HOME",
-        "IS_SANDBOX",
+        MANAGED_SANDBOX_ENV_VAR,
         HOST_ID_ENV_VAR,
         HOST_NAME_ENV_VAR,
         HOST_TOKEN_ENV_VAR,
@@ -986,7 +987,7 @@ def build_job_manifest(
 
     host_env: list[dict[str, object]] = [
         {"name": "HOME", "value": _HOME_DIR},
-        {"name": "IS_SANDBOX", "value": "1"},
+        {"name": MANAGED_SANDBOX_ENV_VAR, "value": "1"},
         {"name": HOST_ID_ENV_VAR, "value": host_id},
         {"name": HOST_NAME_ENV_VAR, "value": host_name},
         {"name": MANAGED_SERVER_URL_ENV_VAR, "value": server_url},
@@ -1634,8 +1635,11 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
                 # immediately.
                 core.create_namespaced_secret(
                     namespace,
-                    build_token_secret_manifest(
-                        secret_name=secret_name, namespace=namespace, token=token
+                    cast(
+                        "k8s_client.V1Secret",
+                        build_token_secret_manifest(
+                            secret_name=secret_name, namespace=namespace, token=token
+                        ),
                     ),
                     _request_timeout=_POD_READY_REQUEST_TIMEOUT_S,
                 )
@@ -1674,7 +1678,9 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
         :param manifest: The manifest from :func:`build_job_manifest`.
         """
         self._load_batch().create_namespaced_job(
-            namespace, manifest, _request_timeout=_POD_READY_REQUEST_TIMEOUT_S
+            namespace,
+            cast("k8s_client.V1Job", manifest),
+            _request_timeout=_POD_READY_REQUEST_TIMEOUT_S,
         )
 
     def _find_job_pod(self, namespace: str, job_name: str) -> str | None:

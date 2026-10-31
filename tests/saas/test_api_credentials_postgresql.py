@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -33,7 +33,7 @@ def test_real_postgresql_api_key_uses_exact_rls_and_revokes_immediately() -> Non
     engine = sa.create_engine(_postgres_url())
     owner_id, steward_id = uuid4(), uuid4()
     tenant_id, space_id, project_id = uuid4(), uuid4(), uuid4()
-    checked_at = datetime(2026, 8, 5, 11, 0, tzinfo=timezone.utc)
+    checked_at = datetime(2026, 8, 5, 11, 0, tzinfo=UTC)
     pepper = b"postgres-api-credential-pepper-material-v1"
     suffix = uuid4().hex[:12]
     governance_role = f"saas_api_governance_{suffix}"

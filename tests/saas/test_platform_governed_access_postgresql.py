@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
@@ -78,7 +78,7 @@ def test_real_postgresql_pc3_support_is_exact_token_tenant_and_immutable(
     engine = sa.create_engine(isolated_postgres_url)
     support_id, operator_id, customer_id = uuid4(), uuid4(), uuid4()
     tenant_id, other_tenant_id = uuid4(), uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with engine.begin() as connection:
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))

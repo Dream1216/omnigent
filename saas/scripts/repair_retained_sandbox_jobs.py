@@ -12,7 +12,7 @@ import socket
 import subprocess
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, overload
 from urllib.parse import quote
@@ -140,7 +140,7 @@ def main() -> None:
     def save(phase: str, **facts) -> None:
         journal_path.write_text(
             json.dumps(
-                {"phase": phase, "at": datetime.now(timezone.utc).isoformat(), **facts},
+                {"phase": phase, "at": datetime.now(UTC).isoformat(), **facts},
                 indent=2,
             )
             + "\n"
@@ -168,7 +168,7 @@ def main() -> None:
                 expected_job_uid=args.job_uid,
                 old_image=args.old_image,
                 image=args.image,
-                now=datetime.now(timezone.utc),
+                now=datetime.now(UTC),
             )
             for name, value in (("original-job", job), ("original-pods", pods), ("plan", plan)):
                 (args.evidence / (name + ".json")).write_text(json.dumps(value, indent=2) + "\n")
@@ -197,7 +197,7 @@ def main() -> None:
                 replacement = plan["replacement"]
                 if plan["expires_at"] is not None:
                     expiry = datetime.fromisoformat(plan["expires_at"])
-                    remaining = int((expiry - datetime.now(timezone.utc)).total_seconds())
+                    remaining = int((expiry - datetime.now(UTC)).total_seconds())
                     if remaining < 600:
                         raise RuntimeError("expiry too close; retained Pods remain orphaned")
                     replacement["spec"]["activeDeadlineSeconds"] = remaining

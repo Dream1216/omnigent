@@ -31,7 +31,7 @@ def runtime_boundary(recovery_boundary, monkeypatch):
         placement_id=str(uuid4()),
         runtime_version="0.19.0.fixture",
         upstream_revision="3" * 40,
-        official_schema_revision="nf12ab34cd56",
+        official_schema_revision="d0a1f879a01d",
         adapter_contract_version="0.2.0",
         runtime_observation_ref="fixture://explicit-unit-only-provider-readback",
         runtime_observation_sha256="4" * 64,
@@ -528,7 +528,7 @@ def _fenced_t_operation(fixture, **changes):
         "upstream_revision": parent.rollback_upstream_revision,
         "official_schema_revision": "mm1a2b3c4d5e",
         "direction": "to_t",
-        "source_official_schema_revision": "nf12ab34cd56",
+        "source_official_schema_revision": "d0a1f879a01d",
         **changes,
     }
     return runtime.FencedTRuntimeOperation(**values)
@@ -587,7 +587,7 @@ def test_fenced_t_only_projects_before_inverse_and_preserves_same_project_ids(ru
             direction="to_candidate",
             runtime_version=fixture.operation.runtime_version,
             upstream_revision=fixture.operation.upstream_revision,
-            official_schema_revision="nf12ab34cd56",
+            official_schema_revision="d0a1f879a01d",
         )
     )
     restored.apply(restored.prepare())
@@ -603,7 +603,7 @@ def test_fenced_t_only_projects_before_inverse_and_preserves_same_project_ids(ru
     [
         {"direction": "unknown"},
         {"source_official_schema_revision": "mm1a2b3c4d5e"},
-        {"official_schema_revision": "nf12ab34cd56"},
+        {"official_schema_revision": "d0a1f879a01d"},
         {"runtime_version": "0.19"},
         {"upstream_revision": "0" * 40},
         {"adapter_contract_version": "0.1.0"},
@@ -656,7 +656,7 @@ def t_composition_boundary(recovery_boundary, runtime_boundary, monkeypatch):
         runtime_boundary.operation,
         recovery=operation,
         runtime_version=VERSION,
-        upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
+        upstream_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
     )
     events, checkpoints = [], []
     control.checkpoint = lambda phase, state: checkpoints.append((phase, copy.deepcopy(state)))
@@ -890,7 +890,7 @@ def test_t_composition_accepts_only_independently_pinned_repaired_target_contrac
         runtime_boundary.operation,
         recovery=operation,
         runtime_version=VERSION,
-        upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
+        upstream_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
     )
     calls = []
 
@@ -939,7 +939,7 @@ def test_t_composition_wrong_upstream_is_not_an_original_t_target(
         runtime_boundary.operation,
         recovery=operation,
         runtime_version=VERSION,
-        upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
+        upstream_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
     )
     with pytest.raises(db.Refused, match="original_t_runtime_contract_required"):
         runtime.FencedTRuntimeRecovery(

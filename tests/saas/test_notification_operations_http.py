@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -36,7 +36,7 @@ from saas.control_plane.platform_security import (
 )
 
 ORIGIN = "https://notify.example.test"
-NOW = datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 9, 0, tzinfo=UTC)
 TENANT_ID = UUID("10000000-0000-4000-8000-000000000001")
 TENANT_ACTOR = UUID("10000000-0000-4000-8000-000000000002")
 STAFF_ACTOR = UUID("20000000-0000-4000-8000-000000000002")

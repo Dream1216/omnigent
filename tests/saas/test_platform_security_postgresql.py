@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -533,7 +533,7 @@ def test_real_postgresql_platform_model_budget_concurrency_and_metering_binding(
         connection.exec_driver_sql("SET LOCAL ROLE saas_billing")
 
     service = ModelProviderBudgetAdmissionService(factory)
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
 
     def reserve(tenant_id: UUID, run_id: UUID, operation: str) -> object:
         return service.reserve(

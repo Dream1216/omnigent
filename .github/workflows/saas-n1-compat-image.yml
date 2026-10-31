@@ -83,7 +83,7 @@ env:
 
 jobs:
   verify-candidate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout immutable patch source
@@ -295,7 +295,7 @@ jobs:
           retention-days: 1
 
   verify-postgresql-current:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -344,7 +344,7 @@ jobs:
             tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay
 
   verify-postgresql-n1:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -435,7 +435,7 @@ jobs:
       - verify-postgresql-current
       - verify-postgresql-n1
     environment: production-image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read

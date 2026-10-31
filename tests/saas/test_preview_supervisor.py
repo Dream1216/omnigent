@@ -8,7 +8,7 @@ import stat
 import sys
 import tempfile
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -246,7 +246,7 @@ async def test_supervisor_expiry_revokes_and_terminates_process() -> None:
         # Keep expiry beyond the five-second bounded startup contract. A
         # two-second lease made this acceptance depend on host load and could
         # expire before the fixture had bound its UDS in a full-suite run.
-        expires_at=datetime.now(timezone.utc) + timedelta(seconds=lease_seconds),
+        expires_at=datetime.now(UTC) + timedelta(seconds=lease_seconds),
     )
     with (
         tempfile.TemporaryDirectory(prefix="omnigent-preview-sockets-", dir="/tmp") as sockets,

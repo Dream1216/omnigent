@@ -8,7 +8,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import NoReturn, Protocol, cast
 from urllib.parse import urlsplit
@@ -76,11 +76,11 @@ _RUNNER_AGENT_LOGIN = re.compile(r"^runner_[0-9a-f]{32}_g[1-9][0-9]*$")
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _validate_time(value: datetime) -> None:

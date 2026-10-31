@@ -4,7 +4,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -670,7 +670,7 @@ def test_real_postgresql_registration_resend_rotates_challenge_under_force_rls(
     postgresql_engine: Engine,
 ) -> None:
     suffix = uuid4().hex[:12]
-    now = datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 10, 1, 0, tzinfo=UTC)
     envelopes = VerificationEnvelopeKeyring(
         active_key_id="p0-postgresql-resend-v1",
         keys={"p0-postgresql-resend-v1": b"r" * 32},
@@ -740,7 +740,7 @@ def test_real_postgresql_registration_verify_and_onboarding_e2e(
     postgresql_engine: Engine,
 ) -> None:
     suffix = uuid4().hex[:12]
-    now = datetime(2026, 8, 10, 2, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 10, 2, 0, tzinfo=UTC)
     policy = _policy()
     envelopes = VerificationEnvelopeKeyring(
         active_key_id="p0-postgresql-v1",
@@ -936,7 +936,7 @@ def test_real_postgresql_registration_verify_and_onboarding_e2e(
 def test_real_postgresql_customer_status_is_actor_owned_and_content_blind(
     postgresql_engine: Engine,
 ) -> None:
-    now = datetime.now(timezone.utc) - timedelta(minutes=5)
+    now = datetime.now(UTC) - timedelta(minutes=5)
     first_scope, _ = _create_started_scope(
         postgresql_engine,
         suffix=f"status-a-{uuid4().hex[:8]}",
@@ -1001,7 +1001,7 @@ def test_real_postgresql_dispatcher_quarantines_poison_with_content_blind_receip
     postgresql_engine: Engine,
 ) -> None:
     event_id = uuid4()
-    dispatched_at = datetime.now(timezone.utc)
+    dispatched_at = datetime.now(UTC)
     with postgresql_engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         connection.execute(
@@ -1019,7 +1019,7 @@ def test_real_postgresql_dispatcher_quarantines_poison_with_content_blind_receip
                 "aggregate_key": str(event_id),
                 "idempotency_key": f"postgres-quarantine-{event_id}",
                 "request_hash": sha256(event_id.bytes).hexdigest(),
-                "created_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+                "created_at": datetime(2020, 1, 1, tzinfo=UTC),
             },
         )
 
@@ -1109,7 +1109,7 @@ def test_real_postgresql_dispatcher_cannot_forge_or_skip_quarantine_receipt(
     postgresql_engine: Engine,
 ) -> None:
     direct_id, forged_id = uuid4(), uuid4()
-    future = datetime.now(timezone.utc) + timedelta(days=365)
+    future = datetime.now(UTC) + timedelta(days=365)
     with postgresql_engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
         for event_id in (direct_id, forged_id):
@@ -1143,7 +1143,7 @@ def test_real_postgresql_dispatcher_cannot_forge_or_skip_quarantine_receipt(
             )
     _assert_rls_denied(immutable_source.value)
 
-    terminal_at = datetime.now(timezone.utc)
+    terminal_at = datetime.now(UTC)
     terminal_digest = sha256(b"direct terminal without receipt").hexdigest()
     with pytest.raises(DBAPIError, match="requires one exact receipt") as missing_receipt:
         with postgresql_engine.begin() as connection:
@@ -1200,7 +1200,7 @@ def test_real_postgresql_quarantine_receipt_cannot_create_pg_temp_shadow(
     postgresql_engine: Engine,
 ) -> None:
     event_id = uuid4()
-    terminal_at = datetime.now(timezone.utc)
+    terminal_at = datetime.now(UTC)
     request_hash = sha256(event_id.bytes).hexdigest()
     terminal_digest = sha256(b"pg-temp-shadow-receipt").hexdigest()
     with postgresql_engine.begin() as connection:
@@ -1263,8 +1263,8 @@ def test_real_postgresql_quarantine_receipt_cannot_create_pg_temp_shadow(
 @pytest.mark.parametrize(
     ("retained_column", "retained_value"),
     (
-        ("available_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
-        ("claimed_at", datetime(2030, 1, 1, tzinfo=timezone.utc)),
+        ("available_at", datetime(2030, 1, 1, tzinfo=UTC)),
+        ("claimed_at", datetime(2030, 1, 1, tzinfo=UTC)),
         ("claim_token", uuid4()),
     ),
 )
@@ -1274,7 +1274,7 @@ def test_real_postgresql_quarantine_rejects_retained_dispatch_state(
     retained_value: object,
 ) -> None:
     event_id = uuid4()
-    terminal_at = datetime.now(timezone.utc)
+    terminal_at = datetime.now(UTC)
     terminal_digest = sha256(f"terminal-{retained_column}".encode()).hexdigest()
     with postgresql_engine.begin() as connection:
         connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
@@ -1324,7 +1324,7 @@ def test_real_postgresql_vertical_chain_obeys_onboarding_rls(
     # Keep synthetic stage timestamps behind PostgreSQL's wall clock.  This
     # preserves the causal activated_at <= Run.created_at <= completed_at
     # ordering while still exercising deterministic stage transitions.
-    now = datetime.now(timezone.utc) - timedelta(minutes=3, seconds=10)
+    now = datetime.now(UTC) - timedelta(minutes=3, seconds=10)
     policy = _policy()
     envelopes = VerificationEnvelopeKeyring(
         active_key_id="p0-vertical-postgresql-v1",
@@ -1517,7 +1517,7 @@ def test_real_postgresql_runtime_failure_compensates_exact_scope(
 ) -> None:
     postgresql_engine = isolated_onboarding_engine
     suffix = uuid4().hex[:12]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     scope, onboarding_sessions = _create_started_scope(
         postgresql_engine,
         suffix=suffix,
@@ -1590,7 +1590,7 @@ def test_real_postgresql_runtime_partition_is_bound_to_frozen_placement(
 ) -> None:
     postgresql_engine = isolated_onboarding_engine
     suffix = uuid4().hex[:12]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     scope, onboarding_sessions = _create_started_scope(
         postgresql_engine,
         suffix=f"partition-placement-{suffix}",

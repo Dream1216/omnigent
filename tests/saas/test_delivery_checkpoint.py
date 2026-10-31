@@ -12,7 +12,7 @@ import subprocess
 import tarfile
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
@@ -92,7 +92,7 @@ def checkpoint(worktree_fixture, tmp_path):  # noqa: F811
             ),
         ),
     ).change_set_ids[0]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _configure_worktree_quota(f)
     run = _lease_run(f, change_set_id=change, key="checkpoint-run", now=now)
     lease = _allocate(f, run, change, now=now + timedelta(seconds=2))
@@ -261,7 +261,7 @@ def test_real_mtls_checkpoint_import_object_verification_and_replay(
                 object_ref="oss://test/checkpoint.tar.zst",
                 put_url=SecretStr(upload_endpoint),
                 headers=(),
-                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
                 max_bytes=1024 * 1024,
             )
 

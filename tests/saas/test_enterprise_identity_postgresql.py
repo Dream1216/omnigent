@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import Event
@@ -122,7 +122,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     issued = service.issue_directory(
         _context(actor=owner_id, tenant=tenant_id, space=space_id),
         display_name=f"Corporate IdP {suffix}",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key=f"pc5-directory-{suffix}",
     )
     assert issued.bearer_token is not None
@@ -131,7 +131,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         _context(actor=owner_id, tenant=tenant_id, space=space_id),
         directory_id=issued.id,
         expected_version=1,
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key=f"pc5-directory-rotate-{suffix}",
     )
     assert rotated.bearer_token is not None
@@ -221,7 +221,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
     other_directory = service.issue_directory(
         _context(actor=owner_id, tenant=tenant_id, space=space_id),
         display_name=f"Other IdP {suffix}",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key=f"pc5-other-directory-{suffix}",
         provider_type="okta",
         attribute_mapping={
@@ -639,7 +639,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
                 {"directory": issued.id},
             )
 
-    overlap_now = datetime.now(timezone.utc)
+    overlap_now = datetime.now(UTC)
     overlap = service.schedule_directory_credential_rotation(
         _context(actor=owner_id, tenant=tenant_id, space=space_id),
         directory_id=issued.id,
@@ -697,7 +697,7 @@ def test_real_postgresql_scim_token_rls_event_immutability_and_deprovision_order
         _context(actor=owner_id, tenant=tenant_id, space=space_id),
         directory_id=issued.id,
         expected_version=3,
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key=f"pc5-directory-disable-{suffix}",
     )
     assert disabled.status == "disabled"

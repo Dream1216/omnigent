@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -337,7 +337,7 @@ def test_weighted_fair_claim_prevents_hot_tenant_starvation_and_scopes_capabilit
     scheduling_fixture: SchedulingFixture,
 ) -> None:
     fixture = scheduling_fixture
-    now = datetime(2026, 8, 4, 10, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 4, 10, 0, tzinfo=UTC)
     pool_id = _pool(fixture)
     for scope in fixture.scopes:
         fixture.scheduling.configure_tenant_share(
@@ -497,7 +497,7 @@ def test_runner_compatibility_stale_heartbeat_and_dispatch_dead_letter(
     scheduling_fixture: SchedulingFixture,
 ) -> None:
     fixture = scheduling_fixture
-    now = datetime(2026, 8, 4, 11, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 4, 11, 0, tzinfo=UTC)
     pool_id = _pool(fixture)
     scope = fixture.scopes[0]
     fixture.scheduling.configure_tenant_share(
@@ -599,7 +599,7 @@ def test_ordinary_runner_registration_cannot_bypass_promoted_fleet(
 ) -> None:
     fixture = scheduling_fixture
     pool_id = _pool(fixture)
-    now = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
     with fixture.factory.begin() as db:
         db.add(
             ControlPlaneOutboxEvent(
@@ -641,7 +641,7 @@ def test_recovery_accepts_retired_bound_profile_and_egress(
 ) -> None:
     fixture = scheduling_fixture
     scope = fixture.scopes[0]
-    now = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
     pool_id = _pool(fixture)
     fixture.scheduling.configure_tenant_share(
         tenant_id=scope.tenant_id,
@@ -762,7 +762,7 @@ def test_claim_quarantines_invalid_pending_dispatch_and_continues(
 ) -> None:
     fixture = scheduling_fixture
     scope = fixture.scopes[0]
-    now = datetime(2026, 8, 4, 13, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 4, 13, 0, tzinfo=UTC)
     pool_id = _pool(fixture)
     fixture.scheduling.configure_tenant_share(
         tenant_id=scope.tenant_id,

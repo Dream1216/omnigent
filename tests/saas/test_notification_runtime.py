@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
@@ -27,7 +27,7 @@ from saas.notification_runtime import (
     InAppNotificationProvider,
 )
 
-NOW = datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 13, 0, tzinfo=UTC)
 DIGESTER = NotificationErrorDigester("runtime-key", b"r" * 32)
 
 

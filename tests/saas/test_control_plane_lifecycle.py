@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -27,7 +27,7 @@ from saas.control_plane import (
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
 
-NOW = datetime(2026, 8, 4, 3, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 4, 3, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)

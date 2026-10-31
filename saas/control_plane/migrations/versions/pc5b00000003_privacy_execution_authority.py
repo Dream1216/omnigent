@@ -7,7 +7,7 @@ Revises: pc5b00000002
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 from uuid import uuid4
@@ -697,7 +697,7 @@ def _time(value: object) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
+        return parsed.replace(tzinfo=UTC)
     return parsed
 
 

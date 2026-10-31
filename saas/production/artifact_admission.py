@@ -7,7 +7,7 @@ import json
 import os
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -114,7 +114,7 @@ def run_artifact_admission(
     client: Any,
     *,
     nonce_factory: Callable[[], str] = lambda: uuid4().hex,
-    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> dict[str, object]:
     """Prove create/read/hash and an accepted logical delete without listing."""
 
@@ -149,7 +149,7 @@ def run_artifact_admission(
     for name in _KEY_SPACES:
         _probe_object(client, bucket=bucket, key=object_keys[name], payload=payload)
 
-    completed_at = now().astimezone(timezone.utc).replace(microsecond=0)
+    completed_at = now().astimezone(UTC).replace(microsecond=0)
     return {
         "schema_version": 1,
         "status": "pass",

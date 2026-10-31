@@ -1,24 +1,24 @@
 diff --git a/omnigent/cli_config.py b/omnigent/cli_config.py
-index 4c651992d..849cdffb3 100644
+index 8b27e392d84c8a55783c5da7e92353f836deea40..7d86641a06565767d2b15fcd5fcae831cfea6555 100644
 --- a/omnigent/cli_config.py
 +++ b/omnigent/cli_config.py
-@@ -2741,2 +2741,2 @@ def _print_kimi_auth_help() -> None:
+@@ -2838,2 +2838,2 @@ def _print_kimi_auth_help() -> None:
 -        "    • Omnigent stores no kimi credential and cannot thread one per "
 -        "spawn — configure it once in the kimi CLI\n"
 +        "    • Managed SaaS can also supply an Omnigent platform Provider "
 +        "per session; its short-lived token is never written to this config\n"
-@@ -2776 +2775,0 @@ def _manage_kimi_harness() -> None:
+@@ -2873 +2872,0 @@ def _manage_kimi_harness() -> None:
 -        harness_install_spec,
-@@ -2777,0 +2777 @@ def _manage_kimi_harness() -> None:
+@@ -2874,0 +2874 @@ def _manage_kimi_harness() -> None:
 +        install_harness_cli,
-@@ -2782,4 +2782,2 @@ def _manage_kimi_harness() -> None:
+@@ -2879,4 +2879,2 @@ def _manage_kimi_harness() -> None:
 -    # Gate on the CLI. Kimi ships a single binary via a curl installer (not
 -    # npm), so there's no in-process auto-install — name the command and let
 -    # the user run it, then re-open. Mirrors how ``harness_setup_hint`` treats
 -    # the other curl-installed CLI (cursor-agent).
 +    # Gate on the CLI. Kimi now publishes an official npm package, so setup can
 +    # install it directly instead of sending the user to a mutable curl script.
-@@ -2787,6 +2785,5 @@ def _manage_kimi_harness() -> None:
+@@ -2884,6 +2882,5 @@ def _manage_kimi_harness() -> None:
 -        spec = harness_install_spec(KIMI_KEY)
 -        hint = (spec.install_hint if spec else None) or "see Kimi Code docs"
 -        console.print(
@@ -30,7 +30,7 @@ index 4c651992d..849cdffb3 100644
 +            ["Yes — install official npm package", "No — back to harnesses"],
 +            default=0,
 +            clear_on_exit=True,
-@@ -2794 +2791,9 @@ def _manage_kimi_harness() -> None:
+@@ -2891 +2888,9 @@ def _manage_kimi_harness() -> None:
 -        return
 +        if choice != 0:
 +            return
@@ -42,7 +42,7 @@ index 4c651992d..849cdffb3 100644
 +            )
 +            return
 diff --git a/omnigent/db/utils.py b/omnigent/db/utils.py
-index b30774e9d..24a30fd98 100644
+index f30e64df2f625e3a901e07bdeb2cad10227536f1..a0029166e2a800013292e7507bb6c0a7a3e34d7c 100644
 --- a/omnigent/db/utils.py
 +++ b/omnigent/db/utils.py
 @@ -40,0 +41,18 @@ ManagedSessionMaker = Callable[[], AbstractContextManager[Session]]
@@ -80,7 +80,7 @@ index b30774e9d..24a30fd98 100644
 +                if initializer is not None:
 +                    initializer(session)
 diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
-index 970fa7eb5..04cd40c0e 100644
+index 970fa7eb5427191e17cbb6afd53b4cee5377ab07..04cd40c0e9cb5638f7256c677d5ef953a6458e3f 100644
 --- a/omnigent/llms/_usage_observer.py
 +++ b/omnigent/llms/_usage_observer.py
 @@ -82,0 +83 @@ class _UsageBucket(_ModelUsage):

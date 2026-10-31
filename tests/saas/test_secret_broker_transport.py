@@ -6,7 +6,7 @@ import socket
 import ssl
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -42,7 +42,7 @@ def _write_private_key(path: Path, key: ec.EllipticCurvePrivateKey) -> None:
 
 
 def _certificate_fixture(root: Path, runner_ids: tuple[UUID, ...]) -> dict[str, _CertificateFiles]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Omnigent Test CA")])
     ca_certificate = (

@@ -7,7 +7,7 @@ import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
@@ -399,7 +399,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
     schema_owner = f"saas_test_runner_owner_{suffix}"
     external_public_database_privileges: dict[str, frozenset[str]] = {}
     password = f"Runner-{uuid4().hex}"
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     actor_id = uuid4()
     tenant_id = uuid4()
     space_id = uuid4()
@@ -2585,7 +2585,7 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
                         owner_engine,
                         application_name=route_application_name,
                     )
-                    time.sleep(1.0)
+                    time.sleep(1.0)  # custom-lint: disable=sleep-then-assert -- cross row TTL
                     held_transaction.rollback()
                     with pytest.raises(PreviewExecutionControlPlaneError) as expired_ready:
                         waiting_ready.result(timeout=5)

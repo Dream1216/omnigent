@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -101,7 +101,7 @@ def test_artifact_admission_proves_crud_hash_and_logical_delete(tmp_path: Path) 
         _config(tmp_path),
         client,
         nonce_factory=lambda: "a" * 32,
-        now=lambda: datetime(2026, 9, 1, tzinfo=timezone.utc),
+        now=lambda: datetime(2026, 9, 1, tzinfo=UTC),
     )
 
     assert client.calls == ["put", "head", "get", "delete"] * 4
@@ -150,7 +150,7 @@ def test_real_admission_receipt_is_accepted_by_server_loader(tmp_path: Path) -> 
         config,
         _Client(),
         nonce_factory=lambda: "d" * 32,
-        now=lambda: datetime(2026, 9, 1, tzinfo=timezone.utc),
+        now=lambda: datetime(2026, 9, 1, tzinfo=UTC),
     )
     path = tmp_path / "artifact-admission-receipt.json"
     path.write_text(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import subprocess
 from collections.abc import Mapping
@@ -11,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from saas.production import legacy_stack
 from saas.production.admission import validate_evidence_admission
 from saas.production.business import load_business_evidence, validate_business_readiness
 from saas.production.deletion import load_deletion_evidence, validate_deletion_readiness
@@ -82,7 +84,110 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _evidence_only_path(value: str, repo: Path | None = None) -> bool:
+def _legacy_stack_evidence_only(repo: Path, product_revision: str) -> bool:
+    """Permit only the current product's typed rollback row, not new trust inputs."""
+
+    def unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("typed stack evidence has duplicate JSON keys")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> None:
+        raise ValueError("typed stack evidence has a non-finite JSON constant")
+
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("typed stack evidence has a non-finite JSON number")
+        return number
+
+    def strict_object(raw: str) -> dict[str, Any]:
+        value = json.loads(
+            raw,
+            object_pairs_hook=unique_fields,
+            parse_constant=reject_constant,
+            parse_float=finite_float,
+        )
+        if not isinstance(value, dict):
+            raise ValueError("typed stack evidence must be a JSON object")
+        return value
+
+    def current_object(relative: str) -> dict[str, Any]:
+        load_release_evidence(repo, relative)
+        return strict_object((repo / relative).read_text(encoding="utf-8"))
+
+    try:
+        envelope = current_object("saas/acceptance/p0-production-image-evidence.json")
+        if (
+            envelope is None
+            or set(envelope) != {"kind", "product_revision", "release_evidence", "legacy_fallback"}
+            or envelope["kind"] != legacy_stack.VARIANT
+            or envelope["product_revision"] != product_revision
+            or not isinstance(envelope["release_evidence"], dict)
+            or envelope["release_evidence"].get("product_revision") != product_revision
+        ):
+            return False
+        fallback = envelope["legacy_fallback"]
+        if not isinstance(fallback, dict) or set(fallback) != {
+            "stack_id",
+            "publication_ids",
+            "original_publication_ids",
+            "full_stack_rollback",
+        }:
+            return False
+        policy = current_object("saas/production/deployment-policy.json")
+        if policy is None:
+            return False
+        current = current_object(legacy_stack.STACK_REGISTRY)
+        row = legacy_stack.registered_stack(repo, fallback["stack_id"], policy)
+        body = fallback["full_stack_rollback"]
+        if (
+            fallback["publication_ids"] != row["publication_ids"]
+            or fallback["original_publication_ids"] != row["original_publication_ids"]
+            or not isinstance(body, dict)
+            or body.get("kind") != "production_legacy_full_stack_rollback/v2"
+            or body.get("product_revision") != product_revision
+            or body.get("result") != "passed"
+            or legacy_stack.publisher.digest(body) != row["rollback_sha256"]
+        ):
+            return False
+        original = _git(repo, "show", f"{product_revision}:{legacy_stack.STACK_REGISTRY}")
+        if original.returncode != 0:
+            return False
+        previous = strict_object(original.stdout)
+        if (
+            not isinstance(previous, dict)
+            or set(previous) != {"schema_version", "stacks"}
+            or type(previous["schema_version"]) is not int
+            or previous["schema_version"] != 1
+            or not isinstance(previous["stacks"], dict)
+            or current is None
+        ):
+            return False
+        identifier = fallback["stack_id"]
+        prior_rows = {key: value for key, value in previous["stacks"].items() if key != identifier}
+        current_rows = {
+            key: value for key, value in current["stacks"].items() if key != identifier
+        }
+        return legacy_stack.publisher.digest(prior_rows) == legacy_stack.publisher.digest(
+            current_rows
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def _evidence_only_path(
+    value: str, repo: Path | None = None, *, product_revision: str | None = None
+) -> bool:
+    if value == legacy_stack.STACK_REGISTRY:
+        return (
+            repo is not None
+            and product_revision is not None
+            and _legacy_stack_evidence_only(repo, product_revision)
+        )
     if value.startswith(_REVIEW_RECORD_DIRECTORY + "/"):
         return repo is not None and governed_review_record(repo, value) is not None
     return value in _EVIDENCE_ONLY_EXACT_PATHS or (
@@ -146,7 +251,7 @@ def validate_candidate_revision(value: str | None, repo: Path | None = None) -> 
     non_evidence_paths = sorted(
         path
         for path in changed.stdout.splitlines()
-        if path and not _evidence_only_path(path, repo)
+        if path and not _evidence_only_path(path, repo, product_revision=value)
     )
     if non_evidence_paths:
         blockers.append(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -233,7 +233,7 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
         app.include_router(router, prefix=prefix, tags=tags)
     integration.install_middleware(app)
     client = TestClient(app)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     issued = lifecycle.issue_auth_session(
         user_id=ids["owner"],
         authn_method="password",
@@ -394,7 +394,7 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
     approver_issued = lifecycle.issue_auth_session(
         user_id=ids["member"],
         authn_method="password",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     client.cookies.set("saas_session", approver_issued.token)
     approver_headers = {
@@ -520,7 +520,7 @@ def test_enterprise_admin_http_is_cookie_csrf_bound_paginated_and_action_scoped(
     refreshed_owner = lifecycle.issue_auth_session(
         user_id=ids["owner"],
         authn_method="password",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     client.cookies.set("saas_session", refreshed_owner.token)
     requested = client.get(f"/saas/tenants/{ids['tenant']}/enterprise-access-preflights/mine")

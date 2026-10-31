@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
@@ -39,7 +39,7 @@ from saas.control_plane.runtime_provider_journal import (
 
 _JOURNAL_ROLE = "saas_runtime_provider_journal"
 _TABLE = "saas_runtime_provider_operation_journal"
-_LEGACY_SEED_TIME = datetime(2026, 8, 25, 4, 0, tzinfo=timezone.utc)
+_LEGACY_SEED_TIME = datetime(2026, 8, 25, 4, 0, tzinfo=UTC)
 
 
 class _ProviderMustNotRun:
@@ -457,7 +457,7 @@ def _response(
         result_hash=canonical_sha256(attributes),
         provider_request_id=provider_request_id,
         provider_resource_id="runtime-project-42",
-        observed_at=datetime(2026, 8, 25, 8, 0, tzinfo=timezone.utc),
+        observed_at=datetime(2026, 8, 25, 8, 0, tzinfo=UTC),
         receipt_hash="0" * 64,
         signature_key_id="runtime-receipt-key-1",
         signature_hex="d" * 64,
@@ -691,9 +691,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
                         "to_status": migration_event.to_status,
                         "facts_hash": migration_event.facts_hash,
                         "previous_hash": migration_event.previous_hash,
-                        "occurred_at": migration_event.occurred_at.astimezone(
-                            timezone.utc
-                        ).isoformat(),
+                        "occurred_at": migration_event.occurred_at.astimezone(UTC).isoformat(),
                     }
                 )
             affected_ids = [

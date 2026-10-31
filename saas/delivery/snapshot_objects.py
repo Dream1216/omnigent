@@ -17,7 +17,7 @@ import secrets
 import stat
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -357,7 +357,7 @@ class SnapshotObjectAuthority:
             "put_url": url,
             "headers": [{"name": k, "value": v} for k, v in headers.items()],
             "expires_at": (
-                datetime.now(timezone.utc) + timedelta(seconds=self.settings.ttl_seconds)
+                datetime.now(UTC) + timedelta(seconds=self.settings.ttl_seconds)
             ).isoformat(),
             "max_bytes": request.max_bytes,
         }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -73,7 +73,7 @@ _ALLOWED_TRANSITIONS = {
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _validate_time(value: datetime) -> None:
@@ -1316,7 +1316,7 @@ class ExecutionControlPlane:
             raise ExecutionControlPlaneError("stale_fence", "worker lease or fence is stale")
         lease_expires_at = run.lease_expires_at
         if lease_expires_at is not None and lease_expires_at.tzinfo is None:
-            lease_expires_at = lease_expires_at.replace(tzinfo=timezone.utc)
+            lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
         if lease_expires_at is None or lease_expires_at <= checked_at:
             raise ExecutionControlPlaneError("lease_expired", "worker lease has expired")
 

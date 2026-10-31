@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -73,7 +73,7 @@ def _service(clock: _Clock, *, active_key_id: str = "v2") -> ContextSnapshotServ
 
 
 def test_snapshot_is_opaque_replica_verifiable_and_key_rotatable() -> None:
-    clock = _Clock(datetime(2026, 8, 4, 8, 0, tzinfo=timezone.utc))
+    clock = _Clock(datetime(2026, 8, 4, 8, 0, tzinfo=UTC))
     session, runtime = _facts(clock)
     old_replica = _service(clock, active_key_id="v1")
     issued = old_replica.issue(
@@ -98,7 +98,7 @@ def test_snapshot_is_opaque_replica_verifiable_and_key_rotatable() -> None:
 
 
 def test_snapshot_rejects_tamper_other_session_and_expiry() -> None:
-    clock = _Clock(datetime(2026, 8, 4, 8, 0, tzinfo=timezone.utc))
+    clock = _Clock(datetime(2026, 8, 4, 8, 0, tzinfo=UTC))
     session, runtime = _facts(clock)
     service = _service(clock)
     issued = service.issue(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -24,7 +24,7 @@ from saas.scripts import transition_local_platform_operator as transition_script
 
 ORIGIN = "https://staff.example.test"
 AUDIENCE = "omnigent-platform-admin"
-NOW = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
 
 def _environment() -> dict[str, str]:

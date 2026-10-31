@@ -19,7 +19,7 @@ import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
@@ -378,7 +378,7 @@ class PlatformModelPrice:
     def rates_at(self, at: datetime) -> tuple[int, int, int]:
         """Resolve the pinned DeepSeek weekday UTC peak-window contract."""
 
-        normalized = at.astimezone(timezone.utc)
+        normalized = at.astimezone(UTC)
         peak = normalized.weekday() < 5 and (1 <= normalized.hour < 4 or 6 <= normalized.hour < 10)
         if peak:
             return (
@@ -499,7 +499,7 @@ class PlatformModelGateway:
             lambda: httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0), trust_env=False)
         )
         self._readiness_check = readiness_check
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._provider_failures = _ProviderFailures(retry_clock or time.monotonic)
 
     def require_ready(self) -> None:

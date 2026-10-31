@@ -8,7 +8,7 @@ import socket
 import ssl
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -309,7 +309,7 @@ def _certificate_material(
     _IssuedCertificate,
     x509.Certificate,
 ]:
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Gateway Health CA")])
     ca = (

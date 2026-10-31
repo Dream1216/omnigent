@@ -16,7 +16,7 @@ import json
 import os
 import sys
 from collections.abc import Callable, Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import BinaryIO
 
@@ -182,7 +182,7 @@ def run_platform_smtp_bootstrap(
         cipher = cipher_loader(environ)
         if cipher is None:
             raise PlatformSmtpBootstrapError("secret_cipher_unavailable")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         authorization = PlatformAuthorizationService(sessions)
         actor = authorization.bootstrap_initial_staff_pair(
             operator=InitialPlatformStaffIdentity(

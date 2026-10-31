@@ -13,7 +13,7 @@ import base64
 import binascii
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal, NoReturn, Protocol, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -2248,8 +2248,8 @@ def _limit(value: int, *, maximum: int = 100) -> None:
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _raise_source(error: LifecycleError | PlatformSecurityError) -> NoReturn:

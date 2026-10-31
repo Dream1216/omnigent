@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -33,7 +33,7 @@ from saas.production.runner_control import RunnerPreviewTunnelRegistration
 
 
 def _ca(root: Path) -> Path:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Preview Runner CA")])
     certificate = (
@@ -92,7 +92,7 @@ def _registration(
         server_name="owner.preview.svc.cluster.local",
         audience="owner.preview.svc.cluster.local",
         registration_token=token,
-        expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+        expires_at=datetime.now(UTC) + timedelta(seconds=60),
     )
 
 

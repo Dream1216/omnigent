@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -34,7 +34,7 @@ from saas.control_plane.notification_models import (
 from saas.control_plane.notification_templates import NotificationTemplateBootstrap
 from saas.control_plane.platform_models import PlatformStaffPrincipalRecord
 
-NOW = datetime(2026, 8, 10, 11, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 11, 0, tzinfo=UTC)
 
 
 class SchedulerSource:

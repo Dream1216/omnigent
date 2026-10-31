@@ -5,7 +5,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -113,7 +113,7 @@ class _BrowserStaffSessions:
 
 def _write_certificate(directory: Path) -> tuple[Path, Path]:
     key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
     certificate = (
         x509.CertificateBuilder()

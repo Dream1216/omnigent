@@ -1169,7 +1169,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
                     database_cluster_ref="same-db",
                     object_store_ref="same-objects",
                     kms_key_ref="same-kms",
-                    official_schema_revision="nf12ab34cd56",
+                    official_schema_revision="d0a1f879a01d",
                     capacity_class="team",
                     status="active",
                 )
@@ -1185,7 +1185,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
                     runtime_version=VERSION,
                     physical_partition_key=str(index),
                     placement_generation=11,
-                    source_revision="3db749d784ff044304473939acaae3a65c0fec61",
+                    source_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
                     adapter_contract_version="0.2.0",
                     status="active",
                 )
@@ -1218,7 +1218,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
         complete_gold = None
         if old_gold is not None:
             verified = migration._verify_state(plan, engines)
-            assert (verified.official_head, verified.saas_head) == ("nf12ab34cd56", "p0s000000018")
+            assert (verified.official_head, verified.saas_head) == ("d0a1f879a01d", "p0s000000018")
             projection = _source_projection(plan, engines)
             key = (identity["server_major"], verified.official_head, verified.saas_head)
             inventory_anchor = migration._project_identity_guard_inventory_predecessor(
@@ -1305,7 +1305,7 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None):
             runtime_observation_ref="fixture://provider-not-qualified",
             runtime_observation_sha256="4" * 64,
             direction="to_t",
-            source_official_schema_revision="nf12ab34cd56",
+            source_official_schema_revision="d0a1f879a01d",
         )
         control = runtime.RuntimePlacementMaintenance(
             plan=plan,
@@ -1692,8 +1692,8 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
         target = replace(
             target,
             runtime_version=VERSION,
-            upstream_revision="3db749d784ff044304473939acaae3a65c0fec61",
-            official_schema_revision="nf12ab34cd56",
+            upstream_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
+            official_schema_revision="d0a1f879a01d",
         )
 
         def fixture_transition(parent, child, before):
@@ -1704,7 +1704,7 @@ def assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gol
                     official.exec_driver_sql(
                         "SELECT version_num FROM public.alembic_version"
                     ).scalar_one()
-                    == "nf12ab34cd56"
+                    == "d0a1f879a01d"
                 )
 
         def fixture_pair(parent, state):

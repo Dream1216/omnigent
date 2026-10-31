@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -23,7 +23,7 @@ from saas.public_api_contract import (
 )
 from saas.scripts.dump_public_openapi import serialized_document
 
-_NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
 _CURSOR_FILTERS = {"status": ["queued", "running"]}
 
 
@@ -98,7 +98,7 @@ def test_cursor_rejects_weak_keys_invalid_json_and_naive_times() -> None:
 
 def test_version_headers_are_explicit_and_deprecation_requires_a_safe_window() -> None:
     assert ApiVersionPolicy().headers() == {"X-Omnigent-API-Version": PUBLIC_API_VERSION}
-    sunset = datetime(2027, 2, 10, tzinfo=timezone.utc)
+    sunset = datetime(2027, 2, 10, tzinfo=UTC)
     assert ApiVersionPolicy(
         deprecated=True,
         sunset_at=sunset,

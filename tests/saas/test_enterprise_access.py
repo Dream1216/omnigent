@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -36,7 +36,7 @@ from saas.control_plane import (
     TenantMembership,
 )
 
-_NOW = datetime(2026, 8, 5, 13, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 8, 5, 13, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,7 +440,7 @@ def test_enterprise_destructive_preflights_require_fresh_separated_approval_and_
         persisted = db.get(EnterpriseAccessPreflightRecord, role_preflight.preflight_id)
         assert persisted is not None
         assert persisted.status == "executed"
-        assert persisted.executed_at.replace(tzinfo=timezone.utc) == _NOW
+        assert persisted.executed_at.replace(tzinfo=UTC) == _NOW
 
 
 def test_enterprise_preflight_inboxes_are_requester_scope_and_expiry_bounded(

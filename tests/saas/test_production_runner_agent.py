@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -22,7 +22,7 @@ LEASE = RunnerControlClientLease(
     fence_token=7,
     dispatch_generation=3,
     failure_domain="cn-east-1a",
-    expires_at=datetime.now(timezone.utc) + timedelta(seconds=45),
+    expires_at=datetime.now(UTC) + timedelta(seconds=45),
     capability_id=UUID("30000000-0000-4000-8000-000000000003"),
     capability_token="cap_" + "c" * 60,
 )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from hashlib import sha256
 from typing import cast
@@ -102,14 +102,14 @@ class _RunAuthority:
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _time(value: datetime, field: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise BillingMeteringError("metering_time_invalid", f"{field} must be timezone-aware")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _text(value: str, field: str, maximum: int) -> str:
@@ -194,7 +194,7 @@ class BillingMeteringAuthority:
         model_budget_reservation_id: UUID | None = None,
         now: datetime | None = None,
     ) -> MeteredUsage:
-        checked_at = _time(now or datetime.now(timezone.utc), "now")
+        checked_at = _time(now or datetime.now(UTC), "now")
         happened = _time(occurred_at, "occurred_at")
         fingerprint = certificate_fingerprint_sha256.strip().lower()
         if _HEX_SHA256.fullmatch(fingerprint) is None:

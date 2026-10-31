@@ -10,7 +10,7 @@ import stat
 import sys
 import tempfile
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
@@ -83,7 +83,7 @@ def _route(*, generation: int = 4, opaque_key: str = "pvr_abc123") -> PreviewRou
             "user-agent": "preview-contract-test",
         },
         response_headers={"Content-Security-Policy": "sandbox"},
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
 
 

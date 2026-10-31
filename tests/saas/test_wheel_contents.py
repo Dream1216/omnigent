@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 from saas.scripts.check_wheel_contents import REQUIRED_WHEEL_PATHS, find_missing_paths
 

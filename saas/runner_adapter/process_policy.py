@@ -35,6 +35,8 @@ from omnigent.host.runner_zygote import ZygoteRunnerProc
 from omnigent.process_logging import env_truthy
 from omnigent.runner._zygote import ZYGOTE_ENABLED_ENV_VAR
 from omnigent.runner.identity import RUNNER_ID_ENV_VAR, token_bound_runner_id
+from omnigent.server.feature_flags import FEATURES_ENV_VAR, resolve_feature_flags
+from saas.production.release_features import DEFERRED_FEATURES, managed_feature_environment
 from saas.runner_adapter.metering import (
     MANAGED_METERING_ENVELOPE_ENV_VAR,
     ManagedMeteringError,
@@ -116,6 +118,7 @@ def build_managed_host_environment(base: Mapping[str, str]) -> dict[str, str]:
     # Canonicalize every false spelling to the exact value used in deployment
     # evidence and ensure the upstream Host selects its direct-Popen path.
     environment[ZYGOTE_ENABLED_ENV_VAR] = _CANONICAL_ZYGOTE_DISABLED
+    environment[FEATURES_ENV_VAR] = managed_feature_environment(base)
     environment.pop(RUNNER_ENV_PASSTHROUGH_ENV_VAR, None)
     for name in HARNESS_CREDENTIAL_ENV_VARS:
         if not environment.get(name, "").strip():
@@ -136,6 +139,14 @@ def require_managed_host_environment(environment: Mapping[str, str]) -> None:
         raise ManagedRunnerProcessPolicyError(
             "managed_runner_ambient_credentials",
             "managed Host must receive Run and Tool credentials only from the Secret Broker",
+        )
+    if (
+        FEATURES_ENV_VAR not in environment
+        or resolve_feature_flags(environment).enabled_features & DEFERRED_FEATURES
+    ):
+        raise ManagedRunnerProcessPolicyError(
+            "managed_runner_release_features",
+            "managed Host must carry the explicit SaaS release-feature snapshot",
         )
 
 

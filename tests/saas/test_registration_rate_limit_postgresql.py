@@ -570,7 +570,7 @@ def test_same_subject_contention_waits_past_policy_lock_timeout(
         with ThreadPoolExecutor(max_workers=1) as workers:
             future = workers.submit(_consume_result, limiter, subject)
             assert consume_started.wait(timeout=3)
-            sleep(0.35)
+            sleep(0.35)  # custom-lint: disable=sleep-then-assert -- subject lock timeout
             transaction.commit()
             assert future.result(timeout=3) == "allowed"
     finally:
@@ -633,7 +633,7 @@ def test_caller_transaction_holds_same_subject_quota_lock_until_commit(
         try:
             second = workers.submit(_consume_result, limiter, subject)
             assert second_consume_started.wait(timeout=3)
-            sleep(0.35)
+            sleep(0.35)  # custom-lint: disable=sleep-then-assert -- subject lock timeout
             assert not second.done()
             release_first_transaction.set()
             assert first.result(timeout=3) == "allowed"
@@ -706,7 +706,7 @@ def test_same_subject_wait_refreshes_database_clock_before_window_decision(
         with ThreadPoolExecutor(max_workers=1) as workers:
             future = workers.submit(_consume_result, limiter, subject)
             assert consume_started.wait(timeout=3)
-            sleep(0.75)
+            sleep(0.75)  # custom-lint: disable=sleep-then-assert -- cross rate-limit window
             transaction.commit()
             assert future.result(timeout=3) == "allowed"
     finally:

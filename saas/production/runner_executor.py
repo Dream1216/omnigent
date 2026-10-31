@@ -14,7 +14,7 @@ from concurrent.futures import Future
 from configparser import Error as ConfigParserError
 from configparser import RawConfigParser
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from queue import Full, Queue
@@ -2178,7 +2178,7 @@ class ProductionHostIsolationExecutor:
             dispatch = database.get(RunDispatchRecord, lease.run_id)
             expires_at = None if run is None else run.lease_expires_at
             if expires_at is not None and expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
+                expires_at = expires_at.replace(tzinfo=UTC)
             if (
                 run is None
                 or dispatch is None
@@ -2191,7 +2191,7 @@ class ProductionHostIsolationExecutor:
                 or run.lease_token != lease.lease_token
                 or run.fence_token != envelope.fence_token
                 or expires_at is None
-                or expires_at <= datetime.now(timezone.utc)
+                or expires_at <= datetime.now(UTC)
                 or run.input.get("change_set_id") != str(envelope.change_set_id)
                 or dispatch.status != "leased"
                 or dispatch.selected_runner_id != envelope.runner_id
@@ -2476,8 +2476,8 @@ class ProductionHostIsolationExecutor:
                     "Worktree heartbeat returned no authoritative expiry",
                 )
             if renewed_until.tzinfo is None:
-                renewed_until = renewed_until.replace(tzinfo=timezone.utc)
-            if renewed_until <= datetime.now(timezone.utc) + timedelta(seconds=safety_seconds):
+                renewed_until = renewed_until.replace(tzinfo=UTC)
+            if renewed_until <= datetime.now(UTC) + timedelta(seconds=safety_seconds):
                 await self._lose_worktree_lease(active)
                 raise RunnerControlError(
                     "runner_worktree_heartbeat_unsafe",
@@ -2524,8 +2524,8 @@ class ProductionHostIsolationExecutor:
                 current = active.worktree_lease
             expires_at = current.expires_at
             if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-            remaining = (expires_at - datetime.now(timezone.utc)).total_seconds()
+                expires_at = expires_at.replace(tzinfo=UTC)
+            remaining = (expires_at - datetime.now(UTC)).total_seconds()
             if remaining <= 0:
                 await self._lose_worktree_lease(active)
                 raise RunnerControlError(
@@ -2593,8 +2593,8 @@ class ProductionHostIsolationExecutor:
         try:
             current_expiry = active.worktree_lease.expires_at
             if current_expiry.tzinfo is None:
-                current_expiry = current_expiry.replace(tzinfo=timezone.utc)
-            remaining = (current_expiry - datetime.now(timezone.utc)).total_seconds()
+                current_expiry = current_expiry.replace(tzinfo=UTC)
+            remaining = (current_expiry - datetime.now(UTC)).total_seconds()
             safety_seconds = min(
                 self._worktree_heartbeat_safety_seconds,
                 max(0.2, remaining / 3),
@@ -2801,8 +2801,8 @@ class ProductionHostIsolationExecutor:
             # launch on a lease that expired or was fenced during preparation.
             current_expiry = active.worktree_lease.expires_at
             if current_expiry.tzinfo is None:
-                current_expiry = current_expiry.replace(tzinfo=timezone.utc)
-            remaining = (current_expiry - datetime.now(timezone.utc)).total_seconds()
+                current_expiry = current_expiry.replace(tzinfo=UTC)
+            remaining = (current_expiry - datetime.now(UTC)).total_seconds()
             safety_seconds = min(
                 self._worktree_heartbeat_safety_seconds,
                 max(0.2, remaining / 3),
@@ -2931,8 +2931,8 @@ class ProductionHostIsolationExecutor:
             active.finalizing = True
         current_expiry = active.worktree_lease.expires_at
         if current_expiry.tzinfo is None:
-            current_expiry = current_expiry.replace(tzinfo=timezone.utc)
-        remaining = (current_expiry - datetime.now(timezone.utc)).total_seconds()
+            current_expiry = current_expiry.replace(tzinfo=UTC)
+        remaining = (current_expiry - datetime.now(UTC)).total_seconds()
         safety_seconds = min(
             self._worktree_heartbeat_safety_seconds,
             max(0.2, remaining / 3),
@@ -3011,8 +3011,8 @@ class ProductionHostIsolationExecutor:
             )
         current_expiry = active.worktree_lease.expires_at
         if current_expiry.tzinfo is None:
-            current_expiry = current_expiry.replace(tzinfo=timezone.utc)
-        remaining = (current_expiry - datetime.now(timezone.utc)).total_seconds()
+            current_expiry = current_expiry.replace(tzinfo=UTC)
+        remaining = (current_expiry - datetime.now(UTC)).total_seconds()
         safety_seconds = min(
             self._worktree_heartbeat_safety_seconds,
             max(0.2, remaining / 3),

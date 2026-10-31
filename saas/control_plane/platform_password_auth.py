@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -43,11 +43,11 @@ _LOCAL_OPERATOR_TRANSITION_LOCK = 0x4F4D4E4953544C50
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _comparable(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def normalize_staff_username(username: str) -> str:

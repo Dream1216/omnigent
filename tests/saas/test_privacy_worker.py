@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -34,7 +34,7 @@ from saas.privacy_worker import (
     verify_privacy_worker_database_role,
 )
 
-NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
 TARGET_ID = uuid4()
 MANIFEST_ID = uuid4()
 WORK_ID = uuid4()
@@ -115,7 +115,7 @@ class _IdentityProvider:
 class _ScriptedScopeProvider:
     def __init__(
         self,
-        outcomes: list[PrivacyExecutionScope | None | Exception],
+        outcomes: list[PrivacyExecutionScope | Exception | None],
         *,
         stop: threading.Event | None = None,
     ) -> None:

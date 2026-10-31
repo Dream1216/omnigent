@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Literal, cast
 from uuid import UUID, uuid4, uuid5
@@ -80,17 +80,13 @@ _RETAINED_DISPOSITIONS = frozenset(
 def _utc_input(value: datetime, field: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise PlatformSecurityError("platform_time_invalid", f"{field} must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _db_utc(value: datetime) -> datetime:
     """SQLite loses timezone metadata; persisted timestamps are defined as UTC."""
 
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _digest_text(value: str) -> str:
@@ -941,7 +937,7 @@ class PrivacyExecutionService:
             )
 
     def _at(self, value: datetime | None) -> datetime:
-        return _utc_input(value or datetime.now(timezone.utc), "now")
+        return _utc_input(value or datetime.now(UTC), "now")
 
     def _identity_hash(self, identity: WorkloadIdentity, at: datetime) -> str:
         if type(identity) is not WorkloadIdentity:

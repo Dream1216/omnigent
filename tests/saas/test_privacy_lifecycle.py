@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -54,7 +54,7 @@ from saas.control_plane.privacy_models import (
 
 ORIGIN = "https://platform-admin.example.test"
 AUDIENCE = "omnigent-platform-admin"
-NOW = datetime(2026, 8, 9, 7, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 9, 7, 0, tzinfo=UTC)
 EVIDENCE_KEY = DeletionEvidenceKey("deletion-test-key", b"d" * 32)
 
 
@@ -683,7 +683,7 @@ def test_user_deletion_anonymizes_identity_blocks_replay_and_requires_all_surfac
         assert registration.idempotency_key != "b" * 64
         assert registration.request_hash != "c" * 64
         assert registration.verified_at is None
-        assert registration.terminal_at.replace(tzinfo=timezone.utc) == NOW + timedelta(seconds=3)
+        assert registration.terminal_at.replace(tzinfo=UTC) == NOW + timedelta(seconds=3)
 
     assertion = VerifiedIdentityAssertion(
         provider="oidc",

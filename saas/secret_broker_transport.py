@@ -466,7 +466,7 @@ class MutualTlsSecretBrokerServer:
                 status=403,
                 body=_error_document("secret_broker_redemption_denied"),
             )
-        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError):
+        except (TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             await _write_response(
                 writer,
                 status=400,

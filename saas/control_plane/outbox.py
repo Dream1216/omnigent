@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Protocol, cast
 from uuid import UUID, uuid4
@@ -114,13 +114,13 @@ class ClaimedOutboxEvent:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _canonical_timestamp(value: datetime) -> str:
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 def _delivery_error_digest(error: Exception) -> str:

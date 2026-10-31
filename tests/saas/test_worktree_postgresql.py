@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
 from uuid import UUID, uuid4
@@ -355,7 +355,7 @@ def test_real_postgresql_worktree_rls_single_writer_and_governance_preflight() -
         max_concurrent=1,
         burst_limit=1,
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     scheduler.prepare_dispatch(
         run_id=scopes[0]["run"],
         pool_id=pool_id,

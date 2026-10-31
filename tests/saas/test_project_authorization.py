@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -454,7 +454,7 @@ def test_resource_grant_is_exact_and_expired_grant_fails_closed(project_control_
         subject_type="user",
         subject_id=scope.member_id,
         role="read",
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
         idempotency_key="resource-reader",
     )
     member = _context(scope, scope.member_id, "resource-reader")
@@ -474,7 +474,7 @@ def test_resource_grant_is_exact_and_expired_grant_fails_closed(project_control_
         subject_type="user",
         subject_id=scope.member_id,
         role="owner",
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
         idempotency_key="resource-owner",
     )
     assert authorizer.evaluate(
@@ -517,7 +517,7 @@ def test_resource_grant_is_exact_and_expired_grant_fails_closed(project_control_
         project_id=project_id,
         resource_type="conversation",
         resource_id=resource_id,
-        now=datetime.now(timezone.utc) + timedelta(minutes=10),
+        now=datetime.now(UTC) + timedelta(minutes=10),
     ).allowed
 
 
@@ -1020,7 +1020,7 @@ def test_member_removal_preflight_revokes_project_and_resource_access_atomically
     assert grant.grant_id is not None
     provider = ProjectRemovalImpactProvider(factory)
     governance = MembershipGovernanceService(factory, provider)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     preflight = governance.create_removal_preflight(
         actor_id=scope.owner_id,
         tenant_id=scope.tenant_id,
@@ -1143,7 +1143,7 @@ def test_member_removal_composite_preflight_blocks_active_runs(project_control_p
         run = db.get(RunRecord, run_id)
         assert run is not None
         run.status = "succeeded"
-        run.terminal_at = datetime.now(timezone.utc)
+        run.terminal_at = datetime.now(UTC)
 
     ready = governance.create_removal_preflight(
         actor_id=scope.owner_id,
