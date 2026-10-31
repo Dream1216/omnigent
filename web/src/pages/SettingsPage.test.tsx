@@ -1095,6 +1095,18 @@ describe("SettingsPage", () => {
     expect(screen.queryByRole("button", { name: /Change password/ })).toBeNull();
     // Sign out is still available.
     expect(screen.getByRole("button", { name: /Sign out/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sign-in methods" })).toBeNull();
+  });
+
+  it("links SaaS accounts to their identity settings", async () => {
+    mocks.accountsEnabled = false;
+    mocks.loginUrl = "/saas/login";
+    renderPage("/settings/account");
+    await waitFor(() => expect(screen.getByText("alice")).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "Sign-in methods" })).toHaveAttribute(
+      "href",
+      "/saas/account/identities",
+    );
   });
 
   it("renders the Members section at /settings/members when accounts is on", async () => {

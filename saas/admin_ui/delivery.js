@@ -1,6 +1,9 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
+  const passwordLoginReady = window.OmnigentSaasSession.configureLogin(
+    $("login"), $("login-options-message")
+  );
   const state = {
     projects: [],
     runs: [],
@@ -455,8 +458,9 @@
       result.status,
     );
   }
-  $("login").addEventListener("submit", (event) => {
+  $("login").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!await passwordLoginReady) return;
     perform(async () => {
       const result = await api("/auth/login", {
         method: "POST",

@@ -781,6 +781,9 @@ class SaasAuthContextMiddleware:
             return True
         if method == "GET" and path in {
             "/saas/auth/bootstrap",
+            "/saas/auth/options",
+            "/saas/auth/result",
+            "/saas/account/identities",
             "/saas/auth/assets/oidc-complete.js",
             "/saas/auth/assets/session.js",
         }:
@@ -1071,14 +1074,31 @@ def create_saas_auth_router(
     cookie_config: SaasCookieConfig,
     governance: MembershipGovernanceService | None = None,
     oidc: OidcAuthorizationService | None = None,
+    auth_mode: Literal["legacy", "dual", "casdoor"] | None = None,
     context_snapshots: ContextSnapshotService | None = None,
 ) -> APIRouter:
     """Build login/logout/self-service identity routes for downstream app wiring."""
 
     router = APIRouter()
+    mode = auth_mode or ("dual" if oidc is not None else "legacy")
+    if mode not in {"legacy", "dual", "casdoor"} or (mode != "legacy" and oidc is None):
+        raise ValueError("customer authentication mode requires a configured identity provider")
+
+    @router.get("/auth/options")
+    def auth_options(response: Response) -> dict[str, object]:
+        response.headers["Cache-Control"] = "private, no-store"
+        return {
+            "mode": mode,
+            "password_enabled": mode != "casdoor",
+            "providers": oidc.browser_providers() if oidc is not None else [],
+        }
 
     @router.post("/auth/login")
     def login(body: LoginRequest, response: Response) -> dict[str, object]:
+        if mode == "casdoor":
+            raise _http_error(
+                LifecycleError("identity_provider_required", "use central sign-in"), 401
+            )
         try:
             user_id = passwords.authenticate(body.email, body.password)
             now = datetime.now(timezone.utc)
@@ -1271,6 +1291,21 @@ def create_saas_auth_router(
             for identity in identities.list_identities(principal.session.user_id)
         ]
 
+    @router.get("/auth/identity-conflicts")
+    def list_identity_conflicts(request: Request, response: Response) -> list[dict[str, object]]:
+        principal = _require_principal(auth_provider, request)
+        response.headers["Cache-Control"] = "private, no-store"
+        return [
+            {
+                "id": str(conflict.id),
+                "provider": conflict.provider,
+                "email": conflict.email_normalized,
+                "display_name": conflict.display_name,
+                "review_status": conflict.platform_review_status,
+            }
+            for conflict in identities.list_identity_conflicts(principal.session.user_id)
+        ]
+
     @router.delete("/identities/{connection_id}", status_code=204)
     def revoke_identity(
         connection_id: UUID,
@@ -1319,12 +1354,14 @@ def create_saas_auth_router(
     if oidc is not None:
 
         def oidc_callback_error(
-            failure: LifecycleError, *, state: str, browser: bool, ui_locale: str = "zh-CN"
+            failure: LifecycleError, *, state: str, browser: bool, ui_locale: str | None = None
         ) -> Response:
             status_code = 503 if failure.code == "oidc_dependency_unavailable" else 400
             response = (
                 completion_document(
-                    error_code=failure.code, ui_locale=ui_locale, status_code=status_code
+                    error_code=failure.code,
+                    ui_locale=ui_locale or getattr(failure, "ui_locale", ""),
+                    status_code=status_code,
                 )
                 if browser
                 else JSONResponse(
@@ -1344,13 +1381,22 @@ def create_saas_auth_router(
         @router.get("/auth/oidc/{provider}/start")
         def start_oidc_login(
             provider: str,
+            request: Request,
             intent: Literal["login", "signup"] = "login",
+            reauthenticate: bool = False,
             return_to: str = "/",
             ui_locale: str = "zh-CN",
         ) -> Response:
             try:
+                if reauthenticate and intent != "login":
+                    raise LifecycleError("oidc_purpose_invalid", "reauthentication requires login")
+                principal = auth_provider.get_principal(request) if reauthenticate else None
                 started = oidc.begin(
-                    provider, purpose=intent, return_to=return_to, ui_locale=ui_locale
+                    provider,
+                    purpose="reauth" if reauthenticate else intent,
+                    target_session=principal.session if principal else None,
+                    return_to=return_to,
+                    ui_locale=ui_locale,
                 )
             except LifecycleError as error:
                 raise _http_error(error, 400) from error
@@ -1381,7 +1427,11 @@ def create_saas_auth_router(
                 )
             except LifecycleError as error:
                 raise _http_error(error, 409) from error
-            response = RedirectResponse(started.authorization_url, status_code=303)
+            response = (
+                JSONResponse({"authorization_url": started.authorization_url})
+                if "application/json" in request.headers.get("accept", "")
+                else RedirectResponse(started.authorization_url, status_code=303)
+            )
             _set_oidc_transaction_cookie(
                 response,
                 cookie_config,
@@ -1451,6 +1501,7 @@ def create_saas_auth_router(
                     expires_at=issued_at + cookie_config.ttl,
                     now=issued_at,
                     external_identity=completed.external_identity,
+                    required_parent_session_id=completed.parent_session_id,
                 )
             except LifecycleError as lifecycle_error:
                 return oidc_callback_error(
@@ -1469,7 +1520,9 @@ def create_saas_auth_router(
                 scopes = context_resolver.list_available_scopes(actor_id=user_id)
                 response = completion_document(
                     csrf_token=issued.csrf_token,
-                    return_to=completed.return_to if scopes else "/setup",
+                    return_to=completed.return_to
+                    if scopes or completed.purpose in {"link", "reauth"}
+                    else "/setup",
                     ui_locale=completed.ui_locale,
                 )
             response.headers["Cache-Control"] = "private, no-store"
@@ -1526,6 +1579,13 @@ def create_saas_auth_router(
             idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
         ) -> dict[str, object]:
             principal = _require_principal(auth_provider, request)
+            if body.decision == "approve":
+                raise _http_error(
+                    LifecycleError(
+                        "identity_link_required", "confirm through a fresh identity sign-in"
+                    ),
+                    409,
+                )
             try:
                 resolved = identities.resolve_identity_conflict(
                     user_id=principal.session.user_id,
@@ -1669,6 +1729,7 @@ def create_saas_http_integration(
     project_authorizer: ProjectAuthorizer | None = None,
     runtime_bindings: RuntimeBindingService | None = None,
     oidc: OidcAuthorizationService | None = None,
+    auth_mode: Literal["legacy", "dual", "casdoor"] | None = None,
     context_snapshots: ContextSnapshotService | None = None,
     availability_gate: ControlPlaneAvailabilityGate | None = None,
     degraded_read_paths: frozenset[str] = frozenset(),
@@ -1702,6 +1763,7 @@ def create_saas_http_integration(
         cookie_config=cookie_config,
         governance=governance,
         oidc=oidc,
+        auth_mode=auth_mode,
         context_snapshots=context_snapshots,
     )
     onboarding_dependencies = (
@@ -1731,11 +1793,17 @@ def create_saas_http_integration(
                 onboarding_status=onboarding_status,
                 auth_provider=auth_provider,
                 client_network=onboarding_client_network,
+                legacy_registration_enabled=auth_mode != "casdoor",
             )
         )
         onboarding_ui_router = create_onboarding_ui_router()
     else:
-        onboarding_ui_router = None
+        if oidc is not None:
+            from saas.control_plane.onboarding_http import create_onboarding_ui_router
+
+            onboarding_ui_router = create_onboarding_ui_router()
+        else:
+            onboarding_ui_router = None
     if (project_admin is None) != (project_authorizer is None):
         raise ValueError("Project Admin service and Authorizer must be configured together")
     if project_admin is not None and project_authorizer is not None:

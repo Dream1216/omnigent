@@ -14,7 +14,10 @@ from saas.control_plane.oidc_browser import (
 
 
 @pytest.fixture
-def oidc_browser() -> Iterator[Browser]:
+def oidc_browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[Browser]:
+    # This fixture covers the backend-only completion fallback. The exported
+    # Next page has its own browser journey with the actual packaged assets.
+    monkeypatch.setattr("saas.control_plane.oidc_browser.login_page", lambda *_a, **_k: None)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:

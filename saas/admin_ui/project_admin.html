@@ -17,6 +17,7 @@
         <span><strong>OMNIGENT</strong><small>SAAS CONTROL PLANE</small></span>
       </a>
       <div class="system-state">
+        <a href="/saas/account/identities">登录方式 ↗</a>
         <a href="/saas/delivery">交付工作台 ↗</a>
         <span class="pulse" aria-hidden="true"></span>
         <span id="context-state" data-testid="context-state">NO CONTEXT</span>
@@ -33,6 +34,8 @@
           <p>控制台不会从 URL、表单或本地缓存信任任何角色。Tenant、Space 与授权版本均由服务端重新解析。</p>
         </div>
         <form class="login-form" id="login-form">
+          <a data-central-login href="/saas/login">前往统一登录 ↗</a>
+          <fieldset disabled>
           <label>
             <span>已验证邮箱</span>
             <input data-testid="login-email" id="login-email" name="email" type="email" autocomplete="username" required>
@@ -44,6 +47,7 @@
           <button class="primary-button" data-testid="login-submit" type="submit">
             建立 HttpOnly 会话 <span>↗</span>
           </button>
+          </fieldset>
           <p class="form-message" id="login-message" role="status"></p>
         </form>
       </section>

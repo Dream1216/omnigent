@@ -594,6 +594,8 @@ class IdentityManagementService:
         assertion: VerifiedIdentityAssertion,
         idempotency_key: str,
         expected_security_version: int | None = None,
+        required_session_id: UUID | None = None,
+        require_local_session: bool = False,
     ) -> UUID:
         """Link a provider-verified subject to an already authenticated Global User."""
 
@@ -638,6 +640,29 @@ class IdentityManagementService:
                 raise LifecycleError(
                     "authorization_snapshot_stale", "account changed during identity link"
                 )
+            if require_local_session or required_session_id is not None:
+                local = (
+                    db.scalar(
+                        sa.select(AuthSessionRecord)
+                        .where(AuthSessionRecord.id == required_session_id)
+                        .with_for_update()
+                    )
+                    if required_session_id is not None
+                    else None
+                )
+                now = _now()
+                if (
+                    local is None
+                    or local.user_id != user_id
+                    or local.revoked_at is not None
+                    or local.security_version != user.security_version
+                    or _comparable_time(local.expires_at) <= now
+                    or now - _comparable_time(local.created_at) > timedelta(minutes=5)
+                    or _comparable_time(local.created_at) > now + timedelta(seconds=30)
+                ):
+                    raise LifecycleError(
+                        "recent_authentication_required", "recent local authentication is required"
+                    )
             conflict = db.scalar(
                 sa.select(IdentityConflict)
                 .where(
@@ -726,6 +751,39 @@ class IdentityManagementService:
                 },
             )
             return connection_id
+
+    def require_reauthentication_identity(
+        self, *, user_id: UUID, assertion: VerifiedIdentityAssertion
+    ) -> UUID:
+        assertion.validate()
+        with self._session_factory() as db:
+            identity = db.scalar(
+                sa.select(IdentityConnection.id).where(
+                    IdentityConnection.user_id == user_id,
+                    IdentityConnection.provider == assertion.provider,
+                    IdentityConnection.issuer == assertion.issuer,
+                    IdentityConnection.subject == assertion.subject,
+                    IdentityConnection.status == "active",
+                )
+            )
+            if identity is None:
+                raise LifecycleError(
+                    "reauthentication_identity_mismatch", "sign in with the current account"
+                )
+        return user_id
+
+    def list_identity_conflicts(self, user_id: UUID) -> list[IdentityConflict]:
+        with self._session_factory() as db:
+            return list(
+                db.scalars(
+                    sa.select(IdentityConflict)
+                    .where(
+                        IdentityConflict.candidate_user_id == user_id,
+                        IdentityConflict.status == "pending",
+                    )
+                    .order_by(IdentityConflict.created_at)
+                )
+            )
 
     def list_identities(self, user_id: UUID) -> list[IdentityConnection]:
         """Return the caller's identity connections without credential secrets."""

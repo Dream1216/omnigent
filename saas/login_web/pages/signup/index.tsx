@@ -1,8 +1,6 @@
-import { UserPlus } from "lucide-react";
 import Head from "next/head";
 import { AuthShell } from "@/components/auth-shell";
-import { FlowIntro } from "@/components/flow-intro";
-import { SignupForm } from "@/components/signup-form";
+import { SignupEntry } from "@/components/signup-entry";
 import { useI18n } from "@/lib/i18n";
 
 export default function SignupPage() {
@@ -25,14 +23,7 @@ export default function SignupPage() {
         skipHref="#signup"
         skipLabel={t("signup.skip")}
       >
-        <FlowIntro
-          step={1}
-          icon={<UserPlus size={23} />}
-          eyebrow={t("signup.eyebrow")}
-          heading={t("signup.heading")}
-          description={t("signup.description")}
-        />
-        <SignupForm />
+        <SignupEntry />
       </AuthShell>
     </>
   );

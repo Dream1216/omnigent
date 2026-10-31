@@ -80,6 +80,8 @@ button { cursor: pointer; }
 }
 .login-copy > p:last-child { max-width: 42rem; color: var(--muted); font-size: 15px; line-height: 1.8; }
 .login-form { padding: clamp(40px, 7vw, 110px); align-self: center; display: grid; gap: 28px; }
+.login-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 28px; }
+.login-form fieldset[hidden] { display: none; }
 
 label { display: grid; gap: 9px; }
 label > span, .module-label { color: var(--muted); font: 600 9px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }

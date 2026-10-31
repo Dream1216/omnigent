@@ -31,7 +31,7 @@ TENANT_ROLES = (
 SPACE_ROLES = ("owner", "admin", "operator", "member", "viewer")
 IDENTITY_CONNECTION_STATUSES = ("active", "revoked")
 OIDC_LOGIN_TRANSACTION_STATUSES = ("pending", "consumed", "failed")
-OIDC_LOGIN_PURPOSES = ("login", "signup", "link")
+OIDC_LOGIN_PURPOSES = ("login", "signup", "link", "reauth")
 IDENTITY_CONFLICT_STATUSES = ("pending", "approved", "rejected")
 IDENTITY_CONFLICT_PLATFORM_REVIEW_STATUSES = ("unreviewed", "assigned", "blocked")
 INVITATION_STATUSES = ("pending", "accepted", "revoked", "expired")
@@ -281,6 +281,9 @@ class OidcLoginTransaction(SaasBase):
         sa.ForeignKey("saas_global_users.id", ondelete="RESTRICT")
     )
     target_security_version: Mapped[int | None] = mapped_column()
+    target_session_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("saas_auth_sessions.id", ondelete="RESTRICT")
+    )
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
@@ -308,9 +311,13 @@ class OidcLoginTransaction(SaasBase):
         ),
         sa.CheckConstraint(
             "(purpose IN ('login', 'signup') AND target_user_id IS NULL "
-            "AND target_security_version IS NULL) OR "
+            "AND target_security_version IS NULL AND target_session_id IS NULL) OR "
             "(purpose = 'link' AND target_user_id IS NOT NULL "
-            "AND target_security_version > 0)",
+            "AND target_security_version > 0) OR "
+            "(purpose = 'reauth' AND ((target_user_id IS NULL "
+            "AND target_security_version IS NULL AND target_session_id IS NULL) OR "
+            "(target_user_id IS NOT NULL AND target_security_version > 0 "
+            "AND target_session_id IS NOT NULL)))",
             name="ck_oidc_login_target_by_purpose",
         ),
         sa.Index("ix_oidc_login_expiry", "status", "expires_at"),

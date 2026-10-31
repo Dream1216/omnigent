@@ -104,6 +104,7 @@ def test_real_postgresql_expansion_preserves_oidc_authority_and_once_only_state(
                     "WHERE oid='saas_oidc_login_transactions'::regclass"
                 )
             ).one() == (True, True)
+            command.upgrade(config, "head")
             connection.exec_driver_sql(
                 (root / "saas/control_plane/postgresql_roles.sql").read_text()
             )
@@ -152,5 +153,35 @@ def test_real_postgresql_expansion_preserves_oidc_authority_and_once_only_state(
             connection.exec_driver_sql("SET LOCAL ROLE saas_app")
             with pytest.raises(DBAPIError):
                 connection.exec_driver_sql("SELECT * FROM saas_oidc_login_transactions")
+    finally:
+        engine.dispose()
+
+
+def test_reauthentication_expansion_retains_old_transactions_and_refuses_data_loss() -> None:
+    engine = sa.create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            config = _config(connection)
+            command.upgrade(config, "cd1b00000001")
+            _old_transaction(connection)
+            command.upgrade(config, "head")
+            assert connection.execute(
+                sa.text(
+                    "SELECT purpose, target_session_id, return_to "
+                    "FROM saas_oidc_login_transactions"
+                )
+            ).one() == ("login", None, "/")
+            with pytest.raises(RuntimeError, match="application-only rollback"):
+                command.downgrade(config, "cd1b00000001")
+            assert (
+                connection.scalar(sa.text("SELECT count(*) FROM saas_oidc_login_transactions"))
+                == 1
+            )
+            connection.execute(sa.text("DELETE FROM saas_oidc_login_transactions"))
+            command.downgrade(config, "cd1b00000001")
+            assert "target_session_id" not in {
+                item["name"]
+                for item in sa.inspect(connection).get_columns("saas_oidc_login_transactions")
+            }
     finally:
         engine.dispose()

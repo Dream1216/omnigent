@@ -154,6 +154,7 @@ class MembershipLifecycleService:
         expires_at: datetime,
         now: datetime | None = None,
         external_identity: ExternalSessionIdentity | None = None,
+        required_parent_session_id: UUID | None = None,
     ) -> IssuedAuthSession:
         """Issue a revocable opaque bearer token for one active Global User."""
 
@@ -196,6 +197,23 @@ class MembershipLifecycleService:
                         "oidc_identity_unavailable", "external identity connection is unavailable"
                     )
                 external = bind_external_session(db, external_identity)
+            # Match back-channel revocation: lock logout fences before session rows.
+            if required_parent_session_id is not None:
+                parent = db.scalar(
+                    sa.select(AuthSessionRecord)
+                    .where(AuthSessionRecord.id == required_parent_session_id)
+                    .with_for_update()
+                )
+                if (
+                    parent is None
+                    or parent.user_id != user_id
+                    or parent.revoked_at is not None
+                    or parent.security_version != user.security_version
+                    or _comparable_time(parent.expires_at) <= issued_at
+                ):
+                    raise LifecycleError(
+                        "authorization_snapshot_stale", "authorizing session is no longer active"
+                    )
             db.add(
                 AuthSessionRecord(
                     id=session_id,

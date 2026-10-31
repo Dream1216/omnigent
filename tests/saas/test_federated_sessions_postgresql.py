@@ -60,10 +60,12 @@ def postgres_federation(
 
 
 @pytest.mark.parametrize("first", ["logout", "login"])
+@pytest.mark.parametrize("parent_bound", [False, True], ids=["unbound", "parent"])
 def test_real_postgresql_login_logout_race_cannot_leave_a_live_old_identity_session(
     postgres_federation: tuple[sa.Engine, sessionmaker[Session]],
     monkeypatch: pytest.MonkeyPatch,
     first: str,
+    parent_bound: bool,
 ) -> None:
     engine, sessions = postgres_federation
     user = (
@@ -86,6 +88,16 @@ def test_real_postgresql_login_logout_race_cannot_leave_a_live_old_identity_sess
     )
     event = VerifiedLogoutEvent("casdoor", identity.issuer, "race-event", now, "race-user", None)
     lifecycle = MembershipLifecycleService(sessions)
+    parent = (
+        lifecycle.issue_auth_session(
+            user_id=user,
+            authn_method="oidc:casdoor",
+            expires_at=now + timedelta(hours=1),
+            external_identity=identity,
+        )
+        if parent_bound
+        else None
+    )
     service = FederatedSessionService(sessions)
     locked, release = threading.Event(), threading.Event()
     original = federated._lock_fences
@@ -112,6 +124,7 @@ def test_real_postgresql_login_logout_race_cannot_leave_a_live_old_identity_sess
             authn_method="oidc:casdoor",
             expires_at=now + timedelta(hours=1),
             external_identity=identity,
+            required_parent_session_id=parent.session_id if parent else None,
         )
 
     def logout():
@@ -213,7 +226,7 @@ def test_real_postgresql_fence_authority_and_external_mapping_are_not_customer_c
         )
 
 
-@pytest.mark.parametrize("retained", ["empty", "fence", "session"])
+@pytest.mark.parametrize("retained", ["empty", "fence", "session", "oidc"])
 def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
     postgres_federation: tuple[sa.Engine, sessionmaker[Session]], retained: str
 ) -> None:
@@ -247,6 +260,23 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
         )
         with engine.begin() as connection:
             connection.exec_driver_sql("DELETE FROM saas_oidc_session_fences")
+    elif retained == "oidc":
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "INSERT INTO saas_oidc_login_transactions "
+                    "(id,provider,state_hash,browser_binding_hash,nonce_hash,code_verifier_ciphertext,"
+                    "purpose,status,expires_at) VALUES "
+                    "(:id,'casdoor',:state,:binding,:nonce,'retained','reauth','pending',:expiry)"
+                ),
+                {
+                    "id": uuid4(),
+                    "state": "a" * 64,
+                    "binding": "b" * 64,
+                    "nonce": "c" * 64,
+                    "expiry": now + timedelta(minutes=5),
+                },
+            )
 
     owner = "federated_migration_" + uuid4().hex
     with engine.begin() as connection:
@@ -256,7 +286,11 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
         # Schema owners can reference tables used by existing RLS predicates.
         connection.exec_driver_sql(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {owner}")
         connection.exec_driver_sql(f"GRANT SELECT, UPDATE ON saas_alembic_version TO {owner}")
-        for table in ("saas_auth_sessions", "saas_oidc_session_fences"):
+        for table in (
+            "saas_auth_sessions",
+            "saas_oidc_session_fences",
+            "saas_oidc_login_transactions",
+        ):
             connection.exec_driver_sql(f"ALTER TABLE {table} OWNER TO {owner}")
     try:
 
@@ -282,12 +316,22 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
             with engine.connect() as connection:
                 assert connection.scalar(
                     sa.text("SELECT version_num FROM saas_alembic_version")
-                ) == ("cd1b00000001")
-                table = "saas_oidc_session_fences" if retained == "fence" else "saas_auth_sessions"
+                ) == ("cd1c00000001")
+                table = (
+                    "saas_oidc_login_transactions"
+                    if retained == "oidc"
+                    else "saas_oidc_session_fences"
+                    if retained == "fence"
+                    else "saas_auth_sessions"
+                )
                 assert connection.scalar(sa.text(f"SELECT count(*) FROM {table}")) > 0
     finally:
         with engine.begin() as connection:
-            for table in ("saas_auth_sessions", "saas_oidc_session_fences"):
+            for table in (
+                "saas_auth_sessions",
+                "saas_oidc_session_fences",
+                "saas_oidc_login_transactions",
+            ):
                 connection.exec_driver_sql(
                     f'ALTER TABLE IF EXISTS {table} OWNER TO "{original_owner}"'
                 )

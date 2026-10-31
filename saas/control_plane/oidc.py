@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from jwt import InvalidTokenError
 from sqlalchemy.orm import Session, sessionmaker
 
-from saas.control_plane.db_models import GlobalUser, OidcLoginTransaction
+from saas.control_plane.db_models import AuthSessionRecord, GlobalUser, OidcLoginTransaction
 from saas.control_plane.federated_sessions import (
     ExternalSessionIdentity,
     FederatedSessionService,
@@ -37,6 +37,12 @@ from saas.control_plane.oidc_keyring import OidcTransactionKeyring
 
 _PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _MAX_TOKEN_RESPONSE_BYTES = 1_048_576
+
+
+class OidcFlowError(LifecycleError):
+    def __init__(self, error: LifecycleError, ui_locale: str) -> None:
+        super().__init__(error.code, str(error))
+        self.ui_locale = ui_locale
 
 
 def validate_oidc_return_to(value: str) -> str:
@@ -222,10 +228,11 @@ class OidcAuthorizationCompleted:
     transaction_id: UUID
     user_id: UUID | None
     conflict_id: UUID | None
-    purpose: Literal["login", "signup", "link"]
+    purpose: Literal["login", "signup", "link", "reauth"]
     return_to: str
     ui_locale: str
     external_identity: ExternalSessionIdentity
+    parent_session_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,9 +241,10 @@ class _ConsumedTransaction:
     provider: str
     nonce_hash: str
     code_verifier: str
-    purpose: Literal["login", "signup", "link"]
+    purpose: Literal["login", "signup", "link", "reauth"]
     target_user_id: UUID | None
     target_security_version: int | None
+    target_session_id: UUID | None
     return_to: str
     ui_locale: str
     created_at: datetime
@@ -286,11 +294,27 @@ class OidcAuthorizationService:
             if any(self._keyring.key_id(value) not in self._keyring.keys for value in pending):
                 raise ValueError("OIDC transaction rotation must retain keys for pending logins")
 
+    def browser_providers(self) -> list[dict[str, str | None]]:
+        return [
+            {
+                "name": name,
+                "authorization_origin": urlsplit(config.authorization_endpoint)
+                ._replace(path="", query="", fragment="")
+                .geturl(),
+                "start_path": f"/saas/auth/oidc/{name}/start",
+                "link_path": f"/saas/auth/oidc/{name}/link/start",
+                "signup_path": f"/saas/auth/oidc/{name}/start?intent=signup"
+                if config.signup_endpoint is not None
+                else None,
+            }
+            for name, config in self._providers.items()
+        ]
+
     def begin(
         self,
         provider: str,
         *,
-        purpose: Literal["login", "signup", "link"] = "login",
+        purpose: Literal["login", "signup", "link", "reauth"] = "login",
         target_session: ValidatedAuthSession | None = None,
         return_to: str = "/",
         ui_locale: str = "zh-CN",
@@ -315,7 +339,7 @@ class OidcAuthorizationService:
                 raise LifecycleError(
                     "recent_authentication_required", "recent authentication is required"
                 )
-        elif purpose not in {"login", "signup"}:
+        elif purpose not in {"login", "signup", "reauth"}:
             raise LifecycleError("oidc_purpose_invalid", "OIDC purpose is invalid")
 
         transaction_id = uuid4()
@@ -353,6 +377,7 @@ class OidcAuthorizationService:
                     ui_locale=ui_locale,
                     created_at=issued_at,
                     target_user_id=target_session.user_id if target_session else None,
+                    target_session_id=target_session.session_id if target_session else None,
                     target_security_version=(
                         target_session.security_version if target_session else None
                     ),
@@ -377,7 +402,7 @@ class OidcAuthorizationService:
                 else ui_locale
             ),
         }
-        if purpose == "link":
+        if purpose in {"link", "reauth"}:
             parameters.update({"prompt": "login", "max_age": "0"})
         query = urlencode(parameters)
         endpoint = config.signup_endpoint if purpose == "signup" else config.authorization_endpoint
@@ -429,7 +454,7 @@ class OidcAuthorizationService:
                 email_verified=claims.get("email_verified") is True,
                 display_name=claims.get("name") if isinstance(claims.get("name"), str) else None,
             )
-            if transaction.purpose == "link":
+            if transaction.purpose in {"link", "reauth"}:
                 auth_time = claims.get("auth_time")
                 if (
                     isinstance(auth_time, bool)
@@ -442,6 +467,7 @@ class OidcAuthorizationService:
                         "oidc_recent_authentication_required",
                         "recent identity authentication is required",
                     )
+            if transaction.purpose == "link":
                 self._require_link_target_current(transaction)
                 user_id = cast(UUID, transaction.target_user_id)
                 self._identities.link_identity(
@@ -449,10 +475,21 @@ class OidcAuthorizationService:
                     assertion=assertion,
                     idempotency_key=f"oidc-link:{transaction.id}",
                     expected_security_version=transaction.target_security_version,
+                    required_session_id=transaction.target_session_id,
+                    require_local_session=True,
+                )
+                resolution = IdentityLoginResolution(user_id=user_id, conflict_id=None)
+            elif transaction.purpose == "reauth" and transaction.target_user_id is not None:
+                self._require_link_target_current(transaction, recent=False)
+                user_id = self._identities.require_reauthentication_identity(
+                    user_id=transaction.target_user_id, assertion=assertion
                 )
                 resolution = IdentityLoginResolution(user_id=user_id, conflict_id=None)
             else:
                 resolution = self._identities.resolve_verified_login(assertion)
+        except LifecycleError as error:
+            self._mark_failed(transaction.id)
+            raise OidcFlowError(error, transaction.ui_locale) from error
         except Exception:
             self._mark_failed(transaction.id)
             raise
@@ -465,6 +502,7 @@ class OidcAuthorizationService:
             return_to=transaction.return_to,
             ui_locale=transaction.ui_locale,
             external_identity=external,
+            parent_session_id=transaction.target_session_id,
         )
 
     def logout_url(self, provider: str) -> str | None:
@@ -574,9 +612,10 @@ class OidcAuthorizationService:
                 provider=transaction.provider,
                 nonce_hash=transaction.nonce_hash,
                 code_verifier=code_verifier,
-                purpose=cast(Literal["login", "signup", "link"], transaction.purpose),
+                purpose=cast(Literal["login", "signup", "link", "reauth"], transaction.purpose),
                 target_user_id=transaction.target_user_id,
                 target_security_version=transaction.target_security_version,
+                target_session_id=transaction.target_session_id,
                 return_to=transaction.return_to,
                 ui_locale=transaction.ui_locale,
                 created_at=_comparable_time(transaction.created_at),
@@ -812,13 +851,28 @@ class OidcAuthorizationService:
             raise LifecycleError("oidc_id_token_invalid", "OIDC authorized party is invalid")
         return cast(dict[str, object], claims)
 
-    def _require_link_target_current(self, transaction: _ConsumedTransaction) -> None:
+    def _require_link_target_current(
+        self, transaction: _ConsumedTransaction, *, recent: bool = True
+    ) -> None:
         if transaction.target_user_id is None or transaction.target_security_version is None:
             raise LifecycleError("oidc_transaction_invalid", "OIDC link target is invalid")
         with self._session_factory() as db:
             user = db.get(GlobalUser, transaction.target_user_id)
+            local = (
+                db.get(AuthSessionRecord, transaction.target_session_id)
+                if transaction.target_session_id
+                else None
+            )
             if (
-                user is None
+                local is None
+                or local.revoked_at is not None
+                or _comparable_time(local.expires_at) <= self._now()
+                or local.user_id != transaction.target_user_id
+                or (
+                    recent
+                    and self._now() - _comparable_time(local.created_at) > timedelta(minutes=5)
+                )
+                or user is None
                 or user.status != "active"
                 or user.security_version != transaction.target_security_version
             ):

@@ -13,7 +13,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FederatedSignIn } from "@/components/federated-sign-in";
 import { safeReturnTarget, signIn } from "@/lib/auth";
+import {
+  identityOptions,
+  identityErrorKey,
+  type IdentityOptions,
+} from "@/lib/identity";
 import { useI18n, type TranslationFunction } from "@/lib/i18n";
 
 const localizedErrors = new Map<string, Parameters<TranslationFunction>[0]>([
@@ -54,9 +60,25 @@ export function LoginForm() {
   const [capsLock, setCapsLock] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [options, setOptions] = useState<IdentityOptions | null>(null);
+  const [optionsError, setOptionsError] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [reauthenticate, setReauthenticate] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setOptionsError(null);
+    identityOptions(controller.signal)
+      .then(setOptions)
+      .catch((cause) => {
+        if (!controller.signal.aborted) setOptionsError(cause);
+      });
+    return () => controller.abort();
+  }, [attempt]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    setReauthenticate(params.get("reauthenticate") === "1");
     if (emailRef.current) emailRef.current.value = params.get("email") || "";
     setDestination(
       safeReturnTarget(params.get("return_to"), window.location.origin),
@@ -76,7 +98,7 @@ export function LoginForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!ready || pending.current) return;
+    if (!ready || !options?.password_enabled || pending.current) return;
     const fields = new FormData(event.currentTarget);
     pending.current = true;
     setBusy(true);
@@ -102,122 +124,163 @@ export function LoginForm() {
 
   return (
     <>
-      <form
-        id="login"
-        onSubmit={submit}
-        aria-busy={busy}
-        action="/saas/auth/login"
-        method="post"
-      >
-        <fieldset
-          id="login-fields"
-          disabled={!ready || busy}
-          className="m-0 grid min-w-0 gap-6 border-0 p-0"
+      {options && options.mode !== "legacy" && options.providers.length > 0 && (
+        <>
+          <FederatedSignIn
+            providers={options.providers}
+            destination={destination}
+            reauthenticate={reauthenticate}
+          />
+          {options.password_enabled && (
+            <p className="identity-divider">{t("identity.existingPassword")}</p>
+          )}
+        </>
+      )}
+      {!options?.password_enabled && options !== null ? null : (
+        <form
+          id="login"
+          onSubmit={submit}
+          aria-busy={busy}
+          action="/saas/auth/login"
+          method="post"
         >
-          <legend className="sr-only">{t("form.legend")}</legend>
-          <div className="grid gap-2.5">
-            <Label htmlFor="email">{t("form.email")}</Label>
-            <div className="relative">
-              <Mail
-                className="input-leading-icon"
-                size={18}
-                aria-hidden="true"
-              />
-              <Input
-                ref={emailRef}
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="username"
-                inputMode="email"
-                autoCapitalize="none"
-                spellCheck={false}
-                placeholder={t("form.emailPlaceholder")}
-                required
-                className="pl-11"
-              />
-            </div>
-          </div>
-          <div className="grid gap-2.5">
-            <Label htmlFor="password">{t("form.password")}</Label>
-            <div className="relative">
-              <LockKeyhole
-                className="input-leading-icon"
-                size={18}
-                aria-hidden="true"
-              />
-              <Input
-                id="password"
-                name="password"
-                type={visible ? "text" : "password"}
-                autoComplete="current-password"
-                placeholder={t("form.passwordPlaceholder")}
-                required
-                className="pr-14 pl-11"
-                onKeyDown={(event) =>
-                  setCapsLock(event.getModifierState("CapsLock"))
-                }
-                onKeyUp={(event) =>
-                  setCapsLock(event.getModifierState("CapsLock"))
-                }
-                onBlur={() => setCapsLock(false)}
-              />
-              <Button
-                id="password-toggle"
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute top-1 right-1 rounded-lg"
-                aria-label={
-                  visible ? t("form.hidePassword") : t("form.showPassword")
-                }
-                aria-controls="password"
-                aria-pressed={visible}
-                onClick={() => setVisible((value) => !value)}
-              >
-                {visible ? (
-                  <EyeOff size={18} aria-hidden="true" />
-                ) : (
-                  <Eye size={18} aria-hidden="true" />
-                )}
-              </Button>
-            </div>
-            <p
-              id="caps-lock"
-              role="status"
-              hidden={!capsLock}
-              className="text-xs text-amber-700"
-            >
-              {t("form.capsLock")}
-            </p>
-          </div>
-          <Button
-            id="login-submit"
-            type="submit"
-            className="mt-1 h-[52px] w-full text-sm shadow-[0_6px_16px_-5px_#2563eb66]"
+          <fieldset
+            id="login-fields"
+            disabled={!ready || busy || !options}
+            className="m-0 grid min-w-0 gap-6 border-0 p-0"
           >
-            {busy ? (
-              <LoaderCircle
-                size={18}
-                className="motion-safe:animate-spin"
-                aria-hidden="true"
-              />
-            ) : null}
-            {busy ? t("form.submitting") : t("form.submit")}
-            {!busy ? <ArrowRight size={18} aria-hidden="true" /> : null}
-          </Button>
-        </fieldset>
-        <p
-          id="login-error"
-          ref={errorRef}
-          role="alert"
-          tabIndex={-1}
-          hidden={!error}
-          className="login-error"
-        >
-          {translatedError(error, t)}
+            <legend className="sr-only">{t("form.legend")}</legend>
+            <div className="grid gap-2.5">
+              <Label htmlFor="email">{t("form.email")}</Label>
+              <div className="relative">
+                <Mail
+                  className="input-leading-icon"
+                  size={18}
+                  aria-hidden="true"
+                />
+                <Input
+                  ref={emailRef}
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="username"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder={t("form.emailPlaceholder")}
+                  required
+                  className="pl-11"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2.5">
+              <Label htmlFor="password">{t("form.password")}</Label>
+              <div className="relative">
+                <LockKeyhole
+                  className="input-leading-icon"
+                  size={18}
+                  aria-hidden="true"
+                />
+                <Input
+                  id="password"
+                  name="password"
+                  type={visible ? "text" : "password"}
+                  autoComplete="current-password"
+                  placeholder={t("form.passwordPlaceholder")}
+                  required
+                  className="pr-14 pl-11"
+                  onKeyDown={(event) =>
+                    setCapsLock(event.getModifierState("CapsLock"))
+                  }
+                  onKeyUp={(event) =>
+                    setCapsLock(event.getModifierState("CapsLock"))
+                  }
+                  onBlur={() => setCapsLock(false)}
+                />
+                <Button
+                  id="password-toggle"
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-1 right-1 rounded-lg"
+                  aria-label={
+                    visible ? t("form.hidePassword") : t("form.showPassword")
+                  }
+                  aria-controls="password"
+                  aria-pressed={visible}
+                  onClick={() => setVisible((value) => !value)}
+                >
+                  {visible ? (
+                    <EyeOff size={18} aria-hidden="true" />
+                  ) : (
+                    <Eye size={18} aria-hidden="true" />
+                  )}
+                </Button>
+              </div>
+              <p
+                id="caps-lock"
+                role="status"
+                hidden={!capsLock}
+                className="text-xs text-amber-700"
+              >
+                {t("form.capsLock")}
+              </p>
+            </div>
+            <Button
+              id="login-submit"
+              type="submit"
+              className="mt-1 h-[52px] w-full text-sm shadow-[0_6px_16px_-5px_#2563eb66]"
+            >
+              {busy ? (
+                <LoaderCircle
+                  size={18}
+                  className="motion-safe:animate-spin"
+                  aria-hidden="true"
+                />
+              ) : null}
+              {busy ? t("form.submitting") : t("form.submit")}
+              {!busy ? <ArrowRight size={18} aria-hidden="true" /> : null}
+            </Button>
+          </fieldset>
+          <p
+            id="login-error"
+            ref={errorRef}
+            role="alert"
+            tabIndex={-1}
+            hidden={!error}
+            className="login-error"
+          >
+            {translatedError(error, t)}
+          </p>
+        </form>
+      )}
+      {options && options.mode === "legacy" && options.providers.length > 0 && (
+        <>
+          <p className="identity-divider">{t("identity.otherSignIn")}</p>
+          <FederatedSignIn
+            providers={options.providers}
+            destination={destination}
+            reauthenticate={reauthenticate}
+          />
+        </>
+      )}
+      {!options && !optionsError && (
+        <p role="status" className="identity-caption">
+          {t("identity.loading")}
         </p>
-      </form>
+      )}
+      {optionsError !== null && (
+        <div className="login-error" role="alert">
+          <p>{t(identityErrorKey(optionsError))}</p>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setAttempt((value) => value + 1)}
+          >
+            {t("identity.retry")}
+          </Button>
+        </div>
+      )}
       <noscript>
         <p className="login-error">{t("form.noScript")}</p>
       </noscript>

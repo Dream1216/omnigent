@@ -11,7 +11,7 @@
   <body>
     <header>
       <a href="/">OMNIGENT <span> / 交付工作台</span></a
-      ><a href="/">返回工作区 ↗</a>
+      ><a href="/saas/account/identities">登录方式 ↗</a><a href="/">返回工作区 ↗</a>
     </header>
     <main>
       <div class="intro">
@@ -24,6 +24,9 @@
       <p id="message" role="status" aria-live="polite"></p>
       <form id="login" hidden class="panel">
         <h2>登录工作区</h2>
+        <a data-central-login href="/saas/login">前往统一登录 ↗</a>
+        <p id="login-options-message" role="status"></p>
+        <fieldset disabled>
         <label
           >邮箱<input
             id="email"
@@ -37,6 +40,7 @@
             autocomplete="current-password"
             required /></label
         ><button type="submit">登录</button>
+        </fieldset>
       </form>
       <section id="workspace" hidden>
         <div class="project-bar">

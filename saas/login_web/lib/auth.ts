@@ -1,20 +1,30 @@
 export const CSRF_KEY = "omnigent.saas.csrf";
 
-function clearCsrfToken() {
-  for (const storage of [window.sessionStorage, window.localStorage]) {
+export function clearCsrfToken() {
+  for (const name of ["sessionStorage", "localStorage"] as const) {
     try {
-      storage.removeItem(CSRF_KEY);
+      window[name].removeItem(CSRF_KEY);
     } catch {
       // A restricted storage backend must not hide the actual login error.
     }
   }
 }
 
-function persistCsrfToken(token: string) {
-  let persisted = false;
-  for (const storage of [window.sessionStorage, window.localStorage]) {
+export function readCsrfToken(): string {
+  for (const name of ["localStorage", "sessionStorage"] as const) {
     try {
-      storage.setItem(CSRF_KEY, token);
+      const value = window[name].getItem(CSRF_KEY);
+      if (value !== null) return value;
+    } catch {}
+  }
+  return "";
+}
+
+export function persistCsrfToken(token: string) {
+  let persisted = false;
+  for (const name of ["sessionStorage", "localStorage"] as const) {
+    try {
+      window[name].setItem(CSRF_KEY, token);
       persisted = true;
     } catch {
       // The other browser storage may still be available.

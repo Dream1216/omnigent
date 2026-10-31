@@ -2586,6 +2586,13 @@ function AccountSection() {
           >
             <LogOutIcon className="size-4" /> Sign out
           </Button>
+          {info !== "loading" && info.login_url === "/saas/login" && (
+            <Button variant="ghost" className="w-full justify-start gap-2" asChild>
+              <a href="/saas/account/identities">
+                <KeyRoundIcon className="size-4" /> Sign-in methods
+              </a>
+            </Button>
+          )}
           {signOutError && (
             <div
               role="alert"

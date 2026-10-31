@@ -1,13 +1,15 @@
 # Omnigent login UI
 
-Blue/white login surface for `/saas/login`, using Next.js **Pages Router**,
+Blue/white authentication surfaces for `/saas/login`, `/signup`,
+`/saas/account/identities` and `/saas/auth/result`, using Next.js **Pages Router**,
 React **18.3.1**, Tailwind CSS **4**, and locally owned shadcn/ui primitives
 using Radix Label/Slot. React stays on the same version as the main application.
 
 This is an isolated npm package with a committed lockfile. It does not modify
 the main Vite app or the root pnpm workspace. It exports static assets into
 `saas/login_ui/static/`; FastAPI serves them at `/saas/login-assets/`.
-There is no additional production Node process, database change, or new auth API.
+There is no additional production Node process. Identity pages use the SaaS
+authentication APIs and require their matching backend migrations.
 
 ## Build and preview
 
@@ -35,8 +37,8 @@ Reload after a new build. `npm run dev` supports styling hot reload on port
 ## Language behavior
 
 The login surface supports English (`en-US`) and Simplified Chinese (`zh-CN`).
-It uses the saved `omnigent.locale` browser preference first, then follows the
-browser language, and otherwise falls back to English. The header switcher
+An explicit supported query locale or trusted callback locale takes priority,
+followed by saved `omnigent.locale`, browser language, and English. The header switcher
 updates all login copy, accessible labels, document metadata, and `<html lang>`
 without reloading the page. The preference is same-origin and contains no
 account data or credentials.
@@ -44,7 +46,7 @@ account data or credentials.
 ## Acceptance
 
 ```sh
-uv run pytest tests/saas/test_onboarding_ui_browser.py tests/saas/test_login_ui.py tests/saas/test_onboarding_http.py tests/saas/test_wheel_contents.py
+uv run pytest tests/saas/test_identity_ui_browser.py tests/saas/test_oidc_browser_entry.py tests/saas/test_onboarding_ui_browser.py tests/saas/test_login_ui.py tests/saas/test_onboarding_http.py tests/saas/test_wheel_contents.py
 ```
 
 Build first: these tests require the actual Next export, not a mocked page.
@@ -62,18 +64,34 @@ Manual checks:
 4. Submit in the preview: observe a readable error and an enabled retry button.
 5. Switch to 中文, reload the page, and confirm that the Chinese selection and
    localized form labels persist; switch back to EN and repeat.
-6. After a separately authorized deployment, use a test account to confirm that
-   the real login reaches `/settings/account` and signup still works.
+6. On an assembled isolated preview, follow central sign-in with a synthetic
+   account; inspect the conflict page for an existing email, sign in to the old
+   account, then explicitly confirm connecting the identity. Confirm the stable
+   account ID and both sign-in methods. Unconfirmed conflicts cannot log in.
+7. Sign in again in a second tab. Use the first tab to start a connection,
+   proving the current CSRF is read. Sign out, confirm the local API returns
+   401, and verify the IdP notification revokes the other provider sessions.
 
 ## Authentication and delivery boundaries
 
-- Sends the unchanged `{email, password}` contract to same-origin `/saas/auth/login`.
+- Fetches `/saas/auth/options` before enabling password entry. A missing endpoint
+  on an older backend retains legacy behavior; an unavailable or malformed
+  response keeps password submission disabled. Central registration asks for
+  identity first; workspace creation remains a subsequent product step.
+- Legacy/dual password entry sends `{email, password}` to `/saas/auth/login`.
 - Keeps HttpOnly session cookies server-owned; stores only the existing CSRF
   token under `omnigent.saas.csrf` in tab-local and same-origin shared browser
   storage so new tabs can authenticate mutations. Passwords are not persisted.
 - Validates `return_to` against the current origin. External and backslash
   redirects fall back to `/`.
-- No fake SSO, password-reset, or remember-me controls are introduced.
+- Connecting an identity requires explicit consent and POST with the latest
+  CSRF, followed by fresh provider authentication. Only the configured provider
+  origin is accepted for the handoff. A wrong account, stale local session or
+  blocked conflict cannot be connected.
+- The original callback response carries escaped JSON and the build-derived
+  completion page. The page stores local CSRF and replaces history, including
+  across tabs; storage failure leaves a readable retry path.
+- Provider tokens and passwords are never persisted in browser storage.
 - Forms stay disabled until hydration; a no-JavaScript message explains why.
 - Fonts are bundled locally. No external font/image/analytics requests.
 - The server retains its strict CSP. Only build-derived hashes are allowed

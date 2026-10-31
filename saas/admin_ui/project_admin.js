@@ -34,6 +34,9 @@
   };
 
   const loginDeck = $("#login-deck");
+  const passwordLoginReady = window.OmnigentSaasSession.configureLogin(
+    $("#login-form"), $("#login-message")
+  );
   const workspace = $("#workspace");
   const eventLog = $("#event-log");
   const actionDialog = $("#action-dialog");
@@ -1645,6 +1648,7 @@
 
   $("#login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!await passwordLoginReady) return;
     const message = $("#login-message");
     message.textContent = "VERIFYING…";
     try {

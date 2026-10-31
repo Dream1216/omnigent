@@ -9,9 +9,12 @@ production deployment.
 
 The server accepts `OMNIGENT_SAAS_AUTH_MODE=legacy|dual|casdoor`. Without any
 Casdoor files, `legacy` preserves the existing composition. Other modes require
-all three files; partial configuration fails before serving requests. The
-mode value is currently a configuration contract; entry routing and the
-per-user credential authority gates must be completed before enabling it.
+all three files; partial configuration fails before serving requests.
+`/saas/auth/options` publishes local entry paths and the mode without secrets.
+`dual` offers both password and central sign-in; `casdoor` hides customer password
+forms and rejects local password login and new legacy registration requests.
+Already-issued legacy registration verification remains available. Per-user
+credential authority and migration gates are still required before cutover.
 
 - `OMNIGENT_SAAS_CASDOOR_CONFIG_FILE`: an owner-controlled JSON file matching
   [config.example.json](config.example.json).
@@ -39,6 +42,13 @@ and `ui_locale=zh-CN|en-US`. The return target, locale, encrypted PKCE verifier,
 state and nonce survive a replica change. Distinct browser-binding cookies
 allow simultaneous login transactions in two tabs. Linking requires a recent
 local session, CSRF, `prompt=login`, `max_age=0`, and a fresh IdP `auth_time`.
+`reauthenticate=true` requires the same fresh IdP proof and, when already signed
+in, an identity connected to the current user. The authorizing local session
+is checked again under a row lock before linking and before session issuance.
+Session issuance locks logout fences before the parent session, matching
+back-channel revocation so concurrent reauthentication cannot deadlock.
+The public conflict decision API cannot approve a link; the user must confirm
+in `/saas/account/identities` and complete a fresh identity authorization.
 
 For a browser callback, the original response delivers a CSP-protected,
 non-cacheable document and same-origin scripts. They store the local CSRF
@@ -64,6 +74,12 @@ notifications revoke matching external sessions; legacy and Staff sessions
 are outside their scope. Persistent event receipts reject conflicting replay,
 and PostgreSQL row locks prevent a late callback from restoring a logged-out
 session. New credentials issued after the logout epoch remain usable.
+
+Migration `cd1c00000001` persists reauthentication and its authorizing local
+session. Retained older link transactions remain stored but cannot complete
+without a bound session. Its downgrade refuses retained OIDC transactions,
+including for a schema owner subject to forced RLS. Full production catalog
+anchors and recovery replay remain outstanding for these revisions.
 
 Local logout revokes the product session before returning a fixed provider
 logout URL. Provider unavailability cannot undo that revocation. Logout JWTs
@@ -94,6 +110,7 @@ From this checkout, with its Python development and SaaS dependencies:
 
 ```bash
 PYTHONPATH=. python -m pytest tests/saas/test_oidc_http_auth.py tests/saas/test_oidc_logout.py tests/saas/test_oidc_key_rotation.py tests/saas/test_casdoor_config.py tests/saas/test_oidc_completion_browser.py -q
+PYTHONPATH=. python -m pytest tests/saas/test_oidc_browser_entry.py tests/saas/test_identity_ui_browser.py -q
 OMNIGENT_SAAS_TEST_POSTGRES_URL=postgresql+psycopg://USER@localhost/TEST_ADMIN_DB PYTHONPATH=. python -m pytest tests/saas/test_casdoor_migration.py tests/saas/test_federated_sessions_postgresql.py -q
 ```
 

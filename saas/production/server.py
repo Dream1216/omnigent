@@ -26,7 +26,7 @@ from datetime import timedelta
 from pathlib import Path
 from threading import Lock
 from types import MappingProxyType
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -1366,6 +1366,7 @@ def build_production_saas_services(
         identities=identities,
         passwords=passwords,
         oidc=oidc,
+        auth_mode=cast(Literal["legacy", "dual", "casdoor"], config.identity.mode),
         context_resolver=context_resolver,
         cookie_config=SaasCookieConfig(
             name=config.cookie_name,

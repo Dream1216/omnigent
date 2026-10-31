@@ -157,6 +157,7 @@ def create_onboarding_router(
     onboarding_status: OnboardingStatusService,
     auth_provider: SaasAuthProvider,
     client_network: TrustedClientNetworkResolver,
+    legacy_registration_enabled: bool = True,
 ) -> APIRouter:
     """Expose non-enumerating registration, resend, and verification routes."""
 
@@ -226,6 +227,12 @@ def create_onboarding_router(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> OnboardingRegistrationResponse:
         response.headers["Cache-Control"] = "no-store"
+        if not legacy_registration_enabled:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "identity_provider_required", "message": "use central sign-up"},
+                headers={"Cache-Control": "no-store"},
+            )
         try:
             accepted = onboarding.request_registration(
                 email=body.email,
@@ -309,6 +316,21 @@ def create_onboarding_ui_router() -> APIRouter:
     @router.get("/saas/login", include_in_schema=False)
     def login_shell() -> HTMLResponse:
         return login_page(_UI_HEADERS) or _fallback_onboarding_page()
+
+    @router.get("/saas/account/identities", include_in_schema=False)
+    @router.get("/saas/auth/result", include_in_schema=False)
+    def identity_shell(request: Request) -> HTMLResponse:
+        page = "identities" if request.url.path.endswith("/identities") else "oidc-result"
+        exported = login_page(_UI_HEADERS, page=page)
+        if exported is None:
+            return HTMLResponse(
+                "<main><h1>Account interface unavailable</h1>"
+                "<p>Build the authentication interface to continue.</p>"
+                '<a href="/saas/login">Sign in</a></main>',
+                status_code=503,
+                headers=_UI_HEADERS,
+            )
+        return exported
 
     @router.get("/saas/login-assets/{path:path}", include_in_schema=False)
     def login_static_asset(path: str) -> Response:

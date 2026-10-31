@@ -7,6 +7,8 @@ from html import escape
 
 from fastapi.responses import HTMLResponse, Response
 
+from saas.login_ui.http import login_page
+
 OIDC_COMPLETE_SCRIPT = r"""(() => {
   'use strict';
   const data = JSON.parse(document.getElementById('oidc-result').textContent);
@@ -69,7 +71,13 @@ def completion_document(
     )
     payload = (
         json.dumps(
-            {"csrf_token": csrf_token, "return_to": return_to, "storage_error": storage_error},
+            {
+                "csrf_token": csrf_token,
+                "return_to": return_to,
+                "storage_error": storage_error,
+                "ui_locale": ui_locale,
+                "error_code": error_code,
+            },
             ensure_ascii=True,
         )
         .replace("<", "\\u003c")
@@ -77,6 +85,30 @@ def completion_document(
         .replace("&", "\\u0026")
     )
     retry = "重新登录" if chinese else "Try signing in again"
+    exported = login_page(
+        {
+            **SECURITY_HEADERS,
+            "Content-Security-Policy": SECURITY_HEADERS["Content-Security-Policy"].replace(
+                "connect-src 'self';",
+                "connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:;",
+            ),
+        },
+        page="oidc-result",
+    )
+    if exported is not None:
+        document = (
+            bytes(exported.body)
+            .decode()
+            .replace(
+                "</body>",
+                f'<script id="oidc-result" type="application/json">{payload}</script></body>',
+            )
+        )
+        return HTMLResponse(
+            document,
+            status_code=status_code,
+            headers={k: v for k, v in exported.headers.items() if k != "content-length"},
+        )
     return HTMLResponse(
         f'<!doctype html><html lang="{escape(ui_locale)}"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'

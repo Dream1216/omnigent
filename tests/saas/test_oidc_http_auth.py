@@ -427,9 +427,22 @@ def test_same_email_oidc_subject_requires_recent_explicit_confirmation(
             "Idempotency-Key": "approve-explicit-identity",
         },
     )
-    assert resolved.status_code == 200
-    assert resolved.json()["decision"] == "approve"
-    assert resolved.json()["identity_connection_id"]
+    assert resolved.status_code == 409
+    assert resolved.json()["detail"]["code"] == "identity_link_required"
+    assert len(oidc_harness.identities.list_identities(existing_user)) == 1
+    started = oidc_harness.client.post(
+        "/saas/auth/oidc/test/link/start",
+        headers={"Origin": "https://testserver", "X-CSRF-Token": logged_in.json()["csrf_token"]},
+        follow_redirects=False,
+    )
+    assert started.status_code == 303
+    confirmed = oidc_harness.provider.authorize(
+        started.headers["location"], subject="new-subject-same-email", email="same@example.com"
+    )
+    assert (
+        oidc_harness.client.get("/saas/auth/oidc/test/callback", params=confirmed).status_code
+        == 200
+    )
     assert len(oidc_harness.identities.list_identities(existing_user)) == 2
 
     exact_callback, _ = _start(

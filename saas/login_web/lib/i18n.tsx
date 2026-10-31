@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { CSRF_KEY } from "@/lib/auth";
 
 const enUS = {
   "language.label": "Language",
@@ -135,6 +136,62 @@ const enUS = {
   "status.errorHeading": "Sign in to continue",
   "status.errorDescription": "We could not read the workspace setup state.",
   "status.signIn": "Sign in to continue",
+  "identity.title": "Sign-in methods",
+  "identity.signOut": "Sign out",
+  "identity.errorTitle": "Sign-in method error",
+  "identity.eyebrow": "YOUR ACCOUNT",
+  "identity.description":
+    "Review your connected identities and choose how you sign in.",
+  "identity.back": "Back to settings",
+  "identity.loading": "Loading sign-in options…",
+  "identity.continue": "Continue to sign in",
+  "identity.central": "Central sign-in",
+  "identity.centralDescription":
+    "Sign in with your verified account. You’ll return here when you’re done.",
+  "identity.createAccount": "Create an account",
+  "identity.registrationDescription":
+    "Verify your email and create your account first. You can set up or join a workspace after signing in.",
+  "identity.existingPassword": "Or use your existing password",
+  "identity.otherSignIn": "Already using central sign-in?",
+  "identity.retry": "Try again",
+  "identity.signInFirst": "Sign in to manage your account",
+  "identity.signInFirstDescription":
+    "Use your existing sign-in method first. Then you can connect another identity.",
+  "identity.signInAgain": "Sign in again",
+  "identity.currentAccount": "Current account",
+  "identity.methods": "Connected identities",
+  "identity.verified": "Verified email",
+  "identity.confirmationHeading": "An identity needs your confirmation",
+  "identity.confirmationDescription":
+    "An identity with this email tried to sign in. Connect it only if it belongs to you.",
+  "identity.connectHeading": "Connect an identity",
+  "identity.connectDescription":
+    "You’ll sign in again with the identity you want to connect. Check the current account above before continuing.",
+  "identity.consent":
+    "I want to connect my identity to the account shown above.",
+  "identity.connect": "Confirm and connect",
+  "identity.connecting": "Opening sign-in…",
+  "identity.noProviders":
+    "No additional sign-in providers are available for this account.",
+  "identity.reauthenticate":
+    "Sign in again with your current account before connecting an identity.",
+  "identity.rejected":
+    "This identity cannot be connected. Contact your account administrator for help.",
+  "identity.manualReview":
+    "This identity needs a manual review before it can be connected.",
+  "identity.wrongAccount":
+    "Use a sign-in method already connected to your current account.",
+  "identity.conflictHeading": "This email already has an account",
+  "identity.conflictDescription":
+    "Sign in with your original account, then open Sign-in methods to explicitly connect this identity. Your accounts have not been merged.",
+  "identity.existingAccount": "Sign in with existing account",
+  "identity.completingHeading": "Completing sign-in",
+  "identity.completing": "Your verified sign-in is being completed.",
+  "identity.retryHeading": "Sign-in could not complete",
+  "identity.retryDescription":
+    "Please try signing in again. If the problem continues, contact your account administrator.",
+  "identity.storageError":
+    "Browser storage is unavailable. Enable site storage and try signing in again.",
   "error.generic": "Unable to sign in. Please try again.",
   "error.timeout": "The request timed out. Please try again.",
   "error.network":
@@ -275,6 +332,51 @@ const zhCN: Record<MessageKey, string> = {
   "status.errorHeading": "登录后继续",
   "status.errorDescription": "暂时无法读取工作空间设置状态。",
   "status.signIn": "登录后继续",
+  "identity.title": "登录方式",
+  "identity.signOut": "退出登录",
+  "identity.errorTitle": "登录方式错误",
+  "identity.eyebrow": "您的账号",
+  "identity.description": "查看已关联的身份，并管理您的登录方式。",
+  "identity.back": "返回账号设置",
+  "identity.loading": "正在读取登录方式…",
+  "identity.continue": "继续登录",
+  "identity.central": "统一登录",
+  "identity.centralDescription": "使用您已验证的账号登录，完成后将返回本站。",
+  "identity.createAccount": "创建账号",
+  "identity.registrationDescription":
+    "先验证邮箱并创建账号。登录后，再创建或加入工作空间。",
+  "identity.existingPassword": "或使用已有账号的密码",
+  "identity.otherSignIn": "已使用统一登录？",
+  "identity.retry": "重试",
+  "identity.signInFirst": "登录后管理账号",
+  "identity.signInFirstDescription": "请先使用原有方式登录，再关联其他身份。",
+  "identity.signInAgain": "重新登录",
+  "identity.currentAccount": "当前账号",
+  "identity.methods": "已关联的身份",
+  "identity.verified": "邮箱已验证",
+  "identity.confirmationHeading": "有身份等待您确认",
+  "identity.confirmationDescription":
+    "有身份尝试使用此邮箱登录。请仅在确认该身份属于您时进行关联。",
+  "identity.connectHeading": "关联身份",
+  "identity.connectDescription":
+    "您将重新登录需要关联的身份。继续前，请核对上方的当前账号。",
+  "identity.consent": "我确认将自己的身份关联到上方账号。",
+  "identity.connect": "确认并关联",
+  "identity.connecting": "正在打开身份登录…",
+  "identity.noProviders": "当前未配置其他可关联的登录方式。",
+  "identity.reauthenticate": "请先重新登录当前账号，再关联身份。",
+  "identity.rejected": "此身份无法关联，请联系账号管理员协助处理。",
+  "identity.manualReview": "此身份需要先完成人工审核才能关联。",
+  "identity.wrongAccount": "请使用当前账号已关联的身份重新登录。",
+  "identity.conflictHeading": "此邮箱已有账号",
+  "identity.conflictDescription":
+    "请先使用原账号登录，再前往“登录方式”明确关联此身份。系统尚未合并账号。",
+  "identity.existingAccount": "使用原账号登录",
+  "identity.completingHeading": "正在完成登录",
+  "identity.completing": "正在完成已验证的身份登录。",
+  "identity.retryHeading": "登录未完成",
+  "identity.retryDescription": "请重新登录。如果问题持续，请联系账号管理员。",
+  "identity.storageError": "浏览器存储不可用。请启用本站存储后重试登录。",
   "error.generic": "暂时无法登录，请重试。",
   "error.timeout": "请求超时，请重试。",
   "error.network": "无法连接服务器，请检查网络后重试。",
@@ -305,6 +407,20 @@ function isLocale(value: string | null): value is Locale {
 }
 
 function browserLocale(): Locale {
+  try {
+    const result = JSON.parse(
+      document.getElementById("oidc-result")?.textContent || "{}",
+    );
+    const requested =
+      result.ui_locale ||
+      new URLSearchParams(window.location.search).get("ui_locale");
+    if (isLocale(requested)) {
+      try {
+        window.localStorage.setItem(LOCALE_STORAGE_KEY, requested);
+      } catch {}
+      return requested;
+    }
+  } catch {}
   try {
     const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
     if (isLocale(stored)) return stored;
@@ -342,6 +458,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const syncLocale = (event: StorageEvent) => {
+      if (event.key === CSRF_KEY) {
+        try {
+          window.sessionStorage.setItem(CSRF_KEY, event.newValue || "");
+        } catch {}
+      }
       if (event.key === LOCALE_STORAGE_KEY && isLocale(event.newValue)) {
         setLocaleState(event.newValue);
       }

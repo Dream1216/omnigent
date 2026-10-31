@@ -263,8 +263,12 @@ def test_logout_fence_rejects_a_late_callback_with_a_retryable_response(
     assert not any("_oidc_" in cookie.name for cookie in oidc_harness.client.cookies.jar)
     if browser:
         assert response.headers["content-type"].startswith("text/html")
-        assert '<html lang="en-US">' in response.text
-        assert '<a href="/saas/login">Try signing in again</a>' in response.text
+        if "__NEXT_DATA__" in response.text:
+            assert '"ui_locale": "en-US"' in response.text
+            assert '"error_code": "oidc_session_ended"' in response.text
+        else:
+            assert '<html lang="en-US">' in response.text
+            assert '<a href="/saas/login">Try signing in again</a>' in response.text
     else:
         assert response.json()["error"]["code"] == "oidc_session_ended"
 

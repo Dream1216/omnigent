@@ -10,6 +10,7 @@
   --muted-foreground: #64748b;
   --accent: #eff5ff;
   --input: #dce3ee;
+  --border: #e4eaf3;
   --ring: #3b82f6;
   --radius: 0.75rem;
 }
@@ -49,15 +50,22 @@ a {
   position: fixed;
   top: 16px;
   left: 24px;
-  transform: translateY(-180%);
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
   z-index: 10;
-  padding: 12px 20px;
+  padding: 0;
   border-radius: 8px;
   background: white;
   color: #1d4ed8;
 }
 .skip-link:focus {
-  transform: translateY(0);
+  clip-path: none;
+  width: auto;
+  height: auto;
+  padding: 12px 20px;
 }
 .login-shell {
   display: grid;
@@ -846,4 +854,147 @@ h1 > span {
     animation: none !important;
     transition: none !important;
   }
+}
+
+.federated-entry {
+  display: grid;
+  gap: 14px;
+}
+.identity-caption {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.identity-caption[role="status"] {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.identity-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 26px 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.identity-divider::before,
+.identity-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+}
+.identity-settings {
+  display: grid;
+  gap: 26px;
+}
+.identity-settings h2,
+.identity-callout h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.identity-account {
+  display: grid;
+  gap: 7px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.identity-account > span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.identity-account code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.identity-methods {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.identity-methods li {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.identity-method-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 33px;
+  height: 33px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #edf7f1;
+  color: #207448;
+}
+.identity-methods strong {
+  display: block;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.identity-methods small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.identity-callout {
+  padding: 20px;
+  border: 1px solid #c9dafa;
+  border-radius: 14px;
+  background: #f2f7ff;
+}
+.identity-callout > svg {
+  color: var(--primary);
+  margin-bottom: 12px;
+}
+.identity-callout p,
+.identity-callout ul {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #475d7b;
+  margin: 0 0 16px;
+  overflow-wrap: anywhere;
+}
+.identity-callout ul {
+  margin-bottom: 0;
+  padding-left: 18px;
+}
+.identity-consent {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  margin: 20px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  cursor: pointer;
+}
+.identity-consent input {
+  margin: 3px 0 0;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--primary);
+}
+.identity-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.identity-reauth {
+  margin-top: 15px;
+}
+.identity-reauth a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
