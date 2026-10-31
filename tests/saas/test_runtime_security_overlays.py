@@ -27,15 +27,18 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert len(runtime["manifest_digest"]) == 71
     assert runtime["runtime_contract"]["architectures"] == ["amd64", "arm64"]
     assert runtime["runtime_contract"]["venv_builder_image"] == "python:3.12-slim"
-    assert runtime["runtime_contract"]["common_packages"]["python-3.12"] == "3.12.15-r3"
+    assert runtime["runtime_contract"]["common_packages"]["python-3.12"] == "3.12.16-r0"
+    assert runtime["runtime_contract"]["common_packages"]["libseccomp"] == "2.6.1-r4"
     assert runtime["runtime_contract"]["common_packages"]["zlib"] == ("1.3.2.1_rc20260917-r0")
     assert runtime["runtime_contract"]["server_packages"] == {
+        "bubblewrap": "0.13.0-r0",
         "cyrus-sasl-heimdal-libs": "2.1.28-r58",
         "git": "2.56.0-r0",
         "heimdal-libs": "7.8.0-r54",
         "keyutils-libs": "1.6.3-r41",
         "krb5-conf": "1.0-r10",
         "krb5-libs": "1.22.2-r5",
+        "libcap": "2.78-r4",
         "libcom_err": "1.47.4-r4",
         "libcrypto3": "3.6.5-r5",
         "libcurl-openssl4": "8.23.0-r2",
@@ -44,9 +47,12 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
         "libnghttp2-14": "1.70.0-r6",
         "libpcre2-8-0": "10.49-r1",
         "libpsl": "0.23.3-r3",
+        "libselinux": "3.11-r2",
+        "libsepol": "3.11-r3",
         "libssl3": "3.6.5-r5",
         "libunistring": "1.5-r0",
         "libverto": "0.3.2-r10",
+        "linux-pam": "1.7.3-r1",
         "nghttp3": "1.18.0-r2",
         "ngtcp2": "1.25.0-r6",
     }
@@ -143,6 +149,19 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert "curl=8.23.0-r1" in dockerfile
     assert "libstdc++=16.2.0-r1" in dockerfile
     assert "git=2.56.0-r0" in dockerfile
+    assert "/usr/bin/bwrap --version" in dockerfile
+    seccomp_probe = (
+        "/opt/venv/bin/python -B -I -c "
+        "'from omnigent.inner._seccomp import _load_libseccomp; _load_libseccomp()'"
+    )
+    assert dockerfile.count(seccomp_probe) == 2
+    for stage, venv_copy in (
+        ("host", "COPY --from=builder /opt/venv-export /opt/venv"),
+        ("runtime", "COPY --from=server-builder /opt/server-venv-export /opt/venv"),
+    ):
+        body = dockerfile.partition(f"FROM secured-python-runtime AS {stage}\n")[2]
+        body = body.partition("\nFROM ")[0]
+        assert body.index(venv_copy) < body.index(seccomp_probe)
     assert "gcc=16.2.0-r1" in dockerfile
     assert "apk del --purge make gcc" in dockerfile
     transient = json.loads((_root() / "saas/supply_chain/wolfi-runtime-lock.json").read_text())[
@@ -180,6 +199,12 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     ("stage", "target", "replacement", "expected"),
     [
         (
+            "rootfs",
+            "libseccomp=2.6.1-r4",
+            "libseccomp",
+            "Wolfi common_packages pins must be installed exactly",
+        ),
+        (
             "host",
             "binutils=2.47-r2",
             "binutils=2.47-r1",
@@ -197,6 +222,12 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
             "libcurl-openssl4",
             "Wolfi server_packages pins must be installed exactly",
         ),
+        (
+            "runtime",
+            "bubblewrap=0.13.0-r0",
+            "bubblewrap",
+            "Wolfi server_packages pins must be installed exactly",
+        ),
     ],
 )
 def test_wolfi_resolved_package_closure_rejects_drift(
@@ -205,7 +236,12 @@ def test_wolfi_resolved_package_closure_rejects_drift(
     repo = _material_lock_repo(tmp_path)
     dockerfile = repo / "deploy/docker/Dockerfile"
     source = dockerfile.read_text(encoding="utf-8")
-    prefix, separator, rest = source.partition(f"FROM secured-python-runtime AS {stage}\n")
+    stage_header = (
+        "FROM ${RUNTIME_IMAGE} AS secured-python-runtime-rootfs\n"
+        if stage == "rootfs"
+        else f"FROM secured-python-runtime AS {stage}\n"
+    )
+    prefix, separator, rest = source.partition(stage_header)
     assert separator
     body, suffix_separator, suffix = rest.partition("\nFROM ")
     assert body.count(target) == 1

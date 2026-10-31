@@ -73,18 +73,30 @@ def test_all_pods_stage_owner_only_files_without_root_or_plaintext_secret_envs()
 
     for pod in _pod_specs(items):
         pod_security = pod["securityContext"]
+        expected_uid = (
+            65532 if any(row["name"] == "runner-agent" for row in pod["containers"]) else 10001
+        )
         assert pod_security["runAsNonRoot"] is True
-        assert pod_security["runAsUser"] == 10001
-        assert pod_security["runAsGroup"] == 10001
-        assert pod_security["fsGroup"] == 10001
+        assert pod_security["runAsUser"] == expected_uid
+        assert pod_security["runAsGroup"] == expected_uid
+        assert pod_security["fsGroup"] == expected_uid
         for container in [*pod.get("initContainers", []), *pod["containers"]]:
             security = container["securityContext"]
             assert security["runAsNonRoot"] is True
-            assert security["runAsUser"] == 10001
+            assert security["runAsUser"] == expected_uid
+            assert security.get("runAsGroup", pod_security["runAsGroup"]) == expected_uid
             assert security["capabilities"]["drop"] == ["ALL"]
             for entry in container.get("env", []):
                 assert "secretKeyRef" not in entry
-                assert "valueFrom" not in entry
+                if entry["name"] == "OMNIGENT_SAAS_POD_UID":
+                    assert entry == {
+                        "name": "OMNIGENT_SAAS_POD_UID",
+                        "valueFrom": {
+                            "fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"}
+                        },
+                    }
+                else:
+                    assert "valueFrom" not in entry
                 if entry["name"] not in {
                     "OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_URI",
                     "OMNIGENT_SAAS_RUNNER_RECOVERY_ARTIFACT_ENDPOINT_URL",
@@ -207,7 +219,7 @@ def test_server_consumes_exact_artifact_admission_authority_and_rollout_bindings
     template = server["spec"]["template"]
     pod = template["spec"]
     container = next(item for item in pod["containers"] if item["name"] == "server")
-    env = {item["name"]: item["value"] for item in container["env"]}
+    env = {item["name"]: item.get("value") for item in container["env"]}
     volumes = {item["name"]: item for item in pod["volumes"]}
 
     for name in (
@@ -763,7 +775,7 @@ def test_server_and_runner_artifact_authorities_are_three_way_isolated() -> None
             for entry in container["env"]
             if entry["name"].endswith("ARTIFACT_CREDENTIALS_FILE")
         )
-        env = {entry["name"]: entry["value"] for entry in container["env"]}
+        env = {entry["name"]: entry.get("value") for entry in container["env"]}
         return secret, credentials_file, env
 
     server_secret, server_file, _server_env = artifact_binding("omnigent-saas-server")
@@ -978,7 +990,7 @@ def test_beta_database_contract_requires_external_cnpg_postgresql18_admission() 
     ordered_contract = (
         "`postgresql_principals.sql`",
         "`postgresql_database.sql`",
-        "`p0s000000015`",
+        "`p0s000000018`",
         "`postgresql_roles.sql`",
         "`saas/control_plane/postgresql_runner_agent_cluster.psql`",
         "**Freeze the coupled evidence.**",
@@ -1046,7 +1058,7 @@ def test_server_advertises_only_concrete_runner_and_holds_only_its_public_ca() -
     )
     pod = server["spec"]["template"]["spec"]
     container = pod["containers"][0]
-    env = {entry["name"]: entry["value"] for entry in container["env"]}
+    env = {entry["name"]: entry.get("value") for entry in container["env"]}
     secret_names = {
         volume["secret"]["secretName"] for volume in pod["volumes"] if "secret" in volume
     }
@@ -1124,7 +1136,7 @@ def test_preview_exchange_authority_is_a_distinct_server_only_file() -> None:
         )
         == 1
     )
-    server_env = {entry["name"]: entry["value"] for entry in pod["containers"][0]["env"]}
+    server_env = {entry["name"]: entry.get("value") for entry in pod["containers"][0]["env"]}
     assert server_env["OMNIGENT_SAAS_PREVIEW_EXCHANGE_HMAC_KEY_FILE"] == (
         "/runtime/preview-exchange-hmac-key"
     )
@@ -1147,3 +1159,51 @@ def test_preview_exchange_authority_is_a_distinct_server_only_file() -> None:
 
 def test_no_mutable_compose_deployment_is_shipped() -> None:
     assert not (_DEPLOYMENT / "docker-compose.production.yaml").exists()
+
+
+def test_only_runner_execution_containers_use_exact_reviewed_localhost_profile() -> None:
+    items = _items("kubernetes.production.yaml")
+    for deployment in (item for item in items if item["kind"] == "Deployment"):
+        pod = deployment["spec"]["template"]["spec"]
+        assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+        runner = deployment["metadata"]["name"].startswith("omnigent-saas-runner-agent-")
+        for init in pod.get("initContainers", []):
+            assert init["securityContext"].get(
+                "seccompProfile", pod["securityContext"]["seccompProfile"]
+            ) == {"type": "RuntimeDefault"}
+            assert "OMNIGENT_HOST_SANDBOX_BACKEND" not in {
+                row["name"] for row in init.get("env", [])
+            }
+        for container in pod["containers"]:
+            effective = container["securityContext"].get(
+                "seccompProfile", pod["securityContext"]["seccompProfile"]
+            )
+            if not runner:
+                assert effective == {"type": "RuntimeDefault"}
+                continue
+            assert container["name"] == "runner-agent"
+            assert effective == {
+                "type": "Localhost",
+                "localhostProfile": "omnigent/bubblewrap-v3.json",
+            }
+            assert pod["hostPID"] is False
+            assert pod["shareProcessNamespace"] is False
+            assert pod["runtimeClassName"] == "omnigent-runner"
+            assert pod["nodeSelector"] == {
+                "kubernetes.io/arch": "amd64",
+                "omnigent.io/seccomp-profile-v3": "c500aa5e6862ba7d",
+            }
+            assert (
+                deployment["spec"]["template"]["metadata"]["annotations"][
+                    "omnigent.io/runner-seccomp-profile-sha256"
+                ]
+                == "c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363"
+            )
+            assert {row["name"]: row.get("value") for row in container["env"]}[
+                "OMNIGENT_HOST_SANDBOX_BACKEND"
+            ] == "kubernetes"
+            assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
+            assert container["securityContext"]["allowPrivilegeEscalation"] is False
+            assert container["securityContext"]["readOnlyRootFilesystem"] is True
+            assert container["securityContext"]["runAsUser"] == 65532
+            assert container["securityContext"]["runAsGroup"] == 65532

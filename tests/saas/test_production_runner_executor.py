@@ -1433,6 +1433,8 @@ async def test_unknown_worktree_heartbeat_fails_closed_without_checkpoint(
         assert context.executor._active.pop(context.lease.run_id) is active
 
     heartbeat_committed = asyncio.Event()
+    unknown_committed = asyncio.Event()
+    unknown_response_armed = threading.Event()
     release_response = threading.Event()
     shell_started = threading.Event()
     environment = _HeartbeatRaceEnvironment(heartbeat_committed, shell_started)
@@ -1445,6 +1447,9 @@ async def test_unknown_worktree_heartbeat_fails_closed_without_checkpoint(
         if not shell_started.is_set():
             return mutation
         loop.call_soon_threadsafe(heartbeat_committed.set)
+        if not unknown_response_armed.is_set():
+            return mutation
+        loop.call_soon_threadsafe(unknown_committed.set)
         assert release_response.wait(timeout=1)
         raise TimeoutError("heartbeat response lost after commit")
 
@@ -1474,6 +1479,8 @@ async def test_unknown_worktree_heartbeat_fails_closed_without_checkpoint(
         monkeypatch.setattr(
             context.executor._worktree_adapter, "checkpoint", checkpoint_must_not_run
         )
+        unknown_response_armed.set()
+        await unknown_committed.wait()
         finalization = asyncio.create_task(
             context.executor.prepare_finalization(context.lease, result="succeeded")
         )

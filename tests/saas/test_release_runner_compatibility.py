@@ -28,6 +28,9 @@ _P0 = "p0s000000015"
 _R = "lm2r00000001"
 _S = "lm2s00000001"
 _T = "lm2t00000001"
+_P16 = "p0s000000016"
+_P17 = "p0s000000017"
+_P18 = "p0s000000018"
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +68,21 @@ def test_r_runner_contract_pins_the_complete_new_function_set_and_digest(head) -
     ) != runner_agent_database_authority_contract_sha256(control_plane_schema_revision=_P0)
 
 
+@pytest.mark.parametrize("installed", [_P16, _P17, _P18])
+def test_unreleased_p16_p17_inherit_the_complete_t_runner_contract(monkeypatch, installed):
+    _t, t_functions, t_hashes = _runner_agent_schema_contract(_T)
+    _p0, p0_functions, _p0_hashes = _runner_agent_schema_contract(_P0)
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: installed)
+    selected, functions, hashes = _runner_agent_schema_contract(None)
+    assert selected == installed
+    assert functions == t_functions
+    assert hashes == t_hashes
+    assert len(functions) == len(set(functions)) == len(p0_functions) + 1
+    assert set(functions) - set(p0_functions) == {
+        ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb")
+    }
+
+
 @pytest.mark.parametrize("revision", ["lm2q00000001", "future", ""])
 def test_runner_unknown_schema_is_rejected_before_a_database_connection(revision: str) -> None:
     with pytest.raises(RunnerControlError, match="schema"):
@@ -76,7 +94,7 @@ def test_runner_unknown_schema_is_rejected_before_a_database_connection(revision
         )
 
 
-@pytest.mark.parametrize("installed", [_R, _S, _T])
+@pytest.mark.parametrize("installed", [_R, _S, _T, _P16, _P17, _P18])
 def test_r_packaged_application_cannot_borrow_the_p0_contract(monkeypatch, installed) -> None:
     monkeypatch.setattr(migration, "_expected_head", lambda _kind: installed)
     assert _runner_agent_schema_contract(None)[0] == installed
@@ -115,8 +133,12 @@ def test_fleet_projection_must_equal_the_explicit_release_schema() -> None:
         )
 
 
-@pytest.mark.parametrize("revision", [_P0, _R, _S, _T])
-def test_fleet_release_facts_keep_official_and_control_plane_heads_distinct(revision) -> None:
+@pytest.mark.parametrize("revision", [_P0, _R, _S, _T, _P16, _P17, _P18])
+def test_fleet_release_facts_keep_official_and_control_plane_heads_distinct(
+    monkeypatch, revision
+) -> None:
+    if revision in {_P16, _P17, _P18}:
+        monkeypatch.setattr(migration, "_expected_head", lambda _kind: revision)
     context = _context()
     source = {
         "OMNIGENT_SAAS_PRODUCT_REVISION": context.product_revision,

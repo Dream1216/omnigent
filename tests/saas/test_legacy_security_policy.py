@@ -8,7 +8,6 @@ import hashlib
 import json
 import re
 import subprocess
-import sys
 
 import pytest
 
@@ -89,11 +88,12 @@ def _persist(data, monkeypatch):
 
 @pytest.fixture(params=(policy.MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe"))
 def owner(scenario, monkeypatch, request):
+    from saas.scripts import legacy_source_ci as reader
+
     # Reuse the owning immutable-Git scenario and substitute only API/log transport.
     data = scenario
     trusted_checkout = request.param
     fixed_main_sources = owner_main_sources(ROOT)
-    reader = sys.modules["saas.scripts.legacy_source_ci"]
     monkeypatch.setitem(
         reader.verify_pr_tree.__globals__["BASELINES"],
         "Core",

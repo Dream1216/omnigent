@@ -24,6 +24,11 @@ _MAX_SNAPSHOT_TTL = timedelta(seconds=60)
 _HEADER_TYPE = "saas-context-snapshot+jwe"
 
 
+def context_snapshot_epoch_grace_seconds() -> float:
+    """An earlier issuer may be five seconds ahead; bound its last valid snapshot."""
+    return _MAX_SNAPSHOT_TTL.total_seconds() + 5.0
+
+
 class ContextSnapshotError(PermissionError):
     """Stable fail-closed error raised for invalid or stale snapshots."""
 
@@ -105,8 +110,13 @@ class VerifiedContextSnapshot:
 class ContextSnapshotService:
     """Issue encrypted, signed, token-bound snapshots with no database dependency."""
 
-    def __init__(self, policy: ContextSnapshotPolicy) -> None:
+    def __init__(self, policy: ContextSnapshotPolicy, *, invalidations=None) -> None:
         self._policy = policy
+        self._invalidations = invalidations
+
+    def require_invalidation_ready(self) -> None:
+        if self._invalidations is not None and not self._invalidations.ready:
+            self._deny("snapshot_invalidation_unavailable", "snapshot invalidation is not current")
 
     def issue(
         self,
@@ -240,6 +250,14 @@ class ContextSnapshotService:
             runtime.space_id
         ):
             self._deny("snapshot_resource_invalid", "snapshot resource binding is invalid")
+        if (
+            self._invalidations is not None
+            and session.security_version < self._invalidations.minimum("user", session.user_id)
+        ):
+            self._deny(
+                "snapshot_security_version_stale",
+                "snapshot was invalidated by a committed security change",
+            )
         return VerifiedContextSnapshot(
             session=session,
             runtime_context=runtime,

@@ -14,6 +14,8 @@ from urllib.parse import urlsplit
 
 import tomllib
 
+from saas.production.review_exception import apply_review_exception, review_verification_scope
+
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -38,8 +40,8 @@ _APPROVED_UV_VERSION = "0.12.1"
 _APPROVED_PNPM_VERSION = "12.10.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.266"),
-    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.283"),
+    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "1.0.4"),
     "@moonshot-ai/kimi-code": ("KIMI_CODE_VERSION", "0.43.1"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
@@ -47,6 +49,7 @@ _APPROVED_HOST_CLI_VERSIONS = {
 }
 _APPROVED_MCP_SDK_VERSION = "1.32.0"
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
+    "decode-uri-component@0.5.1",
     "http-cache-semantics@4.3.0",
     "body-parser@2.4.0",
     "electron@42.11.16",
@@ -1276,7 +1279,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "COPY --from=secured-python-runtime-rootfs / /",
         "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
         "apk add --no-cache",
-        "python-3.12=3.12.15-r3",
+        "python-3.12=3.12.16-r0",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3.12",
@@ -2148,10 +2151,25 @@ def _validate_release_attestations(
     product_revision: object,
     operations_completed_at: datetime | None,
     evidence_completed_at: datetime | None,
+    repo: Path | None = None,
+    now: datetime | None = None,
 ) -> list[str]:
     if not isinstance(value, list):
         return ["release attestations must be a list"]
     violations: list[str] = []
+    required_roles = set(policy["promotion"]["required_approval_roles"])
+    review = apply_review_exception(
+        repo,
+        value,
+        domain="image",
+        required_roles=required_roles,
+        product_revision=product_revision,
+        now=now or datetime.now(UTC),
+    )
+    violations.extend(review.violations)
+    required_roles, value = review.required_roles, review.attestations
+    if not isinstance(value, list):
+        return [*violations, "release attestations must remain a list"]
     roles: set[str] = set()
     actors: set[str] = set()
     for raw in value:
@@ -2181,7 +2199,7 @@ def _validate_release_attestations(
             violations.append("release attestation time is outside the approval window")
         if raw.get("product_revision") != product_revision:
             violations.append("release attestation revision does not match evidence")
-    if roles != set(policy["promotion"]["required_approval_roles"]):
+    if roles != required_roles:
         violations.append("release attestations do not cover every approval role")
     return violations
 
@@ -2326,6 +2344,8 @@ def _validate_evidence(
             product_revision=product_revision,
             operations_completed_at=operations_completed_at,
             evidence_completed_at=completed_at,
+            repo=repo,
+            now=now,
         )
     )
     if not _hex_sha256(evidence.get("evidence_sha256")) or evidence.get(
@@ -2335,6 +2355,7 @@ def _validate_evidence(
     return violations
 
 
+@review_verification_scope
 def validate_release(
     repo: Path,
     policy: dict[str, Any],

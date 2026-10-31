@@ -67,19 +67,26 @@ class OutboxClaimRoute:
 
     aggregate_type: str
     event_type: str
-    payload_event_type: str
+    payload_event_type: str | None = None
 
     def __post_init__(self) -> None:
-        values = (self.aggregate_type, self.event_type, self.payload_event_type)
+        values = (self.aggregate_type, self.event_type)
+        if self.payload_event_type is not None:
+            values += (self.payload_event_type,)
         if any(_SAFE_ERROR_CODE.fullmatch(value) is None for value in values):
             raise ValueError("Outbox claim route is invalid")
 
     def predicate(self) -> sa.ColumnElement[bool]:
-        return sa.and_(
+        predicates = [
             ControlPlaneOutboxEvent.aggregate_type == self.aggregate_type,
             ControlPlaneOutboxEvent.event_type == self.event_type,
-            ControlPlaneOutboxEvent.payload["event_type"].as_string() == self.payload_event_type,
-        )
+        ]
+        if self.payload_event_type is not None:
+            predicates.append(
+                ControlPlaneOutboxEvent.payload["event_type"].as_string()
+                == self.payload_event_type
+            )
+        return sa.and_(*predicates)
 
 
 @dataclass(frozen=True, slots=True)

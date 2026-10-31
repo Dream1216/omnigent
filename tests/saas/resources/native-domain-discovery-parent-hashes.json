@@ -220,8 +220,8 @@
   },
   "saas/scripts/oci_promotion.py": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
   "saas/scripts/check_image_supply_chain.py": {
-    "parent_sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23",
-    "combined_sha256": "ded133dddef0e5185a396a936b83e66eecd3cd2532abb24c258f21f5e1dd95ca",
+    "parent_sha256": "63f30befba6a656f5bd70f36389f5f15e84b145b79a28adbe2d74b416be9cf0c",
+    "combined_sha256": "18412a80f174da0e1523d1701ca4cc3232e2f7dcccad56fc6ae1de3ede71ef24",
     "approved_change": "A60e typed adapter only, preserving every original Root generic verifier function and assertion; exact inverse restores full Root base file",
     "preserved_functions": {
       "_sha256": "9da2ea2c4f7f9301e06e1ac26911597bbebdfdf8b3864861379b3e0612b9b38b",
@@ -243,12 +243,25 @@
       "_validate_workflow": "30217457e05f6fc2ca8c8f6d4627bd9884d580a5be80529244a55bce850a365b",
       "_validate_image": "1332f7438db50ba586348c56ce3a3000406e7f81e85f25247422dd4d52559225",
       "_validate_promotion": "2a4f4c4505988c3e5c8506eeeee8bfe42dccbd98e41a4e695b3a9a6783b8f954",
-      "_validate_release_attestations": "58f721e8215bd3ba8679aaab2a539c7d78a14ba9ead4cf5370776c6936d076a2",
-      "_validate_evidence": "96fe8337dc225262d4fd0c878e17edaf43aa028a1dbcd9d177a1ed3041234d96",
+      "_validate_release_attestations": "f0c7d43b0cb386fed859c56fa4070136be89812fa53833f36a62aa9fd60a4b53",
+      "_validate_evidence": "9510839bf96fb0d57cd21afd50989f959be8de796240a9190c95024eca400aa2",
       "main": "793393ec42be00a6221570528ae7467c74d282666c2fd1a1f5612b316149df3c"
     },
     "approved_functions": {
       "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "b686a809e43a477866837a5e7b14f01575cb226493480237615dd0e16e6a51ad",
+      "inverse_fragments": [
+        {
+          "before": "_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n",
+          "after": "_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n    \"decode-uri-component@0.5.1\",\n"
+        },
+        {
+          "before": "        \"python-3.12=3.12.15-r3\",\n",
+          "after": "        \"python-3.12=3.12.16-r0\",\n"
+        }
+      ]
     }
   },
   "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",

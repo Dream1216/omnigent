@@ -35,7 +35,10 @@ from saas.production.postgresql_migration import (
     _runtime_saas_head,
 )
 from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
+    EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     OPTIONAL_SERVICE_ROLE_PROFILES,
     ProductionServiceRoleBinding,
@@ -62,7 +65,7 @@ _TEMPLATE_RELEASE_INCARNATION = "0" * 32
 _TEMPLATE_ARTIFACT_STORE_URI = "s3://replace-with-production-bucket/omnigent"
 _TEMPLATE_ARTIFACT_ENDPOINT = "https://replace-artifact-endpoint.example.invalid"
 _TEMPLATE_ARTIFACT_REGION = "replace-with-artifact-region"
-_TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000015"
+_TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000018"
 _MIGRATION_COMMAND = ["python", "-m", "saas.scripts.run_postgresql_migration"]
 _MIGRATION_ARGS = ["--product-revision", "$(OMNIGENT_SAAS_SOURCE_SHA)"]
 _RELEASE_SERVICE_ROLES = {
@@ -935,20 +938,39 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         document.get("service_logins"),
         name="service_logins",
     )
-    if set(login_rows) not in (
-        set(EXPECTED_PRODUCTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES),
-    ):
+    core_roles = set(EXPECTED_PRODUCTION_SERVICE_ROLES)
+    if control_plane_schema_revision in {"p0s000000017", "p0s000000018"}:
+        required_roles = core_roles | set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        model_roles = required_roles | set(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
+        admin_roles = model_roles | set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
+        allowed_profiles = (
+            required_roles,
+            model_roles,
+            admin_roles,
+            admin_roles | set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+        )
+    else:
+        legacy_roles = set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        allowed_profiles = (
+            core_roles,
+            legacy_roles - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+            legacy_roles,
+        )
+    if set(login_rows) not in allowed_profiles:
         raise ReleaseRenderError(
-            "service_logins must contain a complete core or full release profile"
+            "service_logins must contain a complete schema-bound release profile"
         )
     if "model_projection" in login_rows and control_plane_schema_revision not in {
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
+        "p0s000000016",
+        "p0s000000017",
+        "p0s000000018",
     }:
-        raise ReleaseRenderError("model projection profile requires the R, S or T schema")
+        raise ReleaseRenderError(
+            "model projection profile requires R, S, T or its P16/P17/P18 successor"
+        )
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
         for service in sorted(login_rows)
@@ -1262,6 +1284,52 @@ def _stage_role_profiles(script: str, spec: KubernetesReleaseSpec, directory: st
     return script if not lines else script.replace(core, "\n".join((core, *lines)))
 
 
+def _validate_revocation_projection(server: Mapping[str, Any]) -> None:
+    pod = _nested_mapping(server, "spec", "template", "spec")
+    init = _named_row(pod.get("initContainers"), name="stage-server-secrets", row_type="init")
+    main = _named_row(pod.get("containers"), name="server", row_type="container")
+    volume = _named_row(pod.get("volumes"), name="revocation-source", row_type="volume")
+    expected = {
+        "name": "revocation-source",
+        "secret": {
+            "secretName": "omnigent-saas-revocation-consumer-database",
+            "defaultMode": 0o400,
+            "optional": True,
+            "items": [{"key": "value", "path": "value"}],
+        },
+    }
+    mount = {"name": "revocation-source", "mountPath": "/source/revocation", "readOnly": True}
+    env = _named_row(main.get("env"), name="OMNIGENT_SAAS_POD_UID", row_type="environment")
+    url = _named_row(
+        main.get("env"),
+        name="OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE",
+        row_type="environment",
+    )
+    if (
+        volume != expected
+        or _named_row(init.get("volumeMounts"), name="revocation-source", row_type="mount")
+        != mount
+        or any(row.get("name") == "revocation-source" for row in main.get("volumeMounts", []))
+        or env
+        != {
+            "name": "OMNIGENT_SAAS_POD_UID",
+            "valueFrom": {"fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"}},
+        }
+        or url
+        != {
+            "name": "OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE",
+            "value": "/runtime/revocation-consumer-database-url",
+        }
+        or "\n".join(init.get("args", [])).count(
+            "if [ -f /source/revocation/value ]; then\n"
+            "  install -m 0400 /source/revocation/value "
+            "/runtime/revocation-consumer-database-url\nfi"
+        )
+        != 1
+    ):
+        raise ReleaseRenderError("Server native revocation projection is invalid")
+
+
 def _migration_args(spec: KubernetesReleaseSpec) -> list[str]:
     if spec.control_plane_schema_revision == _expected_head("saas"):
         return list(_MIGRATION_ARGS)
@@ -1393,7 +1461,7 @@ def _render_release_documents(
         ),
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": (
             spec.control_plane_schema_revision,
-            "p0s000000015",
+            "p0s000000018",
         ),
         "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": (
             spec.adapter_contract_version,
@@ -1492,6 +1560,7 @@ def _render_release_documents(
                 args[0] = _stage_role_profiles(args[0], spec, directory)
 
     server = _resource(production, kind="Deployment", name="omnigent-saas-server")
+    _validate_revocation_projection(server)
     server_annotations = _nested_mapping(server, "spec", "template", "metadata", "annotations")
     for field, rendered in {
         "omnigent.io/artifact-credential-revision": spec.artifact.credential_revision,

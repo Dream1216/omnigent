@@ -611,6 +611,27 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
         with engine.begin() as connection:
             connection.exec_driver_sql("SET LOCAL ROLE saas_app")
             _set_scope(connection, tenant_id=scope["tenant"], space_id=scope["space"])
+            project_ids = (
+                connection.execute(sa.text("SELECT id FROM saas_projects FOR UPDATE"))
+                .scalars()
+                .all()
+            )
+            assert project_ids == [scope["project"]]
+            assert connection.exec_driver_sql(
+                "SELECT has_table_privilege('saas_app', 'saas_projects', 'UPDATE'), "
+                "has_column_privilege('saas_app', 'saas_projects', 'id', 'UPDATE'), "
+                "has_column_privilege('saas_app', 'saas_projects', 'name', 'UPDATE'), "
+                "has_column_privilege('saas_app', 'saas_projects', 'status', 'UPDATE')"
+            ).one() == (False, True, False, False)
+            with engine.begin() as governance:
+                governance.exec_driver_sql("SET LOCAL ROLE saas_governance")
+                _set_scope(governance, tenant_id=scope["tenant"], space_id=scope["space"])
+                with pytest.raises(DBAPIError) as locked:
+                    governance.execute(
+                        sa.text("SELECT id FROM saas_projects WHERE id = :id FOR UPDATE NOWAIT"),
+                        {"id": scope["project"]},
+                    )
+                assert locked.value.orig.sqlstate == "55P03"
             expected_rows = {
                 "saas_egress_policies": 2,
                 "saas_execution_profiles": 2,
@@ -626,6 +647,53 @@ def test_real_postgresql_isolation_token_rls_and_monotonic_leases() -> None:
                     tuple(row) == (scope["tenant"], scope["space"], scope["project"])
                     for row in visible_scopes
                 )
+
+    unreferenced_project = uuid4()
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_projects (id, tenant_id, space_id, name, visibility, "
+                "created_by, status, authorization_version) VALUES "
+                "(:project, :tenant, :space, 'No children', 'restricted', :actor, 'active', 1)"
+            ),
+            {
+                "project": unreferenced_project,
+                "tenant": scopes[0]["tenant"],
+                "space": scopes[0]["space"],
+                "actor": scopes[0]["actor"],
+            },
+        )
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET LOCAL ROLE saas_app")
+        _set_scope(connection, tenant_id=scopes[0]["tenant"], space_id=scopes[0]["space"])
+        assert (
+            connection.execute(
+                sa.text("SELECT id FROM saas_projects WHERE id=:id FOR UPDATE"),
+                {"id": unreferenced_project},
+            ).scalar_one()
+            == unreferenced_project
+        )
+        with pytest.raises(DBAPIError, match="Project identity is immutable") as immutable:
+            with connection.begin_nested():
+                connection.execute(
+                    sa.text("UPDATE saas_projects SET id=:new WHERE id=:old"),
+                    {"old": unreferenced_project, "new": uuid4()},
+                )
+        assert immutable.value.orig.sqlstate == "P0001"
+        assert (
+            connection.execute(
+                sa.text("SELECT id FROM saas_projects WHERE id=:id"), {"id": unreferenced_project}
+            ).scalar_one()
+            == unreferenced_project
+        )
+        assert (
+            connection.execute(
+                sa.text("UPDATE saas_projects SET id=id WHERE id=:id RETURNING id"),
+                {"id": unreferenced_project},
+            ).scalar_one()
+            == unreferenced_project
+        )
 
     first, second = scopes
     with engine.begin() as connection:
@@ -969,7 +1037,7 @@ def test_real_postgresql_isolation_migration_downgrade_removes_guards_and_polici
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(isolated_postgres_url)
     with engine.begin() as connection:
-        _migrate(connection, root, "head")
+        _migrate(connection, root, "p0s000000015")
         _migrate(connection, root, "-p4b000000001")
         tables = set(
             connection.execute(

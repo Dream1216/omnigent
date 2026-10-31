@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from saas.production.review_exception import apply_review_exception, review_verification_scope
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _RECORD_FIELDS = {
@@ -78,6 +80,64 @@ _ARTIFACT_FIELDS = {
     "verified_workflow_identity",
 }
 _ATTESTATION_FIELDS = {"role", "actor_id_hash", "attested_at", "product_revision"}
+
+_RUNNER_SECCOMP_V3 = {
+    "type": "Localhost",
+    "localhost_profile": "omnigent/bubblewrap-v3.json",
+    "profile_sha256": "c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363",
+    "container_name": "runner-agent",
+    "runtime_class": "omnigent-runner",
+    "platform": "linux/amd64",
+    "container_runtime_version": "containerd://2.3.2-k3s2",
+    "run_as_uid": 65532,
+    "run_as_gid": 65532,
+}
+_RUNNER_SECCOMP_FIELDS = {
+    "container_name",
+    "container_id_hash",
+    "image",
+    "product_revision",
+    "node_uid_hash",
+    "pod_uid_hash",
+    "effective_profile",
+    "pod_profile",
+    "init_profiles",
+    "node_file",
+    "runtime",
+    "process",
+    "observed_at",
+    "raw_evidence_sha256",
+}
+_NODE_PROFILE_FIELDS = {
+    "path",
+    "sha256",
+    "owner_uid",
+    "owner_gid",
+    "mode",
+    "nlink",
+    "type",
+    "device",
+    "inode",
+}
+_RUNNER_RUNTIME_FIELDS = {
+    "platform",
+    "runtime_class",
+    "kernel_release",
+    "container_runtime_version",
+    "pid_namespace_hash",
+    "host_pid_namespace_hash",
+}
+_RUNNER_PROCESS_FIELDS = {
+    "uid",
+    "gid",
+    "no_new_privileges",
+    "seccomp_mode",
+    "effective_capabilities",
+    "host_pid",
+    "share_process_namespace",
+    "root_read_only",
+    "sandbox_backend",
+}
 
 
 def canonical_deployment_record_sha256(record: Mapping[str, Any]) -> str:
@@ -162,8 +222,12 @@ def _validate_policy(
     baseline: Mapping[str, Any],
 ) -> list[str]:
     violations: list[str] = []
-    if policy.get("schema_version") != 2:
-        violations.append("deployment policy schema_version must be 2")
+    if type(policy.get("schema_version")) is not int or policy.get("schema_version") not in {2, 3}:
+        violations.append("deployment policy schema_version must be 2 or 3")
+    if policy.get("schema_version") == 3 and policy.get("runner_seccomp") != _RUNNER_SECCOMP_V3:
+        violations.append(
+            "deployment policy runner_seccomp must match the exact reviewed v3 contract"
+        )
     if not _nonempty(policy.get("policy_id")):
         violations.append("deployment policy_id is required")
     if _parse_time(f"{policy.get('reviewed_at')}T00:00:00Z") is None:
@@ -323,6 +387,147 @@ def _validate_cluster(
     return violations, blockers, failure_domain_hashes, physical_host_hashes
 
 
+def _validate_runner_seccomp_v3(
+    observation: object,
+    placement: Mapping[str, Any],
+    component: Mapping[str, Any],
+    record: Mapping[str, Any],
+    *,
+    label: str,
+) -> list[str]:
+    """Bind signed raw node/CRI observations to one exact execution container."""
+
+    prefix = f"{label}: runner seccomp"
+    facts = _mapping(observation)
+    if facts is None or set(facts) != _RUNNER_SECCOMP_FIELDS:
+        return [f"{prefix} observation fields do not match schema"]
+    violations: list[str] = []
+    if (
+        facts.get("container_name") != _RUNNER_SECCOMP_V3["container_name"]
+        or facts.get("image") != component.get("digest_pinned_image")
+        or facts.get("product_revision") != record.get("product_revision")
+        or any(
+            facts.get(field) != placement.get(field) for field in ("node_uid_hash", "pod_uid_hash")
+        )
+        or not _sha256(facts.get("container_id_hash"))
+        or facts.get("container_id_hash") in {"0" * 64, hashlib.sha256(b"").hexdigest()}
+        or any(
+            not _sha256(facts.get(field))
+            or facts.get(field) in ("0" * 64, hashlib.sha256(b"").hexdigest())
+            for field in ("node_uid_hash", "pod_uid_hash")
+        )
+        or re.fullmatch(r"\S+@sha256:[0-9a-f]{64}", str(facts.get("image"))) is None
+    ):
+        violations.append(f"{prefix} execution identity does not match placement/source/image")
+    if facts.get("effective_profile") != {
+        "type": "Localhost",
+        "localhostProfile": _RUNNER_SECCOMP_V3["localhost_profile"],
+    }:
+        violations.append(
+            f"{prefix} effective container profile is not the reviewed Localhost profile"
+        )
+    if facts.get("pod_profile") != {"type": "RuntimeDefault"} or facts.get("init_profiles") != {
+        "stage-runner-identity": {"type": "RuntimeDefault"}
+    }:
+        violations.append(f"{prefix} Pod and init profiles must remain RuntimeDefault")
+
+    node_file = _mapping(facts.get("node_file"))
+    if node_file is None or set(node_file) != _NODE_PROFILE_FIELDS:
+        violations.append(f"{prefix} node file fields do not match schema")
+    else:
+        mode = node_file.get("mode")
+        if (
+            node_file.get("path") != _RUNNER_SECCOMP_V3["localhost_profile"]
+            or node_file.get("sha256") != _RUNNER_SECCOMP_V3["profile_sha256"]
+            or type(node_file.get("owner_uid")) is not int
+            or node_file["owner_uid"] != 0
+            or type(node_file.get("owner_gid")) is not int
+            or node_file["owner_gid"] != 0
+            or type(node_file.get("nlink")) is not int
+            or node_file["nlink"] != 1
+            or node_file.get("type") != "regular_nofollow"
+            or any(
+                type(node_file.get(field)) is not int or node_file[field] <= 0
+                for field in ("device", "inode")
+            )
+            or not isinstance(mode, str)
+            or re.fullmatch(r"0[0-7]{3}", mode) is None
+            or (
+                isinstance(mode, str)
+                and re.fullmatch(r"0[0-7]{3}", mode) is not None
+                and (int(mode, 8) & 0o022 or not int(mode, 8) & 0o400)
+            )
+        ):
+            violations.append(
+                f"{prefix} actual node file is missing, unsafe, or has the wrong bytes"
+            )
+
+    runtime = _mapping(facts.get("runtime"))
+    if runtime is None or set(runtime) != _RUNNER_RUNTIME_FIELDS:
+        violations.append(f"{prefix} runtime fields do not match schema")
+    elif (
+        runtime.get("platform") != _RUNNER_SECCOMP_V3["platform"]
+        or runtime.get("runtime_class") != _RUNNER_SECCOMP_V3["runtime_class"]
+        or runtime.get("container_runtime_version")
+        != _RUNNER_SECCOMP_V3["container_runtime_version"]
+        or re.fullmatch(
+            r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+._][A-Za-z0-9._+-]+)?",
+            str(runtime.get("kernel_release")),
+        )
+        is None
+        or any(
+            not _nonempty(runtime.get(field))
+            or str(runtime[field]).lower() in {"unknown", "not_observed", "none", "n/a"}
+            or len(str(runtime[field])) > 128
+            or any(character.isspace() for character in str(runtime[field]))
+            for field in ("kernel_release", "container_runtime_version")
+        )
+        or any(
+            not _sha256(runtime.get(field))
+            or runtime.get(field) in ("0" * 64, hashlib.sha256(b"").hexdigest())
+            for field in ("pid_namespace_hash", "host_pid_namespace_hash")
+        )
+        or runtime.get("pid_namespace_hash") == runtime.get("host_pid_namespace_hash")
+    ):
+        violations.append(f"{prefix} runtime or private PID namespace is unproven")
+
+    process = _mapping(facts.get("process"))
+    expected_process = {
+        "uid": 65532,
+        "gid": 65532,
+        "no_new_privileges": True,
+        "seccomp_mode": 2,
+        "effective_capabilities": 0,
+        "host_pid": False,
+        "share_process_namespace": False,
+        "root_read_only": True,
+        "sandbox_backend": "kubernetes",
+    }
+    if (
+        process is None
+        or set(process) != _RUNNER_PROCESS_FIELDS
+        or any(
+            type(process.get(field)) is not type(value) or process.get(field) != value
+            for field, value in expected_process.items()
+        )
+    ):
+        violations.append(f"{prefix} execution process hardening is unproven")
+    observed = _parse_time(facts.get("observed_at"))
+    started = _parse_time(record.get("started_at"))
+    completed = _parse_time(record.get("completed_at"))
+    if (
+        observed is None
+        or started is None
+        or completed is None
+        or not started <= observed <= completed
+    ):
+        violations.append(f"{prefix} observation is outside this record's execution window")
+    raw_hash = facts.get("raw_evidence_sha256")
+    if not _sha256(raw_hash) or raw_hash in {"0" * 64, hashlib.sha256(b"").hexdigest()}:
+        violations.append(f"{prefix} immutable raw evidence SHA-256 is required")
+    return violations
+
+
 def _validate_components(
     record: Mapping[str, Any],
     policy: Mapping[str, Any],
@@ -383,8 +588,10 @@ def _validate_components(
             blockers.append(f"{label}: {name} is missing a required workload hardening control")
         if any(component.get(field) is not False for field in false_controls):
             blockers.append(f"{label}: {name} enables a forbidden host or privilege control")
-        if component.get("seccomp_profile") != "RuntimeDefault":
-            blockers.append(f"{label}: {name} does not use RuntimeDefault seccomp")
+        runner_v3 = policy.get("schema_version") == 3 and name == "runner"
+        expected_seccomp = "Localhost" if runner_v3 else "RuntimeDefault"
+        if component.get("seccomp_profile") != expected_seccomp:
+            blockers.append(f"{label}: {name} does not use {expected_seccomp} seccomp")
         if _string_set(component.get("dropped_capabilities")) != {"ALL"}:
             blockers.append(f"{label}: {name} does not drop all Linux capabilities")
 
@@ -392,14 +599,36 @@ def _validate_components(
         component_domains: set[str] = set()
         component_hosts: set[str] = set()
         pod_hashes: set[str] = set()
+        node_hashes: set[str] = set()
+        container_hashes: set[str] = set()
+        raw_evidence_hashes: set[str] = set()
         if not isinstance(placements, list):
             violations.append(f"{label}: {name} placements must be a list")
             continue
         for raw_placement in placements:
             placement = _mapping(raw_placement)
-            if placement is None or set(placement) != _PLACEMENT_FIELDS:
+            fields = _PLACEMENT_FIELDS | ({"seccomp"} if runner_v3 else set())
+            if placement is None or set(placement) != fields:
                 violations.append(f"{label}: {name} placement facts do not match schema")
                 continue
+            if runner_v3:
+                violations.extend(
+                    _validate_runner_seccomp_v3(
+                        placement.get("seccomp"), placement, component, record, label=label
+                    )
+                )
+            if runner_v3:
+                observation = _mapping(placement.get("seccomp")) or {}
+                for field, seen in (
+                    ("node_uid_hash", node_hashes),
+                    ("container_id_hash", container_hashes),
+                    ("raw_evidence_sha256", raw_evidence_hashes),
+                ):
+                    value = observation.get(field)
+                    if isinstance(value, str):
+                        if value in seen:
+                            violations.append(f"{label}: runner seccomp repeats {field}")
+                        seen.add(value)
             for field in _PLACEMENT_FIELDS:
                 if not _sha256(placement.get(field)):
                     violations.append(f"{label}: {name} placement {field} must be SHA-256")
@@ -429,6 +658,7 @@ def _validate_record(
     *,
     now: datetime,
     expected_product_revision: str | None,
+    repo: Path | None = None,
 ) -> tuple[list[str], list[str], bool]:
     violations: list[str] = []
     blockers: list[str] = []
@@ -440,8 +670,10 @@ def _validate_record(
     )
     if set(record) != _RECORD_FIELDS:
         violations.append(f"{label}: record fields do not match schema")
-    if record.get("schema_version") != 2:
-        violations.append(f"{label}: schema_version must be 2")
+    if type(record.get("schema_version")) is not int or record.get("schema_version") != policy.get(
+        "schema_version"
+    ):
+        violations.append(f"{label}: schema_version must match deployment policy")
     if not _nonempty(evidence_id):
         violations.append("deployment evidence_id is required")
     if record.get("evidence_kind") != "production_deployment_drill":
@@ -543,6 +775,16 @@ def _validate_record(
 
     required_roles = _string_set(policy.get("required_attestation_roles"))
     attestations = record.get("attestations")
+    review = apply_review_exception(
+        repo,
+        attestations,
+        domain="deployment",
+        required_roles=required_roles,
+        product_revision=revision,
+        now=now,
+    )
+    violations.extend(review.violations)
+    required_roles, attestations = review.required_roles, review.attestations
     roles: set[str] = set()
     actors: set[str] = set()
     if not isinstance(attestations, list):
@@ -587,6 +829,7 @@ def _validate_record(
     return violations, blockers, qualifies
 
 
+@review_verification_scope
 def validate_deployment_readiness(
     repo: Path,
     policy: Mapping[str, Any],
@@ -618,6 +861,7 @@ def validate_deployment_readiness(
             policy,
             now=current,
             expected_product_revision=expected_product_revision,
+            repo=repo,
         )
         violations.extend(record_violations)
         blockers.extend(record_blockers)

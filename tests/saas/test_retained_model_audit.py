@@ -127,7 +127,7 @@ def test_partial_retained_schema_cannot_start_a_dispatcher():
 
 
 def _publisher(contract):
-    engine, fallback = MagicMock(), MagicMock()
+    engine, fallback = MagicMock(), MagicMock(spec=["publish", "close"])
     engine.dialect.name = "postgresql"
     identity = str(uuid4())
     payload = {"event_type": contract.event, contract.reference: identity}
@@ -248,3 +248,156 @@ def test_partial_model_table_set_is_rejected_even_without_any_audit_function(mis
     ]
     with pytest.raises(RuntimeError, match="schema_contract_rejected"):
         verify_retained_model_audit_functions(db)
+
+
+def test_retained_claim_routes_require_successful_explicit_validation(monkeypatch):
+    import saas.control_plane.retained_model_audit as retained
+
+    publisher, engine, fallback, _ = _publisher(_CONTRACTS[0])
+    engine.connect.assert_not_called()
+    with pytest.raises(RuntimeError, match="routes_not_validated"):
+        _ = publisher.claim_routes
+    monkeypatch.setattr(retained, "verify_retained_model_audit_functions", lambda db: ())
+    publisher.validate_outbox_configuration()
+    assert publisher.claim_routes is None
+    monkeypatch.setattr(
+        retained,
+        "verify_retained_model_audit_functions",
+        lambda db: (_ for _ in ()).throw(RuntimeError("native_contract_rejected")),
+    )
+    with pytest.raises(RuntimeError, match="native_contract_rejected"):
+        publisher.validate_outbox_configuration()
+    with pytest.raises(RuntimeError, match="routes_not_validated"):
+        _ = publisher.claim_routes
+    fallback.publish.assert_not_called()
+
+
+@pytest.mark.parametrize("retained_present", [False, True])
+@pytest.mark.parametrize("fallback_kind", ["typed", "onboarding"])
+def test_retained_wrapper_preserves_bounded_sql_claims(
+    monkeypatch, retained_present, fallback_kind
+):
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    import sqlalchemy as sa
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import saas.control_plane.retained_model_audit as retained
+    from saas.control_plane.db_models import ControlPlaneOutboxEvent
+    from saas.control_plane.onboarding import OnboardingOutboxPublisher
+    from saas.control_plane.outbox import OutboxDispatcher
+    from saas.control_plane.outbox_delivery import (
+        PlatformAuditJournalConsumer,
+        UsageReconciliationConsumer,
+    )
+    from saas.control_plane.revocation import RevocationFanoutPublisher
+
+    routes = (
+        *UsageReconciliationConsumer.claim_routes,
+        *PlatformAuditJournalConsumer.claim_routes,
+        *RevocationFanoutPublisher.claim_routes,
+    )
+    if fallback_kind == "onboarding":
+        routes = OnboardingOutboxPublisher(
+            registrations=None, coordinator=None, envelopes=None, email_sender=None
+        ).claim_routes
+    fallback = SimpleNamespace(claim_routes=routes, publish=lambda **kwargs: None)
+    native = MagicMock()
+    native.dialect.name = "postgresql"
+    publisher = RetainedModelAuditPublisher(native, fallback)
+    monkeypatch.setattr(
+        retained,
+        "verify_retained_model_audit_functions",
+        lambda db: (42, 43, 44) if retained_present else (),
+    )
+    publisher.validate_outbox_configuration()
+    original_routes = routes
+    assert publisher.claim_routes[: len(routes)] == original_routes
+    assert len(publisher.claim_routes) == len(routes) + (3 if retained_present else 0)
+    # A later mutation cannot turn this validated bounded publisher into a global worker.
+    fallback.claim_routes = None
+    assert publisher.claim_routes is not None
+    engine = sa.create_engine("sqlite://", poolclass=StaticPool)
+    ControlPlaneOutboxEvent.__table__.create(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    owned, unowned = set(), set()
+    with factory.begin() as db:
+        for route in (
+            *routes,
+            *(retained.OutboxClaimRoute(c.aggregate, c.event, c.event) for c in _CONTRACTS),
+        ):
+            for event_type, payload_type in (
+                (route.event_type, route.payload_event_type or route.event_type),
+                (route.event_type + ".unknown", route.payload_event_type or route.event_type),
+                *([(route.event_type, "unknown.payload")] if route.payload_event_type else []),
+            ):
+                event_id = uuid4()
+                accepted = any(
+                    candidate.aggregate_type == route.aggregate_type
+                    and candidate.event_type == event_type
+                    and (
+                        candidate.payload_event_type is None
+                        or candidate.payload_event_type == payload_type
+                    )
+                    for candidate in publisher.claim_routes
+                )
+                (owned if accepted else unowned).add(event_id)
+                db.add(
+                    ControlPlaneOutboxEvent(
+                        id=event_id,
+                        tenant_id=None,
+                        aggregate_type=route.aggregate_type,
+                        aggregate_key=str(uuid4()),
+                        event_type=event_type,
+                        idempotency_key=str(event_id),
+                        request_hash="a" * 64,
+                        payload={"event_type": payload_type},
+                        attempt_count=0,
+                    )
+                )
+    dispatcher = OutboxDispatcher(factory, publisher, claim_routes=publisher.claim_routes)
+    claimed = dispatcher._claim(claim_token=uuid4(), batch_size=100, now=datetime.now(UTC))
+    assert {event.id for event in claimed} == owned
+    with factory() as db:
+        for event_id in unowned:
+            row = db.get(ControlPlaneOutboxEvent, event_id)
+            assert row.attempt_count == 0 and row.claim_token is None
+            assert row.claimed_at is None and row.published_at is None
+            assert row.quarantined_at is None
+    engine.dispose()
+
+
+@pytest.mark.parametrize("routes", [(), ("invalid",), "invalid"])
+def test_retained_wrapper_rejects_empty_or_untyped_fallback_routes(monkeypatch, routes):
+    import saas.control_plane.retained_model_audit as retained
+
+    publisher, _, fallback, _ = _publisher(_CONTRACTS[0])
+    fallback.claim_routes = routes
+    monkeypatch.setattr(retained, "verify_retained_model_audit_functions", lambda db: ())
+    with pytest.raises(RuntimeError, match="fallback_routes_rejected"):
+        publisher.validate_outbox_configuration()
+    with pytest.raises(RuntimeError, match="routes_not_validated"):
+        _ = publisher.claim_routes
+
+
+@pytest.mark.parametrize("kind", ["duplicate", "broad_overlap", "retained_overlap"])
+def test_retained_wrapper_rejects_duplicate_and_overlapping_claim_routes(monkeypatch, kind):
+    import saas.control_plane.retained_model_audit as retained
+    from saas.control_plane.outbox import OutboxClaimRoute
+
+    publisher, _, fallback, _ = _publisher(_CONTRACTS[0])
+    route = OutboxClaimRoute("billing", "billing.usage.recorded")
+    fallback.claim_routes = (route, route)
+    if kind == "broad_overlap":
+        fallback.claim_routes = (
+            route,
+            OutboxClaimRoute(*(route.aggregate_type, route.event_type, "nested.event")),
+        )
+    elif kind == "retained_overlap":
+        contract = _CONTRACTS[0]
+        fallback.claim_routes = (OutboxClaimRoute(contract.aggregate, contract.event),)
+    monkeypatch.setattr(retained, "verify_retained_model_audit_functions", lambda db: (42, 43, 44))
+    with pytest.raises(RuntimeError, match="claim_routes_overlap"):
+        publisher.validate_outbox_configuration()

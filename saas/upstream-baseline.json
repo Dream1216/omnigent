@@ -21,7 +21,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "mm1a2b3c4d5e"
+    "nf12ab34cd56"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -114,24 +114,24 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 174,
-    "max_upstream_net_added_loc": 4576,
+    "max_direct_upstream_files": 184,
+    "max_upstream_net_added_loc": 4655,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
     "reviewed_complete_security_budget_followup": {
       "approved_at": "2026-10-25",
-      "previous_max_direct_upstream_files": 158,
-      "max_direct_upstream_files": 171,
-      "measured_upstream_net_added_loc": 3760,
+      "previous_max_direct_upstream_files": 161,
+      "max_direct_upstream_files": 174,
+      "measured_upstream_net_added_loc": 3964,
       "review_packet_sha256": "213efdc87c8c542c9e9779b5d10234641b860a3fcf5d33e4186a0b31ca1abb51",
       "reason": "Requester explicitly approved this complete bounded CI/security delta and existing budget assertion synchronization. Preserve4576 net LOC,nine patches,.85 isolation and every release gate. Conditional administrator scope is limited to the exact reviewed policy4895741c;own final-source mandatory CI,qualified same-source images and coordinated merge window remain required.019 additionally requires all real P4. No legacy new build/signing route or production window is released."
     },
     "reviewed_security_dependency_budget_followup": {
       "approved_at": "2026-10-24",
-      "previous_max_direct_upstream_files": 156,
-      "max_direct_upstream_files": 158,
-      "measured_upstream_net_added_loc": 3747,
+      "previous_max_direct_upstream_files": 159,
+      "max_direct_upstream_files": 161,
+      "measured_upstream_net_added_loc": 3951,
       "scoped_paths": [
         ".github/actions/setup-harness-cli/locks/pi/package.json",
         ".github/actions/setup-harness-cli/locks/pi/package-lock.json"
@@ -141,9 +141,9 @@
     },
     "kimi_terminal_pending_budget_followup": {
       "approved_at": "2026-10-24",
-      "previous_max_direct_upstream_files": 154,
-      "max_direct_upstream_files": 156,
-      "measured_upstream_net_added_loc": 3664,
+      "previous_max_direct_upstream_files": 157,
+      "max_direct_upstream_files": 159,
+      "measured_upstream_net_added_loc": 3876,
       "scoped_paths": [
         "omnigent/harnesses/kimi_native/forwarder.py",
         "tests/test_kimi_native_forwarder.py"
@@ -165,74 +165,124 @@
     },
     "host_ping_test_budget_followup": {
       "approved_at": "2026-10-23",
-      "previous_max_direct_upstream_files": 151,
-      "max_direct_upstream_files": 152,
+      "previous_max_direct_upstream_files": 156,
+      "max_direct_upstream_files": 157,
       "scoped_paths": [
         "tests/server/integration/test_session_host_launch.py"
       ],
-      "measured_upstream_net_added_loc": 3528,
-      "reason": "Requester explicitly approved only the old018 rollback branch 151-to152 increase for the transport Ping/Pong test helper correction. All typed refusal/history assertions, unknown-frame rejection, product behavior, 4576 lines, nine patches, .85 isolation and release gates remain unchanged. New source needs its own mandatory CI."
-    },
-    "upstream_watchdog_test_budget_followup": {
-      "approved_at": "2026-10-23",
-      "previous_max_direct_upstream_files": 152,
-      "max_direct_upstream_files": 153,
-      "scoped_paths": [
-        "tests/inner/conftest.py"
-      ],
-      "upstream_test_fix_revision": "0a9937ec379ea51cf1d51576484fa14d3722d9ef",
-      "reason": "Requester explicitly approved old018 152-to153 for the exact pinned-target upstream diagnostic watchdog fix. Keep 90s complete Python-thread stack dumps, all test bodies/guards, product behavior, 4576 net LOC, nine patches, .85 isolation and every release gate. Fresh final-source Linux mandatory CI still required."
-    },
-    "ui8_recovery_test_budget_followup": {
-      "approved_at": "2026-10-23",
-      "previous_max_direct_upstream_files": 150,
-      "max_direct_upstream_files": 151,
-      "measured_upstream_net_added_loc": 3494,
-      "scoped_paths": [
-        "tests/e2e_ui/chat/test_claude_sdk_terminated_cli_recovery.py"
-      ],
-      "upstream_test_revision": "3db749d784ff044304473939acaae3a65c0fec61",
-      "reason": "The requester explicitly approved only the old018 rollback-branch increase from 150 to 151 files for the exact upstream Claude SDK test process-ownership correction. Product code, workflow policy, 4576 net LOC, nine patches, .85 isolation and all release gates remain unchanged. New source requires its own mandatory technical CI before merge; local browser setup did not execute a test body."
+      "reason": "Requester explicitly approved 0.19 156-to157 only to retain the reviewed transport Ping/Pong test helper correction while integrating the old018 preparation main. Product behavior, all typed/history and unknown-frame assertions, 4576 net LOC, nine patches, .85 isolation and every release gate remain unchanged. Upstream0a9937ec watchdog correction already exists in pinned3db and adds no019 path."
     },
     "followup": {
-      "revision": "platform-model-token-renewal-budget-v30",
-      "approved_at": "2026-10-15",
+      "revision": "upstream-019-mcp-compat-version-test-budget-v35",
+      "approved_at": "2026-10-21",
       "governance_mode": "single_owner_beta",
-      "previous_max_direct_upstream_files": 148,
-      "measured_direct_upstream_files": 150,
+      "previous_max_direct_upstream_files": 155,
+      "measured_direct_upstream_files": 156,
       "previous_max_upstream_net_added_loc": 4576,
+      "measured_upstream_net_added_loc": 3453,
       "scoped_paths": [
-        "web/src/components/blocks/StatusBlocks.tsx",
-        "web/src/components/blocks/StatusBlocks.test.tsx"
+        "tests/e2e/test_mcp_registry_compat_e2e.py"
       ],
-      "reason": "The requester explicitly approved the two-file source-budget increase for the platform model token expiry fix and authorized proceeding through release. Add only the error-banner source and its focused regression coverage, raising the direct-file ceiling from 148 to 150. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta scope authorization is not independent code review, a CI waiver, image admission or production acceptance.",
+      "reason": "The requester explicitly approved only the 155-to-156 direct-file ceiling increase for the upstream b4b08f5c test correction. Use the real Server version to retain strict pre-0.19 transport/header expectations while checking Registry support in stable0.19 and current builds. Exact tagged0.18, tagged0.19 and current real Server/Runner HTTP cases pass with zero pytest retries; all bundle, selection-header and root/child tool restrictions remain asserted. Product code and Managed MCP production enablement are unchanged. Preserve the 4,576-line ceiling, nine-patch ceiling,0.85 isolation floor, protected-policy review and all CI, OCI, real P4, signing, restore, canary, rollback and independent admission gates. This source-budget approval is not production admission.",
       "previous_revision": {
-        "revision": "runtime-security-dependency-budget-v29",
-        "approved_at": "2026-10-09",
+        "revision": "upstream-019-toast-cleanup-test-budget-v34",
+        "approved_at": "2026-10-16",
         "governance_mode": "single_owner_beta",
-        "previous_max_direct_upstream_files": 144,
-        "previous_measured_direct_upstream_files": 143,
-        "measured_direct_upstream_files": 148,
+        "previous_max_direct_upstream_files": 154,
+        "measured_direct_upstream_files": 155,
         "previous_max_upstream_net_added_loc": 4576,
-        "measured_upstream_net_added_loc": 3221,
+        "measured_upstream_net_added_loc": 3416,
         "scoped_paths": [
-          ".github/workflows/ui-snapshot.yml",
-          "deploy/docker/Dockerfile.ubi",
-          "package.json",
-          "tests/e2e_ui/visual/regen_baseline_docker.sh",
-          "tests/test_setup_web_ui_build.py"
+          "web/src/shell/archiveUndoToast.test.tsx"
         ],
-        "reason": "The reviewed runtime dependency remediation moves the release toolchain to pnpm 12.10.1 and must keep the root package-manager contract, UBI build, UI snapshot runner, deterministic baseline regeneration, and real Node boundary test in lockstep. These five previously unmodified official paths move the measured count from 143 to 148 while reducing the measured upstream net-added LOC to 3,221. Raise only the direct-file ceiling from 144 to the exact 148-file measurement; retain the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency check. This Single-Owner Beta record does not waive CI, image admission, signing, restore, deployment, or production acceptance gates.",
+        "reason": "The requester explicitly authorized sequential execution of the final-source freeze, candidate OCI, all P4 acceptance and conditional P5. This approves the reviewed 154-to-155 file proposal for awaiting actual Sonner toast removal before test DOM teardown. Preserve all existing assertions, the 4,576-line ceiling, nine patches, 0.85 isolation floor and all technical/live/signing/restore/canary/independent admission gates. This source-scope approval is not a passed acceptance result.",
         "previous_revision": {
-          "revision": "next-agent-gate-missing-bundle-v28",
-          "approved_at": "2026-10-07",
+          "revision": "upstream-019-abrupt-death-test-budget-v33",
+          "approved_at": "2026-10-16",
           "governance_mode": "single_owner_beta",
-          "previous_max_upstream_net_added_loc": 4568,
-          "measured_upstream_net_added_loc": 4576,
-          "scoped_delta": {
-            "omnigent/server/routes/_sessions/orchestration.py": 8
-          },
-          "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
+          "previous_max_direct_upstream_files": 153,
+          "measured_direct_upstream_files": 154,
+          "previous_max_upstream_net_added_loc": 4576,
+          "measured_upstream_net_added_loc": 3415,
+          "scoped_paths": [
+            "tests/inner/test_brokered_auth_abrupt_death.py"
+          ],
+          "reason": "The requester explicitly approved only the direct-file ceiling increase from 153 to 154 for atomic publication of the upstream abrupt-death test fixture. A deterministic pipe handshake reproduces the empty JSON read before the fix; macOS and Linux real-process scenarios pass without retries after writing the complete state to a same-directory temporary file and atomically replacing state.json. Retain every SIGKILL, descendant and socket cleanup assertion; no product runtime code changes. The approved main c90a079c build metadata fix adds four net official lines, resulting in 3,415 measured lines. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and all release gates. This Single-Owner Beta approval is not independent production review or release admission.",
+          "previous_revision": {
+            "revision": "upstream-019-terminal-reconnect-test-budget-v32",
+            "approved_at": "2026-10-16",
+            "governance_mode": "single_owner_beta",
+            "previous_max_direct_upstream_files": 152,
+            "measured_direct_upstream_files": 153,
+            "previous_max_upstream_net_added_loc": 4576,
+            "measured_upstream_net_added_loc": 3409,
+            "scoped_paths": [
+              "tests/e2e_ui/shells/test_terminal_bridge_reconnect.py"
+            ],
+            "reason": "The requester explicitly approved only the direct-file ceiling increase from 152 to 153 for the upstream terminal reconnect test correction. Ignore complete OSC 10/11 RGB replies when checking typed input and reuse the existing loopback-blocking setup so injected relay closes target the active transport. Six real browser cases pass without retries across both terminal surfaces, both close codes, direct attach and relay fallback. Product code and behavior assertions remain unchanged. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse dependencies and every release gate. This Single-Owner Beta scope authorization is not independent production review, image admission or acceptance.",
+            "previous_revision_reference": "upstream-019-reviewed-visual-budget-v31"
+          }
+        }
+      }
+    },
+    "previous_followup": {
+      "revision": "upstream-019-reviewed-visual-budget-v31",
+      "approved_at": "2026-10-16",
+      "governance_mode": "single_owner_beta",
+      "previous_max_direct_upstream_files": 150,
+      "measured_direct_upstream_files": 152,
+      "previous_max_upstream_net_added_loc": 4576,
+      "measured_upstream_net_added_loc": 3389,
+      "scoped_paths": [
+        "web/src/lib/identity.managedRouting.test.ts",
+        "web/src/lib/viteProxy.test.ts",
+        "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png",
+        "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png"
+      ],
+      "reason": "The requester explicitly approved only the direct-file ceiling increase from 150 to 152 after reviewing the five maintained Linux visual baselines and the measured 0.19 scope. The baselines preserve SaaS language switching and Agent readiness hints; two frontend contract tests retain managed identity and exact proxy authorization assertions. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths, reverse-dependency checks and every release gate. This Single-Owner Beta scope approval is not independent code review, administrator approval of CI policy, image admission or production acceptance.",
+      "previous_revision": {
+        "revision": "platform-model-token-renewal-budget-v30",
+        "approved_at": "2026-10-15",
+        "governance_mode": "single_owner_beta",
+        "previous_max_direct_upstream_files": 148,
+        "measured_direct_upstream_files": 150,
+        "previous_max_upstream_net_added_loc": 4576,
+        "scoped_paths": [
+          "web/src/components/blocks/StatusBlocks.tsx",
+          "web/src/components/blocks/StatusBlocks.test.tsx"
+        ],
+        "reason": "The requester explicitly approved the two-file source-budget increase for the platform model token expiry fix and authorized proceeding through release. Add only the error-banner source and its focused regression coverage, raising the direct-file ceiling from 148 to 150. Preserve the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden paths and reverse-dependency checks. This Single-Owner Beta scope authorization is not independent code review, a CI waiver, image admission or production acceptance.",
+        "previous_revision": {
+          "revision": "runtime-security-dependency-budget-v29",
+          "approved_at": "2026-10-09",
+          "governance_mode": "single_owner_beta",
+          "previous_max_direct_upstream_files": 144,
+          "previous_measured_direct_upstream_files": 143,
+          "measured_direct_upstream_files": 148,
+          "previous_max_upstream_net_added_loc": 4576,
+          "measured_upstream_net_added_loc": 3221,
+          "scoped_paths": [
+            ".github/workflows/ui-snapshot.yml",
+            "deploy/docker/Dockerfile.ubi",
+            "package.json",
+            "tests/e2e_ui/visual/regen_baseline_docker.sh",
+            "tests/test_setup_web_ui_build.py"
+          ],
+          "reason": "The reviewed runtime dependency remediation moves the release toolchain to pnpm 12.10.1 and must keep the root package-manager contract, UBI build, UI snapshot runner, deterministic baseline regeneration, and real Node boundary test in lockstep. These five previously unmodified official paths move the measured count from 143 to 148 while reducing the measured upstream net-added LOC to 3,221. Raise only the direct-file ceiling from 144 to the exact 148-file measurement; retain the 4,576-line ceiling, nine-patch ceiling, 0.85 isolation floor, forbidden native paths and reverse-dependency check. This Single-Owner Beta record does not waive CI, image admission, signing, restore, deployment, or production acceptance gates.",
+          "previous_revision": {
+            "revision": "next-agent-gate-missing-bundle-v28",
+            "approved_at": "2026-10-07",
+            "governance_mode": "single_owner_beta",
+            "previous_max_upstream_net_added_loc": 4568,
+            "measured_upstream_net_added_loc": 4576,
+            "scoped_delta": {
+              "omnigent/server/routes/_sessions/orchestration.py": 8
+            },
+            "reason": "The isolated 17-Agent gate exposed an unloadable Agent bundle returning HTTP 500. Preserve host ownership and workspace validation order, convert only the missing-artifact KeyError to invalid input, and retain the existing readiness guard. Raise only the LOC ceiling by the exact eight-line official-source delta; keep the 144-file ceiling, nine-patch ceiling, isolation floor, forbidden paths and reverse-dependency check. This source-budget record does not waive CI or production admission."
+          }
         }
       }
     },
@@ -693,9 +743,56 @@
           }
         }
       }
+    },
+    "modelpin_owned_cleanup_test_budget_followup": {
+      "approval_status": "APPROVED_LIMITED_SCOPE",
+      "proposed_at": "2026-10-26",
+      "previous_max_direct_upstream_files": 174,
+      "max_direct_upstream_files": 175,
+      "scoped_paths": [
+        "tests/e2e/test_run_preserves_spec_model_under_config_harness_default.py"
+      ],
+      "measured_upstream_net_added_loc": 4002,
+      "test_patch_sha256": "b7702ef1eba7c8b653e8edf88dace2355c0a3295fff4bd1ed3f620607d54ac58",
+      "reason": "Single existing upstream test: use existing data-attributed process reaper and retain only its runtime logs. Original model parameters, all three behavior assertions and startup/run timeouts retained. Local two-node mock run did not reproduce the original CI daemon timeout; root cause remains UNKNOWN. No product/workflow/policy/trusted-input change. Preserve4576 LOC,nine patches,.85 isolation and all release gates; every final head needs its own mandatory CI and candidate images.",
+      "approved_at": "2026-10-26",
+      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: 批准仅将 0.19 上限增至 175；其他限制不变"
+    },
+    "native_cold_input_durability_followup": {
+      "approval_status": "APPROVED_LIMITED_SCOPE",
+      "previous_max_direct_upstream_files": 175,
+      "changed_product_paths": [
+        "omnigent/server/app.py",
+        "omnigent/server/startup_inputs.py",
+        "omnigent/server/API.md",
+        "tests/server/integration/test_managed_startup_inputs.py"
+      ],
+      "new_official_paths": [
+        "omnigent/server/startup_inputs.py",
+        "omnigent/server/API.md",
+        "tests/server/integration/test_managed_startup_inputs.py"
+      ],
+      "measured_upstream_net_added_loc": 4273,
+      "previous_measured_upstream_net_added_loc": 4067,
+      "runtime_test_patch_sha256": "127ea6e96fd14602dbdb643d936d40077911019f894216f5c76be91d1432bc7d",
+      "reason": "Native external-Host cold input needs original generic durable worker registration and admission. SaaS-only monkey patches, fabricated ACK, warmup, timeout increases and credentials/policy widening are excluded. The user explicitly approved only the 175-to-178 file limit for these three new official paths; all other limits and gates remain unchanged. Keep4576 LOC,9patch,.85 and all new-head CI/OCI/P4/P5 requirements.",
+      "max_direct_upstream_files": 178,
+      "approved_at": "2026-10-28",
+      "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: 批准仅将 0.19 上限增至 178；其他限制不变",
+      "review_packet_sha256": "9af45de3b002a4eac541e1337e3bfeaabc153a9291ed7df4afb8ca468cacd015"
+    },
+    "native_cold_input_regression_correction_proposal": {
+      "approval_status": "PENDING_EXPLICIT_HUMAN_REVIEW_NOT_AUTHORIZED",
+      "previous_max_direct_upstream_files": 178,
+      "max_direct_upstream_files": 179,
+      "new_official_paths": [
+        "omnigent/server/routes/sessions/routes_events.py"
+      ],
+      "reason": "Restore original Host and fast-init admission, bounded caller wait over the unchanged shielded initializer, preserve authenticated actor separately from display attribution, terminate known native failures once and retain transient/submitted-unknown distinctions. The original 302 CI failures and local counterexamples remain. No source may be adopted under this pending proposal without Root review and the explicit file-budget approval. Keep4576LOC/9patch/.85 and fresh ownCI/OCI/all applicableP4/P5.",
+      "original_178_approval_retained": true
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
-  "upstream_version": "0.18.0.dev20261006"
+  "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+  "upstream_version": "0.19.0.dev20261020"
 }

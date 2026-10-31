@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
     EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
@@ -14,9 +15,11 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindings,
     ProductionServiceRoleBindingsError,
     compose_production_service_role_graph,
+    load_business_delivery_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
     load_production_service_role_bindings,
+    load_production_service_role_graph,
     render_production_service_role_bindings,
 )
 
@@ -250,3 +253,38 @@ def test_rejects_profile_drift(tmp_path: Path, mutation: str) -> None:
 
     with pytest.raises(ProductionServiceRoleBindingsError):
         load_production_service_role_bindings(_write(tmp_path / f"{mutation}.json", rendered))
+
+
+def test_native_business_receivers_are_separate_exact_service_logins(tmp_path):
+    source = _write(tmp_path / "core.json", render_production_service_role_bindings(_bindings()))
+    bindings = tuple(
+        ProductionServiceRoleBinding(service=service, login="recv_" + service, base_role=role)
+        for service, role in EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items()
+    )
+    path = tmp_path / "delivery.json"
+    path.write_text(render_production_service_role_bindings(bindings))
+    path.chmod(0o400)
+    source["OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE"] = str(path)
+    profile = load_business_delivery_service_role_bindings(source)
+    graph = load_production_service_role_graph(source)
+    assert len(graph.bindings) == 18
+    assert graph.login_for("audit_delivery") == "recv_audit_delivery"
+    assert profile.by_service["usage_consumer"].base_role == "saas_usage_consumer"
+    assert len({b.login for b in graph.bindings}) == len(graph.bindings)
+    changed = list(bindings)
+    changed[0] = ProductionServiceRoleBinding(
+        service=changed[0].service, login="prod_dispatcher", base_role=changed[0].base_role
+    )
+    path.chmod(0o600)
+    path.write_text(render_production_service_role_bindings(tuple(changed)))
+    path.chmod(0o400)
+    with pytest.raises(ProductionServiceRoleBindingsError, match="reuse a login"):
+        load_production_service_role_graph(source)
+    changed[0] = ProductionServiceRoleBinding(
+        service=changed[0].service, login="recv_" + changed[0].service, base_role="saas_billing"
+    )
+    path.chmod(0o600)
+    path.write_text(render_production_service_role_bindings(tuple(changed)))
+    path.chmod(0o400)
+    with pytest.raises(ProductionServiceRoleBindingsError):
+        load_business_delivery_service_role_bindings(source)

@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -20,6 +21,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from saas.production import postgresql_migration as migration
+from saas.production import service_bindings
 from saas.production.server import create_role_session_factories
 from saas.production.server_config import ProductionMigrationReceipt
 from saas.production.service_bindings import (
@@ -58,19 +60,15 @@ def _enable_replay_tls(connection: sa.Connection, tmp_path: Path) -> Path:
         serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption(),
     )
-    # COPY writes only these two fixture files, owned by the fresh cluster's OS user.
+    # Each fixture owns its certificate files across repeated cluster replays.
+    prefix = f"/tmp/omnigent-production-replay-{uuid4().hex}"
     for name, pem in (("crt", certificate_pem), ("key", key_pem)):
         lines = ",".join("'" + line + "'" for line in pem.decode().splitlines())
-        connection.exec_driver_sql(
-            f"COPY (SELECT unnest(ARRAY[{lines}])) TO '/tmp/omnigent-production-replay.{name}'"
-        )
+        connection.exec_driver_sql(f"COPY (SELECT unnest(ARRAY[{lines}])) TO '{prefix}.{name}'")
         setting = "ssl_cert_file" if name == "crt" else "ssl_key_file"
-        connection.exec_driver_sql(
-            f"ALTER SYSTEM SET {setting} = '/tmp/omnigent-production-replay.{name}'"
-        )
+        connection.exec_driver_sql(f"ALTER SYSTEM SET {setting} = '{prefix}.{name}'")
     connection.exec_driver_sql(
-        "COPY (SELECT '') TO PROGRAM "
-        "'chmod 0600 /tmp/omnigent-production-replay.key && cat >/dev/null'"
+        f"COPY (SELECT '') TO PROGRAM 'chmod 0600 {prefix}.key && cat >/dev/null'"
     )
     connection.exec_driver_sql("ALTER SYSTEM SET ssl = 'on'")
     assert connection.exec_driver_sql("SELECT pg_reload_conf()").scalar_one()
@@ -79,9 +77,9 @@ def _enable_replay_tls(connection: sa.Connection, tmp_path: Path) -> Path:
     return ca_path
 
 
-@pytest.fixture
+@pytest.fixture(params=["core", "model", "admin", "projection"])
 def production_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> Iterator[migration.ProductionPostgreSqlPlan]:
     configured = os.environ.get("OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL")
     if not configured:
@@ -143,6 +141,43 @@ def production_replay(
         hashlib.sha256(platform_admin_document.encode()).hexdigest(),
         platform_admin_bindings,
     )
+    projection_bindings = tuple(
+        ProductionServiceRoleBinding(service=service, login=f"replay_{service}", base_role=role)
+        for service, role in sorted(
+            service_bindings.EXPECTED_MODEL_PROJECTION_SERVICE_ROLES.items()
+        )
+    )
+    projection_document = render_production_service_role_bindings(projection_bindings)
+    projection_path = tmp_path / "model-projection-bindings.json"
+    projection_path.write_text(projection_document)
+    projection_path.chmod(0o400)
+    projection_manifest = ProductionServiceRoleBindings(
+        projection_path,
+        hashlib.sha256(projection_document.encode()).hexdigest(),
+        projection_bindings,
+    )
+    delivery_manifest = None
+    delivery_bindings: tuple[ProductionServiceRoleBinding, ...] = ()
+    if migration._expected_head("saas") in {"p0s000000017", "p0s000000018"}:
+        delivery_bindings = tuple(
+            ProductionServiceRoleBinding(
+                service=service,
+                login=f"replay_{service}",
+                base_role=role,
+            )
+            for service, role in sorted(
+                service_bindings.EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items()
+            )
+        )
+        delivery_document = render_production_service_role_bindings(delivery_bindings)
+        delivery_path = tmp_path / "business-delivery-bindings.json"
+        delivery_path.write_text(delivery_document)
+        delivery_path.chmod(0o400)
+        delivery_manifest = ProductionServiceRoleBindings(
+            delivery_path,
+            hashlib.sha256(delivery_document.encode()).hexdigest(),
+            delivery_bindings,
+        )
     roles = {
         "principal_operator": "replay_principal",
         "database_owner": "replay_database",
@@ -168,7 +203,13 @@ def production_replay(
             )
         all_bindings = {
             binding.login: binding
-            for binding in (*bindings, *platform_bindings, *platform_admin_bindings)
+            for binding in (
+                *bindings,
+                *platform_bindings,
+                *platform_admin_bindings,
+                *projection_bindings,
+                *delivery_bindings,
+            )
         }
         for binding in all_bindings.values():
             connection.exec_driver_sql(
@@ -198,11 +239,107 @@ def production_replay(
         official_owner_url=authority_url("official_owner"),
         saas_owner_url=authority_url("saas_owner"),
         service_role_bindings=manifest,
-        platform_model_service_role_bindings=platform_manifest,
-        platform_admin_service_role_bindings=platform_admin_manifest,
+        platform_model_service_role_bindings=(
+            platform_manifest if request.param != "core" else None
+        ),
+        platform_admin_service_role_bindings=(
+            platform_admin_manifest if request.param in {"admin", "projection"} else None
+        ),
+        model_projection_service_role_bindings=(
+            projection_manifest if request.param == "projection" else None
+        ),
+        **(
+            {"business_delivery_service_role_bindings": delivery_manifest}
+            if delivery_manifest is not None
+            else {}
+        ),
         require_tls=True,
     )
-    yield plan
+    try:
+        yield plan
+    finally:
+        cleanup = sa.create_engine(url, isolation_level="AUTOCOMMIT")
+        try:
+            with cleanup.connect() as connection:
+                connection.exec_driver_sql("DROP DATABASE IF EXISTS admission_replay WITH (FORCE)")
+                roles = (
+                    connection.execute(
+                        sa.text(
+                            "SELECT rolname FROM pg_roles "
+                            "WHERE rolname <> 'postgres' AND rolname NOT LIKE 'pg_%'"
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if roles:
+                    quote = connection.dialect.identifier_preparer.quote
+                    connection.exec_driver_sql(
+                        "DROP ROLE " + ", ".join(quote(role) for role in roles)
+                    )
+        finally:
+            cleanup.dispose()
+
+
+def _run_original_migration_cli(
+    plan: migration.ProductionPostgreSqlPlan,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+) -> dict[str, object]:
+    import omnigent
+    from saas.scripts import run_postgresql_migration as cli
+
+    output = tmp_path / f"native-cli-{label}.json"
+    with monkeypatch.context() as context:
+        # Keep the original installed-build guard active with the fixture's own revision.
+        context.setattr(
+            omnigent,
+            "_build_info",
+            SimpleNamespace(COMMIT_SHA=plan.product_revision),
+            raising=False,
+        )
+        for field, name in cli._URL_ENVIRONMENTS.items():
+            authority = getattr(plan, field.removesuffix("_url"))
+            path = tmp_path / f"native-cli-{label}-{field}"
+            path.write_text(authority.url.render_as_string(hide_password=False))
+            path.chmod(0o400)
+            context.setenv(name, str(path))
+        for name in cli._DIRECT_URL_ENVIRONMENTS:
+            context.delenv(name, raising=False)
+        for name in ("OMNIGENT_SAAS_SOURCE_SHA", "OMNIGENT_SAAS_PRODUCT_REVISION"):
+            context.setenv(name, plan.product_revision)
+        for name, profile in (
+            ("SERVICE_ROLE_BINDINGS", plan.service_role_bindings),
+            ("PLATFORM_MODEL_SERVICE_ROLE_BINDINGS", plan.platform_model_service_role_bindings),
+            ("PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS", plan.platform_admin_service_role_bindings),
+            (
+                "MODEL_PROJECTION_SERVICE_ROLE_BINDINGS",
+                plan.model_projection_service_role_bindings,
+            ),
+            (
+                "BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS",
+                plan.business_delivery_service_role_bindings,
+            ),
+        ):
+            prefix = "OMNIGENT_SAAS_" + name
+            for suffix in ("_FILE", "_SHA256"):
+                context.delenv(prefix + suffix, raising=False)
+            if profile is not None:
+                context.setenv(prefix + "_FILE", str(profile.path))
+                context.setenv(prefix + "_SHA256", profile.sha256)
+        context.setattr(
+            "sys.argv",
+            [
+                "run_postgresql_migration",
+                "--product-revision",
+                plan.product_revision,
+                "--output",
+                str(output),
+            ],
+        )
+        assert cli.main() == 0
+    return json.loads(output.read_text())
 
 
 def test_real_clean_replay_upgrade_and_catalog_rejections(
@@ -215,7 +352,20 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
     first = migration.run_production_postgresql_migration(plan)
     assert first.status == "pass" and first.official_head == target
     assert first.service_role_graph_sha256 == plan.service_role_graph.sha256
-    assert len(plan.service_role_graph.bindings) == 18
+    profile = (
+        "projection"
+        if plan.model_projection_service_role_bindings is not None
+        else "core"
+        if plan.platform_model_service_role_bindings is None
+        else "model"
+        if plan.platform_admin_service_role_bindings is None
+        else "admin"
+    )
+    delivery_manifest = getattr(plan, "business_delivery_service_role_bindings", None)
+    assert len(plan.service_role_graph.bindings) == (
+        {"core": 15, "model": 17, "admin": 18, "projection": 19}[profile]
+        + (3 if delivery_manifest is not None else 0)
+    )
     verified = migration.run_production_postgresql_migration(plan, verify_only=True)
     assert verified.catalog_sha256 == first.catalog_sha256
     repeated = migration.run_production_postgresql_migration(plan)
@@ -234,11 +384,19 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
                 == "ga1b2c3d4e5f"
             )
         with monkeypatch.context() as context:
-            context.setattr(
-                migration,
-                "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
-                {},
-            )
+            if delivery_manifest is not None:
+                context.setitem(migration._BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS, profile, {})
+            else:
+                context.setattr(
+                    migration,
+                    {
+                        "core": "_SOURCE_SECURITY_CATALOG_SHA256",
+                        "model": "_PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256",
+                        "admin": "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+                        "projection": "_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256",
+                    }[profile],
+                    {},
+                )
             with pytest.raises(migration.PostgreSqlMigrationError) as absent:
                 migration.run_production_postgresql_migration(plan)
             assert absent.value.code == "source_catalog_baseline_missing"
@@ -250,6 +408,104 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         upgraded = migration.run_production_postgresql_migration(plan)
         assert upgraded.official_head == target
         assert upgraded.catalog_sha256 == first.catalog_sha256
+
+        historical_users = [(1_234_567, f"trgm-a-{uuid4()}"), (1_234_568, f"trgm-b-{uuid4()}")]
+        with owner.begin() as connection:
+            for workspace, user in historical_users:
+                connection.execute(
+                    sa.text("SELECT set_config('app.runtime_workspace_id', :workspace, true)"),
+                    {"workspace": str(workspace)},
+                )
+                connection.execute(
+                    sa.text("INSERT INTO users (workspace_id,id) VALUES (:workspace,:user)"),
+                    {"workspace": workspace, "user": user},
+                )
+        operator = sa.create_engine(
+            sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"]).set(
+                database=plan.official_owner.url.database
+            )
+        )
+        try:
+            for predecessor in ("hh1b2c3d4e5f", "mm1a2b3c4d5e"):
+                with owner.connect() as connection:
+                    config.attributes["connection"] = connection
+                    command.downgrade(config, predecessor)
+                with owner.connect() as connection:
+                    assert (
+                        connection.exec_driver_sql(
+                            "SELECT version_num FROM alembic_version"
+                        ).scalar_one()
+                        == predecessor
+                    )
+                    assert connection.exec_driver_sql(
+                        "SELECT indexname FROM pg_indexes WHERE schemaname='public' "
+                        "AND indexname IN ('ix_conversations_title_trgm', "
+                        "'ix_conversation_items_search_text_trgm') ORDER BY indexname"
+                    ).scalars().all() == ["ix_conversations_title_trgm"]
+                with owner.begin() as connection:
+                    connection.exec_driver_sql(
+                        "CREATE INDEX replay_unreviewed_title_trgm ON public.conversations "
+                        "USING gin (lower(title) gin_trgm_ops)"
+                    )
+                try:
+                    with pytest.raises(migration.PostgreSqlMigrationError) as extra:
+                        migration.run_production_postgresql_migration(plan)
+                    assert extra.value.code == "pg_trgm_index_contract_drifted"
+                finally:
+                    with owner.begin() as connection:
+                        connection.exec_driver_sql("DROP INDEX replay_unreviewed_title_trgm")
+                with owner.begin() as connection:
+                    connection.exec_driver_sql("DROP INDEX ix_conversations_title_trgm")
+                    connection.exec_driver_sql(
+                        "CREATE INDEX ix_conversations_title_trgm ON public.conversations "
+                        "USING gin ((lower(title) || 'drift') gin_trgm_ops)"
+                    )
+                try:
+                    with pytest.raises(migration.PostgreSqlMigrationError) as expression:
+                        migration.run_production_postgresql_migration(plan)
+                    assert expression.value.code == "pg_trgm_index_contract_drifted"
+                finally:
+                    with owner.begin() as connection:
+                        connection.exec_driver_sql("DROP INDEX ix_conversations_title_trgm")
+                        connection.exec_driver_sql(
+                            "CREATE INDEX ix_conversations_title_trgm ON public.conversations "
+                            "USING gin (lower(title) gin_trgm_ops)"
+                        )
+                with operator.begin() as connection:
+                    quote = connection.dialect.identifier_preparer.quote
+                    connection.exec_driver_sql(
+                        "ALTER TABLE public.conversations OWNER TO "
+                        + quote(plan.database_owner.login)
+                    )
+                try:
+                    with pytest.raises(migration.PostgreSqlMigrationError) as ownership:
+                        migration.run_production_postgresql_migration(plan)
+                    assert ownership.value.code == "pg_trgm_index_contract_drifted"
+                finally:
+                    with operator.begin() as connection:
+                        quote = connection.dialect.identifier_preparer.quote
+                        connection.exec_driver_sql(
+                            "ALTER TABLE public.conversations OWNER TO "
+                            + quote(plan.official_owner.login)
+                        )
+                receipt = _run_original_migration_cli(plan, tmp_path, monkeypatch, predecessor)
+                assert receipt["status"] == "pass" and receipt["official_head"] == target
+                assert receipt["catalog_sha256"] == first.catalog_sha256
+                assert receipt["service_role_graph_sha256"] == plan.service_role_graph.sha256
+                with owner.begin() as connection:
+                    for workspace, user in historical_users:
+                        connection.execute(
+                            sa.text(
+                                "SELECT set_config('app.runtime_workspace_id', :workspace, true)"
+                            ),
+                            {"workspace": str(workspace)},
+                        )
+                        assert connection.execute(
+                            sa.text("SELECT workspace_id,id FROM users WHERE id=:user"),
+                            {"user": user},
+                        ).all() == [(workspace, user)]
+        finally:
+            operator.dispose()
 
         with owner.begin() as connection:
             connection.exec_driver_sql("UPDATE alembic_version SET version_num='unknown'")
@@ -272,13 +528,33 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         assert final.catalog_sha256 == first.catalog_sha256
     finally:
         owner.dispose()
-    if final.saas_head == "lm2t00000001":
+    if final.saas_head in {"lm2t00000001", "p0s000000016", "p0s000000017", "p0s000000018"}:
         from tests.saas.test_model_budget_owner_settlement_postgresql import (
             verify_non_bypass_budget_owner_settlement,
         )
 
-        verify_non_bypass_budget_owner_settlement(plan)
-    _verify_preview_deployment_and_startup(plan, final, tmp_path)
+        if profile == "core":
+            assert "billing" not in plan.service_role_graph.by_service
+        else:
+            verify_non_bypass_budget_owner_settlement(plan)
+    if profile in {"admin", "projection"}:
+        _verify_preview_deployment_and_startup(plan, final, tmp_path)
+    else:
+        config, engines = _startup_config(plan, final, tmp_path)
+        try:
+            migration.verify_production_postgresql_state(engines=engines, config=config)
+            sessions = create_role_session_factories(
+                config,  # type: ignore[arg-type]
+                verify_state=lambda service_engines, service_config: (
+                    migration.verify_production_postgresql_state(
+                        engines=service_engines, config=service_config
+                    )
+                ),
+            )
+            sessions.close()
+        finally:
+            for engine in engines.values():
+                engine.dispose()
 
 
 def _startup_config(
@@ -289,11 +565,21 @@ def _startup_config(
     path = tmp_path / f"runtime-migration-receipt-{receipt.catalog_sha256}.json"
     path.write_text(json.dumps(receipt.to_dict()))
     path.chmod(0o400)
+    delivery_manifest = getattr(plan, "business_delivery_service_role_bindings", None)
     urls = {
         service: sa.make_url(plan.saas_owner.url)
         .set(username=plan.service_role_graph.login_for(service))
+        .update_query_dict(
+            {"application_name": "saas-revocation-worker"}
+            if service == "revocation_consumer"
+            else {}
+        )
         .render_as_string(hide_password=False)
-        for service in (*migration._SERVER_SERVICE_ROLES, "billing")
+        for service in (
+            *migration._SERVER_SERVICE_ROLES,
+            *(("billing",) if "billing" in plan.service_role_graph.by_service else ()),
+            *(("revocation_consumer",) if delivery_manifest is not None else ()),
+        )
     }
     config = SimpleNamespace(
         product_revision=plan.product_revision,
@@ -301,7 +587,12 @@ def _startup_config(
         control_plane_schema_revision=receipt.saas_head,
         service_role_bindings=plan.service_role_bindings,
         service_role_graph=plan.service_role_graph,
-        capabilities=frozenset({"billing"}),
+        business_delivery_service_role_bindings=delivery_manifest,
+        capabilities=(
+            frozenset({"billing"})
+            if "billing" in plan.service_role_graph.by_service
+            else frozenset()
+        ),
         secrets=SimpleNamespace(database_urls=SimpleNamespace(as_mapping=lambda: urls)),
         migration_receipt=ProductionMigrationReceipt(
             path=path,
@@ -335,10 +626,17 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             print(f"CLEAN_REPLAY_PREVIEW_INVENTORY_PG{major}={inventory_digest}")
-            assert (
-                inventory_digest
-                == migration._PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
+            inventory_predecessor = migration._project_identity_guard_inventory_predecessor(
+                inventory
             )
+            assert inventory_predecessor is not None
+            assert (
+                migration._verify_public_schema_inventory_digest(inventory, key=key)
+                == inventory_digest
+            )
+            assert hashlib.sha256(
+                json.dumps(inventory_predecessor, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest() == migration._PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
             catalog = {
                 "official_head": key[1],
                 "saas_head": key[2],
@@ -374,12 +672,18 @@ def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[in
                 json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             print(f"CLEAN_REPLAY_PREVIEW_SECURITY_PG{major}={digest}")
-            assert (
-                digest
-                == migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(
-                    key
-                )
+            predecessor = migration._source_catalog_project_lock_predecessor(normalized)
+            assert predecessor is not None
+            anchor_digest = hashlib.sha256(
+                json.dumps(predecessor, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            assert anchor_digest != digest
+            expected_security = (
+                migration._PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
+                if plan.model_projection_service_role_bindings is not None
+                else migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
             )
+            assert anchor_digest == expected_security.get(key)
             return key, digest
     finally:
         engine.dispose()
@@ -506,4 +810,28 @@ def _verify_runner_deployment_and_startup(
     migration.verify_production_postgresql_state(engines=engines, config=config)
     print(
         "RUNNER_REVOKED_MANAGEMENT_STARTUP=pass; original_receipt=unchanged; unsafe_edges=rejected"
+    )
+
+
+@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
+def test_real_fenced_t_runtime_rebinding_commit_and_complete_facts(production_replay):
+    """Run the native maintenance scenario in the existing two-major replay lane."""
+    from tests.saas.test_runtime_maintenance_postgresql import (
+        assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome,
+    )
+
+    assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome(
+        production_replay
+    )
+
+
+@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
+def test_real_fenced_t_inverse_and_same_oid_reattach(production_replay, tmp_path):
+    """Derive clean original T gold; fixture callbacks do not qualify old images."""
+    from tests.saas.test_runtime_maintenance_postgresql import (
+        assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold,
+    )
+
+    assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
+        production_replay, tmp_path
     )

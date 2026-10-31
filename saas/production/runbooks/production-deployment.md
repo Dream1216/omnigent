@@ -16,7 +16,7 @@ least two availability zones and continue to enforce every tenant and sandbox fe
 4. Verify all required components have two ready replicas, a disruption budget, hard
    anti-affinity/topology spread, digest-pinned images, dedicated ServiceAccounts, no
    host namespace, no privileged mode, no privilege escalation, read-only root filesystems,
-   `RuntimeDefault` seccomp, and all Linux capabilities dropped.
+   `RuntimeDefault` seccomp (the exact schema-v3 Runner execution exception below is separately reviewed), and all Linux capabilities dropped.
 5. Verify default-deny ingress/egress, metadata and private control-plane denial,
    proxy-only Runner egress, restricted DNS, isolated Preview origin, Runner-local UDS,
    and mTLS on Runner control and Preview relay paths from live policy and packet probes.
@@ -61,3 +61,49 @@ uv run python -m saas.scripts.check_deployment_readiness \
 CI omits `--require-ready`; an empty evidence directory must remain structurally valid
 and production-blocked. Never turn a local or single-host rehearsal into production
 evidence.
+
+## Exact Runner execution seccomp (schema v3)
+
+Only the `runner-agent` execution container in each canonical Runner deployment
+uses `Localhost` at `omnigent/bubblewrap-v3.json`, full SHA-256
+`c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363`.
+Pod and init profiles and all other components remain `RuntimeDefault`.
+The Runner keeps UID/GID 65532, dropped ALL capabilities, no-new-privileges,
+read-only root, private PID, `hostPID: false`, and
+`shareProcessNamespace: false`. Its trusted outer-backend marker is
+`OMNIGENT_HOST_SANDBOX_BACKEND=kubernetes`; its existing RuntimeClass is
+`omnigent-runner`. Neither that name nor a Node label proves effective isolation.
+
+The authorized operator must capture fresh node UID, Pod ownership/UID, execution
+container ID and digest, effective CRI/profile/process facts, and the actual
+root-owned regular profile file using no-follow open and stable pre/post inode,
+metadata and full byte hash. Bind the kernel/runtime, private PID namespace,
+all effective init profiles, source revision, time and immutable raw artifact
+hash to each placement. Retain the original bootstrap and activated inner-filter
+positive/negative probes. Missing observations, unknown mapping, stale receipts,
+a short hash label alone, or a changed runtime require rejection and new capture.
+No maintained deployment-record collector is configured by this document: the
+Root-owned raw node/CRI/probe adapter must be reviewed and actually executed.
+Local unit fixtures are not node evidence and must never be signed as actuals.
+
+Policy and record schema versions must match. V2 remains RuntimeDefault-only;
+old V2 records are never automatically upgraded into V3 evidence. V3 selects only
+the exact Runner contract above. All original replica/failure-domain, database,
+network, 30-day age, rollback/P5 and distinct SRE/security/release-engineering
+requirements remain. Recreate the whole-file admission receipt with the existing
+signing identities and immutable raw artifact; no new signer or exemption is
+introduced. The schema/rule change itself needs explicit human approval before
+formal adoption, independently of local tests or successful kernel probes.
+
+The V3 profile was captured for `containerd://2.3.2-k3s2`; that exact runtime
+is required. Any runtime upgrade needs new capture/review rather than assuming
+compatibility. Kernel releases must be observed legal versions, not UNKNOWN.
+Each Runner instance needs its own current container ID and raw-evidence hash;
+one aggregate/old probe hash cannot be reused for two physical placements.
+
+Runner Pod, stage init, execution container and fsGroup must all use the normal
+execution-profile UID/GID 65532. The original stager creates owner-only 0400
+files and 0700 directories as that same user; do not stage as another UID or
+weaken owner checks. Other component identities remain unchanged. The Runner
+uses its explicit work/repository/runtime mounts; this contract does not add a
+HOME override or infer UID switching from HOME/USER environment strings.

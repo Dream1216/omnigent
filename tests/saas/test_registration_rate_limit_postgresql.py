@@ -1144,7 +1144,7 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
     rate_limit_postgresql_engine = sa.create_engine(isolated_postgres_url)
     request.addfinalizer(rate_limit_postgresql_engine.dispose)
     with rate_limit_postgresql_engine.begin() as connection:
-        command.upgrade(_migration_config(connection), "head")
+        command.upgrade(_migration_config(connection), "p0s000000015")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )
