@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, LoaderCircle, MailCheck, ShieldCheck } from "lucide-react";
+import { useRouter } from "next/router";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { FlowIntro } from "@/components/flow-intro";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ interface VerificationState {
 }
 
 export function VerificationFlow() {
+  const router = useRouter();
   const { t } = useI18n();
   const [state, setState] = useState<VerificationState | null>(null);
   const [email, setEmail] = useState("");
@@ -61,14 +63,16 @@ export function VerificationFlow() {
   }, []);
 
   useEffect(() => {
-    if (state?.token && window.location.hash) {
-      window.history.replaceState(
-        window.history.state,
-        "",
+    // The exported Pages router restores its initial asPath during hydration.
+    // Once it is ready, scrub its state too so that it cannot restore the token.
+    if (state?.token && router.isReady && window.location.hash) {
+      void router.replace(
         window.location.pathname + window.location.search,
+        undefined,
+        { shallow: true, scroll: false },
       );
     }
-  }, [state]);
+  }, [state, router]);
 
   const verifyKey = useMemo(() => {
     if (!state) return "";

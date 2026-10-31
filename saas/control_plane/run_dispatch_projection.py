@@ -588,7 +588,7 @@ class RunQueuedDispatchProjection:
                     RunnerPoolRecord.failure_domain == placement.failure_domain,
                     RunnerPoolRecord.queue_class == run.queue_class,
                     RunnerPoolRecord.status == "active",
-                    RunnerPoolRecord.source_revision == partition.source_revision,
+                    RunnerPoolRecord.source_revision == run.product_revision,
                     RunnerPoolRecord.schema_revision == placement.official_schema_revision,
                     RunnerPoolRecord.adapter_contract_version
                     == partition.adapter_contract_version,

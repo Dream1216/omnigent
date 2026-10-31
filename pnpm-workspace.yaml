@@ -17,6 +17,11 @@ minimumReleaseAgeExclude:
   # Security-only exception: supersedes the vulnerable <=4.2.0 line. The
   # exact artifact remains integrity-locked and policy-verified.
   - 'http-cache-semantics@4.3.0'
+  # Exact security fixes for compressed-body DoS and revoked TLS intermediates.
+  - 'body-parser@2.4.0'
+  - 'electron@42.11.16'
+  # Exact security fixes for URI host, scheme and relative-path normalization.
+  - 'fast-uri@3.1.9'
   # Security-only exception: fixes GHSA-68fv-2mgg-jv7q. The exact artifact is
   # integrity-locked in pnpm-lock.yaml and remains subject to lockfile policy.
   - 'source-map-js@1.2.2'
@@ -62,7 +67,11 @@ overrides:
   # Build-tool pins that match the legacy npm lockfile. Removing them allowed pnpm
   # to resolve newer Vite/Tailwind patches whose new bundler/chunking produced a
   # broken split of the Shiki bundle and lost the PDF worker asset.
-  vite: 8.1.0
+  vite: 8.1.6
+  '@vitest/coverage-v8': 4.1.12
+  vitest: 4.1.12
+  '@storybook/react-vite': 10.6.2
+  storybook: 10.6.2
   tailwindcss: 4.3.1
   '@tailwindcss/vite': 4.3.1
   '@tailwindcss/node': 4.3.1
@@ -71,24 +80,26 @@ overrides:
   lightningcss: 1.32.0
   postcss: 8.5.23
   browserslist: 4.28.8
-  fast-uri: 3.1.8
+  fast-uri: 3.1.9
   '@xmldom/xmldom': 0.8.15
   qs: 6.16.0
   query-string: 9.5.0
   '@hono/node-server': 1.19.15
-  hono: 4.13.5
+  hono: 4.13.11
   linkify-it: 5.0.2
   shiki: "catalog:"
   react: "catalog:"
   react-dom: "catalog:"
-  dompurify: 3.4.14
+  dompurify: 3.4.17
   mermaid: 11.16.1
   tar: 7.5.21
-  'node-gyp>undici': 6.28.1
-  'undici@>=7.0.0 <8.0.0': 7.29.1
+  'node-gyp>undici': 6.29.1
+  '@ai-sdk/provider-utils>undici': 6.29.1
+  'undici@>=7.0.0 <8.0.0': 7.30.1
   'undici@>=8.0.0 <9.0.0': 8.12.2
+  'zod@>=4.0.0 <5.0.0': 4.6.7
   'body-parser@>=2.0.0 <3.0.0': 2.4.0
-  'zod@>=4.0.0 <5.0.0': 4.6.6
+  '@azure/identity@4.13.3>@azure/msal-node': 7.1.0
   proxy-addr: 2.0.8
   'brace-expansion@>=1.0.0 <2.0.0': 1.1.20
   'brace-expansion@>=2.0.0 <3.0.0': 2.1.6
@@ -134,7 +145,7 @@ overrides:
   '@tiptap/pm': 3.30.5
   '@tiptap/react': 3.30.5
   '@tiptap/starter-kit': 3.30.5
-  express-rate-limit>ip-address: 10.3.1
+  express-rate-limit>ip-address: 10.7.4
   sharp: 0.35.5
   '@modelcontextprotocol/sdk': 1.32.0
 

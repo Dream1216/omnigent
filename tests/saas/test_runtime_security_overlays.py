@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from saas.scripts.activate_debian_sid_snapshot import activate
+from saas.scripts.check_image_supply_chain import validate_image_material_lock
+from tests.saas.test_image_supply_chain import _material_lock_repo
 
 
 def _root() -> Path:
@@ -25,11 +29,57 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert runtime["runtime_contract"]["venv_builder_image"] == "python:3.12-slim"
     assert runtime["runtime_contract"]["common_packages"]["python-3.12"] == "3.12.15-r3"
     assert runtime["runtime_contract"]["common_packages"]["zlib"] == ("1.3.2.1_rc20260917-r0")
-    assert runtime["runtime_contract"]["server_packages"] == {"git": "2.56.0-r0"}
-    assert runtime["runtime_contract"]["transient_host_packages"] == {
-        "gcc": "16.2.0-r1",
-        "make": "4.4.1-r15",
+    assert runtime["runtime_contract"]["server_packages"] == {
+        "cyrus-sasl-heimdal-libs": "2.1.28-r58",
+        "git": "2.56.0-r0",
+        "heimdal-libs": "7.8.0-r54",
+        "keyutils-libs": "1.6.3-r41",
+        "krb5-conf": "1.0-r10",
+        "krb5-libs": "1.22.2-r5",
+        "libcom_err": "1.47.4-r4",
+        "libcrypto3": "3.6.5-r5",
+        "libcurl-openssl4": "8.23.0-r2",
+        "libidn2": "2.3.8-r11",
+        "libldap-2.6": "2.6.14-r0",
+        "libnghttp2-14": "1.70.0-r6",
+        "libpcre2-8-0": "10.49-r1",
+        "libpsl": "0.23.3-r3",
+        "libssl3": "3.6.5-r5",
+        "libunistring": "1.5-r0",
+        "libverto": "0.3.2-r10",
+        "nghttp3": "1.18.0-r2",
+        "ngtcp2": "1.25.0-r6",
     }
+    assert runtime["runtime_contract"]["transient_host_packages"] == {
+        "binutils": "2.47-r2",
+        "gcc": "16.2.0-r1",
+        "glibc-2.44-dev": "2.44-r8",
+        "isl": "0.28-r5",
+        "libatomic": "16.2.0-r1",
+        "libgomp": "16.2.0-r1",
+        "libquadmath": "16.2.0-r1",
+        "libstdc++-dev": "16.2.0-r1",
+        "libxcrypt-dev": "4.5.2-r6",
+        "linux-headers": "7.3-r0",
+        "make": "4.4.1-r15",
+        "mpc": "1.4.1-r2",
+        "mpfr": "4.2.2-r4",
+        "openssf-compiler-options": "20250904-r11",
+        "posix-cc-wrappers": "2-r10",
+    }
+
+    host_packages = {
+        **runtime["runtime_contract"]["host_packages"],
+        **runtime["runtime_contract"]["transient_host_packages"],
+    }
+    assert len(runtime["runtime_contract"]["host_packages"]) == 53
+    assert len(host_packages) == 68
+    assert (
+        hashlib.sha256(
+            json.dumps(host_packages, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        == "a7c804cdc84cf76eebf5bd9368566af20abf888c96634fa654fd948f608e9c7d"
+    )
 
 
 def test_github_cli_security_fix_source_is_closed_and_pinned() -> None:
@@ -95,6 +145,14 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert "git=2.56.0-r0" in dockerfile
     assert "gcc=16.2.0-r1" in dockerfile
     assert "apk del --purge make gcc" in dockerfile
+    transient = json.loads((_root() / "saas/supply_chain/wolfi-runtime-lock.json").read_text())[
+        "runtime_contract"
+    ]["transient_host_packages"]
+    purges = re.findall(r"apk del --purge ([^\\\r\n&]+)", dockerfile)
+    assert len(purges) == 1
+    purged_packages = purges[0].split()
+    assert len(purged_packages) == len(transient)
+    assert set(purged_packages) == set(transient)
     assert "sandbox:x:1000660000:1000660000::/sandbox:/bin/sh" in dockerfile
     assert 'pwd.getpwnam("sandbox")' in dockerfile
     assert "--connect-timeout 30 --max-time 900 -o /tmp/kiro.zip" in dockerfile
@@ -116,6 +174,46 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert (
         "vulnerability_policy" in (_root() / "saas/supply_chain/release-policy.json").read_text()
     )
+
+
+@pytest.mark.parametrize(
+    ("stage", "target", "replacement", "expected"),
+    [
+        (
+            "host",
+            "binutils=2.47-r2",
+            "binutils=2.47-r1",
+            "Wolfi transient_host_packages pins must be installed exactly",
+        ),
+        (
+            "host",
+            "libpcre2-8-0=10.49-r1",
+            "libpcre2-8-0",
+            "Wolfi host_packages pins must be installed exactly",
+        ),
+        (
+            "runtime",
+            "libcurl-openssl4=8.23.0-r2",
+            "libcurl-openssl4",
+            "Wolfi server_packages pins must be installed exactly",
+        ),
+    ],
+)
+def test_wolfi_resolved_package_closure_rejects_drift(
+    tmp_path: Path, stage: str, target: str, replacement: str, expected: str
+) -> None:
+    repo = _material_lock_repo(tmp_path)
+    dockerfile = repo / "deploy/docker/Dockerfile"
+    source = dockerfile.read_text(encoding="utf-8")
+    prefix, separator, rest = source.partition(f"FROM secured-python-runtime AS {stage}\n")
+    assert separator
+    body, suffix_separator, suffix = rest.partition("\nFROM ")
+    assert body.count(target) == 1
+    dockerfile.write_text(
+        prefix + separator + body.replace(target, replacement, 1) + suffix_separator + suffix,
+        encoding="utf-8",
+    )
+    assert expected in validate_image_material_lock(repo)
 
 
 def test_sid_snapshot_activation_is_exact_and_fail_closed(tmp_path: Path) -> None:

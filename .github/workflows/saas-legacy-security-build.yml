@@ -1,0 +1,895 @@
+name: SaaS legacy security build
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Exact legacy component registered in the reviewed main profiles
+        type: choice
+        required: true
+        options: [Core, Gateway, Model]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-legacy-security-${{ inputs.component }}
+  cancel-in-progress: false
+
+jobs:
+  build-initial:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      product-revision: ${{ steps.selection.outputs.product_revision }}
+      product-tree: ${{ steps.selection.outputs.product_tree }}
+      profile-sha256: ${{ steps.selection.outputs.profile_sha256 }}
+      wheel-sha256: ${{ steps.stage.outputs.wheel_sha256 }}
+      artifact-id: ${{ steps.upload-wheel.outputs.artifact-id }}
+      artifact-sha256: ${{ steps.upload-wheel.outputs.artifact-digest }}
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+      OMNIGENT_SKIP_WEB_UI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - name: Checkout exact main control
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered immutable product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout registered product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify complete source before executing product build
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller verify-source \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --product "$GITHUB_WORKSPACE/product"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: "0.12.1"
+      - name: Derive hashed build backend constraints from the product lock
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller build-constraints \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --product "$GITHUB_WORKSPACE/product" \
+            --destination "$RUNNER_TEMP/legacy-build-constraints.txt"
+      - name: Set up product pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: product/package.json
+          standalone: true
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Build fresh SaaS login export
+        working-directory: product/saas/login_web
+        env:
+          OMNIGENT_SOURCE_REVISION: ${{ steps.selection.outputs.product_revision }}
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build
+          npm run format:check
+      - name: Build fresh product wheel and SPA
+        working-directory: product
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.selection.outputs.source_date_epoch }}
+          OMNIGENT_SKIP_WEB_UI: "false"
+          OMNIGENT_BUILD_WEB_UI: "1"
+          VITE_OMNIGENT_HOST_ROUTING: "true"
+        run: |
+          set -euo pipefail
+          uv build --wheel --build-constraints "$RUNNER_TEMP/legacy-build-constraints.txt" \
+            --require-hashes --out-dir "$RUNNER_TEMP/fresh-legacy-dist"
+      - name: Inspect and stage fresh product bytes with trusted control
+        id: stage
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller stage-wheel \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --product "$GITHUB_WORKSPACE/product" \
+            --dist "$RUNNER_TEMP/fresh-legacy-dist" \
+            --destination "$RUNNER_TEMP/fresh-legacy-wheel" --github-output "$GITHUB_OUTPUT"
+      - name: Retain unsigned fresh wheel for protected promotion
+        id: upload-wheel
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-initial-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fresh-legacy-wheel/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+
+  qualify-source:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact main source verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered source qualification product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact source qualification product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Qualify complete reviewed source CI and original policy state
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_source_qualification \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-source-qualification"
+      - name: Retain original source CI bytes and refusal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-source-ci-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-source-qualification/
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 90
+
+  verify-product-pg:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    name: legacy-pg (${{ matrix.major }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - major: 16
+            image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+          - major: 18
+            image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+    services:
+      postgres:
+        image: ${{ matrix.image }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+      PG_MAJOR: ${{ matrix.major }}
+      OMNIGENT_SKIP_WEB_UI: "true"
+      OMNIGENT_SAAS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+      PGPASSWORD: postgres
+    steps:
+      - name: Checkout exact main PG verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered PG product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact PG product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify complete component PG input fingerprints
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_pg_contract verify-source \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --major "$PG_MAJOR" --output "$RUNNER_TEMP/legacy-pg-source.json"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: "0.12.1"
+      - name: Install locked product contract dependencies without build hooks
+        working-directory: product
+        run: |
+          set -euo pipefail
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/legacy-pg-venv" >> "$GITHUB_ENV"
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/legacy-pg-venv" \
+            uv sync --frozen --extra saas --group dev --no-install-local --no-config
+      - name: Capture actual disposable PostgreSQL version
+        run: |
+          set -euo pipefail
+          psql --no-psqlrc --set ON_ERROR_STOP=1 --host localhost --username postgres \
+            --dbname postgres --tuples-only --no-align --command "SHOW server_version_num" \
+            > "$RUNNER_TEMP/legacy-pg-version.txt"
+          version=$(cat "$RUNNER_TEMP/legacy-pg-version.txt")
+          [[ "$version" =~ ^[0-9]+$ ]]
+          [[ "$((version / 10000))" == "$PG_MAJOR" ]]
+      - name: Execute original exact-source PostgreSQL contracts
+        working-directory: product
+        run: |
+          set -euo pipefail
+          if [[ "$PG_MAJOR" == 16 ]]; then
+            selectors=(
+              tests/saas/test_control_plane_migration.py::test_real_postgresql_pinned_n1_outbox_compatibility_bridge
+              tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay
+              'tests/saas/test_n1_outbox_admission.py::test_real_postgresql_roles_allow_exact_rollback_schema_and_reject_newer_marker_drift[p0s000000004]'
+              tests/saas/test_production_runner_postgresql.py::test_pg16_runner_direct_authority_is_fail_closed
+            )
+          elif [[ "$PG_MAJOR" == 18 ]]; then
+            selectors=(
+              tests/saas/test_n1_compat_patch.py
+              tests/saas/test_control_plane_migration.py::test_real_postgresql_pinned_n1_outbox_compatibility_bridge
+              tests/saas/test_n1_outbox_admission.py::test_real_postgresql_n1_compat_login_admission_and_roles_replay
+            )
+          else
+            exit 2
+          fi
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I -m pytest -v -n 0 --reruns 0 \
+            -c pyproject.toml --confcutdir=tests \
+            -o "cache_dir=$RUNNER_TEMP/legacy-pg-pytest-cache" \
+            --junitxml="$RUNNER_TEMP/legacy-pg.xml" "${selectors[@]}"
+      - name: Reverify source and exact PostgreSQL result inventory
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_pg_contract verify-results \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --major "$PG_MAJOR" --xml "$RUNNER_TEMP/legacy-pg.xml" \
+            --version-file "$RUNNER_TEMP/legacy-pg-version.txt" \
+            --output "$RUNNER_TEMP/legacy-pg-result.json"
+      - name: Retain exact-source PG evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-pg-${{ inputs.component }}-${{ matrix.major }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/legacy-pg-source.json
+            ${{ runner.temp }}/legacy-pg-version.txt
+            ${{ runner.temp }}/legacy-pg.xml
+            ${{ runner.temp }}/legacy-pg-result.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  collect-product-pg:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: verify-product-pg
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.upload-pg-receipts.outputs.artifact-id }}
+      artifact-sha256: ${{ steps.upload-pg-receipts.outputs.artifact-digest }}
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact main PG receipt verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered PG receipt product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact PG receipt product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Collect exact native PG16 and PG18 jobs and original artifacts
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_control_results \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-native-pg-receipts"
+      - name: Retain original native PG receipts and refusal evidence
+        id: upload-pg-receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-native-pg-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-native-pg-receipts/
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 90
+
+  prepare-publication:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: [build-initial, qualify-source, collect-product-pg]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact main publication control
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered publication product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact publication product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare original native inputs and fresh raw scans
+        id: admission
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_initial_publisher prepare \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
+      - name: Retain publication preparation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-preparation-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-publication/export/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain original ZIP bytes and native refusal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-native-preparation-${{ inputs.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/legacy-publication/export/
+            ${{ runner.temp }}/legacy-publication/context-api/
+            ${{ runner.temp }}/legacy-publication/signature-context-api/
+            ${{ runner.temp }}/legacy-publication/final-native-api/
+            ${{ runner.temp }}/legacy-publication/inputs/
+            ${{ runner.temp }}/legacy-publication/signature-final-inputs/
+            ${{ runner.temp }}/legacy-publication/preparation/
+            ${{ runner.temp }}/legacy-publication/publication/
+            ${{ runner.temp }}/legacy-publication/runtime/
+            ${{ runner.temp }}/legacy-publication/signatures/
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 90
+
+  publish-exact-oci:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: prepare-publication
+    environment: production-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+      packages: write
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact main publication control
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered publication product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact publication product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish exact OCI and verify registry readback
+        id: admission
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_initial_publisher publish \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
+      - name: Retain exact publication receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-publication-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-publication/export/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain original ZIP bytes and native refusal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-native-publication-${{ inputs.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/legacy-publication/export/
+            ${{ runner.temp }}/legacy-publication/context-api/
+            ${{ runner.temp }}/legacy-publication/signature-context-api/
+            ${{ runner.temp }}/legacy-publication/final-native-api/
+            ${{ runner.temp }}/legacy-publication/inputs/
+            ${{ runner.temp }}/legacy-publication/signature-final-inputs/
+            ${{ runner.temp }}/legacy-publication/preparation/
+            ${{ runner.temp }}/legacy-publication/publication/
+            ${{ runner.temp }}/legacy-publication/runtime/
+            ${{ runner.temp }}/legacy-publication/signatures/
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 90
+
+  verify-published-runtime:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: publish-exact-oci
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+      packages: read
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact main publication control
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered publication product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact publication product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up QEMU for both independent runtime platforms
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - name: Verify all published platforms and generate current SBOMs
+        id: admission
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_initial_publisher runtime \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
+      - name: Retain independent runtime and SBOM evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-runtime-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-publication/export/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain original ZIP bytes and native refusal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-native-runtime-${{ inputs.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/legacy-publication/export/
+            ${{ runner.temp }}/legacy-publication/context-api/
+            ${{ runner.temp }}/legacy-publication/signature-context-api/
+            ${{ runner.temp }}/legacy-publication/final-native-api/
+            ${{ runner.temp }}/legacy-publication/inputs/
+            ${{ runner.temp }}/legacy-publication/signature-final-inputs/
+            ${{ runner.temp }}/legacy-publication/preparation/
+            ${{ runner.temp }}/legacy-publication/publication/
+            ${{ runner.temp }}/legacy-publication/runtime/
+            ${{ runner.temp }}/legacy-publication/signatures/
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 90
+
+  attest-exact-inputs:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: verify-published-runtime
+    environment: production-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact main publication control
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered publication product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact publication product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Revalidate native inputs and construct typed statement
+        id: admission
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_initial_publisher attest-inputs \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
+      - name: Attest exact fresh wheel
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-path: ${{ steps.admission.outputs.wheel_path }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/legacy-publication/export/provenance.json
+      - name: Attest exact server index
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.admission.outputs.server_name }}
+          subject-digest: ${{ steps.admission.outputs.server_digest }}
+          push-to-registry: true
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/legacy-publication/export/provenance.json
+      - name: Attest exact host index
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.admission.outputs.host_name }}
+          subject-digest: ${{ steps.admission.outputs.host_digest }}
+          push-to-registry: true
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/legacy-publication/export/provenance.json
+      - name: Attest server amd64 SBOM
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.admission.outputs.server_name }}
+          subject-digest: ${{ steps.admission.outputs.server_amd64_digest }}
+          push-to-registry: true
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: ${{ runner.temp }}/legacy-publication/export/sbom/server-amd64.spdx.json
+      - name: Attest server arm64 SBOM
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.admission.outputs.server_name }}
+          subject-digest: ${{ steps.admission.outputs.server_arm64_digest }}
+          push-to-registry: true
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: ${{ runner.temp }}/legacy-publication/export/sbom/server-arm64.spdx.json
+      - name: Attest host amd64 SBOM
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.admission.outputs.host_name }}
+          subject-digest: ${{ steps.admission.outputs.host_amd64_digest }}
+          push-to-registry: true
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: ${{ runner.temp }}/legacy-publication/export/sbom/host-amd64.spdx.json
+      - name: Attest host arm64 SBOM
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.admission.outputs.host_name }}
+          subject-digest: ${{ steps.admission.outputs.host_arm64_digest }}
+          push-to-registry: true
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: ${{ runner.temp }}/legacy-publication/export/sbom/host-arm64.spdx.json
+      - name: Verify actual native signatures
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_initial_publisher verify-signatures \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-publication"
+      - name: Retain native signature readback receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-signatures-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-publication/export/native-signatures.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain original ZIP bytes and native refusal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-native-signatures-${{ inputs.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/legacy-publication/export/
+            ${{ runner.temp }}/legacy-publication/context-api/
+            ${{ runner.temp }}/legacy-publication/signature-context-api/
+            ${{ runner.temp }}/legacy-publication/final-native-api/
+            ${{ runner.temp }}/legacy-publication/inputs/
+            ${{ runner.temp }}/legacy-publication/signature-final-inputs/
+            ${{ runner.temp }}/legacy-publication/preparation/
+            ${{ runner.temp }}/legacy-publication/publication/
+            ${{ runner.temp }}/legacy-publication/runtime/
+            ${{ runner.temp }}/legacy-publication/signatures/
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 90
+
+  independent-readback:
+    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: attest-exact-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+      pull-requests: read
+      packages: read
+      attestations: read
+    env:
+      LEGACY_COMPONENT: ${{ inputs.component }}
+      CONTROL_REVISION: ${{ github.sha }}
+    steps:
+      - name: Checkout exact main publication control
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Select registered publication product
+        id: selection
+        working-directory: control
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_build_controller select \
+            --control "$PWD" --component "$LEGACY_COMPONENT" \
+            --control-revision "$CONTROL_REVISION" --github-output "$GITHUB_OUTPUT"
+      - name: Checkout exact publication product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.selection.outputs.product_revision }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up crane
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Independently read native signatures and exact registry OCI
+        id: admission
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -B -m saas.scripts.legacy_initial_publisher consume \
+            --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
+            --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
+            --destination "$RUNNER_TEMP/legacy-publication" --github-output "$GITHUB_OUTPUT"
+      - name: Retain independent native consumer result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-consumer-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-publication/export/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain original ZIP bytes and native refusal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-native-consumer-${{ inputs.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/legacy-publication/export/
+            ${{ runner.temp }}/legacy-publication/context-api/
+            ${{ runner.temp }}/legacy-publication/signature-context-api/
+            ${{ runner.temp }}/legacy-publication/final-native-api/
+            ${{ runner.temp }}/legacy-publication/inputs/
+            ${{ runner.temp }}/legacy-publication/signature-final-inputs/
+            ${{ runner.temp }}/legacy-publication/preparation/
+            ${{ runner.temp }}/legacy-publication/publication/
+            ${{ runner.temp }}/legacy-publication/runtime/
+            ${{ runner.temp }}/legacy-publication/signatures/
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 90

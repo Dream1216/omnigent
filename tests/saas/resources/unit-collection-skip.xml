@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testsuite name="unit-fixture" tests="3" failures="0" errors="0" skipped="1"><testcase classname="tests.unit.test_example" name="test_pass"/><testcase classname="" name="tests.saas.test_unit_fixture_collection"><skipped message="collection skipped">unit fixture: optional test module is unavailable</skipped></testcase></testsuite></testsuites>

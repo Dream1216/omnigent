@@ -1,0 +1,256 @@
+{
+  "saas/scripts/legacy_source_ci.py": {
+    "parent_sha256": "cd88ea8b1bfb17d013d435ba705eb9ba4a4af4fb7495eb0d29cd64411dd34eaa",
+    "combined_sha256": "592b8f27058b41bb11d644b579d52e85180ffe4232123496080b6f87510a37ab",
+    "approved_change": "Reviewed C142 exact single-BOM native timestamp support and OWNER fixed-main typed policy joins; six other functions byte identical; current BOM AST equals C142 with only Ruff line wrapping; inverse restores the exact parent file",
+    "preserved_functions": {
+      "_instant": "8319a0a5d38bd0c083c634d91a9783b50bf42147d1437867a1770107521a3a0f",
+      "checkout_commit": "aa1e98690271ad239bbe690b067e355de05fcd6c616d09609f1fcc397859e7ce",
+      "verify_job_set": "f7724d9290bfd3026d2dc7759f83f7f43995258c77dce73803b34b1f9e6d2488",
+      "verify_run_pull_request": "ac711ee9c5fc8c8b985a75a754481dbfeb742c6de77370230a22b64e5cb04b81",
+      "download_job_log": "644e2f10207e00ecd044c57b781cc05763eef400979978334531aab78cd9d07b",
+      "_job_pages": "6b0d1a4671d2d5313e40fac81674843821031f2b3942505912a00db4ed097e9c"
+    },
+    "approved_functions": {
+      "completed_step_lines": "2058e64675a67265ab7137831f27ee8a155cffb9dce6fd540f93a8eeb1c1d827",
+      "_load_contract": "b33f58ef5848513ad24928244624ae8937b4d2e19cdb1c884dd62ce5dfd75c8d",
+      "collect_source_ci_bindings": "5bd9fe4b266d85666bd82f2e1499e7186040c9421a7f5ea7b0906f2bb5dbb27e"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "fc9294ef29aab041fefdee3bbce660f47bb190de9f07152f014e2dd12a04218e",
+      "inverse_fragments": [
+        {
+          "before": "import re\n",
+          "after": "import re\nimport select\n"
+        },
+        {
+          "before": "def download_job_log(job_id: int, destination: Path) -> None:\n    \"\"\"Fetch a bounded native log directly; never follow an artifact-provided URL.\"\"\"\n    require(type(job_id) is int and job_id > 0, \"invalid native job ID\")\n    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n    argv = [\"gh\", \"api\", f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\"]\n    started = time.monotonic()\n    try:\n        process = subprocess.Popen(\n            argv,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE,\n        )\n    except OSError as error:\n        os.close(descriptor)\n        _write_log_diagnostic(\n            destination,\n            {\"argv\": argv, \"spawn_errno\": error.errno, \"returncode\": None},\n        )\n        raise\n    stderr_digest = hashlib.sha256()\n    stderr_bytes = 0\n    stderr_sample = bytearray()\n    stderr_complete = False\n\n    def drain_stderr() -> None:\n        nonlocal stderr_bytes, stderr_complete\n        assert process.stderr is not None\n        try:\n            while chunk := process.stderr.read(65536):\n                stderr_digest.update(chunk)\n                stderr_bytes += len(chunk)\n                stderr_sample.extend(chunk[: max(0, 65536 - len(stderr_sample))])\n            stderr_complete = True\n        except OSError:\n            pass\n\n    reader = threading.Thread(target=drain_stderr, daemon=True)\n    reader.start()\n    deadline = threading.Event()\n\n    def expire() -> None:\n        deadline.set()\n        if process.poll() is None:\n            process.kill()\n\n    timer = threading.Timer(45, expire)\n    timer.start()\n    total = 0\n    try:\n        assert process.stdout is not None\n        with os.fdopen(descriptor, \"wb\") as output:\n            while chunk := process.stdout.read(65536):\n                total += len(chunk)\n                require(\n                    total <= 32 * 1024 * 1024,\n                    \"native job log exceeds its bounded input\",\n                )\n                output.write(chunk)\n        require(process.wait(timeout=5) == 0, \"native job log download failed or timed out\")\n    finally:\n        timer.cancel()\n        if process.poll() is None:\n            process.kill()\n            process.wait(timeout=5)\n        if process.stdout is not None:\n            process.stdout.close()\n        reader.join(timeout=5)\n        if process.stderr is not None and not reader.is_alive():\n            process.stderr.close()\n        # Never persist arbitrary stderr: it may contain credentials or signed URLs.\n        sample = bytes(stderr_sample).lower()\n        _write_log_diagnostic(\n            destination,\n            {\n                \"argv\": argv,\n                \"returncode\": process.returncode,\n                \"deadline_seconds\": 45,\n                \"deadline_expired\": deadline.is_set(),\n                \"elapsed_seconds\": round(time.monotonic() - started, 6),\n                \"stdout_bytes\": total,\n                \"stderr_bytes\": stderr_bytes,\n                \"stderr_sha256\": stderr_digest.hexdigest(),\n                \"stderr_complete\": stderr_complete,\n                \"stderr_sample_limit\": 65536,\n                \"http_statuses\": sorted(\n                    {int(match) for match in re.findall(rb\"\\(http ([1-5][0-9]{2})\\)\", sample)}\n                ),\n                \"transport_indicators\": [\n                    name\n                    for name, phrase in (\n                        (\"tls-handshake-timeout\", b\"tls handshake timeout\"),\n                        (\"unexpected-eof\", b\"unexpected eof\"),\n                        (\"deadline-exceeded\", b\"context deadline exceeded\"),\n                        (\"connection-reset\", b\"connection reset\"),\n                    )\n                    if phrase in sample\n                ],\n            },\n        )\n\n",
+          "after": "def download_job_log(job_id: int, destination: Path) -> None:\n    \"\"\"Fetch a bounded native log directly; never follow an artifact-provided URL.\"\"\"\n    require(type(job_id) is int and job_id > 0, \"invalid native job ID\")\n    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n    argv = [\"gh\", \"api\", f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\"]\n    started = time.monotonic()\n    try:\n        process = subprocess.Popen(\n            argv,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE,\n        )\n    except OSError as error:\n        os.close(descriptor)\n        _write_log_diagnostic(\n            destination,\n            {\"argv\": argv, \"spawn_errno\": error.errno, \"returncode\": None},\n        )\n        raise\n    stderr_digest = hashlib.sha256()\n    stderr_bytes = 0\n    stderr_sample = bytearray()\n    stderr_complete = False\n    stop_stderr = threading.Event()\n\n    def drain_stderr() -> None:\n        nonlocal stderr_bytes, stderr_complete\n        assert process.stderr is not None\n        try:\n            descriptor = process.stderr.fileno()\n            os.set_blocking(descriptor, False)\n            while not stop_stderr.is_set():\n                if not select.select([descriptor], [], [], 0.1)[0]:\n                    continue\n                try:\n                    chunk = os.read(descriptor, 65536)\n                except BlockingIOError:\n                    continue\n                if not chunk:\n                    stderr_complete = True\n                    return\n                stderr_digest.update(chunk)\n                stderr_bytes += len(chunk)\n                stderr_sample.extend(chunk[: max(0, 65536 - len(stderr_sample))])\n        except OSError:\n            pass\n\n    reader = threading.Thread(target=drain_stderr, name=f\"native-job-log-stderr-{job_id}\")\n    reader.start()\n    deadline = threading.Event()\n\n    def expire() -> None:\n        deadline.set()\n        if process.poll() is None:\n            process.kill()\n\n    timer = threading.Timer(45, expire)\n    timer.name = f\"native-job-log-deadline-{job_id}\"\n    timer.start()\n    total = 0\n    try:\n        assert process.stdout is not None\n        with os.fdopen(descriptor, \"wb\") as output:\n            while chunk := process.stdout.read(65536):\n                total += len(chunk)\n                require(\n                    total <= 32 * 1024 * 1024,\n                    \"native job log exceeds its bounded input\",\n                )\n                output.write(chunk)\n        require(process.wait(timeout=5) == 0, \"native job log download failed or timed out\")\n    finally:\n        timer.cancel()\n        timer.join()\n        if process.poll() is None:\n            process.kill()\n            process.wait(timeout=5)\n        if process.stdout is not None:\n            process.stdout.close()\n        reader.join(timeout=5)\n        stop_stderr.set()\n        # The only wait is select(0.1); os.read is nonblocking. Freeze stats before return.\n        reader.join()\n        if process.stderr is not None:\n            process.stderr.close()\n        # Never persist arbitrary stderr: it may contain credentials or signed URLs.\n        sample = bytes(stderr_sample).lower()\n        _write_log_diagnostic(\n            destination,\n            {\n                \"argv\": argv,\n                \"returncode\": process.returncode,\n                \"deadline_seconds\": 45,\n                \"deadline_expired\": deadline.is_set(),\n                \"elapsed_seconds\": round(time.monotonic() - started, 6),\n                \"stdout_bytes\": total,\n                \"stderr_bytes\": stderr_bytes,\n                \"stderr_sha256\": stderr_digest.hexdigest(),\n                \"stderr_complete\": stderr_complete,\n                \"stderr_sample_limit\": 65536,\n                \"http_statuses\": sorted(\n                    {int(match) for match in re.findall(rb\"\\(http ([1-5][0-9]{2})\\)\", sample)}\n                ),\n                \"transport_indicators\": [\n                    name\n                    for name, phrase in (\n                        (\"tls-handshake-timeout\", b\"tls handshake timeout\"),\n                        (\"unexpected-eof\", b\"unexpected eof\"),\n                        (\"deadline-exceeded\", b\"context deadline exceeded\"),\n                        (\"connection-reset\", b\"connection reset\"),\n                    )\n                    if phrase in sample\n                ],\n            },\n        )\n\n"
+        },
+        {
+          "before": "import threading\n",
+          "after": "import threading\nimport time\n"
+        },
+        {
+          "before": "def download_job_log(job_id: int, destination: Path) -> None:\n    \"\"\"Fetch a bounded native log directly; never follow an artifact-provided URL.\"\"\"\n    require(type(job_id) is int and job_id > 0, \"invalid native job ID\")\n    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n    try:\n        process = subprocess.Popen(\n            [\"gh\", \"api\", f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\"],\n            stdout=subprocess.PIPE,\n            stderr=subprocess.DEVNULL,\n        )\n    except OSError:\n        os.close(descriptor)\n        raise\n    timer = threading.Timer(45, process.kill)\n    timer.start()\n    try:\n        assert process.stdout is not None\n        total = 0\n        with os.fdopen(descriptor, \"wb\") as output:\n            while chunk := process.stdout.read(65536):\n                total += len(chunk)\n                require(\n                    total <= 32 * 1024 * 1024,\n                    \"native job log exceeds its bounded input\",\n                )\n                output.write(chunk)\n        require(process.wait(timeout=5) == 0, \"native job log download failed or timed out\")\n    finally:\n        timer.cancel()\n        if process.poll() is None:\n            process.kill()\n            process.wait(timeout=5)\n        if process.stdout is not None:\n            process.stdout.close()\n\n",
+          "after": "def _write_log_diagnostic(destination: Path, diagnostic: dict[str, Any]) -> None:\n    # Diagnostics are advisory and must not replace a download or cleanup failure.\n    try:\n        descriptor = os.open(\n            destination.with_name(destination.name + \".native-download.json\"),\n            os.O_WRONLY | os.O_CREAT | os.O_EXCL,\n            0o600,\n        )\n        with os.fdopen(descriptor, \"w\") as output:\n            json.dump(diagnostic, output, sort_keys=True)\n            output.write(\"\\n\")\n    except OSError:\n        pass\n\n\ndef download_job_log(job_id: int, destination: Path) -> None:\n    \"\"\"Fetch a bounded native log directly; never follow an artifact-provided URL.\"\"\"\n    require(type(job_id) is int and job_id > 0, \"invalid native job ID\")\n    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n    argv = [\"gh\", \"api\", f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\"]\n    started = time.monotonic()\n    try:\n        process = subprocess.Popen(\n            argv,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE,\n        )\n    except OSError as error:\n        os.close(descriptor)\n        _write_log_diagnostic(\n            destination,\n            {\"argv\": argv, \"spawn_errno\": error.errno, \"returncode\": None},\n        )\n        raise\n    stderr_digest = hashlib.sha256()\n    stderr_bytes = 0\n    stderr_sample = bytearray()\n    stderr_complete = False\n\n    def drain_stderr() -> None:\n        nonlocal stderr_bytes, stderr_complete\n        assert process.stderr is not None\n        try:\n            while chunk := process.stderr.read(65536):\n                stderr_digest.update(chunk)\n                stderr_bytes += len(chunk)\n                stderr_sample.extend(chunk[: max(0, 65536 - len(stderr_sample))])\n            stderr_complete = True\n        except OSError:\n            pass\n\n    reader = threading.Thread(target=drain_stderr, daemon=True)\n    reader.start()\n    deadline = threading.Event()\n\n    def expire() -> None:\n        deadline.set()\n        if process.poll() is None:\n            process.kill()\n\n    timer = threading.Timer(45, expire)\n    timer.start()\n    total = 0\n    try:\n        assert process.stdout is not None\n        with os.fdopen(descriptor, \"wb\") as output:\n            while chunk := process.stdout.read(65536):\n                total += len(chunk)\n                require(\n                    total <= 32 * 1024 * 1024,\n                    \"native job log exceeds its bounded input\",\n                )\n                output.write(chunk)\n        require(process.wait(timeout=5) == 0, \"native job log download failed or timed out\")\n    finally:\n        timer.cancel()\n        if process.poll() is None:\n            process.kill()\n            process.wait(timeout=5)\n        if process.stdout is not None:\n            process.stdout.close()\n        reader.join(timeout=5)\n        if process.stderr is not None and not reader.is_alive():\n            process.stderr.close()\n        # Never persist arbitrary stderr: it may contain credentials or signed URLs.\n        sample = bytes(stderr_sample).lower()\n        _write_log_diagnostic(\n            destination,\n            {\n                \"argv\": argv,\n                \"returncode\": process.returncode,\n                \"deadline_seconds\": 45,\n                \"deadline_expired\": deadline.is_set(),\n                \"elapsed_seconds\": round(time.monotonic() - started, 6),\n                \"stdout_bytes\": total,\n                \"stderr_bytes\": stderr_bytes,\n                \"stderr_sha256\": stderr_digest.hexdigest(),\n                \"stderr_complete\": stderr_complete,\n                \"stderr_sample_limit\": 65536,\n                \"http_statuses\": sorted(\n                    {int(match) for match in re.findall(rb\"\\(http ([1-5][0-9]{2})\\)\", sample)}\n                ),\n                \"transport_indicators\": [\n                    name\n                    for name, phrase in (\n                        (\"tls-handshake-timeout\", b\"tls handshake timeout\"),\n                        (\"unexpected-eof\", b\"unexpected eof\"),\n                        (\"deadline-exceeded\", b\"context deadline exceeded\"),\n                        (\"connection-reset\", b\"connection reset\"),\n                    )\n                    if phrase in sample\n                ],\n            },\n        )\n\n"
+        },
+        {
+          "before": "import threading\nfrom datetime import datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any\n\nfrom saas.scripts import legacy_security_policy as security\nfrom saas.scripts.legacy_native_evidence import api\n",
+          "after": "import threading\nfrom datetime import datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any, cast\n\nfrom saas.scripts import legacy_security_policy as security\nfrom saas.scripts.legacy_native_evidence import api\n"
+        },
+        {
+          "before": "        isinstance(pulls, list) and len(pulls) == 1,\n        \"native run PR association is ambiguous\",\n    )\n    pull = pulls[0]\n    repository_url = f\"https://api.github.com/repos/{REPOSITORY}\"\n    require(\n",
+          "after": "        isinstance(pulls, list) and len(pulls) == 1,\n        \"native run PR association is ambiguous\",\n    )\n    pulls = cast(list[dict[str, Any]], pulls)\n    pull = pulls[0]\n    repository_url = f\"https://api.github.com/repos/{REPOSITORY}\"\n    require(\n"
+        },
+        {
+          "before": "        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(isinstance(rows, list) and bool(rows), \"native job page is missing\")\n        jobs.extend(rows)\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n            require(\n",
+          "after": "        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(isinstance(rows, list) and bool(rows), \"native job page is missing\")\n        jobs.extend(cast(list[dict[str, Any]], rows))\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n            require(\n"
+        }
+      ]
+    },
+    "native_log_diagnostics_review": {
+      "exact68_before_sha256": "4812f6ef8ace8b0539391fb08ce4c0c110d6a9e0d6f75efec450eadef66e6e52",
+      "intentional_changes": [
+        "download_job_log",
+        "_write_log_diagnostic"
+      ],
+      "unchanged_limits": {
+        "deadline_seconds": 45,
+        "max_log_bytes": 33554432,
+        "post_EOF_wait_seconds": 5,
+        "retry_count": 0
+      },
+      "diagnostics_are_not_admission_evidence": true
+    },
+    "bounded_stderr_cleanup_review": {
+      "parent_production_sha256": "3eec942cedd6c7a5993c6b64c1916f7343406d37e894e5513cc988fe5b53cbda",
+      "changed_function": "download_job_log",
+      "nonblocking_read": true,
+      "select_seconds": 0.1,
+      "normal_EOF_full_statistics": true,
+      "stop_and_join_before_diagnostic": true,
+      "partial_statistics_stderr_complete": false
+    }
+  },
+  "saas/scripts/legacy_initial_publisher.py": {
+    "parent_sha256": "9e0aa5fa559fdea392b419149334852d02db7a64c1f649df4068188c897d9b5f",
+    "combined_sha256": "edea4fe8c38386c67bf3a99589a4e7df45bd3a686d7dc98016745f50a30baff5",
+    "approved_change": "C a2 exact prepare_current_manifest extraction and actual stage prepare call; all prior functions except stage byte identical",
+    "preserved_functions": {
+      "canonical": "8b0d251cf6968e13b999f16face6fa0d824dbf53bc759a9bfebd79bd85a89862",
+      "digest": "c8e88b567f0270e1f9347297e9d918d1d98e6b71d2ce097afd3cfa02b87c1a4a",
+      "write_json": "141e975a39cd2be5486e03603c3640632248dbc1e7144eebd9df197432b78c81",
+      "native_context": "072608a7eb89182c0a453301b69ccb074761f1dd06c9cfcf7cf6a4ad9f35e250",
+      "verify_native_control": "1d35e4e7cbdf60bf68b2df44d1be5df04c16b444322e3c4fef9a90c106146b1d",
+      "successful_steps": "cef77546b5f6e34ab63c1a8d2419a42ba00114534d2a933854a325233a7533cc",
+      "artifact_name": "e9bc7fd9d11353010663f81abd48e6533ca4c023490c808b212a3ef4cbfb0bcd",
+      "artifact_coordinate": "cec4854936f4ed75b45fb2e0dbdc916a24793420fa1c955b59aa707a9d6be6d1",
+      "one_native_artifact": "c43a18620deda20c1d7f095b462774f73aabaf9a706cf75d7178a86b84f746ab",
+      "safe_extract": "9ed6b1629cc404704bb3d18431d74189949eee107594b09bfa199b39f1d480c6",
+      "validate_export_inventory": "08261d7feab273f8e9f53ba68fd487819e6ba37643eeb78514408b5a4c57f52b",
+      "collect_job_export": "ba19c06dd76891c07ff97387cb8cad7fa4b402e57d644a0a1de55358ee31263c",
+      "collect_fresh_wheel": "fb48d35a6cddebfdf89a83483ba9b4cebb5fd93871af4b9a718ddb44878964bf",
+      "strict_qualification": "0f7ca0bc946c4d64584405f8c9f40d9f30d5ef4ed120dac27644de3af6ceb5c6",
+      "collect_original_input": "0753323d9876b335f167b3e63587088fdf173c84b94ebfe87132258aa4004a71",
+      "collect_inputs": "be47139c50a2be236f054364c9c57b198bed6fb3dde68a1b5a426d6f4f6ff92d",
+      "unpack_original": "acf78ef369e09aa0eccd7a12d4a2ab2e3e7264ce3f80efbefc169cb9da73d33c",
+      "scan": "a84eade2ad57414de01f0cf56635c062e4c7799e425595be68b4abfe6cce38d6",
+      "validate_input_identities": "51a978f93ba9bd9728de5a05968141c99b361e861e8b251d0856432661a06131",
+      "admitted_manifest": "1b19c62190be6bf12ffd3a55f1b3a39583f5d16967d2b6acd6272847aaedb326",
+      "compare_admission": "d0c6669e6034f6909c2def4aea830ebd94b5438077275915bc2cd7216ced8acf",
+      "image_references": "722f7e0a894520e96c8a875f08d099d5859017ab435c5f37cb8168edbb7b58f5",
+      "read_registry": "7666cbf7b4632dc1211557e668399ae2e316305236e78d1cf7cda4d1d7606778",
+      "publish_exact": "def74ede04d347b0c702959b8efd3b0a2ab23a02d89527292c29d4b9f6391c6c",
+      "install_syft": "9acf1bce330be0606431fb81319c0db5cb7dcd7ec1ce447d12b60208f377d1c6",
+      "child_reference": "2993a28f3eaeddd574771e0a02ee3b9ef3c3fb362510453638af3c9c8c347d81",
+      "validate_sbom_files": "a0da29db8d6abd2e92a85c3a46cd6c9bce6c71e1318705c47143380f3f67aa6c",
+      "execute_runtime": "7eca2512291d36edc39f781d7e4403c6ef2bf609cc9d8a86758da0b7d739478d",
+      "typed_provenance": "3e5fb4c20486cf4b86de696a882a9dc8d7d988c7329ed35c2dc6d8ca14f91e4d",
+      "verify_runtime_report": "c1cdc1332eaa36190cbc30f1fc0e781b945568b1ecf005668adb9ae4f95b35a4",
+      "native_sbom_verify": "3b8fb7d41c320139692a3bed87b34c3b314c54891bec1571cdb8464a1c1faa91",
+      "verify_signatures": "7f3adcc6c828eb69359d3854daa591cb888c3d7bc2e36d084974a7c0db661da1",
+      "main": "f5171d50bbbff330cce9362ffa792fc08486088daffe3a5d2514b99277545ca8"
+    },
+    "approved_functions": {
+      "stage": "bf43f0789ec0d1b55f92c36d9f8ad5c5af1953d9a6f01215e1bcf274bd21d427",
+      "prepare_current_manifest": "10ecd42ff58af70a1f7a5d9b28744f08b1fe16e49a4427867dbd5db9a0490ee1"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "f8f1cda86c8e22fcfe173cfb1d35f95849e130332122afb4d5c3ba34fd28bc3b",
+      "inverse_fragments": [
+        {
+          "before": "import zipfile\nfrom datetime import UTC, datetime\nfrom pathlib import Path, PurePosixPath\nfrom typing import Any\n\nfrom saas.scripts.legacy_artifact_download import download_artifact_bytes\nfrom saas.scripts.legacy_build_controller import (\n",
+          "after": "import zipfile\nfrom datetime import UTC, datetime\nfrom pathlib import Path, PurePosixPath\nfrom typing import Any, BinaryIO, cast\n\nfrom saas.scripts.legacy_artifact_download import download_artifact_bytes\nfrom saas.scripts.legacy_build_controller import (\n"
+        },
+        {
+          "before": "        stream = bundle.extractfile(member)\n        require(stream is not None, \"missing Syft executable\")\n        with (root / \"syft\").open(\"xb\") as output:\n            shutil.copyfileobj(stream, output)\n    (root / \"syft\").chmod(0o700)\n    return root / \"syft\"\n\n",
+          "after": "        stream = bundle.extractfile(member)\n        require(stream is not None, \"missing Syft executable\")\n        with (root / \"syft\").open(\"xb\") as output:\n            shutil.copyfileobj(cast(BinaryIO, stream), output)\n    (root / \"syft\").chmod(0o700)\n    return root / \"syft\"\n\n"
+        }
+      ]
+    }
+  },
+  ".github/workflows/saas-legacy-security-build.yml": {
+    "parent_sha256": "1682c7afc66e338cb73bbfc8eb96d27abb547b3e823c8e8c88c83d6a61849795",
+    "combined_sha256": "f796f8cebe845150f1ca8ebd5705a2bd09275cbd7885434c750c4c74e62e6a86",
+    "approved_change": "Root ee94.Control exactly one fresh-wheel retention scalar30 to90",
+    "retention_fragment": "path: ${{ runner.temp }}/fresh-legacy-wheel/\n          compression-level: 0\n          if-no-files-found: error\n          retention-days: 90",
+    "type_and_context_correction": {
+      "corrected_sha256": "6d42bd1c4d27f58c1aa504661efeb6a5055977592873c1f22c88a909a89fd69b",
+      "inverse_fragments": [
+        {
+          "before": "      checks: read\n      statuses: read\n      pull-requests: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      checks: read\n      statuses: read\n      pull-requests: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher prepare \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain publication preparation\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-preparation-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher prepare \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain publication preparation\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-preparation-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        },
+        {
+          "before": "      statuses: read\n      pull-requests: read\n      packages: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      statuses: read\n      pull-requests: read\n      packages: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher publish \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain exact publication receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-publication-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher publish \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain exact publication receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-publication-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        },
+        {
+          "before": "      statuses: read\n      pull-requests: read\n      packages: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      statuses: read\n      pull-requests: read\n      packages: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher runtime \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent runtime and SBOM evidence\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-runtime-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher runtime \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent runtime and SBOM evidence\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-runtime-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        },
+        {
+          "before": "      id-token: write\n      attestations: write\n      artifact-metadata: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      id-token: write\n      attestations: write\n      artifact-metadata: write\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher attest-inputs \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Attest exact fresh wheel\n        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0\n        with:\n          subject-path: ${{ steps.admission.outputs.wheel_path }}\n          predicate-type: https://slsa.dev/provenance/v1\n          predicate-path: ${{ runner.temp }}/legacy-publication/export/provenance.json\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher attest-inputs \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Attest exact fresh wheel\n        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0\n        with:\n          subject-path: ${{ steps.admission.outputs.wheel_path }}\n          predicate-type: https://slsa.dev/provenance/v1\n          predicate-path: ${{ runner.temp }}/legacy-publication/export/provenance.json\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher verify-signatures \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\"\n      - name: Retain native signature readback receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-signatures-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/native-signatures.json\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher verify-signatures \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\"\n      - name: Retain native signature readback receipt\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-signatures-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/native-signatures.json\n          compression-level: 0\n"
+        },
+        {
+          "before": "      pull-requests: read\n      packages: read\n      attestations: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n      LEGACY_DESTINATION: ${{ runner.temp }}/legacy-publication\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n",
+          "after": "      pull-requests: read\n      packages: read\n      attestations: read\n    env:\n      LEGACY_COMPONENT: ${{ inputs.component }}\n      CONTROL_REVISION: ${{ github.sha }}\n    steps:\n      - name: Checkout exact main publication control\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: ${{ github.sha }}\n          path: control\n"
+        },
+        {
+          "before": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher consume \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$LEGACY_DESTINATION\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent native consumer result\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-consumer-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n",
+          "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher consume \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent native consumer result\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-consumer-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
+        }
+      ]
+    }
+  },
+  "saas/scripts/legacy_pg_contract.py": {
+    "parent_sha256": "e74d9fba8ee1f439e476eb04bca70045c557e325e85954bed3aa27dc7159576e",
+    "combined_sha256": "db0b351ce3c1d464586bdcbaeb302f4c37680eeb7e88ff0dcdd529d64d8d6907",
+    "approved_change": "C a3 extracts private context-aware PG source verifier; public original context and complete post-context validation body retained",
+    "preserved_functions": {
+      "trusted_pg_paths": "5cb56590513923c65352a834cd2336e041a0278944a3543d7eb866ef09775a0f",
+      "verify_disposable_database_url": "fe2a7d76619b27df3691b2892eb4ef531443281f1d63797df91004f66ca10558",
+      "expected_cases": "27d3e9ff6dc9e86e78a16195384b963870521eaedfa6dbb44dae1efb7a5e2643",
+      "verify_pg_results": "45d048d589955f64fe427bc33c96e69e14308056df6c0dfd66cced6f611bb902",
+      "main": "162df0d9f72d5b0dd9e8ca26048ddaf15ddf9ae58d75d6310fd62ff3ceadd99e"
+    },
+    "approved_functions": {
+      "verify_pg_source": "de58018130f7cb8c412483f221d62fc3e39e275d05c184a2f0ec35da84443b10",
+      "_verify_pg_source": "44f5a9de0f75359d9b560ca0193bd5c918dd65edecd2047404281b23ac3fe224"
+    },
+    "type_and_context_correction": {
+      "corrected_sha256": "79014acd4a646dddd4083302411fcc3ea05462d08af21db31b609b6d0954c792",
+      "inverse_fragments": [
+        {
+          "before": "import re\nimport subprocess\nfrom pathlib import Path\nfrom typing import Any\nfrom urllib.parse import urlsplit\n\nfrom saas.scripts.legacy_build_controller import control_context\n",
+          "after": "import re\nimport subprocess\nfrom pathlib import Path\nfrom typing import Any, cast\nfrom urllib.parse import urlsplit\n\nfrom saas.scripts.legacy_build_controller import control_context\n"
+        },
+        {
+          "before": "    policy = (control / \".github/actions/compat-smoke-saas-n1-gate/evaluate.sh\").read_text()\n    match = re.search(r\"POSTGRESQL_N1_TRUSTED_INPUTS=\\(\\n(.*?)\\n\\)\", policy, re.S)\n    require(match is not None, \"generic PG trusted-input path inventory missing\")\n    paths = []\n    for line in match.group(1).splitlines():\n        parsed = re.fullmatch(r'\\s*\"([^\"|]+)\\|[0-9a-f]{64}(?:,[0-9a-f]{64})?\"\\s*', line)\n        require(parsed is not None, \"generic PG trusted-input declaration is malformed\")\n        paths.append(parsed.group(1))\n    require(len(paths) == len(set(paths)) == 21, \"generic PG path inventory changed\")\n    return tuple(sorted(paths))\n",
+          "after": "    policy = (control / \".github/actions/compat-smoke-saas-n1-gate/evaluate.sh\").read_text()\n    match = re.search(r\"POSTGRESQL_N1_TRUSTED_INPUTS=\\(\\n(.*?)\\n\\)\", policy, re.S)\n    require(match is not None, \"generic PG trusted-input path inventory missing\")\n    match = cast(re.Match[str], match)\n    paths = []\n    for line in match.group(1).splitlines():\n        parsed = re.fullmatch(r'\\s*\"([^\"|]+)\\|[0-9a-f]{64}(?:,[0-9a-f]{64})?\"\\s*', line)\n        require(parsed is not None, \"generic PG trusted-input declaration is malformed\")\n        parsed = cast(re.Match[str], parsed)\n        paths.append(parsed.group(1))\n    require(len(paths) == len(set(paths)) == 21, \"generic PG path inventory changed\")\n    return tuple(sorted(paths))\n"
+        },
+        {
+          "before": "\ndef expected_cases(major: int) -> set[tuple[str, str]]:\n    require(major in PG_IMAGES, \"unsupported PG acceptance major\")\n    cases = set()\n    for selector in PG16_SELECTORS if major == 16 else COMMON_SELECTORS:\n        path, name = selector.split(\"::\", 1)\n        cases.add((path.removesuffix(\".py\").replace(\"/\", \".\"), name))\n",
+          "after": "\ndef expected_cases(major: int) -> set[tuple[str, str]]:\n    require(major in PG_IMAGES, \"unsupported PG acceptance major\")\n    cases: set[tuple[str, str]] = set()\n    for selector in PG16_SELECTORS if major == 16 else COMMON_SELECTORS:\n        path, name = selector.split(\"::\", 1)\n        cases.add((path.removesuffix(\".py\").replace(\"/\", \".\"), name))\n"
+        }
+      ]
+    }
+  },
+  "saas/scripts/oci_promotion.py": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
+  "saas/scripts/check_image_supply_chain.py": {
+    "parent_sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23",
+    "combined_sha256": "ded133dddef0e5185a396a936b83e66eecd3cd2532abb24c258f21f5e1dd95ca",
+    "approved_change": "A60e typed adapter only, preserving every original Root generic verifier function and assertion; exact inverse restores full Root base file",
+    "preserved_functions": {
+      "_sha256": "9da2ea2c4f7f9301e06e1ac26911597bbebdfdf8b3864861379b3e0612b9b38b",
+      "canonical_release_evidence_sha256": "0aeafb36b2503bd1fbdf4bdd8e4e45fe24508b9890438927e3a2409e47c5ee28",
+      "_hex_sha256": "c3d4aa6e363a80e4034218a0dc2fbeea66c7f7ae9635f59c8636f612adc01297",
+      "_parse_time": "2225670ec0c60578ddabbfc8285352f5a6360203a9c8161cf2d2d5ac347ff993",
+      "_positive_integer": "1f1ff3ece5c0a267a51877229b3dbacc0c1eee80949191974e480aa580499948",
+      "_exact_integer": "c32ee87b53b2b6d20fc25f060ec8034547dd3895e43f7802e2648e981708e5ea",
+      "_exact_scalar": "00c9988ce3dde9481ba74e638f57d6aa32445025c940aea7d74e22650bfd9bbf",
+      "_string_set": "aefdcae85b541e49965bf8dd9f995ad767f17d0ef48ad24697ce64f6f5378ff7",
+      "_secret_free_uri": "443fe3078321ef123d4cdc7d27bbdf2dec85f8ea96b347222e8881e12cab3576",
+      "load_release_evidence": "60bcf65e7e62b0d23442e08402b5ccfa936d7fd09fde18da7352dab254c8ca1d",
+      "_ids": "8e661e518d1923f9c8eb9f93798700b8214067d7b90e5173591ec07ae2fab77a",
+      "_read_repository_contract": "d964913b453d45c9c35bf8bf8a29ee791cbd0649dc69f653e35d71ed164df342",
+      "_named_workflow_step": "c25c174fd99c37073c5f7314f47b4bad0dd5a740c6711f822c8f8777c1df2568",
+      "validate_candidate_build_contract": "3faacf46f3c4599c191975d52a2e966e3aa748cb176df93a0e0510e9394123bf",
+      "validate_image_material_lock": "5249ee1bbf2ccb57db16135d088bb88bb282c70df4d68b570add10d9ef9182ea",
+      "_validate_policy": "cd3aeb307696e47b720328dded6f0988787e9e032085a8be90775599e385b6d1",
+      "_validate_workflow": "30217457e05f6fc2ca8c8f6d4627bd9884d580a5be80529244a55bce850a365b",
+      "_validate_image": "1332f7438db50ba586348c56ce3a3000406e7f81e85f25247422dd4d52559225",
+      "_validate_promotion": "2a4f4c4505988c3e5c8506eeeee8bfe42dccbd98e41a4e695b3a9a6783b8f954",
+      "_validate_release_attestations": "58f721e8215bd3ba8679aaab2a539c7d78a14ba9ead4cf5370776c6936d076a2",
+      "_validate_evidence": "96fe8337dc225262d4fd0c878e17edaf43aa028a1dbcd9d177a1ed3041234d96",
+      "main": "793393ec42be00a6221570528ae7467c74d282666c2fd1a1f5612b316149df3c"
+    },
+    "approved_functions": {
+      "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b"
+    }
+  },
+  "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
+  "saas/scripts/compare_oci_rebuilds.py": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
+}

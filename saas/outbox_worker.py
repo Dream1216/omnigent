@@ -22,6 +22,10 @@ from saas.control_plane.postgresql_role_authority import (
     count_global_acl_authorities,
     count_owned_catalog_authorities,
 )
+from saas.control_plane.retained_model_audit import (
+    RetainedModelAuditPublisher,
+    verify_retained_model_audit_functions,
+)
 from saas.onboarding_composition import validate_production_outbox_publisher
 
 _LOGGER = logging.getLogger("omnigent-saas-outbox")
@@ -157,6 +161,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
     if engine.dialect.name != "postgresql":
         raise RuntimeError("the production Outbox worker requires PostgreSQL")
     with engine.connect() as connection:
+        retained_audit_oids = verify_retained_model_audit_functions(connection)
         schema_facts = connection.execute(
             sa.text(
                 "SELECT current_database(), current_schema(), current_schemas(false), "
@@ -365,7 +370,8 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "CROSS JOIN LATERAL aclexplode(object.proacl) acl "
                 "JOIN dispatcher ON acl.grantee = dispatcher.oid "
                 "WHERE namespace.nspname !~ '^pg_' "
-                "AND namespace.nspname <> 'information_schema' UNION ALL "
+                "AND namespace.nspname <> 'information_schema' "
+                "AND object.oid <> ALL(CAST(:retained_audit_oids AS oid[])) UNION ALL "
                 "SELECT 1 FROM pg_type object "
                 "JOIN pg_namespace namespace ON namespace.oid = object.typnamespace "
                 "CROSS JOIN LATERAL aclexplode(object.typacl) acl "
@@ -399,7 +405,8 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
                 "SELECT 1 FROM pg_database object JOIN dispatcher "
                 "ON object.datdba = dispatcher.oid) "
                 "SELECT count(*) FROM unexpected"
-            )
+            ),
+            {"retained_audit_oids": list(retained_audit_oids)},
         ).scalar_one()
         owned_tables = connection.execute(
             sa.text(
@@ -742,7 +749,7 @@ def verify_dispatcher_database_role(engine: Engine) -> None:
     if (
         owned_tables
         or forbidden_table_privileges
-        or executable_security_definers
+        or executable_security_definers != len(retained_audit_oids)
         or forbidden_schema_privileges
     ):
         raise RuntimeError(
@@ -911,6 +918,8 @@ def main() -> int:
         if max_attempts > 32:
             raise RuntimeError("OMNIGENT_SAAS_OUTBOX_MAX_ATTEMPTS must not exceed 32")
         publisher = _load_publisher(publisher_reference)
+        publisher = RetainedModelAuditPublisher(engine, publisher)
+        publisher.validate_outbox_configuration()
         dispatcher = OutboxDispatcher(sessions, publisher, max_attempts=max_attempts)
         stop = threading.Event()
 

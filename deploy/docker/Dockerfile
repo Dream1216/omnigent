@@ -286,6 +286,9 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache \
       ca-certificates-bundle=20260909-r3 \
       gdbm=1.26-r7 \
+      libbrotlicommon1=1.2.0-r7 \
+      libbrotlidec1=1.2.0-r7 \
+      libbrotlienc1=1.2.0-r7 \
       libbz2-1=1.0.8-r25 \
       libexpat1=2.9.0-r0 \
       libffi=3.8.0-r2 \
@@ -461,26 +464,74 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
     IS_SANDBOX=1
 
-# bzip2 is required for optional goose CLI archives (.tar.bz2). make/g++ are
-# transient build inputs for the locked node-pty fallback when its package has
-# no prebuild for the selected Node/architecture; they are purged in the same
-# later layer that installs and verifies the Host CLI graph.
+# Pin the complete resolved Host package graph, including native build inputs.
+# Purge the complete transient package set after verifying the Host CLI graph.
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache \
       bash=5.3-r14 \
+      binutils=2.47-r2 \
       bubblewrap=0.13.0-r0 \
       bzip2=1.0.8-r25 \
       coreutils=9.12-r4 \
       curl=8.23.0-r1 \
+      cyrus-sasl-heimdal-libs=2.1.28-r58 \
+      db=2026.10.7.1-r0 \
       findutils=4.11.0-r3 \
       gcc=16.2.0-r1 \
       git=2.56.0-r0 \
+      glibc-2.44-dev=2.44-r8 \
+      gmp=6.3.0-r11 \
       grep=3.12-r9 \
       gzip=1.14-r10 \
+      heimdal-libs=7.8.0-r54 \
       iproute2=7.2.0-r1 \
+      iptables=1.8.13-r5 \
+      isl=0.28-r5 \
+      jansson=2.15.1-r3 \
+      keyutils-libs=1.6.3-r41 \
+      krb5-conf=1.0-r10 \
+      krb5-libs=1.22.2-r5 \
+      libacl1=2.4.0-r4 \
+      libatomic=16.2.0-r1 \
+      libattr1=2.6.0-r4 \
+      libbpf=1.8.0-r0 \
+      libcap=2.78-r4 \
+      libcom_err=1.47.4-r4 \
+      libcrypto3=3.6.5-r5 \
+      libcurl-openssl4=8.23.0-r2 \
+      libedit=3.1-r20 \
+      libelf=0.197-r0 \
+      libevent=2.1.13-r3 \
+      libgomp=16.2.0-r1 \
+      libidn2=2.3.8-r11 \
+      libldap-2.6=2.6.14-r0 \
+      libmnl=1.0.5-r10 \
+      libnftnl=1.3.2-r2 \
+      libnghttp2-14=1.70.0-r6 \
+      libpcre2-8-0=10.49-r1 \
+      libproc-2-0=4.0.7-r2 \
+      libpsl=0.23.3-r3 \
+      libquadmath=16.2.0-r1 \
+      libselinux=3.11-r2 \
+      libsepol=3.11-r3 \
+      libssl3=3.6.5-r5 \
+      libstdc++-dev=16.2.0-r1 \
+      libtirpc=1.3.8-r0 \
+      libunistring=1.5-r0 \
+      libverto=0.3.2-r10 \
+      libxcrypt-dev=4.5.2-r6 \
+      libzstd1=1.5.7-r11 \
+      linux-headers=7.3-r0 \
+      linux-pam=1.7.3-r1 \
       lsof=4.99.7-r3 \
       make=4.4.1-r15 \
+      mpc=1.4.1-r2 \
+      mpfr=4.2.2-r4 \
       nftables=1.1.7-r0 \
+      nghttp3=1.18.0-r2 \
+      ngtcp2=1.25.0-r6 \
+      openssf-compiler-options=20250904-r11 \
+      posix-cc-wrappers=2-r10 \
       procps=4.0.7-r1 \
       sed=4.10-r3 \
       tmux=3.8-r0 \
@@ -567,6 +618,12 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && install -d -m 0700 "$XDG_RUNTIME_DIR" \
  && npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global \
       --no-audit --no-fund --allow-scripts=pnpm "pnpm@${PNPM_VERSION}" \
+ && test -d "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && rm -rf "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && cp -a /usr/local/lib/node_modules/npm/node_modules/undici \
+      "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && node -e 'const p=require(process.argv[1]); if(p.version!=="6.29.1") throw Error("pnpm undici overlay version differs")' \
+      "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici/package.json" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
  && mkdir -p .github/ci-deps \
  && printf '%s\n' \
@@ -632,7 +689,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       --source-date-epoch "$SOURCE_DATE_EPOCH" \
       --root /opt/omnigent-host-cli \
       --root /usr/local/lib/node_modules/pnpm \
- && apk del --purge make gcc \
+ && apk del --purge make gcc binutils glibc-2.44-dev isl libatomic libgomp libquadmath libstdc++-dev libxcrypt-dev linux-headers mpc mpfr openssf-compiler-options posix-cc-wrappers \
  && ! command -v make \
  && ! command -v g++ \
  && rm -rf /var/cache/apk/* \
@@ -797,6 +854,24 @@ ENV PYTHONUNBUFFERED=1 \
 # Python standard library performs the health check and outbound HTTPS probes.
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache git=2.56.0-r0 \
+      cyrus-sasl-heimdal-libs=2.1.28-r58 \
+      heimdal-libs=7.8.0-r54 \
+      keyutils-libs=1.6.3-r41 \
+      krb5-conf=1.0-r10 \
+      krb5-libs=1.22.2-r5 \
+      libcom_err=1.47.4-r4 \
+      libcrypto3=3.6.5-r5 \
+      libcurl-openssl4=8.23.0-r2 \
+      libidn2=2.3.8-r11 \
+      libldap-2.6=2.6.14-r0 \
+      libnghttp2-14=1.70.0-r6 \
+      libpcre2-8-0=10.49-r1 \
+      libpsl=0.23.3-r3 \
+      libssl3=3.6.5-r5 \
+      libunistring=1.5-r0 \
+      libverto=0.3.2-r10 \
+      nghttp3=1.18.0-r2 \
+      ngtcp2=1.25.0-r6 \
  && test -x /usr/bin/git \
  && rm -rf /var/cache/apk/* \
  && rm -f /var/cache/ldconfig/aux-cache

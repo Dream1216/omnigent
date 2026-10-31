@@ -181,7 +181,10 @@ def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
 
 
 def _sessions(*, billing: bool = False) -> RoleSessionFactories:
-    engines = tuple(sa.create_engine("sqlite://") for _ in range(6 if billing else 5))
+    engines = tuple(
+        sa.create_engine("sqlite://", poolclass=sa.pool.NullPool)
+        for _ in range(6 if billing else 5)
+    )
     return RoleSessionFactories(
         runtime_engine=engines[0],
         authenticator=sessionmaker(engines[1], expire_on_commit=False),
@@ -1148,10 +1151,12 @@ def test_production_composition_forces_context_free_official_jobs_off(
         assert config.official_builtin_agent_seed_enabled is False
         assert config.official_cross_workspace_scheduler_enabled is False
 
-        build_production_server(config, sessions, official=_official())
-
-        assert captured["suppress_context_free_builtin_seed"] is True
-        assert captured["scheduled_task_store"] is None
+        built = build_production_server(config, sessions, official=_official())
+        try:
+            assert captured["suppress_context_free_builtin_seed"] is True
+            assert captured["scheduled_task_store"] is None
+        finally:
+            built.close()
     finally:
         sessions.close()
 
