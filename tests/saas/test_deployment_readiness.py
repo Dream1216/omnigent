@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from saas.production.deployment import (
     canonical_deployment_record_sha256,
@@ -76,7 +79,7 @@ def _record() -> dict[str, object]:
     assert isinstance(drills, list)
     assert isinstance(roles, list)
     record: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": policy["schema_version"],
         "evidence_id": "production-deployment-20260809",
         "evidence_kind": "production_deployment_drill",
         "started_at": "2026-08-09T08:00:00Z",
@@ -130,6 +133,10 @@ def _record() -> dict[str, object]:
             for role in roles
         ],
     }
+    runner = record["components"]["runner"]
+    runner["seccomp_profile"] = "Localhost"
+    for placement in runner["placements"]:
+        placement["seccomp"] = _seccomp_observation(placement, runner["digest_pinned_image"])
     record["record_sha256"] = canonical_deployment_record_sha256(record)
     return record
 
@@ -277,3 +284,262 @@ def test_untrusted_workflow_and_reused_attestor_fail_closed() -> None:
     assert report["status"] == "fail"
     assert any("workflow identity is not trusted" in item for item in report["violations"])
     assert any("actors must be distinct" in item for item in report["violations"])
+
+
+def _seccomp_observation(placement: dict, image: str) -> dict:
+    """Synthetic unit facts only; never an actual node/CRI collector receipt."""
+
+    return {
+        "container_name": "runner-agent",
+        "container_id_hash": _hash(str(placement["pod_uid_hash"]) + "container"),
+        "image": image,
+        "product_revision": _PRODUCT_REVISION,
+        "node_uid_hash": placement["node_uid_hash"],
+        "pod_uid_hash": placement["pod_uid_hash"],
+        "effective_profile": {
+            "type": "Localhost",
+            "localhostProfile": "omnigent/bubblewrap-v3.json",
+        },
+        "pod_profile": {"type": "RuntimeDefault"},
+        "init_profiles": {"stage-runner-identity": {"type": "RuntimeDefault"}},
+        "node_file": {
+            "path": "omnigent/bubblewrap-v3.json",
+            "sha256": "c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363",
+            "owner_uid": 0,
+            "owner_gid": 0,
+            "mode": "0644",
+            "nlink": 1,
+            "type": "regular_nofollow",
+            "device": 1,
+            "inode": 42,
+        },
+        "runtime": {
+            "platform": "linux/amd64",
+            "runtime_class": "omnigent-runner",
+            "kernel_release": "6.8.0-test",
+            "container_runtime_version": "containerd://2.3.2-k3s2",
+            "pid_namespace_hash": _hash("runner-pid"),
+            "host_pid_namespace_hash": _hash("host-pid"),
+        },
+        "process": {
+            "uid": 65532,
+            "gid": 65532,
+            "no_new_privileges": True,
+            "seccomp_mode": 2,
+            "effective_capabilities": 0,
+            "host_pid": False,
+            "share_process_namespace": False,
+            "root_read_only": True,
+            "sandbox_backend": "kubernetes",
+        },
+        "observed_at": "2026-08-09T08:15:00Z",
+        "raw_evidence_sha256": _hash("raw-" + str(placement["pod_uid_hash"])),
+    }
+
+
+def _v2_record() -> dict:
+    record = _record()
+    record["schema_version"] = 2
+    runner = record["components"]["runner"]
+    runner["seccomp_profile"] = "RuntimeDefault"
+    for placement in runner["placements"]:
+        del placement["seccomp"]
+    _resign(record)
+    return record
+
+
+def test_v2_record_bytes_and_runtime_default_semantics_are_preserved() -> None:
+    policy = _policy()
+    policy["schema_version"] = 2
+    del policy["runner_seccomp"]
+    record = _v2_record()
+    assert (
+        record["record_sha256"]
+        == "7cf620beb26c17533433a2c4a4ca7b54b1caaea0c2d30195359d4bce4ad7f832"
+    )
+    assert (
+        hashlib.sha256(
+            json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        ).hexdigest()
+        == "8407f0cfcba5a327247a369be098aee661c9ddec188e46de477c273f86a65586"
+    )
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    assert report["status"] == "pass"
+    assert report["production_readiness"] == "ready"
+    record["components"]["runner"]["seccomp_profile"] = "Localhost"
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    assert report["production_readiness"] == "blocked"
+    assert any("does not use RuntimeDefault" in item for item in report["blockers"])
+
+
+@pytest.mark.parametrize("policy_version,record_version", [(2, 3), (3, 2), (3, True)])
+def test_record_cannot_be_rebased_across_seccomp_schema_versions(
+    policy_version, record_version
+) -> None:
+    policy = _policy()
+    policy["schema_version"] = policy_version
+    if policy_version == 2:
+        del policy["runner_seccomp"]
+    record = _record()
+    record["schema_version"] = record_version
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+    assert any("schema_version" in item for item in report["violations"])
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("container_name",), "stage-runner-identity"),
+        (("container_id_hash",), None),
+        (("container_id_hash",), "0" * 64),
+        (("image",), "registry.example/other@sha256:" + "f" * 64),
+        (("product_revision",), "b" * 40),
+        (("node_uid_hash",), _hash("other-node")),
+        (("pod_uid_hash",), _hash("other-pod")),
+        (("effective_profile", "type"), "RuntimeDefault"),
+        (("effective_profile", "localhostProfile"), "other/profile.json"),
+        (("pod_profile", "type"), "Localhost"),
+        (("init_profiles", "stage-runner-identity", "type"), "Localhost"),
+        (("node_file", "sha256"), "f" * 64),
+        (("node_file", "path"), "../bubblewrap-v3.json"),
+        (("node_file", "owner_uid"), 10001),
+        (("node_file", "owner_gid"), True),
+        (("node_file", "mode"), "0664"),
+        (("node_file", "type"), "symlink"),
+        (("node_file", "nlink"), 2),
+        (("node_file", "inode"), 0),
+        (("runtime", "platform"), "linux/arm64"),
+        (("runtime", "runtime_class"), "untrusted"),
+        (("runtime", "kernel_release"), "UNKNOWN"),
+        (("runtime", "kernel_release"), "6.8"),
+        (("runtime", "container_runtime_version"), "containerd://2.3.3-k3s1"),
+        (("runtime", "container_runtime_version"), None),
+        (("runtime", "pid_namespace_hash"), _hash("host-pid")),
+        (("process", "uid"), 10001),
+        (("process", "effective_capabilities"), True),
+        (("process", "no_new_privileges"), False),
+        (("process", "seccomp_mode"), 0),
+        (("process", "host_pid"), True),
+        (("process", "share_process_namespace"), True),
+        (("process", "root_read_only"), False),
+        (("process", "sandbox_backend"), "none"),
+        (("observed_at",), "2026-08-09T07:59:59Z"),
+        (("observed_at",), "2026-08-09T09:00:01Z"),
+        (("raw_evidence_sha256",), "0" * 64),
+        (("raw_evidence_sha256",), hashlib.sha256(b"").hexdigest()),
+    ],
+)
+def test_v3_runner_observation_rejects_missing_or_cross_bound_facts(path, value) -> None:
+    record = _record()
+    target = record["components"]["runner"]["placements"][0]["seccomp"]
+    for field in path[:-1]:
+        target = target[field]
+    target[path[-1]] = value
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), _policy(), [record], now=_NOW)
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+    assert any("runner seccomp" in item for item in report["violations"])
+
+
+@pytest.mark.parametrize("replacement", [None, {}, {"node_label": "c500aa5e6862ba7d"}])
+def test_v3_runner_requires_full_observation_not_node_labels(replacement) -> None:
+    record = _record()
+    record["components"]["runner"]["placements"][0]["seccomp"] = replacement
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), _policy(), [record], now=_NOW)
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+
+
+@pytest.mark.parametrize(
+    "component", ["control-plane", "queue-worker", "preview-gateway", "egress-proxy"]
+)
+def test_v3_does_not_allow_localhost_for_other_components(component) -> None:
+    record = _record()
+    record["components"][component]["seccomp_profile"] = "Localhost"
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), _policy(), [record], now=_NOW)
+    assert report["production_readiness"] == "blocked"
+    assert any("does not use RuntimeDefault" in item for item in report["blockers"])
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("profile_sha256", "f" * 64),
+        ("localhost_profile", "other/profile.json"),
+        ("container_name", "other"),
+        ("run_as_uid", 10001),
+    ],
+)
+def test_v3_policy_cannot_expand_the_reviewed_runner_contract(field, value) -> None:
+    policy = _policy()
+    policy["runner_seccomp"][field] = value
+    report = validate_deployment_readiness(_repo(), policy, [_record()], now=_NOW)
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+    assert any("exact reviewed v3 contract" in item for item in report["violations"])
+
+
+@pytest.mark.parametrize("field", ["container_id_hash", "raw_evidence_sha256"])
+def test_v3_distinct_pods_cannot_reuse_one_execution_or_raw_observation(field) -> None:
+    record = _record()
+    placements = record["components"]["runner"]["placements"]
+    assert placements[0]["node_uid_hash"] != placements[1]["node_uid_hash"]
+    assert placements[0]["pod_uid_hash"] != placements[1]["pod_uid_hash"]
+    placements[1]["seccomp"][field] = placements[0]["seccomp"][field]
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), _policy(), [record], now=_NOW)
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+    assert any(f"repeats {field}" in item for item in report["violations"])
+
+
+def test_v3_one_node_cannot_claim_two_physical_hosts_and_failure_domains() -> None:
+    record = _record()
+    placements = record["components"]["runner"]["placements"]
+    assert placements[0]["physical_host_hash"] != placements[1]["physical_host_hash"]
+    assert placements[0]["failure_domain_hash"] != placements[1]["failure_domain_hash"]
+    assert placements[0]["pod_uid_hash"] != placements[1]["pod_uid_hash"]
+    assert (
+        placements[0]["seccomp"]["container_id_hash"]
+        != placements[1]["seccomp"]["container_id_hash"]
+    )
+    assert (
+        placements[0]["seccomp"]["raw_evidence_sha256"]
+        != placements[1]["seccomp"]["raw_evidence_sha256"]
+    )
+    placements[1]["node_uid_hash"] = placements[0]["node_uid_hash"]
+    placements[1]["seccomp"]["node_uid_hash"] = placements[0]["node_uid_hash"]
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), _policy(), [record], now=_NOW)
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+    assert any("repeats node_uid_hash" in item for item in report["violations"])
+
+
+@pytest.mark.parametrize(
+    "field", ["node_uid_hash", "pod_uid_hash", "pid_namespace_hash", "host_pid_namespace_hash"]
+)
+@pytest.mark.parametrize(
+    "digest", ["0" * 64, hashlib.sha256(b"").hexdigest()], ids=["zero", "empty"]
+)
+def test_v3_identity_hashes_reject_missing_observation_sentinels(field, digest) -> None:
+    record = _record()
+    placement = record["components"]["runner"]["placements"][0]
+    observation = placement["seccomp"]
+    if field in {"node_uid_hash", "pod_uid_hash"}:
+        placement[field] = digest
+        observation[field] = digest
+    else:
+        observation["runtime"][field] = digest
+    _resign(record)
+    report = validate_deployment_readiness(_repo(), _policy(), [record], now=_NOW)
+    assert report["status"] == "fail"
+    assert report["production_readiness"] == "blocked"
+    assert any("runner seccomp" in item for item in report["violations"])
