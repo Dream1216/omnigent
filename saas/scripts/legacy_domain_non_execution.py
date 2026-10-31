@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from saas.scripts import legacy_domain_native as native
-from saas.scripts.legacy_native_evidence import api
+from saas.scripts.legacy_native_evidence import api, reserve_native_download
 from saas.scripts.legacy_pr_candidate import VALIDATION_REFS
 from saas.scripts.oci_promotion import require
 
@@ -288,6 +288,7 @@ def _download_run_logs(run_id: int, attempt: int, path: Path, bound: int):
         type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0,
         "invalid zero-execution native log coordinates",
     )
+    reserve_native_download(f"{native._ROOT}/actions/runs/{run_id}/attempts/{attempt}/logs")
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "wb") as output:
         process = subprocess.Popen(

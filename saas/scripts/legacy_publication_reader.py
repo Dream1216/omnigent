@@ -19,6 +19,7 @@ import yaml
 
 from saas.scripts import legacy_initial_publisher as publisher
 from saas.scripts.legacy_control_results import _collect_pg_receipts, verify_control_run
+from saas.scripts.legacy_domain_eligibility import require_publication_source_origin
 from saas.scripts.legacy_native_evidence import preserve_native_evidence
 from saas.scripts.legacy_source_qualification import _qualify_source_ci
 from saas.scripts.oci_promotion import read_json, require
@@ -205,10 +206,7 @@ def collect_historical_inputs(
         control, product, component, producer, destination / "source"
     )
     publisher.strict_qualification(source, profile, producer.control_revision)
-    require(
-        source.get("complete_domain_discovery") is True,
-        "complete domain discovery is required for historical publication",
-    )
+    require_publication_source_origin(control, profile, source)
     producer.verify(control, producer.control_revision)
     pg = _collect_pg_receipts(
         control,

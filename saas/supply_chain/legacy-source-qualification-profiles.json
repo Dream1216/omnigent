@@ -5989,6 +5989,10 @@
             "run_logs_sha256": "00543dac8eb32b6b4eb4325b9fc84fb0f5b8192cb6f5c47b7aa7c1f6cba91274"
           }
         ]
+      },
+      "bootstrap_positive_origin": {
+        "kind": "legacy_bootstrap_positive_origin/v1",
+        "source_bundle_sha256": "e1a858001df190c2d993f53d1b8020615bdf48380b400b6318d53e785de78c4d"
       }
     },
     "Gateway": {
@@ -11981,6 +11985,10 @@
           "product_revision": "b6363d1b99fa9f190589471a21c89f89057e6b88",
           "product_tree": "e4db6f65c725d5cb7131e4774da3c39082553043"
         }
+      },
+      "bootstrap_positive_origin": {
+        "kind": "legacy_bootstrap_positive_origin/v1",
+        "source_bundle_sha256": "23c54f6b758d79c84128cc03e511d21a6b6a0fa70e99c7dac61d0721dec6762a"
       }
     },
     "Model": {
@@ -17976,6 +17984,10 @@
           "product_revision": "538eacfab39402307d0b477ba5efc0eddc8007b1",
           "product_tree": "931eded80ed4a253f6e43311479567109568430a"
         }
+      },
+      "bootstrap_positive_origin": {
+        "kind": "legacy_bootstrap_positive_origin/v1",
+        "source_bundle_sha256": "01adb054dbe635022b433d32f1ce6160def1c74c18f8a0ca5863753c75663c70"
       }
     }
   },
