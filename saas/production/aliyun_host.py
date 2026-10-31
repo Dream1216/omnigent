@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -18,12 +19,16 @@ from omnigent.host.identity import (
     HOST_TOKEN_FILE_ENV_VAR,
     HOST_WORKSPACE_ID_ENV_VAR,
 )
+from omnigent.host.runner_zygote import ZygoteRunnerProc
 from saas.production.aliyun_model_client import (
     ALIYUN_MODEL_TOKEN_TTL_SECONDS,
     AliyunHostModelTokenIssuer,
     validated_server_origin,
 )
-from saas.production.platform_model_host import run_host_with_model_issuer
+from saas.production.platform_model_host import (
+    PlatformModelHostProcess,
+    run_host_with_model_issuer,
+)
 from saas.production.platform_model_relay import validated_model_gateway_url
 from saas.production.tenant_model_keys import _read_file
 
@@ -47,6 +52,25 @@ _SERVER_ONLY_ENV = (
 
 class AliyunHostConfigurationError(ValueError):
     """A cloud Host is missing a narrow, file-only launch authority."""
+
+
+def configure_aliyun_runner_recovery(environment: dict[str, str]) -> None:
+    """Keep a pending approval alive across the qualified 150-second outage."""
+
+    environment["OMNIGENT_HOOK_MAX_RETRIES"] = "12"
+
+
+class AliyunHostProcess(PlatformModelHostProcess):
+    """Managed Host with a fixed, bounded approval recovery profile."""
+
+    def _spawn_runner_proc(
+        self,
+        env: dict[str, str],
+        session_slug: str,
+        workspace: Path,
+    ) -> tuple[subprocess.Popen[bytes] | ZygoteRunnerProc, Path]:
+        configure_aliyun_runner_recovery(env)
+        return super()._spawn_runner_proc(env, session_slug, workspace)
 
 
 def prepare_aliyun_host_directory(private: Path, *, home: Path | None = None) -> None:
@@ -137,6 +161,7 @@ def run_aliyun_host() -> None:
         issuer,
         ALIYUN_MODEL_TOKEN_TTL_SECONDS,
         gateway_base_url=gateway,
+        host_process_type=AliyunHostProcess,
     )
 
 

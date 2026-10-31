@@ -67,10 +67,11 @@ Remaining qualification:
 - CI runs 41143681301 (`0d9b444bc`), 41148992698 (`1f19ebd3a`) and
   41151484102 (`73b992158`)
   passed repeat-build equality, provenance/SPDX and runtime checks for the
-  complete minimal Host image. The latest raw scan has
-  zero Critical, 10 High matches for four CVEs, and zero ignored matches. The
-  same Perl, Expat and Kerberos findings block release; the complete image has
-  not passed P2 admission.
+  complete minimal Host image. These historical scans reported
+  zero Critical, 10 High matches for four CVEs, and zero ignored matches.
+  Run 41182409678 on `50a4db091` also passed repeat-build comparison, but its
+  newer raw scan reported zero Critical, 13 High and zero ignored matches;
+  three glibc matches were added. The complete image has not passed P2 admission.
 - Run real Host and bubblewrap checks in an Aliyun MicroVM.
 - Check all linked libraries and the target harness under the non-root identity.
 - Produce the required SBOM, scan, source provenance and repeat-build evidence.
@@ -85,12 +86,43 @@ gateway. It is disabled unless the profile selects that exact path. Actual
 image/deployment, public streaming, cloud Host/Runner, storage and release
 acceptance remain required.
 
+The Aliyun Host uses the existing Claude hook retry extension with a fixed
+12-consecutive-hard-failure limit, injected directly at Runner spawn. The
+generic Host default remains 8. This keeps an approval pending through the
+qualified 150-second connection refusal without enabling arbitrary environment
+passthrough. The managed process policy, authorization rejection, token lifetime,
+model revalidation and hook failure behavior remain in force. Twelve immediate
+connection failures allow 211 seconds of backoff before failure; connection
+attempt time adds to that value, so this is a retry-count limit, not an exact
+211-second wall-clock timeout or an unlimited outage guarantee.
+
+Reproduce the local approval recovery qualification with the frozen CLI versions
+on `PATH` (Claude Code 2.1.266, Codex 0.139.0, tmux):
+
+```bash
+OMNIGENT_E2E_RESILIENCE_FULL=1 \
+  .venv/bin/python -m pytest -o addopts= \
+  -p tests.saas.aliyun_recovery_profile \
+  tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py \
+  -k approve --runxfail -vv
+```
+
+The opt-in plugin applies the same fixed setting through the local lab's
+explicit forwarding mechanism. It uses real local Host/Runner/CLI processes
+and a mock model, and retains the original scenario assertions. It does not
+exercise the cloud Host's launch authority, model relay or Aliyun network;
+those still require cloud qualification. `--runxfail` makes the generic
+Claude 150-second known gap a hard failure if this profile does not recover.
+
 The opt-in [session storage candidate](storage.md) adds immutable Volume
 planning, an STS-only control adapter and real Server/launcher admission behind
 profile version 2; version 3 adds Project-scoped saved output listing and
-authenticated download in desktop/mobile Files and Changes. Real cloud mounts,
-persistence, deployed download authorization, STS
-issuance and P4 acceptance remain pending.
+authenticated download in desktop/mobile Files and Changes. Separate console
+probes verified read-only input mounts and output persistence between two
+disposable vendor Base VMs. A third disposable Base VM also verified a generated
+79-byte UTF-8 input by exact hash under UID 1000, with writes refused by EROFS.
+All three probe VMs were released. Managed Host mounts, deployed download authorization,
+STS issuance and full P4 acceptance remain pending.
 
 The separate [STS issuer candidate](sts-issuer.md) supplies 15-minute,
 Team-scoped control credentials through an explicitly reviewed instance-role

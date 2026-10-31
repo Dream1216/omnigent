@@ -23,7 +23,9 @@ import logging
 import subprocess
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -78,6 +80,18 @@ pytestmark = pytest.mark.asyncio
 
 _HOST_ID = "c2d81b1a6812ae1cf32221c5a2a70ba0"
 _WORKSPACE = "/work/repo"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_stop_intent(runtime_init: None) -> Iterator[None]:
+    from omnigent.server.routes import sessions
+
+    previous = dict(sessions._intentional_stop_sessions.items())
+    try:
+        yield
+    finally:
+        sessions._intentional_stop_sessions.clear()
+        sessions._intentional_stop_sessions.update(previous)
 
 
 class _NoopRunnerWS:
@@ -1067,7 +1081,7 @@ async def _offline_native_host_session(client: httpx.AsyncClient, app: FastAPI) 
 
 
 @pytest.mark.parametrize("has_runner_binding", [True, False])
-async def test_offline_host_gets_real_grace_before_native_failure(
+async def test_offline_host_gets_real_grace_then_refuses_without_persisting_a_message(
     client: httpx.AsyncClient,
     app: FastAPI,
     db_uri: str,
@@ -1097,15 +1111,139 @@ async def test_offline_host_gets_real_grace_before_native_failure(
         },
     )
     assert time.monotonic() - started >= grace_s
-    assert response.status_code == 202, response.text
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "runner_unavailable"
     items = (await client.get(f"/v1/sessions/{session_id}/items")).json()["data"]
-    assert [item["code"] for item in items if item["type"] == "error"] == [
-        "runner_failed_to_start"
-    ]
-    assert len([item for item in items if item.get("role") == "user"]) == 1
+    assert not [item for item in items if item["type"] == "error"]
+    assert not [item for item in items if item.get("role") == "user"]
     messages = [record.getMessage() for record in caplog.records]
     assert any("to reconnect for session" in message for message in messages)
     assert not any("to spawn a runner for session" in message for message in messages)
+
+
+async def test_runner_connect_wait_shares_the_host_reconnect_deadline(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.runtime import set_runner_client
+    from omnigent.server.routes import sessions as sessions_module
+    from omnigent.server.routes.sessions import routes_events
+
+    sid = await _offline_native_host_session(client, app)
+    set_runner_client(None)
+    monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.2)
+    monkeypatch.setattr(sessions_module, "_HOST_RECONNECT_GRACE_S", 0.3)
+    waits = []
+
+    async def runner_wait(*_args, **_kwargs):
+        await asyncio.sleep(0.2)
+        return
+
+    async def host_wait(*_args, **kwargs):
+        waits.append(kwargs["timeout_s"])
+        return
+
+    monkeypatch.setattr(sessions_module, "_wait_for_runner_client", runner_wait)
+    monkeypatch.setattr(routes_events, "_wait_for_host_reconnect", host_wait)
+    response = await client.post(
+        f"/v1/sessions/{sid}/events",
+        json={
+            "type": "message",
+            "data": {"role": "user", "content": [{"type": "input_text", "text": "retry later"}]},
+        },
+    )
+    assert response.status_code == 503
+    assert len(waits) == 1 and 0 <= waits[0] <= 0.15
+
+
+@pytest.mark.parametrize("remaining_budget", [0.1, 0.0])
+async def test_recovered_host_runner_spawn_uses_remaining_reconnect_budget(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    remaining_budget: float,
+) -> None:
+    """Reconnection and a late spawn share one bounded send deadline."""
+    from omnigent.runtime import set_runner_client
+    from omnigent.server.routes import sessions as sessions_module
+    from omnigent.server.routes.sessions import routes_events
+
+    sid = await _offline_native_host_session(client, app)
+    set_runner_client(None)
+    monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.2)
+    monkeypatch.setattr(sessions_module, "_HOST_RECONNECT_GRACE_S", 0.3)
+    waits: list[float] = []
+    responders: list[asyncio.Task[Any]] = []
+    launches: list[HostLaunchRunnerFrame] = []
+    elapsed = [0.0]
+    monkeypatch.setattr(
+        routes_events, "time", SimpleNamespace(**{**vars(time), "monotonic": lambda: elapsed[0]})
+    )
+
+    async def runner_wait(*_args: Any, timeout_s: float, **_kwargs: Any) -> None:
+        waits.append(timeout_s)
+        if len(waits) == 1:
+            elapsed[0] += 0.2
+
+    async def host_wait(*_args: Any, **_kwargs: Any) -> HostConnection:
+        comm = await _connect_host(app)
+        elapsed[0] = 0.3 - remaining_budget
+
+        async def serve_launch() -> None:
+            launches.append(await _serve_one_launch(comm, launch_status="launched"))
+
+        responders.append(asyncio.create_task(serve_launch()))
+        return app.state.host_registry.get(_HOST_ID)
+
+    monkeypatch.setattr(sessions_module, "_wait_for_runner_client", runner_wait)
+    monkeypatch.setattr(routes_events, "_wait_for_host_reconnect", host_wait)
+    try:
+        response = await client.post(
+            f"/v1/sessions/{sid}/events",
+            json={
+                "type": "message",
+                "data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "retry later"}],
+                },
+            },
+        )
+    finally:
+        for responder in responders:
+            responder.cancel()
+        await asyncio.gather(*responders, return_exceptions=True)
+    assert response.status_code == 503, response.text
+    if remaining_budget:
+        assert len(waits) >= 2 and all(0 <= wait <= 0.15 for wait in waits[1:]), waits
+        assert len(launches) == 1
+    else:
+        assert len(waits) == 1 and not launches
+    items = (await client.get(f"/v1/sessions/{sid}/items")).json()["data"]
+    assert not [item for item in items if item["type"] in {"message", "error"}], items
+
+
+async def test_stop_without_a_runner_or_host_acknowledgement_is_not_success(
+    client: httpx.AsyncClient, app: FastAPI, db_uri: str
+) -> None:
+    from omnigent.runtime import set_runner_client
+    from omnigent.server.routes.sessions import (
+        _intentional_stop_sessions,
+        _interrupt_fenced_sessions,
+    )
+
+    sid = await _offline_native_host_session(client, app)
+    store = SqlAlchemyConversationStore(db_uri)
+    store.set_session_live_status(sid, "running")
+    set_runner_client(None)
+    response = await client.post(
+        f"/v1/sessions/{sid}/events", json={"type": "stop_session", "data": {}}
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "runner_unavailable"
+    assert sid not in _interrupt_fenced_sessions and sid not in _intentional_stop_sessions
+    conversation = store.get_conversation(sid)
+    assert conversation is not None and conversation.live_status == "running"
 
 
 async def test_host_reconnect_on_another_replica_redirects_without_failing_input(
@@ -1581,11 +1719,9 @@ async def test_message_relaunch_classifies_replacement_runner_liveness(
         assert response.json()["error"]["code"] == "wrong_replica", response.text
         assert not [item for item in items if item["type"] in {"message", "error"}], items
     else:
-        assert response.status_code == 202, response.text
-        assert len([item for item in items if item["type"] == "message"]) == 1, items
-        errors = [item for item in items if item["type"] == "error"]
-        assert len(errors) == 1, items
-        assert errors[0]["code"] == "runner_failed_to_start"
+        assert response.status_code == 503, response.text
+        assert response.json()["error"]["code"] == "runner_unavailable"
+        assert not [item for item in items if item["type"] in {"message", "error"}], items
 
 
 async def test_message_relaunch_never_connected_names_phase_and_logs_error(
@@ -1680,6 +1816,36 @@ async def _relaunch_then_report_exit(
     finally:
         with contextlib.suppress(asyncio.CancelledError, Exception):
             _ = await responder
+
+
+@pytest.mark.parametrize("wrapper", ["claude-code-native-ui", "codex-native-ui"])
+async def test_native_relaunch_confirmed_exit_preserves_failed_turn(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    wrapper: str,
+) -> None:
+    """An actual process exit still produces a persistent native failed turn."""
+    from omnigent.runtime import set_runner_client
+    from omnigent.server.routes import sessions as sessions_module
+    from omnigent.server.routes.sessions import routes_events
+
+    monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.0)
+    monkeypatch.setattr(routes_events, "_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S", 5.0)
+    comm = await _connect_host(app)
+    session = await _inline_launch_session(client, comm)
+    sid = session["id"]
+    SqlAlchemyConversationStore(db_uri).set_labels(sid, {"omnigent.wrapper": wrapper})
+    set_runner_client(None)
+    response = await _relaunch_then_report_exit(
+        client, comm, sid, "runner process exited with code 1"
+    )
+    assert response.status_code == 202, response.text
+    items = (await client.get(f"/v1/sessions/{sid}/items")).json()["data"]
+    assert len([item for item in items if item.get("role") == "user"]) == 1
+    errors = [item for item in items if item["type"] == "error"]
+    assert len(errors) == 1 and errors[0]["code"] == "runner_failed_to_start"
 
 
 async def test_message_relaunch_host_failure_uncategorized_reports_startup_failure(
@@ -1913,6 +2079,95 @@ async def test_message_relaunch_pre_connect_exit_withholds_log_tail_from_non_own
         r.levelno == logging.ERROR and "SECRET_TOKEN=hunter2" in r.getMessage()
         for r in caplog.records
     ), [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+
+
+@pytest.mark.parametrize("connect_late", [True, False])
+async def test_alive_runner_is_preserved_after_its_initial_connect_grace(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    connect_late: bool,
+) -> None:
+    """A delayed live process is reused or refused without replacing its binding."""
+    from omnigent.runtime import set_runner_client
+    from omnigent.server.routes import sessions as sessions_module
+    from omnigent.server.routes.sessions import routes_events
+
+    monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.01)
+    monkeypatch.setattr(routes_events, "_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S", 0.02)
+    comm = await _connect_host(app)
+    session = await _inline_launch_session(client, comm)
+    sid, runner_id = session["id"], session["runner_id"]
+    status_seen = asyncio.Event()
+    launches: list[HostLaunchRunnerFrame] = []
+    waits: list[str] = []
+    forwarded: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        forwarded.append(request.url.path)
+        return httpx.Response(202 if request.method == "POST" else 200, json={})
+
+    runner = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url="http://runner")
+
+    async def wait_runner(*_args: Any, runner_id: str, **_kwargs: Any) -> httpx.AsyncClient | None:
+        waits.append(runner_id)
+        if len(waits) == 1:
+            await asyncio.wait_for(status_seen.wait(), timeout=budget(5.0))
+            await asyncio.sleep(0.01)
+            return None
+        return runner if connect_late else None
+
+    async def serve_host() -> None:
+        while True:
+            message = await comm.receive_output(timeout=budget(5.0))
+            if message["type"] != "websocket.send":
+                continue
+            frame = decode_host_frame(message["text"])
+            if isinstance(frame, HostRunnerStatusFrame):
+                await comm.send_input(
+                    {
+                        "type": "websocket.receive",
+                        "text": encode_host_frame(
+                            HostRunnerStatusResultFrame(
+                                request_id=frame.request_id,
+                                status="alive",
+                            )
+                        ),
+                    }
+                )
+                status_seen.set()
+                launch = await _serve_one_launch(comm, launch_status="launched")
+                launches.append(launch)
+                return
+
+    set_runner_client(None)
+    monkeypatch.setattr(sessions_module, "_wait_for_runner_client", wait_runner)
+    monkeypatch.setattr(sessions_module, "_ensure_runner_relay_ready", AsyncMock())
+    monkeypatch.setattr(sessions_module, "_ensure_runner_session_initialized", AsyncMock())
+    responder = asyncio.create_task(serve_host())
+    try:
+        response = await client.post(
+            f"/v1/sessions/{sid}/events",
+            json={
+                "type": "message",
+                "data": {"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+            },
+        )
+        assert response.status_code == (202 if connect_late else 503), response.text
+        assert not launches
+        conversation = SqlAlchemyConversationStore(db_uri).get_conversation(sid)
+        assert conversation is not None and conversation.runner_id == runner_id
+        assert all(value == runner_id for value in waits)
+        if connect_late:
+            assert f"/v1/sessions/{sid}/events" in forwarded
+        else:
+            items = (await client.get(f"/v1/sessions/{sid}/items")).json()["data"]
+            assert not [item for item in items if item["type"] in {"message", "error"}]
+    finally:
+        responder.cancel()
+        await asyncio.gather(responder, return_exceptions=True)
+        await runner.aclose()
 
 
 async def test_host_reports_runner_unknown_skips_connect_grace(

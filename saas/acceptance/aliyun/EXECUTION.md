@@ -9,10 +9,47 @@
 - 起点：实际生产提交 `dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec`。
 - 线上地址：`https://next.jxhh.com`。
 - 公开版本证据：`2026-10-31/p1-current-state.json`。
-- 当前阶段：P1 进行中，已启动 P2 的基础镜像准备。
+- 当前阶段：P1～P5 候选实施中，完整生产验收尚未通过。
 - 生产发布：未执行。生产原有两个 provider 保持不变。
 
-## 已完成工作
+## 最新候选与证据
+
+已推送签名候选 `50a4db09139531e2037a49b85dd6166fdfb9cf57`，草稿 PR #200。
+候选已实现显式阿里云装配、模型通道、会话存储及下载界面；默认关闭，未部署。
+Host CI `41182409678` 的双构建与可复现比较通过，原始扫描为
+0 Critical、13 High、0 忽略，P2 未通过。Server CI `41182413291`
+通过预检与实际 PG16/18 回放，回归 5111 通过、13 跳过、2 项受保护身份校验失败，
+未构建或发布 Server 镜像。历史结果不代替当前候选的准入。
+
+控制台创建的两个不同 Base VM 已验证输入挂载只读、输出读写及跨实例 84 字节
+内容与 SHA-256 一致；先释放写入 VM，再创建读取 VM，最终两个 VM 均已释放。
+见 [`p4-console-oss-cross-vm-durability.json`](2026-10-31/p4-console-oss-cross-vm-durability.json)。
+这不证明完整 Host、STS 续期、SaaS 下载授权或跨租户负向验收，P4 未通过。
+
+后续上传生成的79字节中文输入样例，在第三台300秒寿命的独立 Base VM 中，
+以 UID1000 验证实际挂载、文件名列出、UTF-8解码及完整 SHA-256 相等；
+输入卷写入返回 EROFS(30)。本轮唯一实例已释放，活动列表为0；见
+[`p4-console-utf8-input-readonly.json`](2026-10-31/p4-console-utf8-input-readonly.json)。
+此拒绝来自只读挂载，不等同于 IAM 后端拒绝证明。SDK只读复测仍被来源IP策略拒绝，
+未修改IP名单或其他权限。
+
+隔离 P5 候选与上述签名存储源码组合后，真实本地 Server/Host/Runner、
+Claude Code 2.1.266、Codex 0.139.0 配合模拟模型，发送/停止 × 20/150 秒
+8 项严格恢复场景通过；服务端 116 项回归通过。见
+[`p5-host-offline-control-local-validation.json`](2026-10-31/p5-host-offline-control-local-validation.json)。
+该历史矩阵未选择审批场景。后续增加故障前的只读就绪等待，并在阿里云专用
+Host 中通过现有扩展点固定 12 次审批硬失败重试；通用默认仍为 8，托管策略仍
+拒绝任意环境透传。70 项相关单元测试通过，类型检查 0 错误；Claude/Codex × 审批 × 20/150 秒
+4 项严格矩阵全部通过，0 失败、0 错误、0 跳过，耗时 963.292 秒，38 项结果检查通过。
+见 [`p5-approval-recovery-profile-local-validation.json`](2026-10-31/p5-approval-recovery-profile-local-validation.json)。
+这与前述 8 项属于两轮证据，并非一次 12 项全绿运行。
+用户已明确批准源码上限182→184、净增行4869→5216及对应两处预算断言。
+精确四位置数值补丁已应用，最终源码范围检查通过，10项预算用例通过，
+包括九个上游补丁的完整回放检查。见
+[`p5-source-scope-approval.json`](2026-10-31/p5-source-scope-approval.json)。
+恢复候选尚未提交，完整P5云端验收与生产发布仍未通过。
+
+## 初期实施历史
 
 1. 通过 `/saas/version` 和当前 Kubernetes Deployment 注解核对生产版本；Server、Host 就绪，三节点 Ready。
 2. 建立独立工作区，保留其他任务的源码、集群配置与活动构建。
@@ -38,7 +75,7 @@
 
 20. CI `41127064896` 的代码验证再次通过，OCI 导出配置已修复；构建进入 CLI 安装后失败。离线复现定位到 npm 目录覆盖混入旧依赖，引发 minizlib 的 Class extends TypeError。新增共享 Node stage，先清空旧 npm 树再复制固定版本；实际 node-base 构建、安装模块加载及 npm 10.9.9 自检通过，完整新候选待 CI 验证。
 
-## 当前必须解决的差异
+## 初期识别的差异
 
 | 差异 | 权威来源 | 所需工作 |
 |---|---|---|

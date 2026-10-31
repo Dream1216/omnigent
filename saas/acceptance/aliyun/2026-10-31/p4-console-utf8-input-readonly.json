@@ -1,0 +1,53 @@
+{
+  "cleanup": {
+    "active_instances_visible": 0,
+    "activity_list_all_templates_all_statuses_no_search": true,
+    "fixture_retained_for_followup": true,
+    "probe_vm_released": true,
+    "volumes_deleted": false
+  },
+  "evidence_sha256": {
+    "aliyun-console-input-fixture-uploaded-20261031.png": "6bfea2d491d77598591edf304f801f238e6405342ff537e13fb4d5a52f3b9256",
+    "aliyun-console-input-read-pass-20261031.png": "0b564e51b2e7a2df5161b44e99b207ee66c287b66dd80a12dd6317af4c69b6da",
+    "aliyun-console-input-read-vm-released-20261031.png": "fc9e7603c86df6c2933f03320048a42a4b86518554a2070a15d0a0fd4d2c6b02"
+  },
+  "full_managed_host_exercised": false,
+  "guest": {
+    "actual_input_mount": true,
+    "actual_output_mount": true,
+    "exact_file_length_and_hash_asserted": true,
+    "filename_listed": true,
+    "input_st_rdonly": true,
+    "input_write_denial_layer": "read-only mounted filesystem (EROFS), not an IAM denial test",
+    "input_write_errno": 30,
+    "result": "PASS",
+    "uid": 1000
+  },
+  "guest_command_sha256": "f7cf758544ff1fe03a069e9adfb6703197ba3cddecb69ea8b7a098b3cad87510",
+  "iam_policy_or_key_source_ip_modified": false,
+  "input_fixture": {
+    "bytes": 79,
+    "filename": "输入样例-20261031.txt",
+    "generated_nonsensitive": true,
+    "sha256": "6c751e96f4400ae31206e7f7f2631748a9606f731a61fb6c0504201b2e222e08",
+    "uploaded_through_console": true,
+    "utf8_valid": true
+  },
+  "lifetime_s": 300,
+  "max_concurrent_owned_probe_vms": 1,
+  "observed_at": "2026-10-31T10:24:14.172054+00:00",
+  "p4_accepted": false,
+  "p5_accepted": false,
+  "production_activated": false,
+  "proof_method": "Authenticated Aliyun console plus visual WebShell result under UID1000",
+  "public_inbound": false,
+  "remaining": [
+    "Actual managed Host/Runner/model and deployed SaaS output authorization",
+    "STS renewal and IAM permission-denial/cross-Session/Tenant tests",
+    "Qualified image and release gates"
+  ],
+  "scope": "Only the existing synthetic Session-A input/output volumes and existing dedicated role",
+  "sdk_source_ip_admission_proven": false,
+  "template_class": "vendor Base generation2 MicroVM",
+  "vm_count": 1
+}

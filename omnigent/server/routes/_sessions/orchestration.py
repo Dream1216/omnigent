@@ -3826,6 +3826,7 @@ async def _wait_for_host_bound_runner_client(
     runner_exit_reports: RunnerExitReports | None,
     host_conn: HostConnection,
     host_registry: HostRegistry,
+    preserve_live_runner_s: float | None = None,
 ) -> httpx.AsyncClient | None:
     """
     Wait for a host-bound runner to connect, ending early if the host
@@ -3859,6 +3860,8 @@ async def _wait_for_host_bound_runner_client(
         connect wait to abort early on a reported death.
     :param host_conn: Live host connection to query for liveness.
     :param host_registry: Registry used to enqueue the query frame.
+    :param preserve_live_runner_s: Extra bounded wait for a confirmed live
+        process; refuse instead of replacing it if it still cannot connect.
     :returns: The runner HTTP client if it connected, otherwise ``None``
         (timed out, crash report, or host-confirmed dead/unknown).
     """
@@ -3880,17 +3883,35 @@ async def _wait_for_host_bound_runner_client(
             {connect_task, status_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
-        # The connect settling is authoritative (client, timeout, or crash
-        # report) — the host's opinion no longer matters once it lands.
+        # A connected client wins; a timed-out wait can still need the
+        # confirmed-live verdict before deciding whether to replace it.
         if connect_task in done:
-            return connect_task.result()
-        # Only the status query has resolved so far.
-        if status_task.result() in ("dead", "unknown"):
-            # Host confirms the runner will never connect — stop waiting.
-            return None
-        # No verdict ("alive" or an unavailable/too-old/slow host): let the
-        # connect grace run to its natural conclusion.
-        return await connect_task
+            client = connect_task.result()
+            if client is not None or not status_task.done():
+                return client
+            status = status_task.result()
+        else:
+            status = status_task.result()
+            if status in ("dead", "unknown"):
+                return None
+            client = await connect_task
+        if client is None and status == "alive" and preserve_live_runner_s is not None:
+            if preserve_live_runner_s > 0:
+                client = await _wait_for_runner_client(
+                    session_id,
+                    runner_router,
+                    tunnel_registry,
+                    runner_id=runner_id,
+                    timeout_s=preserve_live_runner_s,
+                    runner_exit_reports=runner_exit_reports,
+                )
+            if client is None:
+                raise OmnigentError(
+                    "The existing runner is still reconnecting. Your message was not accepted; "
+                    "retry when it reconnects.",
+                    code=ErrorCode.RUNNER_UNAVAILABLE,
+                )
+        return client
     finally:
         outstanding = [t for t in (connect_task, status_task) if not t.done()]
         for task in outstanding:

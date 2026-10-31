@@ -376,3 +376,179 @@ index affa37df3..163560cca 100644
 +            html = _rewrite_web_ui_index(
 +                index_file.read_text(encoding="utf-8"), base_path, app_name
 +            )
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index 3d8988dff..c9d5e9889 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -3828,0 +3829 @@ async def _wait_for_host_bound_runner_client(
++    preserve_live_runner_s: float | None = None,
+@@ -3861,0 +3863,2 @@ async def _wait_for_host_bound_runner_client(
++    :param preserve_live_runner_s: Extra bounded wait for a confirmed live
++        process; refuse instead of replacing it if it still cannot connect.
+@@ -3883,2 +3886,2 @@ async def _wait_for_host_bound_runner_client(
+-        # The connect settling is authoritative (client, timeout, or crash
+-        # report) — the host's opinion no longer matters once it lands.
++        # A connected client wins; a timed-out wait can still need the
++        # confirmed-live verdict before deciding whether to replace it.
+@@ -3886,8 +3889,26 @@ async def _wait_for_host_bound_runner_client(
+-            return connect_task.result()
+-        # Only the status query has resolved so far.
+-        if status_task.result() in ("dead", "unknown"):
+-            # Host confirms the runner will never connect — stop waiting.
+-            return None
+-        # No verdict ("alive" or an unavailable/too-old/slow host): let the
+-        # connect grace run to its natural conclusion.
+-        return await connect_task
++            client = connect_task.result()
++            if client is not None or not status_task.done():
++                return client
++            status = status_task.result()
++        else:
++            status = status_task.result()
++            if status in ("dead", "unknown"):
++                return None
++            client = await connect_task
++        if client is None and status == "alive" and preserve_live_runner_s is not None:
++            if preserve_live_runner_s > 0:
++                client = await _wait_for_runner_client(
++                    session_id,
++                    runner_router,
++                    tunnel_registry,
++                    runner_id=runner_id,
++                    timeout_s=preserve_live_runner_s,
++                    runner_exit_reports=runner_exit_reports,
++                )
++            if client is None:
++                raise OmnigentError(
++                    "The existing runner is still reconnecting. Your message was not accepted; "
++                    "retry when it reconnects.",
++                    code=ErrorCode.RUNNER_UNAVAILABLE,
++                )
++        return client
+diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
+index 2987e8d02..572259dc9 100644
+--- a/omnigent/server/routes/sessions/routes_events.py
++++ b/omnigent/server/routes/sessions/routes_events.py
+@@ -1458 +1458 @@ def register_events_routes(
+-                await _stop_host_runner_intentionally(
++                host_stopped = await _stop_host_runner_intentionally(
+@@ -1464,0 +1465,6 @@ def register_events_routes(
++                if not stop_delivered and not host_stopped:
++                    raise OmnigentError(
++                        "The host is unreachable and the stop was not confirmed. "
++                        "Retry when the host reconnects.",
++                        code=ErrorCode.RUNNER_UNAVAILABLE,
++                    )
+@@ -2251,0 +2258 @@ def register_events_routes(
++        relaunch_connect_timeout_s = _HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S
+@@ -2284,0 +2292 @@ def register_events_routes(
++            reconnect_started = time.monotonic()
+@@ -2303,0 +2312 @@ def register_events_routes(
++                        preserve_live_runner_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
+@@ -2319,0 +2329 @@ def register_events_routes(
++                binding_changed_during_host_grace = False
+@@ -2335,0 +2346,4 @@ def register_events_routes(
++                        host_grace_remaining = max(
++                            0.0,
++                            _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started),
++                        )
+@@ -2338 +2352 @@ def register_events_routes(
+-                            _sf._HOST_RECONNECT_GRACE_S,
++                            host_grace_remaining,
+@@ -2347 +2361 @@ def register_events_routes(
+-                            timeout_s=_sf._HOST_RECONNECT_GRACE_S,
++                            timeout_s=host_grace_remaining,
+@@ -2355,0 +2370 @@ def register_events_routes(
++                        binding_changed_during_host_grace = fresh_conv.runner_id != conv.runner_id
+@@ -2362,0 +2378,27 @@ def register_events_routes(
++                if (
++                    runner_client is None
++                    and _host_conn is not None
++                    and _grace_host_conn is None
++                    and not binding_changed_during_host_grace
++                    and conv.runner_id is not None
++                ):
++                    remaining = max(
++                        0.0, _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started)
++                    )
++                    if remaining <= 0:
++                        raise OmnigentError(
++                            "The host has only just reconnected. Your message was not accepted; "
++                            "retry when the runner reconnects.",
++                            code=ErrorCode.RUNNER_UNAVAILABLE,
++                        )
++                    runner_client = await _wait_for_host_bound_runner_client(
++                        session_id,
++                        runner_router,
++                        _tunnel_registry,
++                        runner_id=conv.runner_id,
++                        timeout_s=remaining,
++                        runner_exit_reports=runner_exit_reports,
++                        host_conn=_host_conn,
++                        host_registry=_host_reg,
++                        preserve_live_runner_s=0.0,
++                    )
+@@ -2419,0 +2462,8 @@ def register_events_routes(
++                if _grace_host_conn is None:
++                    relaunch_connect_timeout_s = min(
++                        relaunch_connect_timeout_s,
++                        max(
++                            0.0,
++                            _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started),
++                        ),
++                    )
+@@ -2422 +2472 @@ def register_events_routes(
+-                    _HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
++                    relaunch_connect_timeout_s,
+@@ -2431 +2481 @@ def register_events_routes(
+-                    timeout_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
++                    timeout_s=relaunch_connect_timeout_s,
+@@ -2467,18 +2517,11 @@ def register_events_routes(
+-            # A native terminal-session message must NOT be silently
+-            # dropped when no runner is reachable — the runner crashed
+-            # before connecting (the daemon couldn't bring it up). Persist
+-            # the user's message together with the runner-failure error so
+-            # it survives reload and the banner explains why, becoming the
+-            # AP-server-as-writer failed turn (same shape as a definitive
+-            # ensure-probe failure). The cause, when known, is the daemon's
+-            # exit report keyed by this session's runner_id; otherwise a
+-            # generic unavailable message. This is safe precisely because
+-            # the harness will never see it (no desync — there is no live
+-            # harness). Other event types and non-native sessions still
+-            # raise: their message would replay to a relaunched runner, so
+-            # persisting now WOULD desync the store from harness state.
+-            if body.type == "message" and _is_native_terminal_session(conv):
+-                exit_cause = (
+-                    runner_exit_reports.get(conv.runner_id)
+-                    if runner_exit_reports is not None and conv.runner_id is not None
+-                    else None
++            if (
++                body.type == "message"
++                and conv.host_id is not None
++                and relaunched_runner_id is None
++                and not relaunched_launch_refused
++            ):
++                # An absent tunnel cannot prove the host's surviving process exited.
++                raise OmnigentError(
++                    "The host is unreachable. Your message was not accepted; "
++                    "retry when the host reconnects.",
++                    code=ErrorCode.RUNNER_UNAVAILABLE,
+@@ -2485,0 +2529,12 @@ def register_events_routes(
++            exit_cause = (
++                runner_exit_reports.get(conv.runner_id)
++                if runner_exit_reports is not None and conv.runner_id is not None
++                else None
++            )
++            # A late host runner can still connect. Persist a failed turn only
++            # after a definitive refusal or exit, so a retry cannot lose input.
++            if (
++                body.type == "message"
++                and _is_native_terminal_session(conv)
++                and (conv.host_id is None or exit_cause or relaunched_launch_refused)
++            ):
+@@ -2566 +2621 @@ def register_events_routes(
+-                        f"{_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S:.0f}s — the "
++                        f"{relaunch_connect_timeout_s:.0f}s — the "
+@@ -2581 +2636 @@ def register_events_routes(
+-                        f"{_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S:.0f}s. "
++                        f"{relaunch_connect_timeout_s:.0f}s. "

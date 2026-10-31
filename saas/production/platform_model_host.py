@@ -171,6 +171,7 @@ def run_host_with_model_issuer(
     token_ttl: int,
     *,
     gateway_base_url: str = PLATFORM_MODEL_GATEWAY_BASE_URL,
+    host_process_type: type[PlatformModelHostProcess] = PlatformModelHostProcess,
 ) -> None:
     """Use the official managed Host with an explicitly supplied model authority."""
 
@@ -185,7 +186,7 @@ def run_host_with_model_issuer(
         lifecycle_lock: DaemonLifecycleLock | None = None,
         interactive_shells: list[str] | None = None,
     ) -> PlatformModelHostProcess:
-        return PlatformModelHostProcess(
+        return host_process_type(
             identity,
             resolved_server_url,
             lifecycle_lock=lifecycle_lock,

@@ -64,8 +64,56 @@ def test_cloud_host_composes_the_official_model_host_with_file_only_credentials(
     assert isinstance(issuer, AliyunHostModelTokenIssuer)
     assert issuer._host_token == c.token and issuer._lease == c.lease
     assert run.call_args.kwargs == {
-        "gateway_base_url": "https://control.invalid/platform-model/v1"
+        "gateway_base_url": "https://control.invalid/platform-model/v1",
+        "host_process_type": aliyun_host.AliyunHostProcess,
     }
+
+
+@pytest.mark.parametrize("ambient_retry", [None, "1", "1000000"])
+def test_cloud_runner_has_a_fixed_retry_bound_without_ambient_passthrough(
+    monkeypatch, tmp_path, ambient_retry
+):
+    environment = {"PATH": "/usr/bin"}
+    if ambient_retry is not None:
+        environment["OMNIGENT_HOOK_MAX_RETRIES"] = ambient_retry
+    process = object()
+    log = tmp_path / "runner.log"
+    spawn = Mock(return_value=(process, log))
+    monkeypatch.setattr(aliyun_host.PlatformModelHostProcess, "_spawn_runner_proc", spawn)
+    host = object.__new__(aliyun_host.AliyunHostProcess)
+
+    assert host._spawn_runner_proc(environment, "session-", tmp_path) == (process, log)
+    assert environment == {"PATH": "/usr/bin", "OMNIGENT_HOOK_MAX_RETRIES": "12"}
+    spawn.assert_called_once_with(environment, "session-", tmp_path)
+
+
+def test_cloud_factory_keeps_managed_policy_and_model_authority(launch_files, monkeypatch):
+    from saas.production import platform_model_host
+
+    c = launch_files
+    for name in aliyun_host._SERVER_ONLY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in c.env.items():
+        monkeypatch.setenv(name, value)
+    activate = Mock()
+    monkeypatch.setattr(platform_model_host, "activate_managed_host_environment", activate)
+    captured = []
+
+    def run_host(server_url, *, host_factory):
+        from omnigent.host.identity import HostIdentity
+
+        activate.assert_called_once_with()
+        captured.append(
+            host_factory(HostIdentity(host_id=c.env[HOST_ID_ENV_VAR], name="test"), server_url)
+        )
+
+    monkeypatch.setattr(platform_model_host, "run_host_process", run_host)
+    aliyun_host.run_aliyun_host()
+    assert len(captured) == 1
+    host = captured[0]
+    assert isinstance(host, aliyun_host.AliyunHostProcess)
+    assert host._platform_model_token_ttl == 300
+    assert isinstance(host._platform_model_tokens, AliyunHostModelTokenIssuer)
 
 
 @pytest.mark.parametrize("name", aliyun_host._SERVER_ONLY_ENV)
