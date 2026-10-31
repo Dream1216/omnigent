@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "policy_id": "omnigent-saas-production-deployment-v1",
   "reviewed_at": "2026-09-18",
   "revision_contract": {
@@ -27,6 +27,17 @@
     "egress-proxy": {
       "minimum_replicas": 2
     }
+  },
+  "runner_seccomp": {
+    "type": "Localhost",
+    "localhost_profile": "omnigent/bubblewrap-v3.json",
+    "profile_sha256": "c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363",
+    "container_name": "runner-agent",
+    "runtime_class": "omnigent-runner",
+    "platform": "linux/amd64",
+    "container_runtime_version": "containerd://2.3.2-k3s2",
+    "run_as_uid": 65532,
+    "run_as_gid": 65532
   },
   "required_network_controls": [
     "default_deny_ingress",

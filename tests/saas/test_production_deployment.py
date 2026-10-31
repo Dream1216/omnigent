@@ -73,14 +73,18 @@ def test_all_pods_stage_owner_only_files_without_root_or_plaintext_secret_envs()
 
     for pod in _pod_specs(items):
         pod_security = pod["securityContext"]
+        expected_uid = (
+            65532 if any(row["name"] == "runner-agent" for row in pod["containers"]) else 10001
+        )
         assert pod_security["runAsNonRoot"] is True
-        assert pod_security["runAsUser"] == 10001
-        assert pod_security["runAsGroup"] == 10001
-        assert pod_security["fsGroup"] == 10001
+        assert pod_security["runAsUser"] == expected_uid
+        assert pod_security["runAsGroup"] == expected_uid
+        assert pod_security["fsGroup"] == expected_uid
         for container in [*pod.get("initContainers", []), *pod["containers"]]:
             security = container["securityContext"]
             assert security["runAsNonRoot"] is True
-            assert security["runAsUser"] == 10001
+            assert security["runAsUser"] == expected_uid
+            assert security.get("runAsGroup", pod_security["runAsGroup"]) == expected_uid
             assert security["capabilities"]["drop"] == ["ALL"]
             for entry in container.get("env", []):
                 assert "secretKeyRef" not in entry
@@ -1155,3 +1159,51 @@ def test_preview_exchange_authority_is_a_distinct_server_only_file() -> None:
 
 def test_no_mutable_compose_deployment_is_shipped() -> None:
     assert not (_DEPLOYMENT / "docker-compose.production.yaml").exists()
+
+
+def test_only_runner_execution_containers_use_exact_reviewed_localhost_profile() -> None:
+    items = _items("kubernetes.production.yaml")
+    for deployment in (item for item in items if item["kind"] == "Deployment"):
+        pod = deployment["spec"]["template"]["spec"]
+        assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+        runner = deployment["metadata"]["name"].startswith("omnigent-saas-runner-agent-")
+        for init in pod.get("initContainers", []):
+            assert init["securityContext"].get(
+                "seccompProfile", pod["securityContext"]["seccompProfile"]
+            ) == {"type": "RuntimeDefault"}
+            assert "OMNIGENT_HOST_SANDBOX_BACKEND" not in {
+                row["name"] for row in init.get("env", [])
+            }
+        for container in pod["containers"]:
+            effective = container["securityContext"].get(
+                "seccompProfile", pod["securityContext"]["seccompProfile"]
+            )
+            if not runner:
+                assert effective == {"type": "RuntimeDefault"}
+                continue
+            assert container["name"] == "runner-agent"
+            assert effective == {
+                "type": "Localhost",
+                "localhostProfile": "omnigent/bubblewrap-v3.json",
+            }
+            assert pod["hostPID"] is False
+            assert pod["shareProcessNamespace"] is False
+            assert pod["runtimeClassName"] == "omnigent-runner"
+            assert pod["nodeSelector"] == {
+                "kubernetes.io/arch": "amd64",
+                "omnigent.io/seccomp-profile-v3": "c500aa5e6862ba7d",
+            }
+            assert (
+                deployment["spec"]["template"]["metadata"]["annotations"][
+                    "omnigent.io/runner-seccomp-profile-sha256"
+                ]
+                == "c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363"
+            )
+            assert {row["name"]: row.get("value") for row in container["env"]}[
+                "OMNIGENT_HOST_SANDBOX_BACKEND"
+            ] == "kubernetes"
+            assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
+            assert container["securityContext"]["allowPrivilegeEscalation"] is False
+            assert container["securityContext"]["readOnlyRootFilesystem"] is True
+            assert container["securityContext"]["runAsUser"] == 65532
+            assert container["securityContext"]["runAsGroup"] == 65532

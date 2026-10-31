@@ -989,3 +989,53 @@ def test_server_revocation_projection_rejects_source_drift(tmp_path, mutation):
     path.write_text(yaml.safe_dump(value, sort_keys=False))
     with pytest.raises(ReleaseRenderError, match="native revocation projection"):
         render_kubernetes_release(_write_spec(tmp_path), source, tmp_path / "output")
+
+
+@pytest.mark.parametrize("mode", ["stage", "final"])
+def test_renderer_keeps_fixed_runner_only_seccomp_and_private_pid_contract(
+    tmp_path: Path, mode: str
+) -> None:
+    output = tmp_path / "rendered"
+    render_kubernetes_release(_write_spec(tmp_path, mode=mode), _copy_sources(tmp_path), output)
+    production = _document(output / "kubernetes.production.yaml")
+    for deployment in (item for item in production["items"] if item["kind"] == "Deployment"):
+        pod = deployment["spec"]["template"]["spec"]
+        assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+        for init in pod.get("initContainers", []):
+            assert init["securityContext"].get(
+                "seccompProfile", pod["securityContext"]["seccompProfile"]
+            ) == {"type": "RuntimeDefault"}
+        for container in pod["containers"]:
+            effective = container["securityContext"].get(
+                "seccompProfile", pod["securityContext"]["seccompProfile"]
+            )
+            if container["name"] != "runner-agent":
+                assert effective == {"type": "RuntimeDefault"}
+                continue
+            assert effective == {
+                "type": "Localhost",
+                "localhostProfile": "omnigent/bubblewrap-v3.json",
+            }
+            assert pod["hostPID"] is False and pod["shareProcessNamespace"] is False
+            assert pod["securityContext"]["runAsUser"] == 65532
+            assert pod["securityContext"]["runAsGroup"] == 65532
+            assert pod["securityContext"]["fsGroup"] == 65532
+            assert container["securityContext"]["runAsUser"] == 65532
+            assert container["securityContext"]["runAsGroup"] == 65532
+            assert all(
+                init["securityContext"]["runAsUser"] == 65532
+                and init["securityContext"]["runAsGroup"] == 65532
+                for init in pod["initContainers"]
+            )
+            assert pod["runtimeClassName"] == "omnigent-runner"
+            assert pod["nodeSelector"]["kubernetes.io/arch"] == "amd64"
+            assert pod["nodeSelector"]["omnigent.io/seccomp-profile-v3"] == "c500aa5e6862ba7d"
+            assert (
+                deployment["spec"]["template"]["metadata"]["annotations"][
+                    "omnigent.io/runner-seccomp-profile-sha256"
+                ]
+                == "c500aa5e6862ba7d50e54dcff65bf39120eb6f5300e548fc6e599bc58fcba363"
+            )
+            assert {row["name"]: row.get("value") for row in container["env"]}[
+                "OMNIGENT_HOST_SANDBOX_BACKEND"
+            ] == "kubernetes"
