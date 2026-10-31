@@ -112,8 +112,26 @@ jobs:
             > artifacts/python-runtime-diagnostic/image-inspect.json
           jq -e --arg arch "$ARCH" 'length == 1 and .[0].Os == "linux" and .[0].Architecture == $arch' \
             artifacts/python-runtime-diagnostic/image-inspect.json >/dev/null
-          image_id=$(jq -er '.[0].Id' artifacts/python-runtime-diagnostic/image-inspect.json)
+          image_id=$(python3 - <<'PY'
+          import json, os, re, tarfile
+          from pathlib import Path
+          archive = Path(os.environ["RUNNER_TEMP"]) / f"runtime-{os.environ['ARCH']}.tar"
+          with tarfile.open(archive) as stream:
+              descriptors = json.load(stream.extractfile("index.json"))["manifests"]
+          assert len(descriptors) == 1
+          digest = descriptors[0]["digest"]
+          assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+          actual = json.loads(Path("artifacts/python-runtime-diagnostic/image-inspect.json").read_text())[0]
+          assert actual["Descriptor"]["digest"] == digest
+          print(digest)
+          PY
+          )
           [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker image inspect --platform "linux/${ARCH}" "$image_id" \
+            > artifacts/python-runtime-diagnostic/immutable-image-inspect.json
+          jq -e -s '.[0][0].Descriptor == .[1][0].Descriptor and .[0][0].RootFS == .[1][0].RootFS' \
+            artifacts/python-runtime-diagnostic/image-inspect.json \
+            artifacts/python-runtime-diagnostic/immutable-image-inspect.json >/dev/null
           echo "DIAGNOSTIC_IMAGE_ID=${image_id}" >> "$GITHUB_ENV"
       - name: Probe the exact runtime without network or write authority
         run: |

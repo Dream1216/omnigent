@@ -19,6 +19,9 @@ Dockerfile and retains the original base digest, other direct pins, source
 files and release lock. APK performs its normal signature verification.
 The jobs check runtime versions and actual pip-wheel vendor contents, generate
 SBOMs, and retain complete raw scans with zero Critical/High/ignored required.
+The executable reference comes from the OCI index, with the loaded descriptor
+and filesystem checked against it; Docker's config ID is not used as an image
+lookup key for the attested index.
 Database age validation remains enabled. OCI archives, source/context hashes,
 runtime facts and scanner metadata are available as seven-day artifacts.
 
