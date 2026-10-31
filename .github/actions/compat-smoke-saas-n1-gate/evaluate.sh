@@ -32,11 +32,19 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "saas/n1_compat/Dockerfile|df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed"
   "saas/n1_compat/Dockerfile.dockerignore|72aa85a2e1e88d468d3843d18199b1d0959a7ba4b3227c4354c722c4461f3275"
   "saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29"
-  "tests/saas/test_n1_merge_gate_candidate.py|ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365"
-  "tests/saas/test_n1_merge_gate.py|14ac6f69efaf5dcb165e082857bcbbe11764dab043a8cf1ff3b738d3c9b4d262"
+  "tests/saas/test_n1_merge_gate_candidate.py|ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365,0a09d3731cce4d6611c85de07e76f7238295a5add9ecc82a2cf92e0bb524c7d4"
+  "tests/saas/test_n1_merge_gate.py|14ac6f69efaf5dcb165e082857bcbbe11764dab043a8cf1ff3b738d3c9b4d262,17d604a751cbfb6f30dcde95523d514094987d4bc1c83be02648c51dcbc17efe"
   "tests/saas/test_n1_outbox_admission.py|d5db6f7cc3feb7a8a9de64da88bab036ba7b6e57be4043e36c29736d462811c1,2570537024bd3ba5d1501ad58d0e76d65a0b49c66ad471869f7c5cb757440b30"
   "tests/saas/test_control_plane_migration.py|deedcbfcf9cabb1ac4e71cfeb0f0803eb5b62a659bac00720ee99f9befd4d0ef,328247e6aa939404c8323254006efc6b27d9b3e312e42ee7ee2157eede9dae3b"
   "tests/saas/test_production_runner_postgresql.py|3212366d4d615971b1a386831abb47280d2d94332c1876b7552a371dbfc34ee2,c4d205e8be45ef8654abf2e13c586961dcca10d3705867c256f64b766b0254e3"
+)
+
+# Separately reviewed Aliyun input bytes; preserve generic and old018 hashes.
+POSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS=(
+  "pyproject.toml|7b7bfc95d45ac928bb91cf6b383c94c48792474adf967e34fcfddca15d0c58a6"
+  "uv.lock|a6fe77d24c8ce725813ed601abbcf34aefc164334c4471bef4069ceebe1171dc"
+  "tests/saas/test_image_supply_chain.py|109ac4d727d73b271613089acbb693944047f9705f10c33c4e676075fe52d4f7"
+  "saas/scripts/compare_oci_rebuilds.py|fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732"
 )
 
 POSTGRESQL_N1_PATHS=(
@@ -129,6 +137,19 @@ changes_untrusted_automation() {
   return 1
 }
 
+is_reviewed_aliyun_input() {
+  local path=$1 digest=$2 entry
+  case "$path" in
+    pyproject.toml|uv.lock|tests/saas/test_image_supply_chain.py|saas/scripts/compare_oci_rebuilds.py) ;;
+    *) return 1 ;;
+  esac
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  for entry in "${POSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS[@]}"; do
+    [[ "$entry" == "$path|$digest" ]] && return 0
+  done
+  return 1
+}
+
 if ! [[ "${PR:-}" =~ ^[0-9]+$ ]] || ! [[ "${SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
   fail "PR and full head SHA are required"
 fi
@@ -182,8 +203,10 @@ for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}"; do
     -H 'Accept: application/vnd.github.raw+json' \
     "repos/$REPO/contents/$trusted_path?ref=$SHA" \
     | shasum -a 256 | awk '{print $1}')
-  [[ ",$trusted_sha256s," == *",$observed_sha256,"* ]] || \
+  if [[ ",$trusted_sha256s," != *",$observed_sha256,"* ]] && \
+    ! is_reviewed_aliyun_input "$trusted_path" "$observed_sha256"; then
     fail "PostgreSQL N-1 trusted input drift: $trusted_path"
+  fi
 done
 
 # The latest exact workflow run is authoritative, including its rerun attempt.
