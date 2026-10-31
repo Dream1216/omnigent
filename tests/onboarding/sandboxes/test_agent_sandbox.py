@@ -530,29 +530,36 @@ def test_create_workload_creates_a_fresh_sandbox(
 ) -> None:
     """The normal launch path creates, and carries the workspace claim."""
     _, custom = fake_clients
+    custom.get_error = _FakeApiException(status=404, reason="NotFound")
     monkeypatch.setenv(WORKSPACE_SIZE_ENV_VAR, "20Gi")
     job = k8s.build_job_manifest(**_MANIFEST_KW)  # type: ignore[arg-type]
     _launcher()._create_workload("omnigent-sandboxes", job)
 
-    assert custom.calls == ["create"]
+    assert custom.calls == ["get", "create"]
     assert "volumeClaimTemplates" in custom.created[0]["spec"]
 
 
+@pytest.mark.parametrize(
+    "already_exists", [True, False], ids=["existing-quota-full", "create-race"]
+)
 def test_create_workload_wakes_an_existing_sandbox_instead_of_failing(
-    fake_clients: tuple[_FakeCore, _FakeCustom], monkeypatch: pytest.MonkeyPatch
+    fake_clients: tuple[_FakeCore, _FakeCustom],
+    monkeypatch: pytest.MonkeyPatch,
+    already_exists: bool,
 ) -> None:
-    """
-    On a wake, start_host runs again under the same id. A 409 must become a
-    patch back to Running, not an error, and must NOT resend the immutable
-    volumeClaimTemplates.
-    """
+    """Wake an existing CR without a quota-checked CREATE, retaining the 409 race fallback."""
     _, custom = fake_clients
-    custom.create_error = _FakeApiException(status=409, reason="AlreadyExists")
+    if already_exists:
+        custom.create_error = _FakeApiException(status=403, reason="Forbidden: exceeded quota")
+    else:
+        custom.get_error = _FakeApiException(status=404, reason="NotFound")
+        custom.create_error = _FakeApiException(status=409, reason="AlreadyExists")
     monkeypatch.setenv(WORKSPACE_SIZE_ENV_VAR, "20Gi")
     job = k8s.build_job_manifest(**_MANIFEST_KW)  # type: ignore[arg-type]
     _launcher()._create_workload("omnigent-sandboxes", job)
 
-    assert custom.calls == ["create", "patch"]
+    assert custom.calls == (["get", "patch"] if already_exists else ["get", "create", "patch"])
+    assert custom.created == []
     name, body = custom.patches[0]
     assert name == _SANDBOX_ID
     spec = body["spec"]
@@ -565,15 +572,27 @@ def test_create_workload_wakes_an_existing_sandbox_instead_of_failing(
     assert spec["podTemplate"] is job["spec"]["template"]
 
 
+@pytest.mark.parametrize("stage", ["get", "create", "patch"])
+@pytest.mark.parametrize("status", [403, 500])
 def test_create_workload_still_raises_on_a_real_error(
-    fake_clients: tuple[_FakeCore, _FakeCustom],
+    fake_clients: tuple[_FakeCore, _FakeCustom], stage: str, status: int
 ) -> None:
-    """Only 409 means "already there"; anything else is a launch failure."""
+    """Non-404 GET, non-409 CREATE and PATCH errors remain unmodified launch failures."""
     _, custom = fake_clients
-    custom.create_error = _FakeApiException(status=403, reason="Forbidden")
+    error = _FakeApiException(
+        status=status, reason="Forbidden" if status == 403 else "ServerError"
+    )
+    if stage == "create":
+        custom.get_error = _FakeApiException(status=404, reason="NotFound")
+    setattr(custom, f"{stage}_error", error)
     job = k8s.build_job_manifest(**_MANIFEST_KW)  # type: ignore[arg-type]
-    with pytest.raises(_FakeApiException):
+    with pytest.raises(_FakeApiException) as caught:
         _launcher()._create_workload("omnigent-sandboxes", job)
+
+    assert caught.value is error
+    assert custom.calls == (["get"] if stage == "get" else ["get", stage])
+    assert custom.created == []
+    assert custom.patches == []
 
 
 def test_resume_keeps_the_sandbox_and_clears_only_what_is_re_minted(
