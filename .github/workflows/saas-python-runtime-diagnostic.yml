@@ -1,0 +1,194 @@
+name: SaaS Python runtime diagnostic
+
+on:
+  push:
+    branches: [codex/aliyun-runtime-diagnostic-20261031]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saas-python-runtime-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    uses: ./.github/workflows/security-gate.yml
+
+  diagnostic:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    env:
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Check out exact diagnostic source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prepare a separate runtime build context
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import difflib, hashlib, json, os, subprocess
+          from pathlib import Path
+          root = Path.cwd()
+          out = root / "artifacts/python-runtime-diagnostic"
+          out.mkdir(parents=True)
+          context = Path(os.environ["RUNNER_TEMP"]) / "python-runtime-context"
+          context.mkdir()
+          original = (root / "deploy/docker/Dockerfile").read_text()
+          lock_path = root / "saas/supply_chain/wolfi-runtime-lock.json"
+          lock = json.loads(lock_path.read_text())
+          pins = {
+              "py3-pip-wheel": ("26.2.1-r3", "26.2.2-r2"),
+              "python-3.12": ("3.12.15-r3", "3.12.16-r3"),
+              "python-3.12-base": ("3.12.15-r3", "3.12.16-r3"),
+          }
+          changed = original
+          for name, (old, new) in pins.items():
+              assert lock["runtime_contract"]["common_packages"][name] == old
+              before, after = f"{name}={old}", f"{name}={new}"
+              assert changed.count(before) == 1, name
+              changed = changed.replace(before, after)
+          assert len(lock["manifest_digest"]) == 71
+          assert lock["manifest_digest"].startswith("sha256:")
+          revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert revision == os.environ["GITHUB_SHA"]
+          epoch = subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], text=True).strip()
+          (context / "Dockerfile").write_text(changed)
+          (out / "Dockerfile.diagnostic").write_text(changed)
+          (out / "runtime-context.patch").write_text("".join(difflib.unified_diff(
+              original.splitlines(keepends=True), changed.splitlines(keepends=True),
+              fromfile="release-Dockerfile", tofile="diagnostic-Dockerfile")))
+          materials = {
+              "source_revision": revision,
+              "release_dockerfile_sha256": hashlib.sha256(original.encode()).hexdigest(),
+              "diagnostic_dockerfile_sha256": hashlib.sha256(changed.encode()).hexdigest(),
+              "unchanged_runtime_lock_sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
+              "base_image": "cgr.dev/chainguard/wolfi-base@" + lock["manifest_digest"],
+              "source_date_epoch": epoch, "changed_pins": pins,
+              "target": "secured-python-runtime", "architecture": os.environ["ARCH"],
+              "production_admitted": False, "published": False, "signed": False,
+              "scope": "Shared Python runtime only; no application or Aliyun Host qualification",
+          }
+          (out / "materials.json").write_text(json.dumps(materials, indent=2) + "\n")
+          with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
+              stream.write(f"RUNTIME_IMAGE={materials['base_image']}\n")
+              stream.write(f"SOURCE_DATE_EPOCH={epoch}\n")
+          PY
+          git diff --exit-code
+      - name: Set up isolated Docker runtime
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build the diagnostic runtime as an OCI archive
+        run: |
+          set -euo pipefail
+          tag="omnigent-runtime-diagnostic:${GITHUB_SHA}-${ARCH}"
+          archive="${RUNNER_TEMP}/runtime-${ARCH}.tar"
+          docker buildx build --platform "linux/${ARCH}" \
+            --target secured-python-runtime \
+            --build-arg "RUNTIME_IMAGE=${RUNTIME_IMAGE}" \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+            --provenance=mode=max --sbom=true \
+            --tag "$tag" --output "type=oci,dest=${archive}" \
+            "${RUNNER_TEMP}/python-runtime-context"
+          sha256sum "$archive" > artifacts/python-runtime-diagnostic/oci-archive.sha256
+          docker load --input "$archive"
+          docker image inspect --platform "linux/${ARCH}" "$tag" \
+            > artifacts/python-runtime-diagnostic/image-inspect.json
+          jq -e --arg arch "$ARCH" 'length == 1 and .[0].Os == "linux" and .[0].Architecture == $arch' \
+            artifacts/python-runtime-diagnostic/image-inspect.json >/dev/null
+          image_id=$(jq -er '.[0].Id' artifacts/python-runtime-diagnostic/image-inspect.json)
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "DIAGNOSTIC_IMAGE_ID=${image_id}" >> "$GITHUB_ENV"
+      - name: Probe the exact runtime without network or write authority
+        run: |
+          set -euo pipefail
+          docker run --rm --pull never --platform "linux/${ARCH}" \
+            --network none --user 1000:1000 --cap-drop ALL \
+            --security-opt no-new-privileges:true --read-only \
+            --entrypoint /usr/local/bin/python "$DIAGNOSTIC_IMAGE_ID" -B -I -c '
+          import bz2, ctypes, dbm.gnu, hashlib, json, lzma, pathlib, pyexpat, readline, sqlite3, ssl, sys, uuid, zipfile, zlib
+          assert sys.version_info[:3] == (3, 12, 16), sys.version
+          assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION
+          assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION
+          wheels = list(pathlib.Path("/usr/share/python-wheels").glob("pip-26.2.2-*.whl"))
+          assert len(wheels) == 1, wheels
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              vendors = wheel.read("pip/_vendor/vendor.txt").decode().splitlines()
+              assert "msgpack==1.2.3" in vendors, vendors
+              assert "certifi==2026.10.23" in vendors, vendors
+          print(json.dumps({"python": sys.version, "openssl": ssl.OPENSSL_VERSION,
+              "expat": pyexpat.EXPAT_VERSION, "zlib": zlib.ZLIB_RUNTIME_VERSION,
+              "pip_wheel_sha256": hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
+              "msgpack": "1.2.3", "certifi": "2026.10.23", "production_admitted": False}))
+          ' > artifacts/python-runtime-diagnostic/runtime-probe.json
+      - name: Install hash-pinned scanners
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/supply-chain-tools"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            --output "${RUNNER_TEMP}/syft.tar.gz" \
+            https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            --output "${RUNNER_TEMP}/grype.tar.gz" \
+            https://github.com/anchore/grype/releases/download/v0.120.1/grype_0.120.1_linux_amd64.tar.gz
+          printf '%s  %s\n' \
+            c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47 "${RUNNER_TEMP}/syft.tar.gz" \
+            0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d "${RUNNER_TEMP}/grype.tar.gz" \
+            | sha256sum --check --strict
+          tar -xzf "${RUNNER_TEMP}/syft.tar.gz" -C "${RUNNER_TEMP}/supply-chain-tools" syft
+          tar -xzf "${RUNNER_TEMP}/grype.tar.gz" -C "${RUNNER_TEMP}/supply-chain-tools" grype
+          "${RUNNER_TEMP}/supply-chain-tools/grype" version -o json \
+            > artifacts/python-runtime-diagnostic/scanner-version.json
+      - name: Generate SBOM and evaluate complete raw findings
+        run: |
+          set -euo pipefail
+          out=artifacts/python-runtime-diagnostic
+          printf '%s\n' 'ignore: []' 'vex-documents: []' 'db:' \
+            "  cache-dir: ${RUNNER_TEMP}/diagnostic-grype-db" \
+            '  auto-update: false' '  validate-age: true' '  max-allowed-built-age: 24h' \
+            > "$out/grype.yaml"
+          grype="${RUNNER_TEMP}/supply-chain-tools/grype"
+          "$grype" --config "$out/grype.yaml" db update
+          "$grype" --config "$out/grype.yaml" db status -o json > "$out/grype-database.json"
+          "${RUNNER_TEMP}/supply-chain-tools/syft" "docker:${DIAGNOSTIC_IMAGE_ID}" \
+            --platform "linux/${ARCH}" -o "spdx-json=${out}/runtime.spdx.json"
+          "$grype" --config "$out/grype.yaml" "docker:${DIAGNOSTIC_IMAGE_ID}" \
+            --platform "linux/${ARCH}" -o json > "$out/runtime.raw.grype.json"
+          jq '{critical: ([.matches[] | select(.vulnerability.severity == "Critical")] | length),
+               high: ([.matches[] | select(.vulnerability.severity == "High")] | length),
+               ignored: ((.ignoredMatches // []) | length), production_admitted: false}' \
+            "$out/runtime.raw.grype.json" > "$out/scan-summary.json"
+          jq -e '.critical == 0 and .high == 0 and .ignored == 0' "$out/scan-summary.json" >/dev/null
+      - name: Record unchanged source and evidence hashes
+        if: always()
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          find artifacts/python-runtime-diagnostic -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > artifacts/python-runtime-diagnostic/SHA256SUMS
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-runtime-diagnostic-${{ github.sha }}-${{ matrix.arch }}
+          path: |
+            artifacts/python-runtime-diagnostic/
+            ${{ runner.temp }}/runtime-${{ matrix.arch }}.tar
+          if-no-files-found: error
+          retention-days: 7
