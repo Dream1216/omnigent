@@ -667,3 +667,83 @@ def test_unified_failure_always_preserves_stage_native_response_and_same_refusal
     assert (receipts[0].parent.parent / "native-checks-before.json").is_file()
     assert any(row["path"] == "native-checks-before.json" for row in receipt["files"])
     assert not (receipts[0].parent.parent / "source-qualification.json").exists()
+
+
+@pytest.mark.parametrize("boundary", ["metadata", "direct"])
+def test_bootstrap_request_safety_caps_count_real_boundaries_and_latch_failure(
+    tmp_path, monkeypatch, boundary
+):
+    from saas.scripts import legacy_native_evidence as capture
+
+    calls = []
+    monkeypatch.setattr(
+        capture, "_native_api", lambda endpoint: calls.append(endpoint) or {"ok": True}
+    )
+    with pytest.raises(capture.NativeEvidenceFailure, match="safety cap"):
+        with capture.preserve_native_evidence(tmp_path / "native") as evidence:
+            evidence.enable_bootstrap_limits()
+            if boundary == "metadata":
+                for index in range(1024):
+                    capture.api(f"metadata/{index}")
+                with pytest.raises(capture.NativeEvidenceFailure, match="metadata safety cap"):
+                    capture.api("metadata/1025")
+                assert len(calls) == 1024
+            else:
+                for index in range(256):
+                    capture.reserve_native_download(f"direct/{index}")
+                with pytest.raises(
+                    capture.NativeEvidenceFailure, match="direct download safety cap"
+                ):
+                    capture.reserve_native_download("direct/257")
+                assert evidence.bootstrap_usage()["direct_downloads_started"] == 256
+            with pytest.raises(capture.NativeEvidenceFailure):
+                capture.api("must-not-submit-after-fatal")
+    receipt = json.loads((tmp_path / "native/receipt.json").read_text())
+    assert receipt["invocation_raised"] is receipt["capture_failed"] is True
+    assert receipt["bootstrap_request_safety"]["metadata_started"] == len(calls)
+
+
+def test_bootstrap_native_403_preserves_first_exception_and_stops_submissions(
+    tmp_path, monkeypatch
+):
+    from saas.scripts import legacy_native_evidence as capture
+
+    failure = subprocess.CalledProcessError(1, ["gh", "api", "fixed"], stderr=b"HTTP 403")
+    calls = []
+
+    def failed(endpoint):
+        calls.append(endpoint)
+        raise failure
+
+    monkeypatch.setattr(capture, "_native_api", failed)
+    with pytest.raises(capture.NativeEvidenceFailure):
+        with capture.preserve_native_evidence(tmp_path / "native") as evidence:
+            evidence.enable_bootstrap_limits()
+            with pytest.raises(subprocess.CalledProcessError) as raised:
+                capture.api("fixed")
+            assert raised.value is failure
+            with pytest.raises(capture.NativeEvidenceFailure):
+                capture.api("must-not-submit")
+            assert calls == ["fixed"]
+
+
+def test_bootstrap_rate_advisory_is_same_job_only_and_unknown_is_not_a_gate(tmp_path, monkeypatch):
+    from saas.scripts import legacy_native_evidence as capture
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GH_TOKEN", "fixture-never-a-real-token")
+    calls = []
+
+    def failed(endpoint):
+        calls.append(endpoint)
+        raise subprocess.CalledProcessError(1, ["gh", "api", endpoint])
+
+    monkeypatch.setattr(capture, "_native_api", failed)
+    with capture.preserve_native_evidence(tmp_path / "native") as evidence:
+        evidence.enable_bootstrap_limits()
+        evidence.observe_bootstrap_rate_limit()
+        assert evidence.rate_advisory == {
+            "status": "UNKNOWN",
+            "exception_type": "CalledProcessError",
+        }
+        assert calls == ["rate_limit"] and evidence._failure is None

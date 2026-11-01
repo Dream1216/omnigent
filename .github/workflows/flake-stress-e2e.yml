@@ -250,17 +250,17 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Install Claude Code CLI
-        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@a3020c625fd14c083337329b2031582fd8f14161
+        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@fc90cb58c7b907a0e9fa5390c9a213a983788de1
         with:
           harness: claude
 
       - name: Install Codex CLI
-        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@a3020c625fd14c083337329b2031582fd8f14161
+        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@fc90cb58c7b907a0e9fa5390c9a213a983788de1
         with:
           harness: codex
 
       - name: Install Pi CLI
-        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@a3020c625fd14c083337329b2031582fd8f14161
+        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@fc90cb58c7b907a0e9fa5390c9a213a983788de1
         with:
           harness: pi
 

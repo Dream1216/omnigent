@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from saas.scripts import legacy_initial_publisher as publisher
+from saas.scripts.legacy_domain_eligibility import require_publication_source_origin
 from saas.scripts.legacy_publication_reader import (
     HistoricalProducer,
     trusted_entries,
@@ -125,9 +126,8 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
     publisher.strict_qualification(
         admission["source_qualification"]["result"], profile, producer["control_revision"]
     )
-    require(
-        admission["source_qualification"]["result"].get("complete_domain_discovery") is True,
-        "registered legacy publication lacks complete domain discovery",
+    require_publication_source_origin(
+        repo, profile, admission["source_qualification"]["result"], entries=entries
     )
     require(
         isinstance(row["stage_artifacts"], dict)
