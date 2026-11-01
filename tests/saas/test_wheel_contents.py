@@ -47,8 +47,13 @@ def test_casdoor_source_lock_and_referenced_patch_kit_are_packaged() -> None:
 def test_server_image_stages_the_source_manifest_for_package_data() -> None:
     root = Path(__file__).resolve().parents[2]
     recipe = (root / "deploy/docker/Dockerfile").read_text()
-    copied = next(line for line in recipe.splitlines() if line.startswith("COPY pyproject.toml "))
-    assert {"pyproject.toml", "setup.py", "uv.lock", "MANIFEST.in"} <= set(copied.split()[1:-1])
+    copied = {
+        source
+        for line in recipe.splitlines()
+        if line.startswith("COPY ") and line.endswith(" ./")
+        for source in line.split()[1:-1]
+    }
+    assert {"pyproject.toml", "setup.py", "uv.lock", "MANIFEST.in"} <= copied
 
 
 def test_candidate_builds_and_checks_real_backend_wheel_before_oci_builds() -> None:

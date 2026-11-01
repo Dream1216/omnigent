@@ -166,7 +166,8 @@ WORKDIR /build
 
 # Manifests + SDK path-deps first so the install layer caches across
 # pure source edits.
-COPY pyproject.toml setup.py uv.lock MANIFEST.in ./
+COPY pyproject.toml setup.py uv.lock ./
+COPY MANIFEST.in ./
 # License + third-party attribution travel into the published images (the host
 # and runtime targets COPY /build below), since the image redistributes the
 # dependency bytes baked in by the install step.
