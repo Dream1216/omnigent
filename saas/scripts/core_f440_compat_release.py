@@ -80,7 +80,17 @@ def candidate(
 
 
 def validate_scans(root: Path, manifest: dict[str, Any], archive_sha: str) -> dict[str, Any]:
-    summary_path = root / "server-preflight-scan-summary.json"
+    return validate_component_scans(
+        root,
+        {"server": {**manifest, "archive_sha256": archive_sha}},
+        summary_name="server-preflight-scan-summary.json",
+    )
+
+
+def validate_component_scans(
+    root: Path, components: dict[str, dict[str, Any]], *, summary_name: str
+) -> dict[str, Any]:
+    summary_path = root / summary_name
     summary = read(summary_path)
     require(
         summary.get("scanner") == "grype " + scans.GRYPE_VERSION
@@ -89,15 +99,19 @@ def validate_scans(root: Path, manifest: dict[str, Any], archive_sha: str) -> di
     )
     rows = summary.get("images", [])
     require(
-        len(rows) == 2
+        bool(components)
+        and set(components) <= {"server", "host"}
+        and len(rows) == len(components) * len(scans.PLATFORMS)
         and {(row.get("image"), row.get("platform")) for row in rows}
-        == {("server", p) for p in scans.PLATFORMS},
-        "two exact compatibility platform scans required",
+        == {(role, platform) for role in components for platform in scans.PLATFORMS},
+        "exact compatibility platform scans required",
     )
     reports = {}
     for row in rows:
         platform = row["platform"]
-        path = root / ("server-" + platform.split("/")[1] + "-grype.json")
+        manifest = components[row["image"]]
+        archive_sha = manifest["archive_sha256"]
+        path = root / (row["image"] + "-" + platform.split("/")[1] + "-grype.json")
         raw = read(path)
         descriptor = raw.get("descriptor", {})
         require(

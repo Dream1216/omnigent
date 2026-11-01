@@ -41,3 +41,27 @@ Server/Host startup and business execution against the same migrated database;
 all mixed-version combinations; independently restored full encrypted data and
 the existing 900-second physical recovery limit. The native SQL and Store
 probes do not replace these requirements.
+
+## Paired image pipeline
+
+`.github/workflows/saas-d0-legacy-compat.yml` builds an unsigned review candidate
+on a pull request. It verifies native attestations for the exact original wheel
+and both base indexes before materialization, then builds each image twice for
+amd64 and arm64 without cache. Only the fixed eight payloads, source identity and
+installed RECORD may appear in the added layer. Every original compressed base
+layer, runtime command, user, environment, dependency and UI asset is retained.
+
+The exporter checks the actual installed base and refuses source/metadata drift,
+symlinks and existing cached bytecode; it never rewrites the installed base.
+Both four-platform raw scans must contain no High/Critical or ignored findings
+and use a database no older than 24 hours. Normal protected-main dispatch and the
+`production-image` environment are required to publish the verified original OCI
+archives, without rebuilding, under `compat-d0-<source-revision>` tags. Separate
+index provenance and per-platform complete SPDX signatures bind the fixed
+materials and pair. A separate read-only runner verifies all six native
+signatures, exact registry bytes and fresh raw scans. Repacked archive digests
+are recorded separately from the immutable original export digests.
+
+A successful pipeline qualifies candidate material only. Actual runtime/business
+compatibility, full data restore, mixed versions and production admission remain
+separate required evidence; no deployment or database write occurs here.

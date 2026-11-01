@@ -1,0 +1,389 @@
+name: SaaS D0 legacy compatible image pair
+
+on:
+  pull_request:
+    paths:
+      - saas/d0_legacy_compat/**
+      - saas/scripts/prepare_d0_legacy_compat.py
+      - saas/scripts/export_d0_legacy_overlay.py
+      - saas/scripts/d0_legacy_pair_release.py
+      - saas/scripts/core_f440_compat_release.py
+      - tests/saas/test_d0_legacy*.py
+      - .github/workflows/saas-d0-legacy-compat.yml
+  workflow_dispatch:
+    inputs:
+      product_revision:
+        description: Exact reviewed main revision containing the fixed compatibility recipe
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: d0-legacy-compat-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  OMNIGENT_SKIP_WEB_UI: "true"
+  SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  verify-pair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: "0.13.4"
+      - name: Verify source and compatibility boundaries
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_REVISION" ]]
+          uv sync --frozen --group dev --extra saas
+          uv run --no-sync pytest tests/saas/test_d0_legacy_compat.py tests/saas/test_d0_legacy_overlay.py tests/saas/test_d0_legacy_pair_release.py tests/saas/test_core_f440_compat.py -q --reruns 0
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$SOURCE_REVISION")" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        id: builder
+        with:
+          version: v0.36.1
+          driver-opts: image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify native signed original wheel and both immutable base images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.d0_legacy_pair_release stage --repository . --root artifacts/d0-compat --revision "$SOURCE_REVISION"
+      - name: Build server attempt 1 with both exact architectures
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: artifacts/d0-compat/context
+          file: artifacts/d0-compat/context/Dockerfile
+          target: d0-legacy-compatible
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/server-1.tar,rewrite-timestamp=true
+          provenance: mode=max
+          sbom: true
+          push: false
+          no-cache: true
+          pull: true
+          build-args: |
+            BASE_IMAGE=ghcr.io/dream1216/omnigent-saas-server@sha256:b96e64e71ec14879806d1a788b8aa5b3c95f6eccb42da0a1afec84447cad4004
+            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+      - name: Build server attempt 2 with both exact architectures
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: artifacts/d0-compat/context
+          file: artifacts/d0-compat/context/Dockerfile
+          target: d0-legacy-compatible
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/server-2.tar,rewrite-timestamp=true
+          provenance: mode=max
+          sbom: true
+          push: false
+          no-cache: true
+          pull: true
+          build-args: |
+            BASE_IMAGE=ghcr.io/dream1216/omnigent-saas-server@sha256:b96e64e71ec14879806d1a788b8aa5b3c95f6eccb42da0a1afec84447cad4004
+            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+      - name: Build host attempt 1 with both exact architectures
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: artifacts/d0-compat/context
+          file: artifacts/d0-compat/context/Dockerfile
+          target: d0-legacy-compatible
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/host-1.tar,rewrite-timestamp=true
+          provenance: mode=max
+          sbom: true
+          push: false
+          no-cache: true
+          pull: true
+          build-args: |
+            BASE_IMAGE=ghcr.io/dream1216/omnigent-saas-host@sha256:8e459374205b62f383893d1c624375a18020b2df7711a71ea5a7638e62363ea6
+            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+      - name: Build host attempt 2 with both exact architectures
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: artifacts/d0-compat/context
+          file: artifacts/d0-compat/context/Dockerfile
+          target: d0-legacy-compatible
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/host-2.tar,rewrite-timestamp=true
+          provenance: mode=max
+          sbom: true
+          push: false
+          no-cache: true
+          pull: true
+          build-args: |
+            BASE_IMAGE=ghcr.io/dream1216/omnigent-saas-host@sha256:8e459374205b62f383893d1c624375a18020b2df7711a71ea5a7638e62363ea6
+            SOURCE_REVISION=${{ env.SOURCE_REVISION }}
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+      - name: Preserve all exports while reclaiming only this ephemeral builder cache
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.reclaim_candidate_build_cache --root "$RUNNER_TEMP" --builder '${{ steps.builder.outputs.name }}' > artifacts/d0-compat/storage-reclamation.json
+          mkdir -p "$RUNNER_TEMP/d0-first" "$RUNNER_TEMP/d0-second"
+          for role in server host; do
+            mv "$RUNNER_TEMP/$role-1.tar" "$RUNNER_TEMP/d0-first/$role.tar"
+            mv "$RUNNER_TEMP/$role-2.tar" "$RUNNER_TEMP/d0-second/$role.tar"
+          done
+      - name: Verify both repeated platforms and the exact ten-file overlays
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.d0_legacy_pair_release candidate --root artifacts/d0-compat --revision "$SOURCE_REVISION" --epoch "$SOURCE_DATE_EPOCH" --first "$RUNNER_TEMP/d0-first" --second "$RUNNER_TEMP/d0-second" --bases artifacts/d0-compat/bases
+          python -m saas.scripts.scan_oci_candidates --scope complete --image "server=$RUNNER_TEMP/d0-first/server.tar" --image "host=$RUNNER_TEMP/d0-first/host.tar" --output artifacts/d0-compat/original-scans
+          python -m saas.scripts.d0_legacy_pair_release scans --root artifacts/d0-compat --revision "$SOURCE_REVISION" --archives artifacts/d0-compat/original-scans > artifacts/d0-compat/original-scan-verification.json
+      - name: Retain exact original archives for protected publishing without rebuild
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: d0-legacy-original-oci-${{ env.SOURCE_REVISION }}
+          path: ${{ runner.temp }}/d0-first/*.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain original verification and failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: d0-legacy-original-facts-${{ env.SOURCE_REVISION }}
+          path: |
+            artifacts/d0-compat/
+            !artifacts/d0-compat/context/
+            !artifacts/d0-compat/original-wheel/
+            !artifacts/d0-compat/original-wheel.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-pair:
+    needs: verify-pair
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
+    runs-on: ubuntu-24.04
+    environment: production-image
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: d0-legacy-original-facts-${{ github.sha }}
+          path: artifacts/d0-compat
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: d0-legacy-original-oci-${{ github.sha }}
+          path: ${{ runner.temp }}/d0-first
+      - name: Require protected main and reverify the exact exported archives and raw scans
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_WORKFLOW_SHA" == "$SOURCE_REVISION" && "$(git rev-parse HEAD)" == "$SOURCE_REVISION" ]]
+          python - <<'VERIFY'
+          import json, os
+          from pathlib import Path
+          from saas.scripts import d0_legacy_pair_release as release
+          from saas.scripts import core_f440_compat_release as shared
+          root=Path('artifacts/d0-compat')
+          manifest=release.read(root/'pair-manifest.json')
+          actual=release.readback(Path.cwd(),manifest,Path(os.environ['RUNNER_TEMP'])/'d0-first',root/'bases')
+          for role in release.ROLES:
+              shared.require(actual['images'][role]['archive_sha256']==manifest['images'][role]['archive_sha256'],'downloaded original OCI bytes differ')
+          shared.validate_component_scans(root/'original-scans',manifest['images'],summary_name='candidate-scan-summary.json')
+          VERIFY
+      - name: Publish only the verified immutable original pair
+        id: images
+        run: |
+          set -euo pipefail
+          python - <<'PUBLISH'
+          import json, os, subprocess
+          from pathlib import Path
+          from saas.scripts import oci_promotion as oci
+          root=Path('artifacts/d0-compat'); manifest=json.loads((root/'pair-manifest.json').read_text())
+          for role,image in manifest['images'].items():
+              layout=Path(os.environ['RUNNER_TEMP'])/(role+'-layout')
+              oci.extract_layout(Path(os.environ['RUNNER_TEMP'])/'d0-first'/(role+'.tar'),layout)
+              tag=image['image_repository']+':compat-d0-'+os.environ['SOURCE_REVISION']
+              subprocess.run(['crane','push',str(layout),tag],check=True)
+              assert subprocess.check_output(['crane','digest',tag],text=True).strip()==image['index_digest']
+              with open(os.environ['GITHUB_OUTPUT'],'a') as stream:
+                  stream.write(role+'='+image['index_digest']+'\n')
+                  for arch in ('amd64','arm64'):
+                      stream.write(role+'_'+arch+'='+image['facts']['platforms']['linux/'+arch]['manifest_digest']+'\n')
+          PUBLISH
+      - name: Generate complete SPDX inventories from each explicit published platform
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/d0-tools" artifacts/d0-compat/supply-chain
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors --max-time 120 -o "$RUNNER_TEMP/syft.tar.gz" https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
+          printf '%s  %s\n' c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47 "$RUNNER_TEMP/syft.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/syft.tar.gz" -C "$RUNNER_TEMP/d0-tools" syft
+          for role in server host; do
+            python -m saas.scripts.d0_legacy_pair_release predicate --root artifacts/d0-compat --revision "$SOURCE_REVISION" --role "$role" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "artifacts/d0-compat/$role-provenance.json"
+            for arch in amd64 arm64; do
+              child=$(jq -er --arg role "$role" --arg platform "linux/$arch" '.images[$role].facts.platforms[$platform].manifest_digest' artifacts/d0-compat/pair-manifest.json)
+              "$RUNNER_TEMP/d0-tools/syft" "ghcr.io/dream1216/omnigent-saas-$role@$child" --platform "linux/$arch" -o "spdx-json=artifacts/d0-compat/supply-chain/$role-$arch.spdx.json"
+            done
+          done
+      - name: Sign server index with the exact fixed material and pair binding
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
+          subject-digest: ${{ steps.images.outputs.server }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: artifacts/d0-compat/server-provenance.json
+          push-to-registry: true
+      - name: Sign server amd64 complete SPDX inventory
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
+          subject-digest: ${{ steps.images.outputs.server_amd64 }}
+          sbom-path: artifacts/d0-compat/supply-chain/server-amd64.spdx.json
+          push-to-registry: true
+      - name: Sign server arm64 complete SPDX inventory
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-server
+          subject-digest: ${{ steps.images.outputs.server_arm64 }}
+          sbom-path: artifacts/d0-compat/supply-chain/server-arm64.spdx.json
+          push-to-registry: true
+      - name: Sign host index with the exact fixed material and pair binding
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-host
+          subject-digest: ${{ steps.images.outputs.host }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: artifacts/d0-compat/host-provenance.json
+          push-to-registry: true
+      - name: Sign host amd64 complete SPDX inventory
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-host
+          subject-digest: ${{ steps.images.outputs.host_amd64 }}
+          sbom-path: artifacts/d0-compat/supply-chain/host-amd64.spdx.json
+          push-to-registry: true
+      - name: Sign host arm64 complete SPDX inventory
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ghcr.io/dream1216/omnigent-saas-host
+          subject-digest: ${{ steps.images.outputs.host_arm64 }}
+          sbom-path: artifacts/d0-compat/supply-chain/host-arm64.spdx.json
+          push-to-registry: true
+      - name: Verify all six exact native signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m saas.scripts.d0_legacy_pair_release signatures --root artifacts/d0-compat --revision "$SOURCE_REVISION" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: d0-legacy-signed-facts-${{ github.sha }}
+          path: artifacts/d0-compat/
+          if-no-files-found: error
+          retention-days: 30
+
+  independent-readback:
+    needs: publish-pair
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.product_revision == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: d0-legacy-signed-facts-${{ github.sha }}
+          path: artifacts/d0-compat
+      - name: Independently verify exact native signatures and registry content
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.d0_legacy_pair_release signatures --root artifacts/d0-compat --revision "$SOURCE_REVISION" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$RUNNER_TEMP/d0-readback"
+          for role in server host; do
+            digest=$(jq -er --arg role "$role" '.images[$role].index_digest' artifacts/d0-compat/pair-manifest.json)
+            image="ghcr.io/dream1216/omnigent-saas-$role@$digest"
+            [[ "$(crane digest "$image")" == "$digest" ]]
+            crane pull --format=oci --platform=all "$image" "$RUNNER_TEMP/$role-readback-layout"
+            tar -cf "$RUNNER_TEMP/d0-readback/$role.tar" -C "$RUNNER_TEMP/$role-readback-layout" oci-layout index.json blobs
+          done
+          python -m saas.scripts.d0_legacy_pair_release readback --root artifacts/d0-compat --revision "$SOURCE_REVISION" --archives "$RUNNER_TEMP/d0-readback" --bases artifacts/d0-compat/bases --output artifacts/d0-compat/readback-repacked-manifest.json > artifacts/d0-compat/readback-verification.json
+          python -m saas.scripts.scan_oci_candidates --scope complete --image "server=$RUNNER_TEMP/d0-readback/server.tar" --image "host=$RUNNER_TEMP/d0-readback/host.tar" --output artifacts/d0-compat/independent-scans
+          python - <<'SCANS'
+          import json
+          from pathlib import Path
+          from saas.scripts.core_f440_compat_release import validate_component_scans
+          root=Path('artifacts/d0-compat')
+          manifest=json.loads((root/'readback-repacked-manifest.json').read_text())
+          value=validate_component_scans(root/'independent-scans',manifest['images'],summary_name='candidate-scan-summary.json')
+          (root/'independent-scan-verification.json').write_text(json.dumps(value,sort_keys=True)+'\n')
+          SCANS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: d0-legacy-independent-facts-${{ github.sha }}
+          path: artifacts/d0-compat/
+          if-no-files-found: error
+          retention-days: 30
