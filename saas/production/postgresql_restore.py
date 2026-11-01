@@ -2123,6 +2123,13 @@ def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
     if head == "cd2a00000001":
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES, *_CASDOOR_HASH_TABLES)
+    if head == "cd3a00000001":
+        return (
+            *_SELECTED_HASH_TABLES,
+            *_R_MODEL_HASH_TABLES,
+            *_CASDOOR_HASH_TABLES,
+            "saas_credential_migration_receipts",
+        )
     raise PostgreSqlRestoreContractError("unsupported restore hash schema")
 
 

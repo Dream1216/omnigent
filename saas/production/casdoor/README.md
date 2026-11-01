@@ -88,9 +88,19 @@ Migration `cd1c00000001` persists reauthentication and its authorizing local
 session. Retained older link transactions remain stored but cannot complete
 without a bound session. Its downgrade refuses retained OIDC transactions,
 including for a schema owner subject to forced RLS. Full production catalog
-qualification uses the combined `cd2a00000001` head; the intermediate Casdoor
+qualification uses the combined `cd3a00000001` head; the intermediate Casdoor
 heads are not separately qualified deployment targets. Recovery replay remains
 required before cutover.
+
+Migration `cd3a00000001` adds per-user credential authority and immutable
+hash-only migration receipts. The private worker stages verified Argon2id
+imports and explicitly switches authority without changing account or business
+resource IDs. Retained local hashes cannot authenticate after cutover. Pending
+imports cannot create a replacement product account, even if the source email
+changes. Fresh-password recovery requires a bounded offline Ed25519 grant;
+the online worker has public verification keys only. See
+[the migration runbook](CREDENTIAL_MIGRATION.md) for configuration, bounded
+batches, crash retries, key rotation and controlled recovery.
 
 Migration `cd2a00000001` adds `TenantCreationIntent` without a unique user
 constraint, backfills verified registration history, and connects both request
@@ -170,8 +180,8 @@ runner; control-plane admission with a fixture adapter does not satisfy that che
   predecessor-image compatibility and backup restore qualification.
 - Fully assembled provider → setup → workspace → real runner first-task
   acceptance, including retry and membership revocation.
-- Per-user credential ownership and migration receipts; old passwords must
-  stop working after authority moves to Casdoor.
+- Production qualification of per-user migration batches and offline recovery
+  authorization, including old-password rejection after authority changes.
 - Durable identity event Inbox, state reconciliation and disable/reset convergence.
 - Approved social/enterprise channels, isolated deployment with durable DB,
   production TLS and email, signed images, GitOps rollout and recovery drills.

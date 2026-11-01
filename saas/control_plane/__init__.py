@@ -102,6 +102,7 @@ from saas.control_plane.context_snapshot import (
     IssuedContextSnapshot,
     VerifiedContextSnapshot,
 )
+from saas.control_plane.credential_migration_models import CredentialMigrationRecord
 from saas.control_plane.db_models import (
     AuthorizationDecisionRecord,
     AuthSessionRecord,
@@ -731,6 +732,7 @@ __all__ = [
     "ControlPlaneOutboxQuarantineEvent",
     "ControlPlaneResolutionError",
     "CreatedChangeSetGroup",
+    "CredentialMigrationRecord",
     "CredentialMutation",
     "CustomerLedgerEntryRecord",
     "DeletionEvidenceKey",

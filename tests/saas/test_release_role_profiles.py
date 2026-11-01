@@ -203,7 +203,7 @@ def test_extension_login_change_rekeys_the_immutable_bindings_without_changing_c
 
 
 def test_projection_profile_is_not_admitted_on_the_p0_schema(tmp_path):
-    with pytest.raises(renderer.ReleaseRenderError, match=r"projection.*R|projection.*lm2r"):
+    with pytest.raises(renderer.ReleaseRenderError, match=r"projection.*reviewed model schema"):
         renderer.load_public_release_spec(_spec(tmp_path, count=19, head="p0s000000015"))
 
 

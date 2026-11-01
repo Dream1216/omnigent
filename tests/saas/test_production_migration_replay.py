@@ -325,7 +325,7 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         assert final.catalog_sha256 == first.catalog_sha256
     finally:
         owner.dispose()
-    if final.saas_head in {"lm2t00000001", "cd2a00000001"} and profile in {
+    if final.saas_head in {"lm2t00000001", "cd2a00000001", "cd3a00000001"} and profile in {
         "admin",
         "projection",
     }:

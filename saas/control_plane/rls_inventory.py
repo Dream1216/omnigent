@@ -5,6 +5,7 @@ from __future__ import annotations
 CONTROL_PLANE_RLS_TABLES = frozenset(
     {
         "saas_global_users",
+        "saas_credential_migration_receipts",
         "saas_identity_connections",
         "saas_identity_conflicts",
         "saas_oidc_login_transactions",
@@ -140,5 +141,5 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 133:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 133 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 134:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 134 tables")

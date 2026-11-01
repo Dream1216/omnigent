@@ -209,6 +209,28 @@ def _reject_deleted_identity(db: Session, issuer: str, subject: str) -> None:
         )
 
 
+def _reject_unbound_migration_identity(db: Session, assertion: VerifiedIdentityAssertion) -> None:
+    if assertion.provider != "casdoor":
+        return
+    from saas.control_plane.credential_migration_models import CredentialMigrationRecord
+
+    if (
+        db.scalar(
+            sa.select(CredentialMigrationRecord.id)
+            .where(
+                CredentialMigrationRecord.issuer == assertion.issuer,
+                CredentialMigrationRecord.provider_subject == assertion.subject,
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        raise LifecycleError(
+            "identity_migration_pending",
+            "credential migration requires completion or explicit identity connection",
+        )
+
+
 class IdentityManagementService:
     """Provision, link, list, and revoke immutable provider subjects."""
 
@@ -233,6 +255,8 @@ class IdentityManagementService:
                     raise LifecycleError("identity_revoked", "identity connection is revoked")
                 return existing.user_id
 
+            _reject_unbound_migration_identity(db, assertion)
+
             user_id = uuid4()
             connection_id = uuid4()
             db.add(
@@ -242,6 +266,8 @@ class IdentityManagementService:
                     display_name=assertion.display_name,
                     primary_email_normalized=email if assertion.email_verified else None,
                     security_version=1,
+                    credential_owner="casdoor" if assertion.provider == "casdoor" else "legacy",
+                    migration_state="native" if assertion.provider == "casdoor" else "legacy",
                 )
             )
             db.add(
@@ -306,6 +332,8 @@ class IdentityManagementService:
                 if existing.status != "active":
                     raise LifecycleError("identity_revoked", "identity connection is revoked")
                 return IdentityLoginResolution(user_id=existing.user_id, conflict_id=None)
+
+            _reject_unbound_migration_identity(db, assertion)
 
             candidates: set[UUID] = set()
             if assertion.email_verified and email is not None:
@@ -907,6 +935,7 @@ class PasswordCredentialService:
                 .where(
                     PasswordCredential.login_email_normalized == normalized,
                     GlobalUser.status == "active",
+                    GlobalUser.credential_owner == "legacy",
                 )
             ).one_or_none()
             credential = record[0] if record is not None else None
@@ -993,6 +1022,11 @@ class PasswordCredentialService:
             {"user_id": str(user_id), "expected_version": expected_version}
         )
         with self._session_factory() as db:
+            user = db.get(GlobalUser, user_id)
+            if user is None or user.status != "active":
+                raise LifecycleError("user_inactive", "active user is required")
+            if user.credential_owner != "legacy":
+                raise LifecycleError("identity_provider_required", "use central password recovery")
             receipt_key = scoped_idempotency_key("user", user_id, idempotency_key)
             receipt = db.execute(
                 sa.select(ControlPlaneOutboxEvent).where(
@@ -1079,6 +1113,8 @@ class PasswordCredentialService:
             )
             if user is None or user.status != "active":
                 raise LifecycleError("user_inactive", "active user is required")
+            if user.credential_owner != "legacy":
+                raise LifecycleError("identity_provider_required", "use central password recovery")
             credential = db.get(PasswordCredential, user_id)
             if credential is None:
                 if current_hash is not None:

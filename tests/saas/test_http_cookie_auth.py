@@ -448,6 +448,49 @@ def test_password_login_rejects_proof_invalidated_before_session_issue(
         assert db.scalar(sa.select(sa.func.count()).select_from(AuthSessionRecord)) == 0
 
 
+def test_password_http_entry_honors_staged_and_cutover_per_user_authority() -> None:
+    from saas.control_plane.credential_migration import (
+        CredentialMigrationPolicy,
+        CredentialMigrationService,
+    )
+    from tests.saas.test_credential_migration import Provider
+
+    app, scope = _build_fastapi_app()
+    sessions = app.state.saas_test_sessions
+    service = CredentialMigrationService(
+        sessions,
+        provider=Provider(),
+        policy=CredentialMigrationPolicy(
+            issuer="https://auth.example.test", organization="customers", policy_sha256="a" * 64
+        ),
+    )
+    receipt = service.prepare(
+        user_id=UUID(scope["user_id"]),
+        batch_id="http-authority-v1",
+        expected_password_version=1,
+        idempotency_key="http-authority-v1",
+    )
+    with TestClient(app) as client:
+        _login(client)
+        assert service.run_once(receipt.id).status == "imported"
+        _login(client)
+        assert client.get("/saas/auth/me").json()["user_id"] == scope["user_id"]
+        assert service.run_once(receipt.id, cutover=True).status == "completed"
+        assert client.get("/saas/auth/me").status_code == 401
+        rejected = client.post(
+            "/saas/auth/login",
+            json={"email": "http@example.com", "password": "initial-http-password"},
+        )
+        assert rejected.status_code == 401
+        assert rejected.json()["detail"]["code"] == "invalid_credentials"
+        allowed = client.post(
+            "/saas/auth/login",
+            json={"email": "member@example.com", "password": "initial-member-password"},
+        )
+        assert allowed.status_code == 200
+        assert client.get("/saas/auth/me").json()["user_id"] == scope["member_id"]
+
+
 def test_saas_logout_requires_trusted_origin_and_revokes_with_stale_csrf() -> None:
     client, _scope = _build_app()
     csrf = _login(client)

@@ -12,6 +12,9 @@ from saas.control_plane import api_credential_models as _api_credential_models  
 from saas.control_plane import billing_models as _billing_models  # noqa: F401
 from saas.control_plane import certificate_models as _certificate_models  # noqa: F401
 from saas.control_plane import (
+    credential_migration_models as _credential_migration_models,  # noqa: F401
+)
+from saas.control_plane import (
     enterprise_identity_models as _enterprise_identity_models,  # noqa: F401
 )
 from saas.control_plane import execution_models as _execution_models  # noqa: F401

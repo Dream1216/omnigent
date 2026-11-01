@@ -20,7 +20,7 @@ from tests.saas.test_control_plane_migration import _migration_config
 from tests.saas.test_execution_control_plane import _admitted_run, _execution_fixture
 
 _R = "lm2r00000001"
-_CURRENT = "cd2a00000001"
+_CURRENT = "cd3a00000001"
 _PRICE_KEYS = {"fk_session_customer_pricing", "fk_run_customer_pricing"}
 
 

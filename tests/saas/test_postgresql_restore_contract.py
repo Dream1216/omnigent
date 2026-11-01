@@ -198,7 +198,7 @@ def test_restore_digest_covers_onboarding_activation_evidence_tables() -> None:
 def test_canonical_control_plane_rls_inventory_has_exactly_one_hundred_thirty_three_tables() -> (
     None
 ):
-    assert len(CONTROL_PLANE_RLS_TABLES) == 133
+    assert len(CONTROL_PLANE_RLS_TABLES) == 134
     assert "saas_oidc_session_fences" in CONTROL_PLANE_RLS_TABLES
     assert "saas_tenant_creation_intents" in CONTROL_PLANE_RLS_TABLES
     assert "saas_email_provider_configurations" in CONTROL_PLANE_RLS_TABLES

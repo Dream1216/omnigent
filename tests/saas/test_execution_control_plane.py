@@ -74,7 +74,12 @@ def _execution_fixture(engine: sa.Engine, *, create_schema: bool = True):
     factory = sessionmaker(engine, expire_on_commit=False)
     scope = ExecutionScope(uuid4(), uuid4(), uuid4(), uuid4())
     with factory.begin() as db:
-        db.add(GlobalUser(id=scope.owner_id, status="active", security_version=1))
+        # Historical-schema fixtures cannot RETURN new authority server defaults.
+        db.execute(
+            sa.insert(GlobalUser)
+            .inline()
+            .values(id=scope.owner_id, status="active", security_version=1)
+        )
         db.add(
             Tenant(
                 id=scope.tenant_id,

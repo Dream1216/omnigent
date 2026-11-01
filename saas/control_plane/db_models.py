@@ -10,6 +10,16 @@ import sqlalchemy as sa
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 USER_STATUSES = ("active", "suspended", "deleted")
+CREDENTIAL_OWNERS = ("legacy", "casdoor")
+CREDENTIAL_MIGRATION_STATES = (
+    "legacy",
+    "pending",
+    "imported",
+    "cutover",
+    "recovery_required",
+    "recovered",
+    "native",
+)
 TENANT_STATUSES = (
     "provisioning",
     "trial",
@@ -92,6 +102,12 @@ class GlobalUser(SaasBase):
     display_name: Mapped[str | None] = mapped_column(sa.String(256))
     primary_email_normalized: Mapped[str | None] = mapped_column(sa.String(320))
     security_version: Mapped[int] = mapped_column(nullable=False, default=1)
+    credential_owner: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, server_default="legacy"
+    )
+    migration_state: Mapped[str] = mapped_column(
+        sa.String(32), nullable=False, server_default="legacy"
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -105,6 +121,20 @@ class GlobalUser(SaasBase):
     __table_args__ = (
         sa.CheckConstraint(f"status IN ({_values(USER_STATUSES)})", name="ck_user_status"),
         sa.CheckConstraint("security_version > 0", name="ck_user_security_version"),
+        sa.CheckConstraint(
+            f"credential_owner IN ({_values(CREDENTIAL_OWNERS)})", name="ck_user_credential_owner"
+        ),
+        sa.CheckConstraint(
+            f"migration_state IN ({_values(CREDENTIAL_MIGRATION_STATES)})",
+            name="ck_user_migration_state",
+        ),
+        sa.CheckConstraint(
+            "(credential_owner = 'legacy' AND migration_state IN "
+            "('legacy', 'pending', 'imported', 'recovered')) OR "
+            "(credential_owner = 'casdoor' AND migration_state IN "
+            "('native', 'cutover', 'recovery_required'))",
+            name="ck_user_credential_authority_state",
+        ),
     )
 
 

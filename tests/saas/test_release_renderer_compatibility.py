@@ -105,12 +105,12 @@ def test_casdoor_packaged_release_preserves_the_full_model_profile(tmp_path, mon
     original = migration._expected_head
 
     def head(kind):
-        return "cd2a00000001" if kind == "saas" else original(kind)
+        return "cd3a00000001" if kind == "saas" else original(kind)
 
     monkeypatch.setattr(migration, "_expected_head", head)
     monkeypatch.setattr(renderer, "_expected_head", head)
     document = _spec_document(mode=mode)
-    document["control_plane_schema_revision"] = "cd2a00000001"
+    document["control_plane_schema_revision"] = "cd3a00000001"
     document["service_logins"] = {
         service: f"login_{index:02d}"
         for index, service in enumerate(renderer._RELEASE_SERVICE_ROLES, start=1)
@@ -130,7 +130,7 @@ def test_casdoor_packaged_release_preserves_the_full_model_profile(tmp_path, mon
         kind="ConfigMap",
         data_key="OMNIGENT_SAAS_IMAGE_DIGEST",
     )
-    assert release["data"]["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] == "cd2a00000001"
+    assert release["data"]["OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION"] == "cd3a00000001"
 
 
 @pytest.mark.parametrize("head", ["lm2r00000001", "lm2t00000001"])

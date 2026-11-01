@@ -16,6 +16,10 @@ explicit consent and fresh authentication. Product permissions remain local.
   pending/recovery/support states, invitations and multiple workspace choices.
 - `workspace-selection`: choose a server-provided workspace for browser and
   WebSocket requests; removed membership requires another authorized choice.
+- `credential-migration`: staged import, explicit per-user authority cutover,
+  stable account/resources, and old-password rejection after cutover.
+- `credential-recovery`: offline authorization for a fresh password, with session
+  and provider connection revocation and an immutable migration receipt.
 
 ## How to get to it (user POV)
 
@@ -62,6 +66,19 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
 - Signed protocol, replay and logout races: `tests/saas/test_oidc_http_auth.py`,
   `tests/saas/test_oidc_logout.py`, and
   `tests/saas/test_federated_sessions_postgresql.py`.
+- Credential import, interrupted commit/retry, source changes and pending identity
+  fences: `tests/saas/test_credential_migration.py`,
+  `tests/saas/test_casdoor_credential_import.py`, and
+  `tests/saas/test_credential_migration_postgresql.py`.
+- Private bounded batches and fresh-password authorization:
+  `tests/saas/test_credential_migration_cli.py` and
+  `tests/saas/test_credential_recovery.py`. Use the synthetic procedure in
+  `saas/production/casdoor/CREDENTIAL_MIGRATION.md`; it requires owned IdP and
+  database fixtures and never grants production authorization by itself.
+- On the password HTTP entry, confirm an imported user can still sign in before
+  cutover, is rejected after cutover, and another unmigrated user can still sign
+  in. An existing session must expire on cutover. Confirm a pending imported
+  identity cannot create a second account after a source email change.
 - For a real provider preview, first encounter an email conflict without an
   automatic merge, sign in to the old account, explicitly connect the identity,
   and confirm the account ID stays stable. Reauthenticate in a second tab and
@@ -90,5 +107,8 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   production schema, TLS setup, HA deployment, tenant setup or release rollback.
 - Pending email conflicts never prove ownership. Public conflict approval is
   rejected; use fresh local and provider proof through the connection page.
+- An import receipt grants no login before its identity connection is committed.
+  Restoring retained hashes does not restore password authority. Recovery must
+  install a different password and does not change the deployment's login mode.
 - Capture screenshots outside Git. Record the entry point and pair each UI
   result with authoritative, read-only API or database counts.

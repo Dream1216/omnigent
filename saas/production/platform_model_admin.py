@@ -255,6 +255,11 @@ def create_single_owner_model_admin_app(
         authenticator.authenticate(request)
         return _asset("model_provider_admin.js", "text/javascript")
 
+    @app.get("/saas/auth/assets/session.js", include_in_schema=False)
+    def browser_session(request: Request) -> Response:
+        authenticator.authenticate(request)
+        return _asset("browser_session.js", "text/javascript")
+
     @app.get("/saas/admin/platform-model-provider/context")
     def context(request: Request) -> dict[str, object]:
         actor, _ = authenticator.authenticate(request)

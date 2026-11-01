@@ -7,7 +7,7 @@ _SQL = (
     Path(__file__).resolve().parents[2] / "saas/control_plane/postgresql_runner_agent_cluster.sql"
 ).read_text()
 _MODEL_HEADS = ("lm2r00000001", "lm2s00000001", "lm2t00000001")
-_CASDOOR_HEADS = ("cd1a00000001", "cd1b00000001", "cd1c00000001", "cd2a00000001")
+_CASDOOR_HEADS = ("cd1a00000001", "cd1b00000001", "cd1c00000001", "cd2a00000001", "cd3a00000001")
 
 
 def _heads(pattern: str) -> tuple[str, ...]:
@@ -44,8 +44,8 @@ def test_t_support_does_not_relax_cluster_or_owner_admission():
 def test_casdoor_executor_keeps_the_reviewed_interactive_recovery_api():
     from saas.production.runner_executor import _runner_agent_schema_contract
 
-    selected, functions, hashes = _runner_agent_schema_contract("cd2a00000001")
-    assert selected == "cd2a00000001"
+    selected, functions, hashes = _runner_agent_schema_contract("cd3a00000001")
+    assert selected == "cd3a00000001"
     assert (
         "saas_interactive_recovery_owner_v1",
         "uuid, bigint, uuid, bigint, jsonb",

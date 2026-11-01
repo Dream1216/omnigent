@@ -252,6 +252,9 @@ def _fake_official_app(*, integration, **_dependencies: Any) -> FastAPI:
 
 
 class _OnboardingServiceStub:
+    def workspace_creation_service(self, _sessions: object) -> object:
+        return object()
+
     def require_network_rate_limit(self, *_args: object, **_kwargs: object) -> None:
         pass
 

@@ -12,6 +12,9 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.db.utils import shared_read_scope
@@ -809,7 +812,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
                     {"tables": sorted(CONTROL_PLANE_RLS_TABLES)},
                 ).scalars()
             )
-            assert len(CONTROL_PLANE_RLS_TABLES) == 131
+            assert len(CONTROL_PLANE_RLS_TABLES) == 134
             assert forced_tables == CONTROL_PLANE_RLS_TABLES
             role_facts = connection.execute(
                 sa.text(
@@ -1412,17 +1415,30 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
             ).one()
             assert privileges == (True, False, False, False, False, False)
 
-        # Both the irreversible v1 fail-closed transition and a recorded
-        # Provider receipt independently block downgrade.  Each rejection must
-        # roll its temporary NO FORCE posture back with the Alembic transaction.
+        # The current head protects retained workspace intents before reaching
+        # the historical journal revision's own independent guards.
+        with owner_engine.connect() as connection:
+            transaction = connection.begin()
+            try:
+                with pytest.raises(RuntimeError, match="retained workspace intents"):
+                    command.downgrade(_migration_config(connection), "p0s000000003")
+            finally:
+                transaction.rollback()
+
+        def journal_revision_downgrade(connection: sa.Connection) -> None:
+            script = ScriptDirectory.from_config(_migration_config(connection))
+            revision = script.get_revision("p0s000000004")
+            assert revision is not None
+            with Operations.context(MigrationContext.configure(connection)):
+                revision.module.downgrade()
+
+        # Exercise each journal guard directly because current-head downgrade
+        # is already blocked above. Its temporary NO FORCE posture must roll back.
         migration_connection = owner_engine.connect()
         migration_transaction = migration_connection.begin()
         try:
             with pytest.raises(RuntimeError, match="fail-closed legacy Runtime target"):
-                command.downgrade(
-                    _migration_config(migration_connection),
-                    "p0s000000003",
-                )
+                journal_revision_downgrade(migration_connection)
         finally:
             migration_transaction.rollback()
             migration_connection.close()
@@ -1437,10 +1453,7 @@ def test_real_postgresql_runtime_provider_journal_is_atomic_and_replayable(
         migration_transaction = migration_connection.begin()
         try:
             with pytest.raises(RuntimeError, match="durable Runtime Provider"):
-                command.downgrade(
-                    _migration_config(migration_connection),
-                    "p0s000000003",
-                )
+                journal_revision_downgrade(migration_connection)
         finally:
             migration_transaction.rollback()
             migration_connection.close()

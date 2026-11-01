@@ -471,6 +471,9 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
         ).all()
         for table in owned_tables:
             connection.exec_driver_sql(f"ALTER TABLE {table} OWNER TO {owner}")
+        connection.exec_driver_sql(
+            f"ALTER FUNCTION public.saas_guard_credential_migration_receipt() OWNER TO {owner}"
+        )
     try:
 
         def downgrade() -> None:
@@ -495,7 +498,7 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
             with engine.connect() as connection:
                 assert connection.scalar(
                     sa.text("SELECT version_num FROM saas_alembic_version")
-                ) == ("cd2a00000001")
+                ) == ("cd3a00000001")
                 table = (
                     "saas_oidc_login_transactions"
                     if retained == "oidc"
@@ -509,6 +512,19 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
             for table in owned_tables:
                 connection.exec_driver_sql(
                     f'ALTER TABLE IF EXISTS {table} OWNER TO "{original_owner}"'
+                )
+            if (
+                connection.scalar(
+                    sa.text(
+                        "SELECT to_regprocedure("
+                        "'public.saas_guard_credential_migration_receipt()')"
+                    )
+                )
+                is not None
+            ):
+                connection.exec_driver_sql(
+                    "ALTER FUNCTION public.saas_guard_credential_migration_receipt() "
+                    f'OWNER TO "{original_owner}"'
                 )
             connection.exec_driver_sql(f"DROP OWNED BY {owner}")
             connection.exec_driver_sql(f"DROP ROLE {owner}")

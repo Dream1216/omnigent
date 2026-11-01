@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "7bb4ead76336f95f2fe0878fb3b4d9a24c22e91ca20de6757ac4cfa11a9d0f38",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "f3db358741a24e69e2978b609d360092c4bc68818471657d6a8861c26f5df5dd",
     # Clean PG16/18 source replay: Casdoor sessions and authenticated workspace intents.
     (
         16,
@@ -593,6 +604,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "cc472e35901812115cb3ef6e0119cfead539c7209b9ce0de34fff650ef58cb1d",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "0e35b0abea356ee05e611ccc82d129631a24fec5a81174a0ac4df30d446d2c66",
     # Exact 15-service graph from clean restricted-authority source replay.
     (
         16,
@@ -968,6 +990,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "149495112fe07075785cd9a27237c7c2787a8504fb68a795d77b99f99d6202ed",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "4554f28c44d6680a397f4cc25d4561e7d204ce9bab7f31d6295a53e7f889fe7b",
     # Exact 17-service graph; onboarding authority remains separate from HTTP.
     (
         16,
@@ -1313,6 +1346,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "91be4b7c122a58cf2ebe803365f7b4227a1498416e5d329ea992a0eb431069cc",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "6782c59f6443af6a23900d70816e045974ce1105d1bb79169daa35830f5a7fe5",
     # Exact 18-service graph from clean PG16/18 source replay.
     (
         16,
@@ -1653,6 +1697,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "ad6dc3e40c4ca8c7d31a1b80dc907e29a4e89bb7da43526233769ae0c3031dfa",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "c2648feb4dd3beb9dd342d91520c48c5198475e4b49cc75fd97ed69d5750fba3",
     # Reviewed Preview deployment policies are distinct from the clean schema.
     (
         16,
@@ -1968,6 +2023,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "7eb7c15366e9e9c0e84d76d9d51be753638a46300f9ad0edb7f5bdc25b969740",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "86232eb8f5401e456b8f0c49de82513d293d74af82f88ed5dec435dfccd8e777",
     # Exact 18-service graph with the reviewed Preview deployment authority.
     (
         16,
@@ -2290,6 +2356,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "14d94adf710b732e7945dbe4e52dd95fec262d29df4b323414caf788ddeb47cd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "fb8bc6aa0ddc4395c24a801c57ceb4d28628b20412a4ced1d965b48563beb618",
     # Exact 19-service graph from clean PG16/18 source replay.
     (
         16,
@@ -2577,6 +2654,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "fba548509a6b9b38b271bce55d4dfa930a5f3505328d24925232b9f4b0c35d81",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3a00000001",
+    ): "5512a272aed8f2481e7cf0fa00bb86a649bab93ae8b4e468b686431757f5c957",
     # Exact 19-service graph with the reviewed Preview deployment authority.
     (
         16,
@@ -4205,6 +4293,7 @@ def _runtime_saas_head(requested: object) -> str:
         "lm2s00000001": ("lm2s00000001", "lm2t00000001"),
         "lm2t00000001": ("lm2t00000001",),
         "cd2a00000001": ("cd2a00000001",),
+        "cd3a00000001": ("cd3a00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")

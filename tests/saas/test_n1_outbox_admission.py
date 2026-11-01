@@ -226,7 +226,7 @@ def test_n1_roles_replay_p0s8_through_p0s15_reuse_exact_p0s7_rate_contracts() ->
     routing_revisions = {
         item.revision
         for item in ScriptDirectory.from_config(config).walk_revisions()
-        if item.revision.startswith("lm")
+        if item.revision.startswith(("lm", "cd"))
     }
     assert set(re.findall(r"'([^']+)'", constraint_revisions.group(1))) == {
         "p0s000000006",

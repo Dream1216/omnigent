@@ -217,12 +217,15 @@ def test_model_admin_assets_are_secret_free_and_use_tenant_csrf_storage() -> Non
 
     page = client.get("/saas/admin/platform-model-provider")
     script = client.get("/saas/admin/assets/model-provider-admin.js")
+    session_script = client.get("/saas/auth/assets/session.js")
 
-    assert page.status_code == script.status_code == 200
+    assert page.status_code == script.status_code == session_script.status_code == 200
     assert "SINGLE-OWNER BETA" in page.text
-    assert "omnigent.saas.csrf" in script.text
+    assert "/saas/auth/assets/session.js" in page.text
+    assert "window.OmnigentSaasSession.read()" in script.text
+    assert "omnigent.saas.csrf" in session_script.text
     assert "deepseek-flash" in page.text
-    assert "sk-" not in page.text + script.text
+    assert "sk-" not in page.text + script.text + session_script.text
     assert page.headers["x-governance-mode"] == "single-owner-beta-tenant-bridge"
 
 

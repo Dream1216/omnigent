@@ -178,6 +178,8 @@ class MembershipLifecycleService:
             ).scalar_one_or_none()
             if user is None or user.status != "active":
                 raise LifecycleError("user_inactive", "active user is required")
+            if authn_method == "password" and user.credential_owner != "legacy":
+                raise LifecycleError("identity_provider_required", "use central sign-in")
             if (
                 required_security_version is not None
                 and user.security_version != required_security_version
