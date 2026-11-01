@@ -32,6 +32,10 @@ from saas.control_plane.db_models import (
     TenantMembership,
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
+from saas.control_plane.identity_event_models import (
+    IdentityProviderStateRecord,
+    provider_identity_available,
+)
 from saas.control_plane.lifecycle import normalize_email
 from saas.control_plane.onboarding_models import (
     EmailVerificationChallengeRecord,
@@ -1423,8 +1427,10 @@ class SelfServiceOnboardingService:
                                 security_version=1,
                             )
                         )
-                        db.add(
-                            IdentityConnection(
+                        # Legacy signup retains its reviewed email-only column grants.
+                        db.flush()
+                        db.execute(
+                            sa.insert(IdentityConnection).values(
                                 id=uuid4(),
                                 user_id=record.user_id,
                                 provider="password",
@@ -1848,13 +1854,57 @@ class TenantCreationIntentService:
                     .where(
                         IdentityConnection.user_id == actor_id,
                         IdentityConnection.status == "active",
-                        IdentityConnection.email_verified.is_(True),
-                        IdentityConnection.email_normalized.is_not(None),
+                        provider_identity_available(),
+                        sa.or_(
+                            sa.and_(
+                                IdentityConnection.email_verified.is_(True),
+                                IdentityConnection.email_normalized.is_not(None),
+                            ),
+                            sa.and_(
+                                IdentityConnection.provider == "casdoor",
+                                IdentityConnection.phone_verified.is_(True),
+                                IdentityConnection.phone_e164.is_not(None),
+                                sa.exists(
+                                    sa.select(IdentityProviderStateRecord.connection_id).where(
+                                        IdentityProviderStateRecord.connection_id
+                                        == IdentityConnection.id,
+                                        IdentityProviderStateRecord.status == "active",
+                                        IdentityProviderStateRecord.checked_at.is_not(None),
+                                    )
+                                ),
+                            ),
+                        ),
                     )
                     .limit(1)
                 )
                 if verified is None:
-                    raise OnboardingError("verified_email_required", "verify your email first")
+                    pending = db.scalar(
+                        sa.select(IdentityConnection.id)
+                        .where(
+                            IdentityConnection.user_id == actor_id,
+                            IdentityConnection.status == "active",
+                            IdentityConnection.provider == "casdoor",
+                            IdentityConnection.phone_verified.is_(True),
+                            IdentityConnection.phone_e164.is_not(None),
+                            provider_identity_available(),
+                            ~sa.exists(
+                                sa.select(IdentityProviderStateRecord.connection_id).where(
+                                    IdentityProviderStateRecord.connection_id
+                                    == IdentityConnection.id,
+                                    IdentityProviderStateRecord.checked_at.is_not(None),
+                                )
+                            ),
+                        )
+                        .limit(1)
+                    )
+                    if pending is not None:
+                        raise OnboardingError(
+                            "identity_verification_pending",
+                            "contact verification is being checked; try again shortly",
+                        )
+                    raise OnboardingError(
+                        "verified_contact_required", "verify your email or phone first"
+                    )
                 existing = db.scalar(
                     sa.select(TenantCreationIntentRecord).where(
                         TenantCreationIntentRecord.idempotency_key == key

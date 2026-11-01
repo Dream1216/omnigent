@@ -12,6 +12,7 @@ from hashlib import sha256
 import httpx
 
 from saas.control_plane.credential_migration import CredentialMigrationError
+from saas.control_plane.identity import validate_phone_proof
 from saas.control_plane.identity_events import IdentitySyncError, ProviderIdentityState, _aware
 from saas.control_plane.identity_private_channel import verified_identity_tls_context
 from saas.control_plane.lifecycle import LifecycleError, normalize_email
@@ -145,7 +146,13 @@ class CasdoorIdentityStateProvider:
                 or len(data["email"]) > 320
                 or any(
                     type(data.get(name)) is not bool
-                    for name in ("emailVerified", "isForbidden", "isDeleted", "isAdmin")
+                    for name in (
+                        "emailVerified",
+                        "phoneVerified",
+                        "isForbidden",
+                        "isDeleted",
+                        "isAdmin",
+                    )
                 )
                 or type(data.get("isGlobalAdmin", False)) is not bool
                 or data.get("password") not in {"", "***"}
@@ -162,6 +169,8 @@ class CasdoorIdentityStateProvider:
             email = normalize_email(data["email"]) if data["email"] else None
             if data["emailVerified"] and email is None:
                 raise ValueError
+            phone = data.get("phoneE164") or None
+            validate_phone_proof(phone, data["phoneVerified"])
             changed = (
                 _aware(data["lastChangePasswordTime"]) if data["lastChangePasswordTime"] else None
             )
@@ -193,6 +202,8 @@ class CasdoorIdentityStateProvider:
                 username=data["name"],
                 email=email,
                 email_verified=data["emailVerified"],
+                phone_e164=phone if data["phoneVerified"] else None,
+                phone_verified=data["phoneVerified"],
                 disabled=data["isForbidden"],
                 deleted=data["isDeleted"],
                 normal_customer=data["type"] == "normal-user"

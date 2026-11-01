@@ -18,6 +18,8 @@ export interface IdentityConnection {
   provider: string;
   email_normalized: string | null;
   email_verified: boolean;
+  phone_e164?: string | null;
+  phone_verified?: boolean;
   status: string;
 }
 export interface IdentityConflict {

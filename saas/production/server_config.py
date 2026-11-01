@@ -420,6 +420,7 @@ def load_production_identity_config(
             client_secret=secret,
             token_endpoint_auth_method=payload["token_endpoint_auth_method"],
             allowed_identity_owners=(organization,),
+            scopes=("openid", "profile", "email", "phone"),
             ui_locale_parameter="language",
             end_session_endpoint=f"{issuer}/api/logout",
             post_logout_redirect_uri=f"{_https_origin(public_origin)}/saas/login",

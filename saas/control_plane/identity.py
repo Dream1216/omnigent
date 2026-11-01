@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Literal, cast
@@ -44,6 +45,19 @@ _MIN_PASSWORD_LENGTH = 12
 _MAX_PASSWORD_LENGTH = 1024
 
 
+def validate_phone_proof(phone: str | None, verified: bool) -> None:
+    """Require a canonical provider number and an independent ownership assertion."""
+    if (
+        type(verified) is not bool
+        or (verified and phone is None)
+        or (
+            phone is not None
+            and (not isinstance(phone, str) or not re.fullmatch(r"\+[1-9][0-9]{1,14}", phone))
+        )
+    ):
+        raise LifecycleError("identity_assertion_invalid", "phone ownership assertion is invalid")
+
+
 @dataclass(frozen=True, slots=True)
 class VerifiedIdentityAssertion:
     """Provider-verified identity facts; never construct from a public request body."""
@@ -54,6 +68,8 @@ class VerifiedIdentityAssertion:
     email: str | None
     email_verified: bool
     display_name: str | None = None
+    phone_number: str | None = field(default=None, repr=False)
+    phone_number_verified: bool = False
 
     def validate(self) -> None:
         if not self.provider.strip() or len(self.provider) > 64:
@@ -64,6 +80,7 @@ class VerifiedIdentityAssertion:
             raise LifecycleError("identity_assertion_invalid", "identity subject is invalid")
         if self.email is not None:
             normalize_email(self.email)
+        validate_phone_proof(self.phone_number, self.phone_number_verified)
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +317,8 @@ class IdentityManagementService:
                     subject=assertion.subject,
                     email_normalized=email,
                     email_verified=assertion.email_verified,
+                    phone_e164=assertion.phone_number if assertion.phone_number_verified else None,
+                    phone_verified=assertion.phone_number_verified,
                     status="active",
                 )
             )
@@ -316,6 +335,10 @@ class IdentityManagementService:
                     "subject": assertion.subject,
                     "email": email,
                     "email_verified": assertion.email_verified,
+                    "phone_e164": assertion.phone_number
+                    if assertion.phone_number_verified
+                    else None,
+                    "phone_verified": assertion.phone_number_verified,
                 }
             )
             _add_event(
@@ -673,6 +696,8 @@ class IdentityManagementService:
                 "subject": assertion.subject,
                 "email": email,
                 "email_verified": assertion.email_verified,
+                "phone_e164": assertion.phone_number if assertion.phone_number_verified else None,
+                "phone_verified": assertion.phone_number_verified,
             }
         )
         with self._session_factory.begin() as db:
@@ -793,6 +818,8 @@ class IdentityManagementService:
                     subject=assertion.subject,
                     email_normalized=email,
                     email_verified=assertion.email_verified,
+                    phone_e164=assertion.phone_number if assertion.phone_number_verified else None,
+                    phone_verified=assertion.phone_number_verified,
                     status="active",
                 )
             )

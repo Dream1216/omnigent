@@ -8,6 +8,8 @@ explicit consent and fresh authentication. Product permissions remain local.
 
 - `entry-mode`: legacy, dual and central-only login, loading and unavailable states.
 - `signup`: central registration before product workspace setup.
+- `phone-ownership`: verified phone login, authoritative workspace eligibility,
+  pending checks and contact changes without email or automatic account merging.
 - `completion`: original callback, locale, safe return path and storage failure.
 - `connect`: connected identities, pending conflict, consent and fresh proof.
 - `reauthenticate`: current-account proof and cross-tab CSRF refresh.
@@ -54,8 +56,15 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
 - Setup direct entry, Chinese/English draft preservation, mobile and desktop,
   network retry/reload, pending recovery, invitations, signed-out state and
   unavailable browser storage: `tests/saas/test_workspace_setup_browser.py`.
+- Phone-only sign-in methods and Chinese/English pending-contact retry with the
+  same workspace request: `tests/saas/test_identity_ui_browser.py` and
+  `tests/saas/test_workspace_setup_browser.py`. These tests use API fixtures.
 - Authenticated creation, repeat requests, quota, multiple tenants and shared
   opening workflow: `tests/saas/test_workspace_creation.py`.
+- Phone assertions, readback, session fences, workspace checks and schema retention:
+  `tests/saas/test_verified_phone.py`, `tests/saas/test_verified_phone_migration.py`,
+  `tests/saas/test_casdoor_identity_events.py`, and `tests/saas/test_oidc_http_auth.py`.
+  These component tests do not qualify carrier delivery, the provider UI or a real first Run.
 - Workspace preference, HTTP/WebSocket routing, CSRF and membership removal:
   `tests/saas/test_active_workspace_scope.py`.
 - Real database worker authority, concurrent replay, source backfill and

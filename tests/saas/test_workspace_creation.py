@@ -218,7 +218,7 @@ def test_workspace_creation_requires_cookie_csrf_origin_and_server_actor(
 @pytest.mark.parametrize(
     "body,expected",
     [
-        ({"tenant_name": "Default"}, "verified_email_required"),
+        ({"tenant_name": "Default"}, "verified_contact_required"),
     ],
 )
 def test_unverified_identity_cannot_create_trial_resources(

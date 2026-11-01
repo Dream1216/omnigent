@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
 from playwright.sync_api import Browser, Page, Route, expect
 
 from tests.saas.test_identity_ui_browser import identity_browser as identity_browser
@@ -44,6 +45,79 @@ def _capture(page: Page, filename: str) -> None:
         path = Path(location)
         path.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(path / filename), full_page=True)
+
+
+@pytest.mark.parametrize(
+    "locale,submit,message,retry,signin",
+    [
+        (
+            "en-US",
+            "Create a workspace",
+            "We are checking your sign-in information.",
+            "Try again",
+            "Sign in again",
+        ),
+        ("zh-CN", "创建工作空间", "正在核对登录信息", "重试", "重新登录"),
+    ],
+)
+def test_pending_phone_readback_keeps_draft_and_request_key_for_safe_retry(
+    identity_browser: Browser,
+    identity_ui_server: str,
+    locale: str,
+    submit: str,
+    message: str,
+    retry: str,
+    signin: str,
+) -> None:
+    page = identity_browser.new_page()
+    _setup(page)
+    requests = []
+    alert = page.get_by_role(
+        "alert", name="工作空间开通错误" if locale == "zh-CN" else "Workspace setup error"
+    )
+
+    def create(route: Route) -> None:
+        if route.request.method == "GET":
+            route.fulfill(json=[])
+            return
+        requests.append(
+            (route.request.headers.get("idempotency-key"), route.request.post_data_json)
+        )
+        if len(requests) == 1:
+            route.fulfill(
+                status=503,
+                headers={"Retry-After": "5", "Cache-Control": "no-store"},
+                json={"detail": {"code": "identity_verification_pending"}},
+            )
+        else:
+            route.fulfill(status=202, json={"id": _INTENT, "name": "Phone workspace"})
+
+    page.route("**/saas/onboarding/workspaces", create)
+    page.route(
+        f"**/saas/onboarding/workspaces/{_INTENT}/status",
+        lambda route: route.fulfill(json={"state": "provisioning", "stage": "runtime"}),
+    )
+    page.goto(identity_ui_server + "/setup?new=1&ui_locale=" + locale)
+    page.locator("#workspace-name").fill("Phone workspace")
+    page.get_by_role("button", name=submit, exact=True).click()
+    expect(alert).to_contain_text(message)
+    expect(page.get_by_role("link", name=signin, exact=True)).to_have_count(0)
+    expect(page.locator("#workspace-name")).to_have_value("Phone workspace")
+    _capture(page, "phone-readback-pending-" + locale + ".png")
+    page.get_by_role("button", name=retry, exact=True).click()
+    expect(alert).to_have_count(0)
+    # Retrying the error reloads safe reads; submission reuses the same request.
+    page.get_by_role("button", name=submit, exact=True).click()
+    expect(
+        page.get_by_role(
+            "heading",
+            name="工作空间正在准备中" if locale == "zh-CN" else "Your workspace is taking shape",
+        )
+    ).to_be_visible()
+    assert f"intent={_INTENT}" in page.url
+    assert len(requests) == 2 and requests[0] == requests[1]
+    _capture(page, "phone-readback-retried-" + locale + ".png")
+    page.close()
 
 
 def test_setup_retains_language_draft_and_request_key_across_network_retry_and_reload(

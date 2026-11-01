@@ -189,6 +189,36 @@ def _capture(page: Page, name: str) -> None:
         page.screenshot(path=str(path / name), full_page=True)
 
 
+@pytest.mark.parametrize("locale,label", [("en-US", "Verified phone"), ("zh-CN", "手机号已验证")])
+def test_phone_only_identity_shows_bound_number_and_verification(
+    identity_browser: Browser, identity_ui_server: str, locale: str, label: str
+) -> None:
+    page = identity_browser.new_page()
+    _account(page, mode="casdoor")
+    page.route(
+        "**/saas/identities",
+        lambda route: route.fulfill(
+            json=[
+                {
+                    "id": "phone-identity",
+                    "provider": "casdoor",
+                    "email_normalized": None,
+                    "email_verified": False,
+                    "phone_e164": "+12025550100",
+                    "phone_verified": True,
+                    "status": "active",
+                }
+            ]
+        ),
+    )
+    page.goto(identity_ui_server + "/saas/account/identities?ui_locale=" + locale)
+    expect(page.get_by_text("+12025550100", exact=True)).to_be_visible()
+    expect(page.get_by_text(label, exact=False)).to_be_visible()
+    expect(page.get_by_text("owner@example.test", exact=True)).to_have_count(0)
+    _capture(page, "phone-only-identity-" + locale + ".png")
+    page.close()
+
+
 def test_dual_login_uses_fixed_local_start_and_preserves_reauthentication_and_locale(
     identity_browser: Browser,
     identity_ui_server: str,

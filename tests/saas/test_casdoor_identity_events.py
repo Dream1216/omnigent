@@ -147,6 +147,8 @@ class Remote:
             "type": "normal-user",
             "email": "verified@example.test",
             "emailVerified": True,
+            "phoneVerified": False,
+            "phoneE164": "",
             "isForbidden": False,
             "isDeleted": False,
             "isAdmin": False,
@@ -190,10 +192,43 @@ def reader(config):
     return provider, remote
 
 
+def test_reader_uses_canonical_phone_ownership_fact_without_exporting_it_in_repr(config):
+    provider, remote = reader(config)
+    remote.user.update(
+        phone="2025550100", countryCode="US", phoneVerified=True, phoneE164="+12025550100"
+    )
+    proof = provider.read_identity(SUBJECT)
+    assert proof.phone_e164 == "+12025550100" and proof.phone_verified is True
+    assert "+12025550100" not in repr(proof)
+    before = proof.snapshot_sha256()
+    remote.user.update(phoneVerified=False)
+    unverified = provider.read_identity(SUBJECT)
+    assert unverified.phone_e164 is None and not unverified.phone_verified
+    assert unverified.snapshot_sha256() != before
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"phoneVerified": 1},
+        {"phoneVerified": True},
+        {"phoneVerified": True, "phoneE164": "2025550100"},
+        {"phoneVerified": True, "phoneE164": "+01234"},
+        {"phoneVerified": True, "phoneE164": 123},
+    ],
+)
+def test_reader_rejects_unqualified_phone_proof_even_if_number_is_present(config, changes):
+    provider, remote = reader(config)
+    remote.user.update(phone="2025550100", countryCode="US", **changes)
+    with pytest.raises(IdentitySyncError, match="response_invalid"):
+        provider.read_identity(SUBJECT)
+
+
 def test_provider_only_reads_stable_subject_and_hashes_salt_without_exporting_password(config):
     provider, remote = reader(config)
     state = provider.read_identity(SUBJECT)
     assert state.usable and state.password_configured and state.email_verified
+    assert state.phone_e164 is None and state.phone_verified is False
     assert len(state.password_revision_sha256) == len(state.snapshot_sha256()) == 64
     assert remote.user["passwordSalt"] not in repr(state) and "***" not in repr(state)
     assert not hasattr(state, "password_hash") and not hasattr(state, "password_salt")

@@ -71,6 +71,8 @@ async function rememberRequest(name: string): Promise<string> {
 function errorKey(error: unknown): MessageKey {
   const code = error instanceof IdentityError ? error.code : "request_failed";
   if (code === "verified_email_required") return "setup.verifyEmail";
+  if (code === "verified_contact_required") return "setup.verifyContact";
+  if (code === "identity_verification_pending") return "setup.checkingContact";
   if (code === "workspace_creation_limited") return "setup.limited";
   if (code === "browser_storage_unavailable") return "identity.storageError";
   if (code.startsWith("invitation")) return "setup.invitationError";
@@ -553,7 +555,9 @@ export function WorkspaceSetup() {
             {t("identity.retry")}
           </Button>
           {error instanceof IdentityError &&
-            error.code === "verified_email_required" && (
+            ["verified_email_required", "verified_contact_required"].includes(
+              error.code,
+            ) && (
               <a href="/saas/login?return_to=%2Fsetup">
                 {t("identity.signInAgain")}
               </a>

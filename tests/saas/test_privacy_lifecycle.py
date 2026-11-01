@@ -205,6 +205,8 @@ def _seed_user(factory: sessionmaker[Session]) -> tuple[UUID, UUID, UUID, str, s
                     subject="subject-123",
                     email_normalized=email,
                     email_verified=True,
+                    phone_e164="+12025550100",
+                    phone_verified=True,
                     status="active",
                     created_at=NOW,
                     updated_at=NOW,
@@ -655,6 +657,10 @@ def test_user_deletion_anonymizes_identity_blocks_replay_and_requires_all_surfac
             None,
         )
         assert db.get(PasswordCredential, user_id) is None
+        identity = db.scalar(
+            sa.select(IdentityConnection).where(IdentityConnection.user_id == user_id)
+        )
+        assert identity.phone_e164 is None and not identity.phone_verified
         invitations = list(db.scalars(sa.select(MembershipInvitation)))
         assert {value.status for value in invitations} == {"accepted", "revoked"}
         assert all(value.email_normalized.startswith("deleted-") for value in invitations)

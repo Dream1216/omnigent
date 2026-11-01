@@ -198,6 +198,8 @@ class ProviderIdentityState:
     password_configured: bool = False
     password_revision_sha256: str | None = field(default=None, repr=False)
     password_changed_at: datetime | None = None
+    phone_e164: str | None = field(default=None, repr=False)
+    phone_verified: bool = False
 
     @property
     def usable(self) -> bool:
@@ -215,6 +217,10 @@ class ProviderIdentityState:
                 if self.email
                 else None,
                 "email_verified": self.email_verified,
+                "phone_sha256": sha256(self.phone_e164.encode()).hexdigest()
+                if self.phone_e164
+                else None,
+                "phone_verified": self.phone_verified,
                 "disabled": self.disabled,
                 "deleted": self.deleted,
                 "normal_customer": self.normal_customer,

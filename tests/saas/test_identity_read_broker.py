@@ -84,6 +84,20 @@ def test_worker_read_capability_receives_only_validated_credential_free_state(br
     assert SECRET not in repr(client._config)
 
 
+def test_phone_state_uses_explicit_v2_wire_contract_and_rejects_old_schema(broker):
+    provider, pins, api = broker
+    provider.state = replace(provider.state, phone_e164="+12025550100", phone_verified=True)
+    observed = reader_client(pins, bridge(api)).read_identity(SUBJECT)
+    assert observed.phone_e164 == "+12025550100" and observed.phone_verified
+    payload = api.get(IDENTITY_READ_PATH, params={"subject": SUBJECT}, headers=HEADERS).json()
+    assert payload["schema_version"] == 2
+    payload["schema_version"] = 1
+    with pytest.raises(IdentitySyncError, match="reader_response_invalid"):
+        reader_client(
+            pins, httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+        ).read_identity(SUBJECT)
+
+
 @pytest.mark.parametrize(
     "method,path",
     [

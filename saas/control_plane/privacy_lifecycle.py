@@ -1233,6 +1233,8 @@ class PrivacyLifecycleService:
             connection.subject = locator
             connection.email_normalized = None
             connection.email_verified = False
+            connection.phone_e164 = None
+            connection.phone_verified = False
             connection.status = "revoked"
             connection.updated_at = changed_at
 

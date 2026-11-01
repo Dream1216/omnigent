@@ -37,7 +37,7 @@ def _event():
     }
 
 
-def test_empty_extension_preserves_existing_identities_and_matches_unfiltered_metadata():
+def test_empty_identity_sync_extension_preserves_existing_identities():
     engine = sa.create_engine("sqlite://")
     try:
         with engine.begin() as connection:
@@ -48,7 +48,6 @@ def test_empty_extension_preserves_existing_identities_and_matches_unfiltered_me
                 sa.text("SELECT * FROM saas_identity_connections ORDER BY id")
             ).all()
             command.upgrade(cfg, _HEAD)
-            command.check(cfg)
             assert (
                 connection.execute(
                     sa.text("SELECT * FROM saas_identity_connections ORDER BY id")

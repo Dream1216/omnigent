@@ -161,6 +161,7 @@ const enUS = {
   "identity.currentAccount": "Current account",
   "identity.methods": "Connected identities",
   "identity.verified": "Verified email",
+  "identity.verifiedPhone": "Verified phone",
   "identity.confirmationHeading": "An identity needs your confirmation",
   "identity.confirmationDescription":
     "An identity with this email tried to sign in. Connect it only if it belongs to you.",
@@ -238,6 +239,10 @@ const enUS = {
   "setup.error": "Workspace setup error",
   "setup.verifyEmail":
     "Verify your email with your sign-in provider, then sign in again to create a workspace.",
+  "setup.verifyContact":
+    "Verify your email or phone with your sign-in provider, then sign in again to create a workspace.",
+  "setup.checkingContact":
+    "We are checking your sign-in information. Please try again shortly.",
   "setup.limited":
     "You have requested several workspaces recently. Please try again later.",
   "setup.changedRequest":
@@ -395,6 +400,7 @@ const zhCN: Record<MessageKey, string> = {
   "identity.currentAccount": "当前账号",
   "identity.methods": "已关联的身份",
   "identity.verified": "邮箱已验证",
+  "identity.verifiedPhone": "手机号已验证",
   "identity.confirmationHeading": "有身份等待您确认",
   "identity.confirmationDescription":
     "有身份尝试使用此邮箱登录。请仅在确认该身份属于您时进行关联。",
@@ -455,6 +461,9 @@ const zhCN: Record<MessageKey, string> = {
   "setup.invitationError": "此邀请未能接受，请检查邀请码和当前登录账号。",
   "setup.error": "工作空间开通错误",
   "setup.verifyEmail": "请先在身份服务中验证邮箱，再重新登录以创建工作空间。",
+  "setup.verifyContact":
+    "请先在身份服务中验证邮箱或手机号，再重新登录以创建工作空间。",
+  "setup.checkingContact": "正在核对登录信息，请稍后重试。",
   "setup.limited": "你近期已提交多个工作空间开通请求，请稍后再试。",
   "setup.changedRequest": "此请求已经用其他资料提交，请继续之前的开通。",
   "setup.signInDescription": "登录后即可选择或创建工作空间。",

@@ -86,6 +86,17 @@ def _hex64(column: str) -> str:
     return f"length({column}) = 64 AND {remainder} = ''"
 
 
+def _e164(column: str) -> str:
+    remainder = f"substr({column}, 2)"
+    for digit in "0123456789":
+        remainder = f"replace({remainder}, '{digit}', '')"
+    return (
+        f"{column} IS NULL OR (length({column}) BETWEEN 3 AND 16 AND "
+        f"substr({column}, 1, 1) = '+' AND substr({column}, 2, 1) BETWEEN '1' AND '9' "
+        f"AND {remainder} = '')"
+    )
+
+
 class SaasBase(DeclarativeBase):
     """Declarative base kept separate from official Omnigent metadata."""
 
@@ -152,6 +163,8 @@ class IdentityConnection(SaasBase):
     subject: Mapped[str] = mapped_column(sa.String(512), nullable=False)
     email_normalized: Mapped[str | None] = mapped_column(sa.String(320))
     email_verified: Mapped[bool] = mapped_column(nullable=False, default=False)
+    phone_e164: Mapped[str | None] = mapped_column(sa.String(16))
+    phone_verified: Mapped[bool] = mapped_column(nullable=False, server_default=sa.false())
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
@@ -171,6 +184,10 @@ class IdentityConnection(SaasBase):
         sa.CheckConstraint("length(provider) > 0", name="ck_identity_provider_nonempty"),
         sa.CheckConstraint("length(issuer) > 0", name="ck_identity_issuer_nonempty"),
         sa.CheckConstraint("length(subject) > 0", name="ck_identity_subject_nonempty"),
+        sa.CheckConstraint(_e164("phone_e164"), name="ck_identity_phone_e164"),
+        sa.CheckConstraint(
+            "NOT phone_verified OR phone_e164 IS NOT NULL", name="ck_identity_phone_proof"
+        ),
         sa.UniqueConstraint("issuer", "subject", name="uq_identity_issuer_subject"),
         sa.Index("ix_identity_user_status", "user_id", "status"),
         sa.Index("ix_identity_verified_email", "email_normalized", "email_verified"),

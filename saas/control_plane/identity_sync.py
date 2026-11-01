@@ -46,11 +46,13 @@ class IdentityStateClaim:
     email_normalized: str | None = field(repr=False)
     email_verified: bool
     lease_expires_at: datetime
+    phone_e164: str | None = field(default=None, repr=False)
+    phone_verified: bool = False
 
     def digest(self) -> str:
         return identity_digest(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "connection_id": str(self.connection_id),
                 "user_id": str(self.user_id),
                 "token": str(self.token),
@@ -61,6 +63,8 @@ class IdentityStateClaim:
                 "connection_updated_at": self.connection_updated_at.isoformat(),
                 "email_normalized": self.email_normalized,
                 "email_verified": self.email_verified,
+                "phone_e164": self.phone_e164,
+                "phone_verified": self.phone_verified,
                 "lease_expires_at": self.lease_expires_at.isoformat(),
             }
         )
@@ -157,6 +161,8 @@ class IdentityStateSyncService:
                 connection.email_normalized,
                 connection.email_verified,
                 checked + self.policy.provider_lease,
+                connection.phone_e164,
+                connection.phone_verified,
             )
             state.claim_token, state.claim_sha256 = claim.token, claim.digest()
             state.lease_expires_at = claim.lease_expires_at
@@ -234,6 +240,8 @@ class IdentityStateSyncService:
             or _stored(connection.updated_at) != claim.connection_updated_at
             or connection.email_normalized != claim.email_normalized
             or connection.email_verified != claim.email_verified
+            or connection.phone_e164 != claim.phone_e164
+            or connection.phone_verified != claim.phone_verified
             or claim.issuer != self.policy.issuer
             or claim.organization != self.policy.organization
             or state is None
@@ -287,8 +295,13 @@ class IdentityStateSyncService:
             )
             email = normalize_email(proof.email) if proof.email_verified and proof.email else None
             verified = email is not None
+            phone = proof.phone_e164 if proof.phone_verified else None
+            phone_verified = phone is not None
             contact_changed = (
-                connection.email_normalized != email or connection.email_verified != verified
+                connection.email_normalized != email
+                or connection.email_verified != verified
+                or connection.phone_e164 != phone
+                or connection.phone_verified != phone_verified
             )
             password_changed = (
                 state.checked_at is not None
@@ -340,6 +353,9 @@ class IdentityStateSyncService:
                 if user.primary_email_normalized in {None, connection.email_normalized}:
                     user.primary_email_normalized = email
                 connection.email_normalized, connection.email_verified = email, verified
+                connection.updated_at = checked
+            if connection.phone_e164 != phone or connection.phone_verified != phone_verified:
+                connection.phone_e164, connection.phone_verified = phone, phone_verified
                 connection.updated_at = checked
             state.status = status
             snapshot_sha256 = proof.snapshot_sha256()

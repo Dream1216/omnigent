@@ -453,6 +453,12 @@ class OidcAuthorizationService:
                 email=claims.get("email") if isinstance(claims.get("email"), str) else None,
                 email_verified=claims.get("email_verified") is True,
                 display_name=claims.get("name") if isinstance(claims.get("name"), str) else None,
+                phone_number=cast(str | None, claims.get("phone_number"))
+                if "phone" in config.scopes
+                else None,
+                phone_number_verified=cast(bool, claims.get("phone_number_verified", False))
+                if "phone" in config.scopes
+                else False,
             )
             if transaction.purpose in {"link", "reauth"}:
                 auth_time = claims.get("auth_time")

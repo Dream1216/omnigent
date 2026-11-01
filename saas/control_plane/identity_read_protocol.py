@@ -6,6 +6,7 @@ import json
 import re
 from datetime import datetime, timedelta
 
+from saas.control_plane.identity import validate_phone_proof
 from saas.control_plane.identity_events import (
     IdentitySyncError,
     ProviderIdentityState,
@@ -27,6 +28,8 @@ _STATE_FIELDS = (
     "username",
     "email",
     "email_verified",
+    "phone_e164",
+    "phone_verified",
     "disabled",
     "deleted",
     "normal_customer",
@@ -47,6 +50,7 @@ def validate_provider_state(
             for name in (
                 "exists",
                 "email_verified",
+                "phone_verified",
                 "disabled",
                 "deleted",
                 "normal_customer",
@@ -82,6 +86,7 @@ def validate_provider_state(
     ):
         raise IdentitySyncError("identity_provider_response_invalid", retryable=True)
     try:
+        validate_phone_proof(state.phone_e164, state.phone_verified)
         if state.email:
             normalize_email(state.email)
     except LifecycleError:
@@ -100,7 +105,7 @@ def encode_identity_read(
         state.password_changed_at.isoformat() if state.password_changed_at else None
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "broker_revision": broker_revision,
         "provider_source_lock_sha256": provider_source_lock_sha256,
         "observed_at": _utc(observed_at).isoformat(),
@@ -133,7 +138,7 @@ def decode_identity_read(
                 "identity",
             }
             or type(document["schema_version"]) is not int
-            or document["schema_version"] != 1
+            or document["schema_version"] != 2
             or document["broker_revision"] != broker_revision
             or document["provider_source_lock_sha256"] != provider_source_lock_sha256
             or not isinstance(document["identity"], dict)

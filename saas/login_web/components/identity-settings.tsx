@@ -145,7 +145,9 @@ export function IdentitySettings() {
                     </span>
                     <div>
                       <strong>
-                        {connection.email_normalized || connection.provider}
+                        {connection.email_normalized ||
+                          connection.phone_e164 ||
+                          connection.provider}
                       </strong>
                       <small>
                         {connection.provider === "casdoor"
@@ -153,7 +155,9 @@ export function IdentitySettings() {
                           : connection.provider}
                         {connection.email_verified
                           ? " · " + t("identity.verified")
-                          : ""}
+                          : connection.phone_verified
+                            ? " · " + t("identity.verifiedPhone")
+                            : ""}
                       </small>
                     </div>
                   </li>

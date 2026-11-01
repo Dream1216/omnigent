@@ -1335,6 +1335,8 @@ def create_saas_auth_router(
                 "issuer": identity.issuer,
                 "email_normalized": identity.email_normalized,
                 "email_verified": identity.email_verified,
+                "phone_e164": identity.phone_e164,
+                "phone_verified": identity.phone_verified,
                 "status": identity.status,
             }
             for identity in identities.list_identities(principal.session.user_id)

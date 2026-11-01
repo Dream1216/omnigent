@@ -184,15 +184,30 @@ Password-only sign-in remains the initial SMS account policy. A phone OTP alone
 cannot authorize password recovery, including through a repurposed contact code.
 Email recovery requires the currently verified email, a one-time code and a
 five-minute server session proof; an email change or expired proof rejects the
-reset. Signed-in changes still require the current password. Phone-only users
+reset. Signed-in password changes still require the current password. Phone-only users
 without that password need the controlled support recovery procedure.
 
-The current product still ignores phone claims and requires a verified email
-for self-service workspace creation and email invitations. SMS signup alone
-does not satisfy that existing workspace policy. Phone-only workspace support,
-safe recovery and number recycling still need product implementation and
-acceptance. Do not mark an absent email verified or use a phone number as an
-issuer/subject key.
+The product requests the phone scope, validates canonical signed assertions and
+stores phone ownership on the existing issuer/subject connection. Creating a
+workspace with a phone also requires a completed, active authoritative readback
+from the pinned Casdoor reader. A new account waits for that check; retrying
+preserves its workspace request. Contact changes revoke sessions through the
+existing worker fences. The private reader protocol is version 2; replace reader
+and worker processes together with their exact source pins before activation.
+Email invitations still require a verified email. A phone never merges users or
+supplies a fictitious email. Account erasure clears the phone fields; the privacy
+executor can erase these fields but cannot grant ownership.
+
+The `cd4b00000001` extension starts old connections with no phone proof and
+retains the existing RLS and email registration column grants. Retained phone
+data blocks destructive downgrade; use an application rollback. Review and pin
+fresh PG16/18 catalogs for all four authority profiles, then pass the strict
+migration lane before deployment. The Casdoor candidate workflow's manual
+`discover_source_catalogs` option collects review candidates only. Its catalogs
+cannot serve as production acceptance or update release anchors automatically.
+
+Real delivery, number recycling, the full signup-to-first-Run journey and the
+new provider's live HTTP recovery/readback paths still require acceptance.
 
 From this checkout, with its Python development and SaaS dependencies:
 

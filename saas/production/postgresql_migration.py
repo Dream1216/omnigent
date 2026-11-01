@@ -215,6 +215,16 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "e6589bd3b5b0c6e63ddc20084da28dcf689da1e2893fdce2838923fa7d98fda7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "ab0f6b00d420ef164be5e638904b3322a33f32babf6ac303092a8c4278a478aa",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -626,6 +636,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "7a703f0381922a2fa12e80f963a7b49a37129a90d0ef08c87825554f410feb9e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "609ee21025c3c7ba92c631c593483805c5d120bc41dfc936e0f3f10def2a7659",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -1034,6 +1054,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "d84f28cf69fc43adb70115f6ec02a37356050fd6215c06df3b074cc6646cc600",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "dc905c52cda483a5f9d187251cb6f60d6c51f63f53513421046efc5a744c31a7",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -1412,6 +1442,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "172612a5f753c563d06457b79a0a189f90f8371dae46f6afc3505e807b15f1a1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "ef6da002c79cc2e8a8ffcf8b4fd52dc4de0e7cdbfc659a7b0e8fe877af546cc5",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -1785,6 +1825,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "2a0f0d698149538fb9aca8d83113a49c6b164752c0f4189a24f5ff87a7efae2f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "19e9c36f71bd1d8c497150c40b2402593eda1b3edfce330535f4a4462321c38c",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -2133,6 +2183,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "bc3f922118b1a5fe1be1e871cc95f41d98ec86f32eac0203d937a26de4aac435",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "e7d7c08b88df97b9fcda706abc405d8bf1b10617d5a8300813bd7bb1ba5e1b3b",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -2488,6 +2548,16 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "9ba6c74ef099c83c092cb230f40aac62eac648c372290e921b12b1a89f2c82b9",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "77143ffd4d583a08f770ea7ab485986249d56b6bd59b791f844dbd8b7c8bfcd2",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -2808,6 +2878,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "620dd2b979fd511892ad1c2ad68c7586bb86fa36e30961f37efc270f9367a4dd",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4b00000001",
+    ): "09fb7e5b4528d0a632f0c41b8b85e564eee93d79ce7bf176b2f00346b7f73580",
     # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
     (
         16,
@@ -4472,6 +4552,7 @@ def _runtime_saas_head(requested: object) -> str:
         "cd3a00000001": ("cd3a00000001",),
         "cd3b00000001": ("cd3b00000001",),
         "cd4a00000001": ("cd4a00000001",),
+        "cd4b00000001": ("cd4b00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")
@@ -5312,6 +5393,7 @@ _CREDENTIAL_GUARD_SOURCE_SHA256 = {
     "cd3a00000001": "4728f24d9fda1932c24c6dca42df7e6f54a9753ce9de825ba82314ed5c0126df",
     "cd3b00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
     "cd4a00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
+    "cd4b00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
 }
 
 

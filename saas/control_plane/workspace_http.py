@@ -65,14 +65,24 @@ def create_workspace_router(
             )
         except OnboardingError as error:
             status_code = (
-                429
+                503
+                if error.code == "identity_verification_pending"
+                else 429
                 if error.code == "workspace_creation_limited"
-                else (403 if error.code in {"verified_email_required", "user_inactive"} else 409)
+                else (
+                    403
+                    if error.code
+                    in {"verified_email_required", "verified_contact_required", "user_inactive"}
+                    else 409
+                )
             )
+            headers = {"Cache-Control": "private, no-store"}
+            if error.code == "identity_verification_pending":
+                headers["Retry-After"] = "5"
             raise HTTPException(
                 status_code,
                 detail={"code": error.code, "message": str(error)},
-                headers={"Cache-Control": "private, no-store"},
+                headers=headers,
             ) from error
         response.headers["Location"] = f"/saas/onboarding/workspaces/{accepted.intent_id}/status"
         return _accepted(accepted)

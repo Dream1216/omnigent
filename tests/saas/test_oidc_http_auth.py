@@ -386,6 +386,75 @@ def test_oidc_http_cookie_login_is_one_time_pkce_bound_and_jwks_rotates(
     assert oidc_harness.provider.jwks_request_count >= 2
 
 
+def test_signed_phone_claims_require_requested_scope_and_preserve_absent_email(oidc_harness):
+    from dataclasses import replace
+
+    from saas.control_plane.db_models import IdentityConnection
+
+    h = oidc_harness
+    h.oidc._providers["test"] = replace(h.config, scopes=("openid", "profile", "email", "phone"))
+    callback, _ = _start(
+        h,
+        subject="phone-oidc",
+        email="",
+        claim_overrides={
+            "email": None,
+            "email_verified": False,
+            "phone_number": "+12025550100",
+            "phone_number_verified": True,
+        },
+    )
+    response = h.client.get("/saas/auth/oidc/test/callback", params=callback)
+    assert response.status_code == 200
+    with h.sessions() as db:
+        identity = db.scalar(sa.select(IdentityConnection))
+        assert identity.phone_e164 == "+12025550100" and identity.phone_verified
+        assert identity.email_normalized is None and not identity.email_verified
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"phone_number_verified": True},
+        {"phone_number": "2025550100", "phone_number_verified": True},
+        {"phone_number": "+12025550100", "phone_number_verified": "true"},
+    ],
+)
+def test_malformed_signed_phone_proof_is_rejected_before_identity_creation(oidc_harness, claims):
+    from dataclasses import replace
+
+    from saas.control_plane.db_models import GlobalUser
+
+    h = oidc_harness
+    h.oidc._providers["test"] = replace(h.config, scopes=("openid", "email", "phone"))
+    callback, _ = _start(
+        h, subject="invalid-phone-oidc", email="owned@example.test", claim_overrides=claims
+    )
+    response = h.client.get("/saas/auth/oidc/test/callback", params=callback)
+    assert (
+        response.status_code == 400
+        and response.json()["error"]["code"] == "identity_assertion_invalid"
+    )
+    with h.sessions() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(GlobalUser)) == 0
+
+
+def test_unrequested_phone_claim_does_not_grant_product_phone_ownership(oidc_harness):
+    from saas.control_plane.db_models import IdentityConnection
+
+    h = oidc_harness
+    callback, _ = _start(
+        h,
+        subject="unrequested-phone",
+        email="owned@example.test",
+        claim_overrides={"phone_number": "+12025550100", "phone_number_verified": True},
+    )
+    assert h.client.get("/saas/auth/oidc/test/callback", params=callback).status_code == 200
+    with h.sessions() as db:
+        row = db.scalar(sa.select(IdentityConnection))
+        assert row.phone_e164 is None and not row.phone_verified
+
+
 def test_oidc_callback_rejects_wrong_browser_binding_without_exchanging_code(
     oidc_harness: _Harness,
 ) -> None:
