@@ -149,6 +149,28 @@ signing and the normal release admission remain required.
 
 ## Verification
 
+Email and SMS registration take priority over additional social and enterprise
+providers. Use one required `Email or Phone` signup item with `rule=Normal`, a
+random hidden ID, hidden username, password and confirmation. Each selected
+address requires its own verification code. Configure both delivery providers
+before exposing the choice; do not require customers to supply both addresses.
+
+The `stbz.2` patch preserves email-as-username for email registrations and uses
+the generated ID for phone-only accounts. It also enforces the combined required
+contact in the server validator; a client hiding the input cannot create an
+account without either address. Native Go regression cases run in the image
+build. A new patched image still needs real signup, resend/expiry/replay and
+signed OIDC acceptance before activation.
+
+The current product ignores phone claims and requires a verified email for
+self-service workspace creation and email invitations. SMS signup alone does
+not satisfy that existing workspace policy. The selected upstream also derives
+`phone_number_verified` from the presence of a parseable phone rather than a
+separate stored verification fact. Do not use that claim to grant workspace
+eligibility until phone proof, changes, recycling and product persistence have
+their own reviewed implementation and acceptance. Do not mark an absent email
+verified or use a phone number as an issuer/subject key.
+
 From this checkout, with its Python development and SaaS dependencies:
 
 ```bash

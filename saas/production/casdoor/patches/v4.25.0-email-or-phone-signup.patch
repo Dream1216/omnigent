@@ -1,0 +1,131 @@
+--- a/controllers/account.go
++++ b/controllers/account.go
+@@ -206,8 +206 @@
+-	username := authForm.Username
+-	if !application.IsSignupItemVisible("Username") {
+-		if organization.UseEmailAsUsername && application.IsSignupFieldVisible("Email") {
+-			username = authForm.Email
+-		} else {
+-			username = id
+-		}
+-	}
++	username := application.GetSignupUsername(organization, &authForm, id)
+--- a/object/application_item.go
++++ b/object/application_item.go
+@@ -18,0 +19 @@
++	"strings"
+@@ -166,0 +168,23 @@
++}
++
++// HasRequiredSignupContact enforces a combined address item on direct API requests.
++func (application *Application) HasRequiredSignupContact(authForm *form.AuthForm) bool {
++	for _, name := range []string{"Email or Phone", "Phone or Email"} {
++		item := application.getSignupItem(name)
++		if item != nil && item.Visible && item.Required &&
++			strings.TrimSpace(authForm.Email) == "" && strings.TrimSpace(authForm.Phone) == "" {
++			return false
++		}
++	}
++	return true
++}
++
++// GetSignupUsername keeps phone-only accounts on their generated identifier.
++func (application *Application) GetSignupUsername(organization *Organization, authForm *form.AuthForm, id string) string {
++	if application.IsSignupItemVisible("Username") {
++		return authForm.Username
++	}
++	if organization.UseEmailAsUsername && application.IsSignupFieldVisible("Email") && authForm.Email != "" {
++		return authForm.Email
++	}
++	return id
+--- a/object/check.go
++++ b/object/check.go
+@@ -41,0 +42,4 @@
++	if !application.HasRequiredSignupContact(authForm) {
++		return i18n.Translate(lang, "check:Email or phone cannot be empty")
++	}
++
+--- a/i18n/locales/en/data.json
++++ b/i18n/locales/en/data.json
+@@ -64,0 +65 @@
++    "Email or phone cannot be empty": "Email or phone cannot be empty",
+--- a/i18n/locales/zh/data.json
++++ b/i18n/locales/zh/data.json
+@@ -64,0 +65 @@
++    "Email or phone cannot be empty": "请输入邮箱或手机号",
+--- /dev/null
++++ b/object/stbz_signup_contact_test.go
+@@ -0,0 +1,73 @@
++// Copyright 2021 The Casdoor Authors. All Rights Reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//      http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package object
++
++import (
++	"testing"
++
++	"github.com/casdoor/casdoor/form"
++)
++
++func TestStbzCombinedSignupContactRequired(t *testing.T) {
++	for _, name := range []string{"Email or Phone", "Phone or Email"} {
++		application := &Application{SignupItems: []*SignupItem{{Name: name, Visible: true, Required: true}}}
++		for _, authForm := range []*form.AuthForm{{}, {Email: " ", Phone: "\t"}} {
++			if application.HasRequiredSignupContact(authForm) {
++				t.Fatalf("%s accepted an empty required contact", name)
++			}
++		}
++		if msg := CheckUserSignup(application, &Organization{}, &form.AuthForm{}, "en"); msg == "" {
++			t.Fatalf("%s direct signup validation accepted no contact", name)
++		}
++		for _, authForm := range []*form.AuthForm{{Email: "new@example.test"}, {Phone: "2025550100"}} {
++			if !application.HasRequiredSignupContact(authForm) {
++				t.Fatalf("%s rejected a supplied contact", name)
++			}
++		}
++		application.SignupItems[0].Required = false
++		if !application.HasRequiredSignupContact(&form.AuthForm{}) {
++			t.Fatalf("%s changed optional contact behavior", name)
++		}
++		application.SignupItems[0].Required = true
++		application.SignupItems[0].Visible = false
++		if !application.HasRequiredSignupContact(&form.AuthForm{}) {
++			t.Fatalf("%s changed hidden contact behavior", name)
++		}
++	}
++}
++
++func TestStbzSignupUsernameUsesGeneratedIdForPhone(t *testing.T) {
++	organization := &Organization{UseEmailAsUsername: true}
++	for _, name := range []string{"Email or Phone", "Phone or Email", "Email", "Phone"} {
++		application := &Application{SignupItems: []*SignupItem{{Name: name, Visible: true, Required: true}}}
++		if got := application.GetSignupUsername(organization, &form.AuthForm{Phone: "2025550100"}, "generated-id"); got != "generated-id" {
++			t.Fatalf("%s used an empty email as phone account username", name)
++		}
++		if application.IsSignupFieldVisible("Email") {
++			if got := application.GetSignupUsername(organization, &form.AuthForm{Email: "new@example.test"}, "generated-id"); got != "new@example.test" {
++				t.Fatalf("%s changed email-as-username behavior", name)
++			}
++		}
++	}
++	application := &Application{SignupItems: []*SignupItem{{Name: "Email or Phone", Visible: true}, {Name: "Username", Visible: true}}}
++	if got := application.GetSignupUsername(organization, &form.AuthForm{Username: "chosen-name", Email: "new@example.test"}, "generated-id"); got != "chosen-name" {
++		t.Fatal("visible username was replaced")
++	}
++	application.SignupItems[1].Visible = false
++	organization.UseEmailAsUsername = false
++	if got := application.GetSignupUsername(organization, &form.AuthForm{Email: "new@example.test"}, "generated-id"); got != "generated-id" {
++		t.Fatal("disabled email-as-username was ignored")
++	}
++}

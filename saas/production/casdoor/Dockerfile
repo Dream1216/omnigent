@@ -11,16 +11,17 @@ ENV GOTOOLCHAIN=local
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 COPY . ./
+RUN CGO_ENABLED=0 go test ./object -run '^TestStbz' -count=1
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-    -ldflags='-s -w -buildid= -X github.com/casdoor/casdoor/util.Version=v4.25.0-stbz.1 -X github.com/casdoor/casdoor/util.CommitId=528a0213f01caf70b9f41009cbf7b2f67bdd67ec -X github.com/casdoor/casdoor/util.BuildType=stbz' \
+    -ldflags='-s -w -buildid= -X github.com/casdoor/casdoor/util.Version=v4.25.0-stbz.2 -X github.com/casdoor/casdoor/util.CommitId=528a0213f01caf70b9f41009cbf7b2f67bdd67ec -X github.com/casdoor/casdoor/util.BuildType=stbz' \
     -o /out/server .
 
 FROM alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
 ARG PRODUCT_REVISION
 LABEL org.opencontainers.image.title="Shengtian Banzi customer identity" \
-      org.opencontainers.image.version="v4.25.0-stbz.1" \
+      org.opencontainers.image.version="v4.25.0-stbz.2" \
       org.opencontainers.image.source="https://github.com/casdoor/casdoor" \
       org.opencontainers.image.revision="528a0213f01caf70b9f41009cbf7b2f67bdd67ec" \
       com.shengtianbanzi.product-revision="$PRODUCT_REVISION"

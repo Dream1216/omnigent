@@ -11,6 +11,18 @@ import pytest
 from saas.scripts import prepare_casdoor_source as source
 
 
+def test_bundled_patch_checksums_and_native_regressions_are_in_the_image_build() -> None:
+    supply = Path(__file__).resolve().parents[2] / "saas/production/casdoor"
+    lock = json.loads((supply / "source-lock.json").read_text())
+    for patch in lock["patches"]:
+        assert hashlib.sha256((supply / patch["path"]).read_bytes()).hexdigest() == patch["sha256"]
+    recipe = (supply / "Dockerfile").read_text()
+    assert "go test ./object -run '^TestStbz' -count=1" in recipe
+    assert recipe.index("go test ./object") < recipe.index("go build -trimpath")
+    assert f"util.Version={lock['candidate_version']}" in recipe
+    assert f'org.opencontainers.image.version="{lock["candidate_version"]}"' in recipe
+
+
 def _archive(path: Path, member: str = "casdoor/version.txt") -> Path:
     with tarfile.open(path, "w:gz") as bundle:
         content = b"upstream\n"
