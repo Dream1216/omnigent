@@ -1,42 +1,18 @@
 --- a/controllers/account.go
 +++ b/controllers/account.go
-@@ -186,6 +186,7 @@
- 		userEmailVerified = true
- 	}
- 
+@@ -188,0 +189 @@
 +	userPhoneVerified := false
- 	var checkPhone string
- 	if application.IsSignupFieldVisible("Phone") && application.GetSignupFieldRule("Phone") != "No verification" && authForm.Phone != "" {
- 		checkPhone, _ = util.GetE164Number(authForm.Phone, authForm.CountryCode)
-@@ -195,6 +196,7 @@
- 			c.ResponseError(err.Error())
- 			return
- 		}
+@@ -197,0 +199 @@
 +		userPhoneVerified = true
- 	}
- 
- 	id, err := object.GenerateIdForNewUser(application)
-@@ -256,6 +258,10 @@
- 		RegisterSource:    fmt.Sprintf("%s/%s", authForm.Organization, application.Name),
- 	}
- 
+@@ -258,0 +261,4 @@
 +	if userPhoneVerified {
 +		user.MarkPhoneVerified()
 +	}
 +
- 	if user.Tag == "" && len(organization.Tags) > 0 {
- 		tokens := strings.Split(organization.Tags[0], "|")
- 		if len(tokens) > 0 {
 --- a/controllers/verification.go
 +++ b/controllers/verification.go
-@@ -671,6 +671,7 @@
- 	case object.VerifyTypePhone:
- 		user.Phone = dest
- 		user.CountryCode = countryCode
+@@ -673,0 +674 @@
 +		user.MarkPhoneVerified()
- 		_, err = object.UpdateUser(user.GetId(), user, []string{"phone", "country_code"}, false)
- 	default:
- 		c.ResponseError(c.T("verification:Unknown type"))
 --- /dev/null
 +++ b/object/stbz_phone_proof.go
 @@ -0,0 +1,76 @@
@@ -252,43 +228,22 @@
 +}
 --- a/object/syncer_user.go
 +++ b/object/syncer_user.go
-@@ -108,6 +108,9 @@
- 		columns = append(columns, "lark")
- 	}
- 
+@@ -110,0 +111,3 @@
 +	user.phoneProofPending = false
 +	user.preparePhoneProofUpdate(&oldUser, columns)
 +	columns = append(columns, "verified_phone")
- 	affected, err := ormer.Engine.Where(key+" = ? and owner = ?", syncer.getUserValue(&oldUser, key), oldUser.Owner).Cols(columns...).Update(user)
- 	if err != nil {
- 		return false, err
 --- a/object/token_standard_jwt.go
 +++ b/object/token_standard_jwt.go
-@@ -86,7 +86,7 @@
- 		} else if scope == "profile" {
- 			res.Gender = claims.User.Gender
- 		} else if scope == "phone" && claims.User.Phone != "" {
+@@ -89 +89 @@
 -			res.PhoneNumberVerified = true
 +			res.PhoneNumberVerified = claims.User.HasVerifiedPhone()
- 			phoneNumber, ok := util.GetE164Number(claims.User.Phone, claims.User.CountryCode)
- 			if !ok {
- 				res.PhoneNumberVerified = false
 --- a/object/user.go
 +++ b/object/user.go
-@@ -81,6 +81,9 @@
- 	Email                string     `xorm:"varchar(100) index" json:"email"`
- 	EmailVerified        bool       `json:"emailVerified"`
- 	Phone                string     `xorm:"varchar(100) index" json:"phone"`
+@@ -83,0 +84,3 @@
 +	VerifiedPhone        string     `xorm:"varchar(100)" json:"-"`
 +	PhoneVerified        bool       `xorm:"-" json:"phoneVerified"`
 +	phoneProofPending    bool       `xorm:"-" json:"-"`
- 	CountryCode          string     `xorm:"varchar(6)" json:"countryCode"`
- 	Region               string     `xorm:"varchar(100)" json:"region"`
- 	Location             string     `xorm:"varchar(100)" json:"location"`
-@@ -255,22 +258,23 @@
- }
- 
- type Userinfo struct {
+@@ -258,16 +261,17 @@
 -	Sub           string       `json:"sub"`
 -	Iss           string       `json:"iss"`
 -	Aud           string       `json:"aud"`
@@ -322,76 +277,31 @@
 +	Groups              []string     `json:"groups,omitempty"`
 +	Roles               []string     `json:"roles,omitempty"`
 +	Permissions         []string     `json:"permissions,omitempty"`
- 
- 	CustomClaims map[string]interface{} `json:"-"`
- }
-@@ -737,6 +741,8 @@
- 	if user == nil {
- 		return nil, nil
- 	}
+@@ -739,0 +744,2 @@
 +
 +	user.PhoneVerified = user.HasVerifiedPhone()
- 
- 	if user.Password != "" {
- 		user.Password = "***"
-@@ -991,7 +997,8 @@
- 		columns = GetDefaultUserUpdateColumns(isAdmin)
- 	}
- 
+@@ -994 +1000,2 @@
 -	columns = append(columns, "updated_time")
 +	user.preparePhoneProofUpdate(oldUser, columns)
 +	columns = append(columns, "verified_phone", "updated_time")
- 	user.UpdatedTime = util.GetCurrentTime()
- 
- 	if len(user.DeletedTime) > 0 {
-@@ -1083,6 +1090,7 @@
- 		}
- 	}
- 
+@@ -1085,0 +1093 @@
 +	user.preparePhoneProofUpdate(oldUser, nil)
- 	affected, err := ormer.Engine.ID(core.PK{owner, name}).AllCols().Update(user)
- 	if err != nil {
- 		return false, err
-@@ -1099,6 +1107,7 @@
- }
- 
- func AddUser(user *User, lang string) (bool, error) {
+@@ -1101,0 +1110 @@
 +	user.preparePhoneProofInsert()
- 	if user.Id == "" {
- 		application, err := GetApplicationByUser(user)
- 		if err != nil {
-@@ -1230,6 +1239,9 @@
- 
- 	// organization := GetOrganizationByUser(users[0])
- 	for _, user := range users {
+@@ -1232,0 +1242,3 @@
 +		user.VerifiedPhone = ""
 +		user.phoneProofPending = false
 +		user.PhoneVerified = false
- 		// this function is only used for syncer or batch upload, so no need to encrypt the password
- 		// user.UpdateUserPassword(organization)
- 
-@@ -1504,6 +1516,7 @@
- 		resp.Phone = user.Phone
- 		if phoneNumber, ok := util.GetE164Number(user.Phone, user.CountryCode); ok {
- 			resp.PhoneNumber = phoneNumber
+@@ -1506,0 +1519 @@
 +			resp.PhoneNumberVerified = user.HasVerifiedPhone()
- 		}
- 	}
- 
 --- a/object/user_util.go
 +++ b/object/user_util.go
-@@ -245,7 +245,14 @@
- }
- 
- func SetUserField(user *User, field string, value string) (bool, error) {
+@@ -247,0 +248,4 @@
 +	field = strings.ToLower(field)
 +	if strings.EqualFold(strings.ReplaceAll(field, "_", ""), "verifiedPhone") {
 +		return false, fmt.Errorf("phone ownership proof cannot be set as a user field")
 +	}
- 	bean := make(map[string]interface{})
+@@ -248,0 +253,3 @@
 +	if field == "phone" || field == "country_code" {
 +		bean["verified_phone"] = ""
 +	}
- 	if field == "password" {
- 		organization, err := GetOrganizationByUser(user)
- 		if err != nil {

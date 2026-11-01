@@ -16,7 +16,7 @@
     },
     {
       "path": "patches/v4.25.0-verified-phone-proof.patch",
-      "sha256": "508f9e5c46267bd642334d7bc5ec95c9d657c689ecc877d6c2940c5c6dfd15b4"
+      "sha256": "511dd4cf859fca82f98cbeaba8ef4ed9a34fefeb0c2b01c88a06ab2f80c24eb4"
     }
   ]
 }
