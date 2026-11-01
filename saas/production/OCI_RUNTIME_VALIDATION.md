@@ -87,3 +87,10 @@ image signatures, protected source publication, independent identity/business
 approvals, production network isolation, backup acceptance or deployment gates.
 Do not write production acceptance records or activate the staged identity
 Deployments based on this bundle alone.
+
+Candidate preflight also builds a backend wheel and checks its actual members,
+including the Casdoor source lock, referenced patch, build recipe and maintenance
+runbooks. The full reader/worker and credential-import configuration loaders
+read that installed source lock; a source checkout or fixture-composed service
+can hide a missing wheel resource. A passing member check still requires the
+real image's closed configuration, entrypoints and installed metadata tests.

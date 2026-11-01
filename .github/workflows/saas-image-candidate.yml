@@ -146,11 +146,18 @@ jobs:
           tests/saas/test_oci_candidate_build_capacity.py
           tests/saas/test_oci_candidate_validation_export.py
           tests/saas/test_download_oci_validation.py
+          tests/saas/test_wheel_contents.py
           tests/saas/test_oci_promotion.py
           tests/saas/test_runtime_security_overlays.py
           tests/saas/test_host_fleet_cli_supply.py
           tests/saas/test_legacy_domain_discovery.py::test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged
           -q
+      - name: Verify installed identity resource packaging
+        env:
+          OMNIGENT_SKIP_WEB_UI: "true"
+        run: |
+          uv build --wheel --no-build-isolation --out-dir "$RUNNER_TEMP/identity-wheel"
+          uv run python -m saas.scripts.check_wheel_contents "$RUNNER_TEMP/identity-wheel"
       - name: Verify image supply-chain policy
         run: uv run python -m saas.scripts.check_image_supply_chain
 

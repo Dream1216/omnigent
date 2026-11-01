@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import tomllib
+import yaml
 
 from saas.scripts.check_wheel_contents import REQUIRED_WHEEL_PATHS, find_missing_paths
 
@@ -15,6 +17,43 @@ def test_missing_wheel_artifact_is_reported() -> None:
     names = set(REQUIRED_WHEEL_PATHS) - {"saas/control_plane/alembic.ini"}
 
     assert find_missing_paths(names) == ["saas/control_plane/alembic.ini"]
+
+
+def test_casdoor_source_lock_and_referenced_patch_kit_are_packaged() -> None:
+    root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text())
+    patterns = project["tool"]["setuptools"]["package-data"]["saas.production"]
+    lock = json.loads((root / "saas/production/casdoor/source-lock.json").read_text())
+    resources = [
+        "casdoor/source-lock.json",
+        "casdoor/config.example.json",
+        "casdoor/Dockerfile",
+        "casdoor/README.md",
+        "casdoor/CREDENTIAL_MIGRATION.md",
+        "casdoor/IDENTITY_SYNCHRONIZATION.md",
+        "casdoor/IDENTITY_DEAD_LETTERS.md",
+        "casdoor/CUSTOMER_AUTH_RESTORE.md",
+        *["casdoor/" + patch["path"] for patch in lock["patches"]],
+    ]
+    for resource in resources:
+        assert any(Path(resource).match(pattern) for pattern in patterns), resource
+        assert "saas/production/" + resource in REQUIRED_WHEEL_PATHS
+        assert (root / "saas/production" / resource).is_file()
+
+
+def test_candidate_builds_and_checks_real_backend_wheel_before_oci_builds() -> None:
+    root = Path(__file__).resolve().parents[2]
+    document = yaml.safe_load((root / ".github/workflows/saas-image-candidate.yml").read_text())
+    preflight = document["jobs"]["verify-candidate-preflight"]
+    step = next(
+        row
+        for row in preflight["steps"]
+        if row.get("name") == "Verify installed identity resource packaging"
+    )
+    assert step["env"] == {"OMNIGENT_SKIP_WEB_UI": "true"}
+    assert "uv build --wheel --no-build-isolation" in step["run"]
+    assert 'check_wheel_contents "$RUNNER_TEMP/identity-wheel"' in step["run"]
+    assert "verify-candidate-preflight" in document["jobs"]["build-candidate"]["needs"]
 
 
 def test_current_adr_approval_and_ci_evidence_are_required_wheel_artifacts() -> None:
