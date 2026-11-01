@@ -728,6 +728,7 @@ def test_fresh_terminal_turn_reports_running_before_first_model_output(
         session.tmux("send-keys", "Enter")
         try:
             deadline = time.monotonic() + 20
+            last_submit = time.monotonic()
             requests = []
             while time.monotonic() < deadline:
                 state = read_bridge_state(session.bridge)
@@ -738,6 +739,10 @@ def test_fresh_terminal_turn_reports_running_before_first_model_output(
                 ]
                 if requests:
                     break
+                # As in _assert_turn, Enter can land while Codex still absorbs the paste.
+                if time.monotonic() - last_submit >= 1:
+                    session.tmux("send-keys", "Enter")
+                    last_submit = time.monotonic()
                 time.sleep(0.1)
             assert len(requests) == 1, session.tmux("capture-pane", "-p")
             assert state is not None

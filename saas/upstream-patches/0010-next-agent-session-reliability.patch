@@ -537,32 +537,34 @@ index 83b04a080c..0a82dc9c85 100644
 -        comments_fingerprints = await _comments_fingerprints_for(conv_ids)
 -        pull_requests = await _pull_requests_for(conv_ids)
 diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
-index ad3f08c8103e9135e2d61ce344eaca8c36929340..581c1f2e2d7e1c0c537efbbae35ad655f1d4f697 100644
+index ad3f08c8103e9135e2d61ce344eaca8c36929340..f15ab6d578f5b590c2d3921321358aa5f361d81d 100644
 --- a/omnigent/server/routes/sessions/routes_events.py
 +++ b/omnigent/server/routes/sessions/routes_events.py
-@@ -168,0 +169 @@ from omnigent.server.routes._sessions.common import (
+@@ -168,0 +169 @@
 +    _RUNNER_SESSION_INIT_TIMEOUT_S,
-@@ -336,0 +338,3 @@ from omnigent.util.session_lifecycle import (
+@@ -336,0 +338,3 @@
 +# A caller may leave a shared native bootstrap running after this total wait.
 +_NATIVE_BOOTSTRAP_CALLER_WAIT_S = _RUNNER_SESSION_INIT_TIMEOUT_S
 +
-@@ -1777 +1781 @@ def register_events_routes(
+@@ -1777 +1781 @@
 -                await startup.cancel(session_id)
 +                await startup.cancel(session_id, conversation=conv)
-@@ -2886,0 +2891 @@ def register_events_routes(
+@@ -1838,0 +1843 @@
++                conversation=conv if target_session_id == session_id else None,
+@@ -2886,0 +2892 @@
 +                    startup_input=request if isinstance(request, StartupInputContext) else None,
-@@ -3026 +3031,3 @@ def register_events_routes(
+@@ -3026 +3032,3 @@
 -                        if isinstance(request, StartupInputContext):
 +                        if isinstance(
 +                            request, StartupInputContext
 +                        ) and not _is_native_terminal_session(conv):
-@@ -3043,0 +3051,3 @@ def register_events_routes(
+@@ -3043,0 +3052,3 @@
 +                            startup_input=request
 +                            if isinstance(request, StartupInputContext)
 +                            else None,
-@@ -3246,0 +3257 @@ def register_events_routes(
+@@ -3246,0 +3258 @@
 +                    startup_input=request if isinstance(request, StartupInputContext) else None,
-@@ -3402,8 +3413,9 @@ def register_events_routes(
+@@ -3402,9 +3414,38 @@
 -            native_terminal_ready = await _ensure_runner_session_initialized(
 -                session_id,
 -                conv,
@@ -571,6 +573,7 @@ index ad3f08c8103e9135e2d61ce344eaca8c36929340..581c1f2e2d7e1c0c537efbbae35ad655
 -                initializer=initializer,
 -                suppress_recovery_turn=True,
 -                trigger="web_message",
+-            )
 +            cold_input = (
 +                not isinstance(request, (StartupInputContext, _RunnerEventContext))
 +                and startup is not None
@@ -580,7 +583,7 @@ index ad3f08c8103e9135e2d61ce344eaca8c36929340..581c1f2e2d7e1c0c537efbbae35ad655
 +                and _is_native_terminal_session(conv)
 +                and conv.host_id is not None
 +                and startup.hosts.get(conv.host_id) is not None
-@@ -3410,0 +3423,28 @@ def register_events_routes(
++            )
 +            caller_wait = asyncio.timeout(_NATIVE_BOOTSTRAP_CALLER_WAIT_S if cold_input else None)
 +            try:
 +                async with caller_wait:

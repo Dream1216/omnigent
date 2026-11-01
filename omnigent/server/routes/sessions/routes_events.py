@@ -1840,6 +1840,7 @@ def register_events_routes(
             runner_client = await _get_runner_client(
                 target_session_id,
                 runner_router,
+                conversation=conv if target_session_id == session_id else None,
             )
             interrupt_delivered = False
             if runner_client is not None:
