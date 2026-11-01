@@ -145,6 +145,7 @@ jobs:
           tests/saas/test_scan_oci_candidates.py
           tests/saas/test_oci_candidate_build_capacity.py
           tests/saas/test_oci_candidate_validation_export.py
+          tests/saas/test_download_oci_validation.py
           tests/saas/test_oci_promotion.py
           tests/saas/test_runtime_security_overlays.py
           tests/saas/test_host_fleet_cli_supply.py

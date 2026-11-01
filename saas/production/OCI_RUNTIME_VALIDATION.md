@@ -23,6 +23,44 @@ and evidence. The existing immutable promotion tooling supplies archive and
 manifest validation; its protected publication requirements still apply to
 production promotion.
 
+For a first-attempt manual run, use the separate unsigned transfer tool. Obtain
+the artifact ID, ZIP digest/size and exact run facts from GitHub's native API;
+capture the promotion-manifest SHA-256 independently from that run's small
+candidate-evidence artifact. Choose explicit download, expanded-byte and free
+space reserve budgets before requesting any executable bytes:
+
+```sh
+python -m saas.scripts.download_oci_validation inspect \
+  --repository Dream1216/omnigent --revision FULL_SHA \
+  --run-id RUN_ID --artifact-id ARTIFACT_ID \
+  --output-dir /private/new-validation-bundle \
+  --max-download-bytes DOWNLOAD_BUDGET \
+  --max-expanded-bytes EXPANSION_BUDGET --reserve-bytes FREE_SPACE_RESERVE
+```
+
+`inspect` fetches only native metadata and writes no files. A failed, unfinished,
+forked, different-workflow or repeated-attempt run is rejected. The ZIP must be
+named `saas-oci-validation-FULL_SHA`, with a native digest and exact run/source
+binding. After capacity coordination permits transfer, repeat the command with
+`download` and `--manifest-sha256 INDEPENDENT_MANIFEST_SHA256`. The output must
+be new, with an existing resolved parent. Transfer is bounded by the native ZIP
+size, digest and timeout; extraction also checks the total declared expanded
+bytes, manifest digest and current free space. The temporary ZIP is removed
+after extraction, following the existing promotion download behavior.
+
+The capacity report covers simultaneous ZIP and extracted bundle storage. It
+does not reserve filesystem space against concurrent writers or include OCI
+inspection scratch space, platform extraction or container storage; budget
+those separately. A capacity report does not override an outstanding transfer
+hold. The transfer receipt explicitly leaves candidate-seal verification and
+runtime qualification false. Next verify the full sealed candidate with
+`oci_promotion.verify_candidate`, using the independently captured manifest
+digest, exact source epoch and labels, and fresh scans as required. The existing
+`oci_promotion download` remains restricted to protected promotion artifacts;
+the unsigned helper grants no signing or publication authority. Internal PR and
+rerun artifacts require their own reviewed native attempt binding and are not
+accepted by this manual transfer helper.
+
 The retained bundle contains the exact compared Server/Host archives, their
 promotion manifest and raw scan evidence. It is uploaded only after two builds
 of each multi-architecture image compare, both architectures pass the complete

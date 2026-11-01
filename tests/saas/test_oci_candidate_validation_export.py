@@ -87,6 +87,7 @@ def test_source_and_export_contracts_run_before_expensive_image_builds():
         if step.get("name") == "Verify image supply-chain policy contracts"
     )
     assert "tests/saas/test_oci_candidate_validation_export.py" in command
+    assert "tests/saas/test_download_oci_validation.py" in command
     assert (
         "tests/saas/test_legacy_domain_discovery.py::"
         "test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged"
