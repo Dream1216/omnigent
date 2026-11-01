@@ -1,5 +1,5 @@
 diff --git a/omnigent/onboarding/harness_install.py b/omnigent/onboarding/harness_install.py
-index 90e016608..03d548a02 100644
+index dc32fdb55..58082aeb4 100644
 --- a/omnigent/onboarding/harness_install.py
 +++ b/omnigent/onboarding/harness_install.py
 @@ -74,3 +74,2 @@ CURSOR_KEY = "cursor"

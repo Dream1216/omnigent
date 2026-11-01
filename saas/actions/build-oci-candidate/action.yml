@@ -61,5 +61,6 @@ runs:
           UPSTREAM_REVISION=${{ env.UPSTREAM_REVISION }}
           CONTROL_PLANE_SCHEMA_REVISION=${{ env.CONTROL_PLANE_SCHEMA_REVISION }}
           ADAPTER_CONTRACT_VERSION=${{ env.ADAPTER_CONTRACT_VERSION }}
+          VITE_OMNIGENT_HOST_ROUTING=true
           OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && 'kubernetes' || '' }}
           EXTRA_HARNESS_CLIS=${{ inputs.artifact == 'host' && 'jcode@0.90.1 devin@3000.11.3' || '' }}

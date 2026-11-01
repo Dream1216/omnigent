@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIWebSocketRoute
 
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
-from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
+from omnigent.runner.transports.ws_tunnel.registry import RunnerSession, TunnelRegistry
 from omnigent.server.routes.runner_tunnel import (
     RUNNER_ID_MISMATCH_CLOSE_CODE,
     create_runner_tunnel_router,
@@ -305,13 +305,13 @@ def create_preview_owner_tunnel_app(
         heartbeat_seconds=heartbeat_seconds,
     )
 
-    async def on_connect(official_runner_id: str) -> None:
+    async def on_connect(official_runner_id: str, _session: RunnerSession) -> None:
         reservation_id = _CONNECTION_RESERVATION.get()
         if reservation_id is None:
             raise PreviewTunnelRegistrationError("preview_tunnel_registration_stale")
         await lifecycle.connected(reservation_id, official_runner_id)
 
-    async def on_disconnect(official_runner_id: str) -> None:
+    async def on_disconnect(official_runner_id: str, _session: RunnerSession) -> None:
         reservation_id = _CONNECTION_RESERVATION.get()
         if reservation_id is not None:
             await lifecycle.disconnected(reservation_id, official_runner_id)

@@ -1,5 +1,5 @@
 diff --git a/omnigent/cli_config.py b/omnigent/cli_config.py
-index 56efeee18..40704ec20 100644
+index 4c651992d..849cdffb3 100644
 --- a/omnigent/cli_config.py
 +++ b/omnigent/cli_config.py
 @@ -2741,2 +2741,2 @@ def _print_kimi_auth_help() -> None:
@@ -42,7 +42,7 @@ index 56efeee18..40704ec20 100644
 +            )
 +            return
 diff --git a/omnigent/db/utils.py b/omnigent/db/utils.py
-index ab6553c99..28a885025 100644
+index b30774e9d..24a30fd98 100644
 --- a/omnigent/db/utils.py
 +++ b/omnigent/db/utils.py
 @@ -40,0 +41,18 @@ ManagedSessionMaker = Callable[[], AbstractContextManager[Session]]

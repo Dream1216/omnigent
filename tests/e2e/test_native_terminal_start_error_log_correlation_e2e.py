@@ -184,7 +184,13 @@ class _Stack:
 
 
 @contextlib.contextmanager
-def _native_stack(tmp_path: Path, claude_stub_script: str, *, fail_tmux_launch: bool = False):
+def _native_stack(
+    tmp_path: Path,
+    claude_stub_script: str,
+    *,
+    fail_tmux_launch: bool = False,
+    web_ui_dist: Path | None = None,
+):
     """Spawn server + runner-for-a-parent-session with the debug-log sink live.
 
     Mirrors production wiring: the parent session exists first, the runner is
@@ -217,7 +223,15 @@ def _native_stack(tmp_path: Path, claude_stub_script: str, *, fail_tmux_launch: 
         )
         tmux_stub.chmod(0o755)
 
-    with contextlib.closing(_ZeroBusCapture()) as capture, server_runner(tmp_path) as stack:
+    with (
+        contextlib.closing(_ZeroBusCapture()) as capture,
+        server_runner(
+            tmp_path,
+            server_env=(
+                {"OMNIGENT_WEB_UI_DIST": str(web_ui_dist)} if web_ui_dist is not None else None
+            ),
+        ) as stack,
+    ):
         base_url, runner_id = stack.base_url, stack.runner_id
         # The host creates the parent before starting its runner.
         parent_session_id, _parent_agent_id = _create_session_with_scoped_agent(
@@ -354,10 +368,10 @@ def test_missing_agent_lifecycle_row_correlates_to_failed_child(
 
         # PRECONDITION (the reported lifecycle state): the child's agent is no
         # longer present in the store — deleted through the real store API.
-        from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+        from tests._helpers.server_stores import delete_server_agent
 
         database_uri = f"sqlite:///{stack.tmp_path / 'chat.db'}"
-        assert SqlAlchemyAgentStore(database_uri).delete(child_agent_id) is True
+        assert delete_server_agent(database_uri, child_agent_id) is True
         contents = _http.get(
             f"{stack.base_url}/v1/sessions/{child_id}/agent/contents",
             timeout=10.0,

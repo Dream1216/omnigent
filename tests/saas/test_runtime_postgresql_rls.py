@@ -240,7 +240,7 @@ def test_real_postgresql_runtime_rls_and_store_adapter_context(
         ).scalar_one()
     assert role_flags == (False, False)
     assert alembic_privileges == (True, False, False, False)
-    assert official_revision == "mm1a2b3c4d5e"
+    assert official_revision == "nf12ab34cd56"
 
     with runtime_engine.begin() as connection:
         connection.execute(

@@ -8,6 +8,8 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from saas.observability import note_rls_context
+
 
 @dataclass(frozen=True, slots=True)
 class RlsContext:
@@ -73,6 +75,7 @@ def _set_local(session: Session, name: str, value: str) -> None:
 def apply_rls_context(session: Session, context: RlsContext) -> None:
     """Bind RLS facts to the current transaction; never accept raw client values."""
 
+    note_rls_context(session, context if isinstance(context, RlsContext) else None)
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
         return
@@ -119,6 +122,7 @@ def apply_rls_context(session: Session, context: RlsContext) -> None:
 def apply_platform_rls_context(session: Session, context: PlatformRlsContext) -> None:
     """Bind Staff facts and explicitly clear every Customer Realm GUC."""
 
+    note_rls_context(session, context if isinstance(context, RlsContext) else None)
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
         return
@@ -187,6 +191,7 @@ def apply_platform_rls_context(session: Session, context: PlatformRlsContext) ->
 def apply_registration_rls_context(session: Session, context: RegistrationRlsContext) -> None:
     """Bind one public registration request and clear authenticated realms."""
 
+    note_rls_context(session, context if isinstance(context, RlsContext) else None)
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
         return
@@ -210,6 +215,7 @@ def apply_registration_rls_context(session: Session, context: RegistrationRlsCon
 def apply_onboarding_rls_context(session: Session, context: OnboardingRlsContext) -> None:
     """Bind one trusted onboarding worker and clear all unrelated realms."""
 
+    note_rls_context(session, context if isinstance(context, RlsContext) else None)
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
         return

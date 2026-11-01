@@ -634,7 +634,11 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
             RuntimeError,
             match=(
                 r"^(retained execution schema cannot be downgraded|"
-                r"retained model budgets require owner settlement policy)$"
+                r"retained model budgets require owner settlement policy|"
+                r"P17 downgrade requires reviewed preserving-driver archive; "
+                r"never DROP durable facts|"
+                r"P18 downgrade requires reviewed runtime-maintenance inverse; "
+                r"never remove policy contracts implicitly)$"
             ),
         ):
             with connection.begin_nested():

@@ -322,7 +322,9 @@ def test_registry_drift_is_not_accepted_as_metadata_only(tmp_path: Path) -> None
         verify_readback(tmp_path / "server-1.tar", changed)
 
 
-@pytest.mark.parametrize("field", ["id", "name", "expired", "digest", "run-id", "head-sha"])
+@pytest.mark.parametrize(
+    "field", ["id", "name", "validation-name", "expired", "digest", "run-id", "head-sha"]
+)
 def test_wrong_artifact_or_workflow_coordinates_are_rejected(field: str) -> None:
     metadata = {
         "id": 17,
@@ -334,7 +336,9 @@ def test_wrong_artifact_or_workflow_coordinates_are_rejected(field: str) -> None
     verify_artifact_metadata(
         metadata, artifact_id=17, zip_sha256="b" * 64, revision=REVISION, run_id=23
     )
-    if field in ("run-id", "head-sha"):
+    if field == "validation-name":
+        metadata["name"] = f"saas-oci-validation-{REVISION}"
+    elif field in ("run-id", "head-sha"):
         metadata["workflow_run"]["id" if field == "run-id" else "head_sha"] = "different"
     else:
         metadata[field] = "different"

@@ -1,12 +1,12 @@
 diff --git a/omnigent/harnesses/opencode_native/provider.py b/omnigent/harnesses/opencode_native/provider.py
-index f29b8db5b..43c269a2e 100644
+index d7ae6ad52..d41ec82e9 100644
 --- a/omnigent/harnesses/opencode_native/provider.py
 +++ b/omnigent/harnesses/opencode_native/provider.py
-@@ -44,0 +45 @@ DATABRICKS_GATEWAY_PROVIDER_NAME = "Databricks AI Gateway"
+@@ -44,0 +45 @@ DATABRICKS_GATEWAY_PROVIDER_NAME = "Databricks Unity Gateway"
 +CONFIGURED_GATEWAY_PROVIDER_NAME = "Omnigent configured gateway"
 @@ -335 +336 @@ def resolve_databricks_gateway(
--    Resolve a Databricks AI gateway for opencode from a ``~/.databrickscfg`` profile.
-+    Resolve the configured OpenCode gateway, preferring a Databricks profile.
+-    Resolve a Databricks Unity Gateway for opencode from a ``~/.databrickscfg`` profile.
++    Resolve the configured OpenCode gateway, preferring a Databricks Unity Gateway.
 @@ -339,3 +340,4 @@ def resolve_databricks_gateway(
 -    OpenAI-compatible ``/serving-endpoints``. Best-effort: returns ``None`` when
 -    the SDK is absent, the profile is unknown, or auth fails — the caller then

@@ -12,7 +12,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import DBAPIError
 
 from omnigent.db.query_context import query_name_scope
-from saas.control_plane.outbox import OutboxPublisher, OutboxPublishError
+from saas.control_plane.outbox import OutboxClaimRoute, OutboxPublisher, OutboxPublishError
 
 
 @dataclass(frozen=True)
@@ -134,12 +134,48 @@ class RetainedModelAuditPublisher:
 
     def __init__(self, engine: Engine, fallback: OutboxPublisher) -> None:
         self._engine, self._fallback = engine, fallback
+        self._claim_routes: tuple[OutboxClaimRoute, ...] | None = None
+        self._routes_validated = False
+
+    @property
+    def claim_routes(self) -> tuple[OutboxClaimRoute, ...] | None:
+        if not self._routes_validated:
+            raise RuntimeError("retained_model_audit_routes_not_validated")
+        return self._claim_routes
 
     def validate_outbox_configuration(self) -> None:
+        self._routes_validated = False
         if self._engine.dialect.name != "postgresql":
             raise RuntimeError("retained_model_audit_requires_postgresql")
         with self._engine.connect() as connection:
-            verify_retained_model_audit_functions(connection)
+            retained = verify_retained_model_audit_functions(connection)
+        fallback_routes = getattr(self._fallback, "claim_routes", None)
+        if fallback_routes is None:
+            # A legacy unrestricted fallback keeps its existing envelope contract.
+            self._claim_routes = None
+        else:
+            routes = tuple(fallback_routes)
+            if not routes or any(not isinstance(route, OutboxClaimRoute) for route in routes):
+                raise RuntimeError("retained_model_audit_fallback_routes_rejected")
+            if retained:
+                routes += tuple(
+                    OutboxClaimRoute(contract.aggregate, contract.event, contract.event)
+                    for contract in _CONTRACTS
+                )
+            for index, route in enumerate(routes):
+                if any(
+                    route.aggregate_type == other.aggregate_type
+                    and route.event_type == other.event_type
+                    and (
+                        route.payload_event_type is None
+                        or other.payload_event_type is None
+                        or route.payload_event_type == other.payload_event_type
+                    )
+                    for other in routes[:index]
+                ):
+                    raise RuntimeError("retained_model_audit_claim_routes_overlap")
+            self._claim_routes = routes
+        self._routes_validated = True
 
     def publish(
         self,

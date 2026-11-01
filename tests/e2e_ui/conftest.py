@@ -57,12 +57,19 @@ import pytest
 from playwright.sync_api import APIResponse, Error, Locator, Page, Route, expect
 
 from tests._helpers.compat import (
+    apply_runner_env,
     apply_server_env,
+    compat_runner_cwd,
     compat_server_cwd,
+    compat_server_python,
+    runner_executable,
     server_executable,
 )
 from tests._helpers.native_session import create_native_session
 from tests._helpers.session import bind_session_runner, bundle_files, post_session_bundle
+from tests._helpers.workspace_geometry import (
+    workspace_bar_needs_collapse as workspace_bar_needs_collapse,
+)
 from tests.codex_parity.helpers import ev_assistant_message, ev_completed, ev_response_created
 from tests.codex_parity.sidecar_harness import (
     CodexResponsesSidecar,
@@ -74,6 +81,7 @@ from tests.helpers.ui_configuration import (
     _ALLOW_DEV_BASE_URL_ENV,
     ServerState,
     prepared_repro_environment,
+    validate_native_claude_mock_routing,
 )
 from tests.helpers.ui_configuration import (
     _CLAUDE_MOCK_MODEL as _CLAUDE_MOCK_MODEL,
@@ -127,30 +135,6 @@ def fetch_with_retry(route: Route, *, attempts: int = 3) -> APIResponse:
     return route.fetch()
 
 
-def workspace_bar_needs_collapse(bar: Locator) -> bool:
-    """Whether the composer workspace bar's full labels would overflow or truncate.
-
-    Mirrors the bar's own rule (any ``[data-workspace-collapse-label]`` wider
-    than its box, or the row wider than the bar) by probing the expanded layout
-    in place and restoring the current verdict within the same evaluation, so a
-    test can assert the icon collapse is justified — and absent when everything fits.
-
-    :param bar: Locator for ``composer-workspace-controls``.
-    :returns: ``True`` when the bar must show icons only.
-    """
-    return bar.evaluate(
-        """bar => {
-          const verdict = bar.dataset.labels;
-          delete bar.dataset.labels;
-          const labels = [...bar.querySelectorAll('[data-workspace-collapse-label]')];
-          const cramped = bar.scrollWidth > bar.clientWidth + 1
-            || labels.some(el => el.scrollWidth > el.clientWidth + 1);
-          if (verdict !== undefined) bar.dataset.labels = verdict;
-          return cramped;
-        }"""
-    )
-
-
 def open_right_rail(page: Page) -> None:
     """Expand the right "Workspace" rail if it is collapsed.
 
@@ -189,6 +173,31 @@ def switch_markdown_view_mode(page: Page, file_viewer: Locator, mode: str) -> No
     """
     file_viewer.get_by_role("button", name=re.compile(r"^View mode")).first.click()
     page.get_by_role("menuitem", name=mode, exact=True).click()
+
+
+def open_previewable_files_in_preview(page: Page) -> None:
+    """Make Markdown, HTML, and notebook files open on the rendered Preview.
+
+    Seeds the stored FileViewer preferences before the app loads (Markdown
+    otherwise opens in the rich-text editor), so call it before ``page.goto``.
+
+    :param page: Playwright page that has not yet loaded the app.
+    :returns: None.
+    """
+    page.add_init_script(
+        """
+        window.localStorage.setItem(
+          "omnigent:file-view-preferences",
+          JSON.stringify({
+            diffActive: false,
+            diffLayout: "unified",
+            previewableViewMode: "preview",
+            hideWhitespace: false,
+            wrapLines: false,
+          }),
+        );
+        """
+    )
 
 
 # Populated by live_server for fixtures that need the server PID or runner ID.
@@ -314,6 +323,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     :param parser: The pytest option parser.
     """
     parser.addoption(
+        "--ui-dependency-smoke",
+        action="store_true",
+        default=False,
+        help="Run compatibility smoke journeys and all Codex sidecar consumers.",
+    )
+    parser.addoption(
+        "--ui-codex-sidecar-only",
+        action="store_true",
+        help="Run consumers of the Codex Responses sidecar before splitting into shards.",
+    )
+    parser.addoption(
         "--ui-base-url",
         default=None,
         help=(
@@ -421,11 +441,23 @@ def pytest_collection_modifyitems(
     bucket. That averages cost across shards without maintaining a
     durations file.
 
-    No-op unless both ``--splits`` and ``--group`` are passed, so local
-    runs and the non-sharded suites are unaffected. ``trylast`` lets the
-    repo-wide known-failures marking in ``tests/conftest.py`` tag items
-    first; markers travel with the items the slice keeps.
+    Optional sidecar selection precedes the split and includes indirect fixture
+    consumers. ``trylast`` lets repo-wide known-failure marking tag items first;
+    markers travel with the items the slice keeps.
     """
+    dependency = config.getoption("--ui-dependency-smoke")
+    if config.getoption("--ui-codex-sidecar-only") or dependency:
+        selected = [
+            item
+            for item in items
+            if "mocked_native_codex_session" in item.fixturenames
+            or (dependency and item.get_closest_marker("compat_smoke") is not None)
+        ]
+        if not selected:
+            raise pytest.UsageError("No Codex sidecar consumers collected")
+        config.hook.pytest_deselected(items=[item for item in items if item not in selected])
+        items[:] = selected
+
     splits = config.getoption("--splits")
     group = config.getoption("--group")
     if splits is None and group is None:
@@ -634,7 +666,9 @@ def reset_mock_llm(mock_url: str) -> None:
     resp.raise_for_status()
 
 
-def seed_committed_items(session_id: str, items: list[Any]) -> None:
+def seed_committed_items(
+    session_id: str, items: list[Any], *, at_epoch: int | None = None
+) -> None:
     """Append committed ``NewConversationItem``s straight into the store.
 
     For tests that need a settled transcript to act on but not the model's
@@ -661,6 +695,11 @@ def seed_committed_items(session_id: str, items: list[Any]) -> None:
             "seeding needs the spawned server's database; it is "
             "unavailable with --ui-base-url or a workflow-owned reproduction environment."
         )
+    if compat_server_python() is not None or at_epoch is not None:
+        from tests._helpers.server_stores import append_server_items
+
+        append_server_items(str(database_uri), session_id, items, at_epoch=at_epoch)
+        return
     SqlAlchemyConversationStore(str(database_uri)).append(session_id, items)
 
 
@@ -729,6 +768,11 @@ def set_session_task_summary(session_id: str, task_summary: str) -> None:
             "set_session_task_summary needs the spawned server's database; it "
             "is unavailable with --ui-base-url or a workflow-owned reproduction environment."
         )
+    if compat_server_python() is not None:
+        from tests._helpers.server_stores import set_server_task_summary
+
+        set_server_task_summary(str(database_uri), session_id, task_summary)
+        return
     SqlAlchemyConversationStore(str(database_uri)).set_task_summary(session_id, task_summary)
 
 
@@ -875,8 +919,9 @@ def _spawn_runner_against_external_server(
     }
     log_handle = open(log_path, "w")  # noqa: SIM115 — closed in finally
     proc = subprocess.Popen(
-        [sys.executable, "-m", "omnigent.runner._entry"],
-        env=env,
+        [runner_executable(), "-m", "omnigent.runner._entry"],
+        env=apply_runner_env(env),
+        cwd=compat_runner_cwd(),
         stdout=log_handle,
         stderr=subprocess.STDOUT,
     )
@@ -1115,8 +1160,9 @@ def live_server(
         "OPENAI_API_KEY": "mock-key",
     }
     runner_proc = subprocess.Popen(
-        [sys.executable, "-m", "omnigent.runner._entry"],
-        env=runner_env,
+        [runner_executable(), "-m", "omnigent.runner._entry"],
+        env=apply_runner_env(runner_env),
+        cwd=compat_runner_cwd(),
         stdout=runner_log_handle,
         stderr=subprocess.STDOUT,
     )
@@ -1407,8 +1453,9 @@ def _ensure_runner_online(
         ),
     }
     proc = subprocess.Popen(
-        [sys.executable, "-m", "omnigent.runner._entry"],
-        env=env,
+        [runner_executable(), "-m", "omnigent.runner._entry"],
+        env=apply_runner_env(env),
+        cwd=compat_runner_cwd(),
         stdout=log_handle,
         stderr=subprocess.STDOUT,
     )
@@ -2330,11 +2377,18 @@ def _stop_recorded_context(item: pytest.Item) -> None:
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
-) -> Generator[None, None, None]:
-    """Stop the recording when the test body ends, before later fixtures tear down.
+) -> Generator[None, Any, None]:
+    """Finalize recordings and reject skipped tests in selected sidecar runs.
 
     The ``context`` behind ``page`` otherwise outlives the session fixtures' teardown."""
-    yield
+    outcome = yield
+    report = outcome.get_result()
+    if (
+        item.config.getoption("--ui-codex-sidecar-only")
+        or item.config.getoption("--ui-dependency-smoke")
+    ) and report.skipped:
+        report.outcome = "failed"
+        report.longrepr = f"Selected sidecar test skipped: {report.longrepr}"
     if call.when == "call" and _recording_requested(item):
         _stop_recorded_context(item)
 
@@ -2545,7 +2599,9 @@ def _bind_session_runner(base_url: str, session_id: str, runner_id: str) -> None
     bind_session_runner(httpx.patch, base_url, session_id, runner_id, timeout=10.0)
 
 
-def _create_bundled_session(base_url: str, runner_id: str, yaml_text: str) -> str:
+def _create_bundled_session(
+    base_url: str, runner_id: str, yaml_text: str, *, workspace: str | None = None
+) -> str:
     """Register a session-scoped agent from *yaml_text* and bind its session.
 
     The multipart ``POST /v1/sessions`` both registers the agent and creates
@@ -2561,7 +2617,13 @@ def _create_bundled_session(base_url: str, runner_id: str, yaml_text: str) -> st
     data = yaml_text.encode()
     bundle_bytes = bundle_files({"config.yaml": data})
 
-    create = post_session_bundle(httpx.post, f"{base_url}/v1/sessions", bundle_bytes, timeout=30.0)
+    create = post_session_bundle(
+        httpx.post,
+        f"{base_url}/v1/sessions",
+        bundle_bytes,
+        metadata={"workspace": workspace} if workspace is not None else None,
+        timeout=30.0,
+    )
     create.raise_for_status()
     session_id = str(create.json()["session_id"])
     _bind_session_runner(base_url, session_id, runner_id)
@@ -2806,23 +2868,32 @@ def native_codex_session(
                 respawned.wait(timeout=5)
 
 
-@pytest.fixture
-def native_claude_mock_session(
+@contextlib.contextmanager
+def native_claude_mock_session_context(
     live_server: str,
     mock_llm_server_url: str,
     tmp_path_factory: pytest.TempPathFactory,
+    *,
+    terminal_launch_args: list[str] | None = None,
 ) -> Iterator[tuple[str, str]]:
     """A real Claude CLI using an explicitly configured mock provider.
 
     Workflow-owned runners are already configured. Standalone tests temporarily
     install a mock provider regardless of ambient credential placeholders.
+    ``terminal_launch_args`` are persisted on the session and passed to ``claude``.
+    Callers request ``claude_managed_settings`` to expose real machine routing.
     """
+    validate_native_claude_mock_routing(mock_llm_server_url)
     respawned = _ensure_runner_online(live_server, tmp_path_factory)
     runner_id = str(_server_state["runner_id"])
     with _temp_omnigent_mock_config(
         mock_llm_server_url, "claude", workflow_owned=bool(_server_state.get("workflow_owned"))
     ):
-        session_id = _create_native_claude_session(live_server, runner_id)
+        # Keep the default create call unchanged; tests/test_ui_fixture_wiring.py pins it.
+        launch_args = (
+            {} if terminal_launch_args is None else {"terminal_launch_args": terminal_launch_args}
+        )
+        session_id = _create_native_claude_session(live_server, runner_id, **launch_args)
         try:
             yield (live_server, session_id)
         finally:
@@ -2834,6 +2905,20 @@ def native_claude_mock_session(
                 except subprocess.TimeoutExpired:
                     respawned.kill()
                     respawned.wait(timeout=5)
+
+
+@pytest.fixture
+def native_claude_mock_session(
+    live_server: str,
+    mock_llm_server_url: str,
+    tmp_path_factory: pytest.TempPathFactory,
+    claude_managed_settings: None,
+) -> Iterator[tuple[str, str]]:
+    """A real Claude CLI using an explicitly configured mock provider."""
+    with native_claude_mock_session_context(
+        live_server, mock_llm_server_url, tmp_path_factory
+    ) as session:
+        yield session
 
 
 @pytest.fixture
@@ -3088,8 +3173,9 @@ def mocked_native_codex_session(
     try:
         proc = _spawn_server()
         runner_proc = subprocess.Popen(
-            [sys.executable, "-m", "omnigent.runner._entry"],
-            env=runner_env,
+            [runner_executable(), "-m", "omnigent.runner._entry"],
+            env=apply_runner_env(runner_env),
+            cwd=compat_runner_cwd(),
             stdout=runner_log_handle,
             stderr=subprocess.STDOUT,
         )

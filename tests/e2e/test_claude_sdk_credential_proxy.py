@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -16,6 +18,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests._helpers.compat import (
+    apply_runner_env,
+    compat_runner_cwd,
+    compat_runner_python,
+    runner_executable,
+)
 from tests.e2e.conftest import (
     configure_mock_llm,
     create_runner_bound_session,
@@ -30,6 +38,30 @@ pytestmark = pytest.mark.skipif(
 )
 
 _REFRESH_INTERVAL_SECONDS = 0.1
+
+
+def _runner_read_paths() -> list[str]:
+    """Grant the selected runner's environment and import root to bubblewrap."""
+    if compat_runner_python() is None:
+        return [str(Path(__file__).resolve().parents[2]), sys.prefix]
+    result = subprocess.run(
+        [
+            runner_executable(),
+            "-c",
+            "import json, sys, omnigent; print(json.dumps([sys.prefix, omnigent.__file__]))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=apply_runner_env(dict(os.environ)),
+        cwd=compat_runner_cwd(),
+    )
+    prefix, module_file = json.loads(result.stdout)
+    roots = [Path(prefix).resolve(), Path(module_file).resolve().parents[1]]
+    if any(not root.is_dir() or root == Path(root.anchor) for root in roots):
+        raise ValueError("runner read grants must be concrete package or environment roots")
+    return list(dict.fromkeys(str(root) for root in roots))
 
 
 @pytest.fixture
@@ -116,10 +148,10 @@ def test_claude_sdk_credential_proxy_survives_transport_and_renews(
         extra_config={
             "os_env": {
                 "type": "caller_process",
-                "cwd": str(workspace),
+                "cwd": ".",
                 "sandbox": {
                     "type": "linux_bwrap",
-                    "read_paths": [str(Path(__file__).resolve().parents[2]), sys.prefix],
+                    "read_paths": _runner_read_paths(),
                     "write_paths": ["."],
                     "egress_rules": ["* localhost/**", "* 127.0.0.1/**"],
                     "egress_allow_private_destinations": True,
@@ -139,7 +171,10 @@ def test_claude_sdk_credential_proxy_survives_transport_and_renews(
         },
     )
     session_id = create_runner_bound_session(
-        http_client, agent_name=agent_name, runner_id=live_runner_id
+        http_client,
+        agent_name=agent_name,
+        runner_id=live_runner_id,
+        workspace=str(workspace),
     )
     placeholder_file = workspace / "placeholder.txt"
     result_files = [workspace / f"result-{index}.txt" for index in range(2)]

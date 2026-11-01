@@ -140,24 +140,47 @@ describe("showArchiveUndoToast", () => {
   });
 
   it("starts a fresh batch after an Undo", async () => {
-    mountToaster();
-    await show(["a", "b"]);
-    await screen.findByText("Archived 2 sessions");
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    });
-    expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, convs("a", "b"));
-    // Let the dismissed toast finish animating out before reusing the toast id.
-    await waitFor(() => expect(screen.queryByText(/^Archived/)).not.toBeInTheDocument());
+    vi.useFakeTimers();
+    try {
+      mountToaster();
+      await show(["a", "b"]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByText("Archived 2 sessions")).toBeInTheDocument();
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      });
+      expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, convs("a", "b"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(48);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(152);
+      });
+      expect(screen.queryByText(/^Archived/)).not.toBeInTheDocument();
 
-    // A later archive is its own batch, not appended to the undone one: it reads
-    // "1 session" and undoing again restores only the new id.
-    await show(["x"]);
-    await screen.findByText("Archived 1 session");
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    });
-    expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, convs("x"));
+      await show(["x"]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByText("Archived 1 session")).toBeInTheDocument();
+      // A previous toast's delayed removal must not dismiss this fresh batch.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      });
+      expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, convs("x"));
+    } finally {
+      resetArchiveUndoBatchForTests();
+      toast.dismiss();
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+      vi.useRealTimers();
+    }
   });
 
   it("navigates to the archived-sessions settings page via View archived", async () => {

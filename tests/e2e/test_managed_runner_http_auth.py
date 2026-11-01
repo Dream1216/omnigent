@@ -37,6 +37,7 @@ owner JWT fully expires must re-resolve a local credential instead of raising
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -66,7 +67,12 @@ from omnigent.runner.identity import (
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
-from tests._helpers.compat import apply_server_env, compat_server_cwd, server_executable
+from tests._helpers.compat import (
+    apply_server_env,
+    compat_server_cwd,
+    compat_server_python,
+    server_executable,
+)
 from tests._helpers.live_server import find_free_port
 from tests.server.helpers import build_agent_bundle
 
@@ -220,10 +226,43 @@ def _seed_owned_session_with_managed_runner(base_url: str, db_uri: str) -> str:
     from omnigent.stores.host_store import HostStore
 
     host_id = "fc07bf2e7b2943ad9960f771169e83cc"
-    HostStore(db_uri).upsert_on_connect(host_id, "managed-test-host", _OWNER)
-    conversations = SqlAlchemyConversationStore(db_uri)
-    conversations.set_host_id(session_id, host_id, workspace="/tmp/e2e-workspace")
-    conversations.replace_runner_id(session_id, runner_id)
+    if compat_server_python() is not None:
+        subprocess.run(
+            [
+                server_executable(),
+                "-c",
+                "import json, sys; "
+                "from omnigent.stores.host_store import HostStore; "
+                "from omnigent.stores.conversation_store.sqlalchemy_store "
+                "import SqlAlchemyConversationStore; "
+                "value = json.load(sys.stdin); "
+                "HostStore(value['db_uri']).upsert_on_connect("
+                "value['host_id'], 'managed-test-host', value['owner']); "
+                "store = SqlAlchemyConversationStore(value['db_uri']); "
+                "store.set_host_id(value['session_id'], value['host_id'], "
+                "workspace='/tmp/e2e-workspace'); "
+                "store.replace_runner_id(value['session_id'], value['runner_id'])",
+            ],
+            input=json.dumps(
+                {
+                    "db_uri": db_uri,
+                    "host_id": host_id,
+                    "owner": _OWNER,
+                    "session_id": session_id,
+                    "runner_id": runner_id,
+                }
+            ),
+            text=True,
+            check=True,
+            timeout=30,
+            env=apply_server_env(dict(os.environ), _REPO_ROOT),
+            cwd=compat_server_cwd(),
+        )
+    else:
+        HostStore(db_uri).upsert_on_connect(host_id, "managed-test-host", _OWNER)
+        conversations = SqlAlchemyConversationStore(db_uri)
+        conversations.set_host_id(session_id, host_id, workspace="/tmp/e2e-workspace")
+        conversations.replace_runner_id(session_id, runner_id)
     return session_id
 
 

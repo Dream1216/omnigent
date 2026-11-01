@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from saas.production.review_exception import apply_review_exception, review_verification_scope
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _CODE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{1,95}$")
@@ -658,10 +660,22 @@ def _validate_attestations(
     label: str,
     completed: datetime | None,
     product_revision: object,
+    repo: Path | None = None,
+    now: datetime | None = None,
 ) -> tuple[list[str], list[str]]:
     violations: list[str] = []
     blockers: list[str] = []
     required_roles = _string_set(policy.get("required_attestation_roles"))
+    review = apply_review_exception(
+        repo,
+        value,
+        domain="slo_capacity",
+        required_roles=required_roles,
+        product_revision=product_revision,
+        now=now or datetime.now(UTC),
+    )
+    violations.extend(review.violations)
+    required_roles, value = review.required_roles, review.attestations
     roles: set[str] = set()
     actors: set[str] = set()
     if not isinstance(value, list):
@@ -703,6 +717,7 @@ def _validate_record(
     baseline: Mapping[str, Any],
     now: datetime,
     expected_product_revision: str | None,
+    repo: Path | None = None,
 ) -> tuple[list[str], list[str]]:
     violations: list[str] = []
     blockers: list[str] = []
@@ -784,6 +799,8 @@ def _validate_record(
         label=label,
         completed=completed,
         product_revision=product_revision,
+        repo=repo,
+        now=now,
     )
     violations.extend(item_violations)
     blockers.extend(item_blockers)
@@ -793,6 +810,7 @@ def _validate_record(
     return violations, blockers
 
 
+@review_verification_scope
 def validate_slo_capacity_readiness(
     repo: Path,
     policy: Mapping[str, Any],
@@ -830,6 +848,7 @@ def validate_slo_capacity_readiness(
             baseline=current_baseline,
             now=current,
             expected_product_revision=expected_product_revision,
+            repo=repo,
         )
         violations.extend(record_violations)
         blockers.extend(record_blockers)

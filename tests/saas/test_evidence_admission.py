@@ -558,7 +558,9 @@ def test_receipt_workflow_preserves_protected_external_signing_boundary() -> Non
     assert "ref: ${{ github.sha }}" in workflow
     assert "${{ github.workflow_ref }}" in workflow
     assert "private_key" not in workflow.lower()
-    assert "permissions: {contents: read}" in workflow
+    assert "permissions: {contents: read, actions: read}" in workflow
+    assert "GH_TOKEN: ${{ github.token }}" in workflow
+    assert "contents: write" not in workflow and "actions: write" not in workflow
     assert "saas.scripts.issue_evidence_receipt" in workflow
     assert "if: always()" in workflow
     assert "if-no-files-found: error" in workflow

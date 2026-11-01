@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from saas.production.review_exception import apply_review_exception, review_verification_scope
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _CODE = re.compile(r"^[a-z][a-z0-9_-]{1,95}$")
@@ -567,10 +569,21 @@ def _validate_attestations(
     record_subject_sha256: str,
     verification_floor: datetime | None,
     now: datetime,
+    repo: Path | None = None,
 ) -> tuple[list[str], list[str]]:
     violations: list[str] = []
     blockers: list[str] = []
     required_roles = _string_set(policy.get("required_attestation_roles"))
+    review = apply_review_exception(
+        repo,
+        attestations,
+        domain="deletion",
+        required_roles=required_roles,
+        product_revision=product_revision,
+        now=now,
+    )
+    violations.extend(review.violations)
+    required_roles, attestations = review.required_roles, review.attestations
     roles: set[str] = set()
     actor_id_hmacs: set[str] = set()
     if not isinstance(attestations, list):
@@ -621,6 +634,7 @@ def _validate_record(
     policy: Mapping[str, Any],
     now: datetime,
     expected_product_revision: str | None,
+    repo: Path | None = None,
 ) -> tuple[list[str], list[str]]:
     violations: list[str] = []
     blockers: list[str] = []
@@ -717,6 +731,7 @@ def _validate_record(
         record_subject_sha256=record_subject_sha256,
         verification_floor=max(verification_times) if verification_times else None,
         now=now,
+        repo=repo,
     )
     violations.extend(attestation_violations)
     blockers.extend(attestation_blockers)
@@ -726,6 +741,7 @@ def _validate_record(
     return violations, blockers
 
 
+@review_verification_scope
 def validate_deletion_readiness(
     repo: Path,
     policy: Mapping[str, Any],
@@ -755,6 +771,7 @@ def validate_deletion_readiness(
             policy=policy,
             now=current,
             expected_product_revision=expected_product_revision,
+            repo=repo,
         )
         violations.extend(record_violations)
         blockers.extend(record_blockers)

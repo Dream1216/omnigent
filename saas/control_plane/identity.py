@@ -759,6 +759,16 @@ class PasswordCredentialService:
                 f"{_MAX_PASSWORD_LENGTH} characters",
             )
 
+    def get_password_version(self, user_id: UUID) -> int | None:
+        """Return only the credential version needed for a self-service change."""
+
+        with self._session_factory() as db:
+            return db.execute(
+                sa.select(PasswordCredential.password_version).where(
+                    PasswordCredential.user_id == user_id
+                )
+            ).scalar_one_or_none()
+
     def authenticate(self, email: str, password: str, *, now: datetime | None = None) -> UUID:
         """Authenticate one unambiguous verified email without revealing failure cause."""
 

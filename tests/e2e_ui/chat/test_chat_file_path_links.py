@@ -60,7 +60,7 @@ def _agent_bundle(cwd: str) -> bytes:
     ``external_assistant_message``). The ``*.yaml`` arcname routes the bundle
     through the omnigent compat adapter, matching the conftest helpers.
 
-    :param cwd: Absolute workspace directory the runner should use as root.
+    :param cwd: Relative directory within the session workspace.
     :returns: ``.tar.gz`` bytes for multipart upload.
     """
     yaml_text = f"""\
@@ -113,7 +113,11 @@ def linkify_session(
     (ws / _ROOT_FILE).write_text(_README_CONTENT)
 
     create_resp = post_session_bundle(
-        httpx.post, f"{live_server}/v1/sessions", _agent_bundle(str(ws)), timeout=30.0
+        httpx.post,
+        f"{live_server}/v1/sessions",
+        _agent_bundle("."),
+        metadata={"workspace": str(ws)},
+        timeout=30.0,
     )
     create_resp.raise_for_status()
     session_id = create_resp.json()["session_id"]
@@ -223,6 +227,52 @@ def test_chat_linkifies_workspace_paths_including_home_relative(
     hosts_link.click()
     page.wait_for_url(re.compile(r"[?&]file=%2Fetc%2Fhosts(?:&|$)"), timeout=15_000)
     expect(page.get_by_test_id("file-viewer").last).to_contain_text("localhost", timeout=15_000)
+
+
+def test_chat_link_opens_file_beyond_first_large_directory_page(
+    page: Page,
+    live_server: str,
+    runner_id: str,
+    tmp_path: Path,
+) -> None:
+    large = tmp_path / "large"
+    large.mkdir()
+    for i in range(500):
+        (large / (f"{i:04d}-" + "x" * 180 + ".txt")).touch()
+    target = large / "zzzz-target.md"
+    target.write_text("# File beyond the first page\n")
+
+    create_resp = post_session_bundle(
+        httpx.post,
+        f"{live_server}/v1/sessions",
+        _agent_bundle("."),
+        metadata={"workspace": str(tmp_path)},
+        timeout=30.0,
+    )
+    create_resp.raise_for_status()
+    session_id = create_resp.json()["session_id"]
+    try:
+        bind_session_runner(httpx.patch, live_server, session_id, runner_id, timeout=10.0)
+        event_resp = httpx.post(
+            f"{live_server}/v1/sessions/{session_id}/events",
+            json={
+                "type": "external_assistant_message",
+                "data": {"agent": _AGENT_NAME, "text": "See `large/zzzz-target.md`."},
+            },
+            timeout=10.0,
+        )
+        event_resp.raise_for_status()
+
+        page.goto(f"{live_server}/c/{session_id}")
+        link = page.get_by_role("button", name="large/zzzz-target.md")
+        expect(link).to_be_visible(timeout=30_000)
+        link.click()
+        page.wait_for_url(re.compile(r"[?&]file=large%2Fzzzz-target\.md(?:&|$)"))
+        expect(page.get_by_test_id("file-viewer").last).to_contain_text(
+            "File beyond the first page"
+        )
+    finally:
+        httpx.delete(f"{live_server}/v1/sessions/{session_id}", timeout=10.0)
 
 
 # A phone-sized touch context: no hover affordance exists there, so a file

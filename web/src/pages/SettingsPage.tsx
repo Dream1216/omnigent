@@ -42,7 +42,6 @@ import {
   useRef,
   useState,
 } from "react";
-import GithubMono from "@lobehub/icons/es/Github/components/Mono";
 import { useViewerId } from "@/hooks/useViewerId";
 import {
   ArchiveRestoreIcon,
@@ -51,6 +50,7 @@ import {
   DownloadIcon,
   FileDiffIcon,
   FilesIcon,
+  GitPullRequestIcon,
   KeyRoundIcon,
   Loader2Icon,
   LogOutIcon,
@@ -60,6 +60,7 @@ import {
   MoonIcon,
   PanelRightCloseIcon,
   PanelRightIcon,
+  PinIcon,
   PlusIcon,
   SunIcon,
   SquareCheckIcon,
@@ -76,6 +77,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { PageScroll } from "@/components/PageScroll";
 import { SettingsGroup } from "@/components/SettingsGroup";
 import { SettingsLabel } from "@/components/SettingsLabel";
+import { McpRegistryConnections } from "@/components/McpRegistry";
 import { ThemeColorPicker } from "@/components/theme/ThemeColorPicker";
 import { CardRadioGroup } from "@/components/theme/CardRadioGroup";
 import { IconSegmentedControl } from "@/components/theme/IconSegmentedControl";
@@ -100,7 +102,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { MOD_KEY } from "@/components/KeyboardShortcut";
+import { ALT_KEY, MOD_KEY } from "@/components/KeyboardShortcut";
 import { KeyboardShortcutsList } from "@/components/KeyboardShortcutsDialog";
 import { LanguageSettingControl } from "@/components/LanguageSwitcher";
 import { changePassword } from "@/lib/accountsApi";
@@ -117,7 +119,14 @@ import {
   fetchDatabricksStatus,
   type DatabricksConnectionStatus,
 } from "@/lib/databricksIntegration";
-import { getCurrentIsAdmin, logoutBrowserSession, resolveIdentity } from "@/lib/identity";
+import {
+  changeSaasPassword,
+  clearBrowserSessionIdentity,
+  getCurrentIsAdmin,
+  getSaasPasswordVersion,
+  logoutBrowserSession,
+  resolveIdentity,
+} from "@/lib/identity";
 import { clearOptimisticTitles } from "@/lib/optimisticTitles";
 import { clearSessionDrafts } from "@/lib/sessionDrafts";
 import { sessionUpdatesSocket } from "@/lib/sessionUpdatesSocket";
@@ -199,8 +208,12 @@ import {
 } from "@/lib/transcriptViewPreferences";
 import {
   DEFAULT_WORKSPACE_TAB,
+  defaultWorkspaceTabs,
+  PINNED_WORKSPACE_TABS_STORAGE_KEY,
   readDefaultWorkspaceTab,
+  readPinnedWorkspaceTabs,
   writeDefaultWorkspaceTab,
+  writePinnedWorkspaceTabs,
   type DefaultWorkspaceTab,
 } from "@/lib/workspaceTabPreferences";
 import { readDefaultBaseBranch, writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
@@ -267,7 +280,7 @@ import {
   writeBackgroundSessionTitlesEnabled,
 } from "@/lib/backgroundSessionTitlesPreferences";
 import { SettingsHarnessesSection } from "./settings/SettingsHarnessesSection";
-import { ReviewImportsPanel } from "@/components/onboarding/HostImportReview";
+import { SettingsCustomAgentsSection } from "./settings/SettingsCustomAgentsSection";
 
 // Admin-only management surfaces, rendered as the Members / Policies settings
 // sub-categories. Visible to admins in all modes (accounts, OIDC, single-user).
@@ -301,7 +314,7 @@ export function SettingsPage() {
   useOmnigentPageView(`settings.${section}`);
 
   const pageWrapperSettings = useMemo(() => {
-    if (section === "harnesses") {
+    if (section === "harnesses" || section === "custom-agents") {
       return {
         maxWidthClassName: "max-w-4xl",
         contentClassName: "px-4 md:px-8",
@@ -332,12 +345,33 @@ export function SettingsPage() {
   }
 
   return (
-    <PageScroll contentClassName="px-4 md:px-8" extraBottom="2.5rem" {...pageWrapperSettings}>
+    <PageScroll
+      contentClassName="px-4 md:px-8"
+      extraBottom="2.5rem"
+      // Reserve the scrollbar's width so the centered column doesn't shift when
+      // switching between a page or tab that scrolls and one that doesn't.
+      className="[scrollbar-gutter:stable]"
+      {...pageWrapperSettings}
+    >
       {section === "appearance" && <AppearanceSection />}
       {section === "general" && <GeneralSection />}
       {section === "harnesses" && <SettingsHarnessesSection />}
+      {section === "custom-agents" && <SettingsCustomAgentsSection />}
       {section === "git" && <GitSection />}
       {section === "integrations" && <IntegrationsSection />}
+      {section === "mcp" && (
+        <Section title="MCP">
+          {info !== "loading" && info.enabled_connections?.includes("mcp") ? (
+            <McpRegistryConnections />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {info === "loading"
+                ? "Loading MCP services…"
+                : "MCP services are not configured on this server."}
+            </p>
+          )}
+        </Section>
+      )}
       {section === "shortcuts" && <ShortcutsSection />}
       {section === "import" && <ImportSection />}
       {section === "account" && hasAuthSession && <AccountSection />}
@@ -415,7 +449,7 @@ const workspaceTabCards: {
 }[] = [
   { value: "files", label: "Files", icon: FilesIcon },
   { value: "changes", label: "Changes", icon: FileDiffIcon },
-  { value: "github", label: "GitHub", icon: GithubMono },
+  { value: "github", label: "Pull Requests", icon: GitPullRequestIcon },
   { value: "subagents", label: "Agents", icon: BotIcon },
 ];
 
@@ -576,33 +610,121 @@ function WorkspacePanelDefaultControl() {
   );
 }
 
-/** Fallback tab for sessions without a remembered Workspace tab. */
-function WorkspaceTabDefaultControl() {
+/** Pinned pages and the first tab for sessions without a remembered selection. */
+function WorkspaceTabsControl() {
   const [value, setValue] = useState(() => readDefaultWorkspaceTab());
+  const [pinned, setPinned] = useState(() => readPinnedWorkspaceTabs());
   const labelId = useId();
+  const pinnedLabelId = useId();
+  const pinnedCards = workspaceTabCards.filter((card) => pinned.includes(card.value));
+  const firstTab = pinnedCards.find((card) => card.value === value) ?? pinnedCards[0];
+  const previewTabs = firstTab
+    ? [firstTab, ...pinnedCards.filter((card) => card !== firstTab)]
+    : [];
   const choose = useCallback((next: DefaultWorkspaceTab) => {
     setValue(next);
     writeDefaultWorkspaceTab(next);
   }, []);
+  const togglePin = (tab: DefaultWorkspaceTab, checked: boolean) => {
+    const next = defaultWorkspaceTabs.filter((item) =>
+      item === tab ? checked : pinned.includes(item),
+    );
+    setPinned(next);
+    writePinnedWorkspaceTabs(next);
+  };
   return (
-    <ThemeSubsection
-      labelId={labelId}
-      title="Default Workspace tab"
-      helper="Shown first in Workspace. Changing this also updates existing chats when reopened or refreshed. Later tab choices are remembered. File links still open the linked file."
-    >
-      <CardRadioGroup<DefaultWorkspaceTab>
-        labelledBy={labelId}
-        value={value}
-        onSelect={choose}
-        className="grid grid-cols-2 gap-3 sm:grid-cols-4"
-        cardClassName="items-center gap-2 p-4"
-        items={workspaceTabCards.map((card) => ({
-          value: card.value,
-          testId: `workspace-tab-default-${card.value}`,
-          body: iconCardBody(card.icon, card.label),
-        }))}
-      />
-    </ThemeSubsection>
+    <div className="flex flex-col gap-4">
+      <ThemeSubsection
+        labelId={pinnedLabelId}
+        title="Sidebar tabs"
+        helper="Pin the pages you use most. Everything else stays in the + menu."
+      >
+        <div
+          role="img"
+          aria-label={`Sidebar preview: ${previewTabs.length ? `${previewTabs.map((tab) => tab.label).join(", ")} pinned` : "all pages in the + menu"}.`}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/25 px-3 py-2.5"
+        >
+          <span className="text-sm text-muted-foreground">Sidebar preview</span>
+          <div aria-hidden="true" className="flex shrink-0 items-center gap-1">
+            {previewTabs.map(({ value: tab, icon: Icon }) => (
+              <span
+                key={tab}
+                className={cn(
+                  "flex size-7 items-center justify-center rounded-md text-muted-foreground",
+                  tab === firstTab?.value && "bg-background text-foreground shadow-xs",
+                )}
+              >
+                <Icon className="size-4" />
+              </span>
+            ))}
+            {previewTabs.length > 0 && <span className="mx-1 h-4 w-px bg-border" />}
+            <span className="flex size-7 items-center justify-center text-muted-foreground">
+              <PlusIcon className="size-4" />
+            </span>
+          </div>
+        </div>
+        <div role="group" aria-labelledby={pinnedLabelId} className="divide-y divide-border">
+          {workspaceTabCards.map(({ value: tab, label, icon: Icon }) => {
+            const isPinned = pinned.includes(tab);
+            return (
+              <div key={tab} className="flex items-center gap-3 py-2.5">
+                <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                <span className="flex-1 text-ui">{label}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Pin ${label}`}
+                  aria-pressed={isPinned}
+                  title={`${isPinned ? "Unpin" : "Pin"} ${label}`}
+                  onClick={() => togglePin(tab, !isPinned)}
+                  className={cn(
+                    "min-w-24",
+                    isPinned
+                      ? "bg-primary/8 text-primary hover:bg-primary/12"
+                      : "text-muted-foreground",
+                  )}
+                  componentId={`settings.appearance.pin_workspace_${tab}`}
+                >
+                  <PinIcon
+                    aria-hidden="true"
+                    className={cn("size-3.5", isPinned && "fill-current")}
+                  />
+                  {isPinned ? "Pinned" : "Pin"}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      </ThemeSubsection>
+      {firstTab && (
+        <div className="border-t border-border pt-4">
+          <ThemeSubsection
+            labelId={labelId}
+            title="Default Workspace tab"
+            helper="Shown first in Workspace. Changing this also updates existing chats when reopened or refreshed. Later tab choices are remembered. File links still open the linked file."
+          >
+            <CardRadioGroup<DefaultWorkspaceTab>
+              labelledBy={labelId}
+              value={firstTab.value}
+              onSelect={choose}
+              className={cn(
+                "grid gap-3",
+                pinnedCards.length > 1 && "grid-cols-2",
+                pinnedCards.length === 3 && "sm:grid-cols-3",
+                pinnedCards.length === 4 && "sm:grid-cols-4",
+              )}
+              cardClassName="items-center gap-2 p-4"
+              items={pinnedCards.map((card) => ({
+                value: card.value,
+                testId: `workspace-tab-default-${card.value}`,
+                body: iconCardBody(card.icon, card.label),
+              }))}
+            />
+          </ThemeSubsection>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -813,6 +935,8 @@ function AppearanceSection() {
   // replace it with a note (plus a link to the host's own theme settings when
   // one is provided). The color palette, terminal theme, and font controls are
   // per-device prefs that don't conflict with host light/dark, so they stay.
+  // The link opens a new tab: in place, it would replace the app with the
+  // host page, and desktop windows have no Back control.
   const isEmbedded = useIsEmbedded();
   const themeSettingsUrl = getOmnigentThemeSettingsUrl();
   const { setTheme } = useTheme();
@@ -839,6 +963,7 @@ function AppearanceSection() {
     writeWorkspacePanelDefault(WORKSPACE_PANEL_DEFAULT);
 
     writeDefaultWorkspaceTab(DEFAULT_WORKSPACE_TAB);
+    writePinnedWorkspaceTabs(defaultWorkspaceTabs);
 
     writeHideUnconfiguredHarnesses(DEFAULT_HIDE_UNCONFIGURED_HARNESSES);
 
@@ -866,6 +991,7 @@ function AppearanceSection() {
           "omnigent:default-transcript-view",
           "omnigent:default-workspace-panel",
           "omnigent:default-workspace-tab",
+          PINNED_WORKSPACE_TABS_STORAGE_KEY,
           "omnigent:hide-unconfigured-harnesses",
         ]) {
           window.localStorage.removeItem(key);
@@ -936,6 +1062,8 @@ function AppearanceSection() {
                           {" "}
                           <a
                             href={themeSettingsUrl}
+                            target="_blank"
+                            rel="noreferrer"
                             className="font-medium text-primary underline underline-offset-2 hover:text-primary/80"
                           >
                             Click to open Databricks user preferences page.
@@ -949,6 +1077,8 @@ function AppearanceSection() {
                 {themeSettingsUrl && (
                   <a
                     href={themeSettingsUrl}
+                    target="_blank"
+                    rel="noreferrer"
                     className="text-sm font-medium text-primary underline underline-offset-2 md:hidden"
                   >
                     Open Databricks preferences
@@ -969,13 +1099,14 @@ function AppearanceSection() {
           <SettingsGroup title="Chat defaults" testId="settings-group-chat">
             <TranscriptViewDefaultControl />
             <div className="mt-4 border-t border-border pt-4">
-              <WorkspacePanelDefaultControl />
-            </div>
-            <div className="mt-4 border-t border-border pt-4">
-              <WorkspaceTabDefaultControl />
-            </div>
-            <div className="mt-4 border-t border-border pt-4">
               <HideUnconfiguredHarnessesControl />
+            </div>
+          </SettingsGroup>
+
+          <SettingsGroup title="Workspace" testId="settings-group-workspace">
+            <WorkspacePanelDefaultControl />
+            <div className="mt-4 border-t border-border pt-4">
+              <WorkspaceTabsControl />
             </div>
           </SettingsGroup>
 
@@ -1135,7 +1266,6 @@ function GithubMark({ className }: { className?: string }) {
 }
 
 /**
-/**
  * Which panel connects/disconnects each provider. The server's
  * ``enabled_connections`` list says WHICH panels to show; this map says HOW to
  * render each. Adding a provider is one entry here plus one string server-side.
@@ -1148,7 +1278,7 @@ const CONNECTION_PANELS: Record<string, ComponentType> = {
 /**
  * Sandbox Integrations settings. Renders one connect/disconnect panel per
  * provider the server reports in ``enabled_connections``, in that order. The
- * nav hides the section entirely when the list is empty.
+ * MCP accounts have their own page; the nav hides this section without other providers.
  */
 function IntegrationsSection() {
   const info = useServerInfo();
@@ -1368,7 +1498,7 @@ function DeleteWorktreesOnArchiveControl() {
 
 /**
  * Connect / disconnect a Databricks workspace. Once connected, a managed
- * sandbox launched by this user reaches the Databricks AI Gateway (MCP + model
+ * sandbox launched by this user reaches the Databricks Unity Gateway (MCP + model
  * serving) as them, using their per-user OAuth token. Databricks is
  * multi-workspace, so the user supplies their workspace URL. The connect action
  * is a full-page redirect to the workspace OAuth consent; on return the callback
@@ -1449,8 +1579,8 @@ function DatabricksIntegrationControl() {
           className="flex-1"
           description={
             status.connected && status.workspace_host
-              ? `Connected to ${status.workspace_host}${status.databricks_user ? ` as ${status.databricks_user}` : ""}. New sandboxes reach the Databricks AI Gateway (MCP + model serving) as you.`
-              : "Connect your Databricks workspace so new sandboxes reach its AI Gateway (MCP + model serving) as you."
+              ? `Connected to ${status.workspace_host}${status.databricks_user ? ` as ${status.databricks_user}` : ""}. New sandboxes reach the Databricks Unity Gateway (MCP + model serving) as you.`
+              : "Connect your Databricks workspace so new sandboxes reach its Unity Gateway (MCP + model serving) as you."
           }
         />
         <div className="flex shrink-0 items-center gap-2">
@@ -1542,7 +1672,7 @@ function ComposerSendShortcutControl() {
         className="flex-1"
         description={
           <>
-            <p>Off: Enter submits and Shift+Enter inserts a newline.</p>
+            <p>Off: Enter submits and Shift+Enter or {ALT_KEY}+Enter inserts a newline.</p>
             <p>On: Enter inserts a newline and {MOD_KEY}+Enter submits.</p>
           </>
         }
@@ -2459,12 +2589,20 @@ function AccountSection() {
   const info = useServerInfo();
   const queryClient = useQueryClient();
   const accountsEnabled = info !== "loading" && info.accounts_enabled;
+  const saasMode = info !== "loading" && info.login_url === "/saas/login";
   // Identity for display. Sourced from the mode-agnostic `/v1/me` probe so it
   // works under OIDC too (the accounts-only `/auth/me` doesn't exist there).
   const [me, setMe] = useState<{ id: string; is_admin: boolean } | null | "unknown">("unknown");
 
-  // Change-password dialog state (lifted verbatim from the old AccountMenu).
-  // Only used in accounts mode — OIDC identities have no local password.
+  // SaaS advertises the account's version before enabling password changes.
+  const [passwordVersion, setPasswordVersion] = useState<number | null>(null);
+  const [passwordStatusError, setPasswordStatusError] = useState<string | null>(null);
+  const passwordSubmission = useRef<{
+    currentPassword: string;
+    newPassword: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+  } | null>(null);
   const [pwOpen, setPwOpen] = useState(false);
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -2482,6 +2620,19 @@ function AccountSection() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!saasMode) return;
+    let active = true;
+    void getSaasPasswordVersion().then((result) => {
+      if (!active) return;
+      if (result.ok) setPasswordVersion(result.version);
+      else setPasswordStatusError(result.error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [saasMode]);
+
   const onSignOut = useCallback(async () => {
     if (info === "loading" || signOutBusy) return;
     if (!accountsEnabled && info.login_url !== "/saas/login") {
@@ -2491,7 +2642,6 @@ function AccountSection() {
 
     setSignOutBusy(true);
     setSignOutError(null);
-    const saasMode = info.login_url === "/saas/login";
     const result = await logoutBrowserSession(saasMode ? "/saas/auth/logout" : "/auth/logout");
     if (!result.ok) {
       setSignOutError(result.error);
@@ -2504,7 +2654,7 @@ function AccountSection() {
     clearSessionDrafts();
     clearOptimisticTitles();
     window.location.href = withBasePath(saasMode ? "/saas/login" : "/login");
-  }, [accountsEnabled, info, queryClient, signOutBusy]);
+  }, [accountsEnabled, info, queryClient, signOutBusy, saasMode]);
 
   const resetPwForm = useCallback(() => {
     setOldPw("");
@@ -2513,26 +2663,62 @@ function AccountSection() {
     setPwError(null);
     setPwDone(false);
     setPwBusy(false);
+    passwordSubmission.current = null;
   }, []);
 
   const onSubmitPassword = useCallback(async () => {
+    if (pwBusy) return;
     if (newPw !== confirmPw) {
       setPwError("New passwords don't match.");
       return;
     }
     setPwBusy(true);
     setPwError(null);
-    const result = await changePassword({ old_password: oldPw, new_password: newPw });
+    let result: { ok: true } | { ok: false; error: string };
+    if (saasMode) {
+      if (passwordVersion === null) {
+        setPwBusy(false);
+        setPwError("Reload password settings before trying again.");
+        return;
+      }
+      let submission = passwordSubmission.current;
+      if (
+        submission === null ||
+        submission.currentPassword !== oldPw ||
+        submission.newPassword !== newPw ||
+        submission.expectedVersion !== passwordVersion
+      ) {
+        submission = {
+          currentPassword: oldPw,
+          newPassword: newPw,
+          expectedVersion: passwordVersion,
+          idempotencyKey: crypto.randomUUID(),
+        };
+      }
+      passwordSubmission.current = submission;
+      result = await changeSaasPassword(submission);
+    } else {
+      result = await changePassword({ old_password: oldPw, new_password: newPw });
+    }
     setPwBusy(false);
     if (result.ok) {
       setPwDone(true);
       setOldPw("");
       setNewPw("");
       setConfirmPw("");
+      passwordSubmission.current = null;
+      if (saasMode) {
+        clearBrowserSessionIdentity();
+        sessionUpdatesSocket.stop();
+        queryClient.clear();
+        clearSessionDrafts();
+        clearOptimisticTitles();
+        window.location.href = withBasePath("/saas/login");
+      }
     } else {
       setPwError(result.error);
     }
-  }, [oldPw, newPw, confirmPw]);
+  }, [oldPw, newPw, confirmPw, pwBusy, saasMode, passwordVersion, queryClient]);
 
   if (me === "unknown" || me === null) {
     return <Section title="Account">{null}</Section>;
@@ -2561,9 +2747,7 @@ function AccountSection() {
             instead of navigating away from /settings. */}
 
         <div className="flex flex-col gap-1">
-          {/* Change password is accounts-only — an OIDC identity's password
-              lives with the IdP, so there's nothing to change here. */}
-          {accountsEnabled && (
+          {(accountsEnabled || (saasMode && passwordVersion !== null)) && (
             <Button
               variant="ghost"
               className="w-full justify-start gap-2"
@@ -2594,6 +2778,7 @@ function AccountSection() {
               {signOutError}
             </div>
           )}
+          {passwordStatusError && <p role="alert">{passwordStatusError} Reload to retry.</p>}
         </div>
       </div>
 
@@ -2635,6 +2820,7 @@ function AccountSection() {
                 type="password"
                 autoComplete="new-password"
                 placeholder="New password"
+                minLength={saasMode ? 12 : undefined}
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
                 disabled={pwBusy}
@@ -2748,15 +2934,6 @@ function ImportSection() {
         <h2 className="text-ui font-medium">Import from a machine</h2>
         <div className="rounded-xl border border-border bg-card p-4">
           <ImportSessionsPanel />
-        </div>
-      </div>
-      <div className="mt-8 flex flex-col gap-3">
-        <h2 className="text-ui font-medium">Harness imports</h2>
-        <p className="-mt-2 text-ui text-muted-foreground">
-          See the logins, MCP servers, skills, and plugins each machine's harnesses carry over.
-        </p>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <ReviewImportsPanel />
         </div>
       </div>
     </Section>

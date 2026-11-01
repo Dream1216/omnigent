@@ -20,7 +20,7 @@ import pytest
 import uvicorn
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
@@ -185,7 +185,10 @@ def test_export_uses_pinned_thin_bundle_and_denies_scope_or_changed_membership(c
         exporter.export(body)
 
 
-def test_real_mtls_checkpoint_import_object_verification_and_replay(checkpoint, tmp_path):
+@pytest.mark.parametrize("upload_trust", ["explicit-ca", "system-default", "foreign-ca"])
+def test_real_mtls_checkpoint_import_object_verification_and_replay(
+    checkpoint, tmp_path, upload_trust
+):
     from omnigent_dcp.auth.revalidation import OnlineAuthorizationConfig
     from omnigent_dcp.domain.errors import DcpError
     from omnigent_dcp.domain.models import ActorContext
@@ -218,13 +221,45 @@ def test_real_mtls_checkpoint_import_object_verification_and_replay(checkpoint, 
     Base.metadata.create_all(engine)
     repository = SnapshotRepository(engine)
     stored = {}
+    upload_app = FastAPI()
+
+    @upload_app.put("/source")
+    async def receive_upload(request: Request):
+        assert "Authorization" not in request.headers and "Cookie" not in request.headers
+        stored["bytes"] = await request.body()
+        return Response(status_code=200)
+
+    upload_listener = socket.socket()
+    upload_listener.bind(("127.0.0.1", 0))
+    upload_server = uvicorn.Server(
+        uvicorn.Config(
+            upload_app,
+            ssl_certfile=str(server_files.certificate),
+            ssl_keyfile=str(server_files.private_key),
+            ssl_cert_reqs=ssl.CERT_NONE,
+            access_log=False,
+            log_level="error",
+        )
+    )
+    upload_thread = threading.Thread(
+        target=upload_server.run, kwargs={"sockets": [upload_listener]}, daemon=True
+    )
+    upload_thread.start()
+    upload_endpoint = f"https://127.0.0.1:{upload_listener.getsockname()[1]}/source"
+    upload_ca_file = None
+    if upload_trust == "explicit-ca":
+        upload_ca_file = server_files.ca
+    elif upload_trust == "foreign-ca":
+        foreign = tmp_path / "foreign"
+        foreign.mkdir()
+        upload_ca_file = _certificate_fixture(foreign, (uuid4(),))["server"].ca
 
     class Upload:
         async def allocate(self, *, identity, request):
             self.identity, self.request = identity, request
             return SnapshotUploadTarget(
                 object_ref="oss://test/checkpoint.tar.zst",
-                put_url=SecretStr("https://upload.test/source"),
+                put_url=SecretStr(upload_endpoint),
                 headers=(),
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
                 max_bytes=1024 * 1024,
@@ -245,15 +280,11 @@ def test_real_mtls_checkpoint_import_object_verification_and_replay(checkpoint, 
         async def revoke(self, *, object_ref):
             pass
 
-    async def upload(request):
-        stored["bytes"] = await request.aread()
-        return httpx.Response(200)
-
     try:
         deadline = time.monotonic() + 10
-        while not server.started and time.monotonic() < deadline:
+        while (not server.started or not upload_server.started) and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert server.started
+        assert server.started and upload_server.started
         endpoint = f"https://127.0.0.1:{listener.getsockname()[1]}/authorize"
         service = CheckpointImportService(
             repository,
@@ -263,7 +294,7 @@ def test_real_mtls_checkpoint_import_object_verification_and_replay(checkpoint, 
             ),
             tmp_path,
             StaticEntitlementAdmission(dict.fromkeys(EntitlementKey, True)),
-            upload_transport=httpx.MockTransport(upload),
+            upload_ca_file=upload_ca_file,
         )
         actor = ActorContext(
             tenant_id=str(body.tenant_id),
@@ -294,6 +325,21 @@ def test_real_mtls_checkpoint_import_object_verification_and_replay(checkpoint, 
             )  # A checkpoint authority never forges a Runner export receipt.
             return first
 
+        if upload_trust != "explicit-ca":
+            with pytest.raises(DcpError):
+                asyncio.run(run())
+            assert not stored
+            with Session(engine) as db:
+                assert (
+                    db.scalar(
+                        select(func.count())
+                        .select_from(SourceSnapshotRow)
+                        .where(SourceSnapshotRow.status == "ready")
+                    )
+                    == 0
+                )
+            return
+
         result = asyncio.run(run())
         with Session(engine) as db:
             assert db.scalar(select(func.count()).select_from(SourceSnapshotRow)) == 1
@@ -321,6 +367,10 @@ def test_real_mtls_checkpoint_import_object_verification_and_replay(checkpoint, 
             )
     finally:
         server.should_exit = True
+        upload_server.should_exit = True
         thread.join(timeout=10)
+        upload_thread.join(timeout=10)
         listener.close()
+        upload_listener.close()
         engine.dispose()
+        assert not thread.is_alive() and not upload_thread.is_alive()

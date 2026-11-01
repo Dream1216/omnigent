@@ -2,7 +2,8 @@
 
 The setup page is the user-visible half of the native system-browser OAuth
 flow. Exercise its real bundled HTML and shared URL module, with only the
-Electron preload IPC stubbed; the Databricks OAuth module tests cover token exchange.
+Electron preload IPC stubbed; the native main-process tests cover sign-out,
+credential clearing and fresh browser sign-in, and OAuth tests cover token exchange.
 """
 
 from __future__ import annotations
@@ -37,12 +38,14 @@ window.omnigentSetup = {
 """
 
 
-def _open_recovery(page: Page) -> None:
+def _open_recovery(
+    page: Page, *, error: str = "Session expired. Connect to sign in again."
+) -> None:
     page.add_init_script(_PRELOAD)
-    query = urlencode({"url": _WORKSPACE, "error": "Session expired. Connect to sign in again."})
+    query = urlencode({"url": _WORKSPACE, "error": error})
     page.goto(f"{_SETUP_PAGE.as_uri()}?{query}")
     expect(page.locator("#url")).to_have_value(_WORKSPACE)
-    expect(page.locator("#err")).to_have_text("Session expired. Connect to sign in again.")
+    expect(page.locator("#err")).to_have_text(error)
 
 
 def test_databricks_expired_session_can_retry_and_cancel_browser_sign_in(page: Page) -> None:
@@ -72,13 +75,15 @@ def test_databricks_expired_session_can_retry_and_cancel_browser_sign_in(page: P
     assert page.evaluate("() => window.__databricksAuth.calls.length") == 1
 
 
-def test_databricks_different_account_forces_fresh_browser_sign_in(page: Page) -> None:
-    """The explicit account switch reaches native IPC with browserSignIn=true."""
-    _open_recovery(page)
-    page.get_by_role("button", name="Sign in with a different account").click()
+def test_databricks_signed_out_account_switch_uses_native_reconnect(page: Page) -> None:
+    """Sign-out returns to Connect; the shell owns fresh browser-auth state."""
+    _open_recovery(page, error="You're signed out of dbc-example.cloud.databricks.com.")
+    expect(page.get_by_role("button", name="Sign in with a different account")).to_have_count(0)
+    page.locator("#connect").click()
 
     page.wait_for_function("() => window.__databricksAuth.calls.length === 1")
     attempt = page.evaluate("() => window.__databricksAuth.calls[0]")
     assert attempt["url"] == _WORKSPACE
-    assert attempt["options"]["browserSignIn"] is True
+    assert attempt["options"]["requestId"]
+    assert "browserSignIn" not in attempt["options"]
     expect(page.locator("#connect-label")).to_have_text("Connecting…")

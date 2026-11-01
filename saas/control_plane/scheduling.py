@@ -33,6 +33,7 @@ from saas.control_plane.scheduling_models import (
     RunnerRegistrationRecord,
     TenantQueueShareRecord,
 )
+from saas.observability import ensure_observed_factory
 
 _ACTIVE_RUN_STATUSES = frozenset(
     {"leased", "starting", "running", "waiting_input", "waiting_approval", "cancelling"}
@@ -157,6 +158,7 @@ class SchedulingControlPlane:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+        ensure_observed_factory(session_factory)
 
     def create_pool(
         self,

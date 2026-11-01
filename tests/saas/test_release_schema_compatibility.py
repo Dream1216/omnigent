@@ -76,10 +76,13 @@ def _receipt(tmp_path, monkeypatch, *, installed, requested, verify_only=True):
         (_P0, _S),
         (_R, _S),
         (_S, _S),
+        ("p0s000000016", "p0s000000016"),
         (_P0, _T),
         (_R, _T),
         (_S, _T),
         (_T, _T),
+        ("p0s000000017", "p0s000000017"),
+        ("p0s000000018", "p0s000000018"),
     ],
 )
 def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
@@ -103,6 +106,16 @@ def test_receipt_accepts_only_explicit_compatible_application_schema_pairs(
         (_P0, "lm2q00000001"),
         (_P0, "future"),
         ("future", "future"),
+        ("p0s000000016", _P0),
+        ("p0s000000016", _R),
+        ("p0s000000016", _S),
+        ("p0s000000016", _T),
+        ("p0s000000017", _P0),
+        ("p0s000000017", "p0s000000016"),
+        ("p0s000000017", _R),
+        ("p0s000000017", _S),
+        ("p0s000000017", _T),
+        *[("p0s000000018", old) for old in (_P0, "p0s000000016", "p0s000000017", _R, _S, _T)],
     ],
 )
 def test_receipt_rejects_unsupported_or_future_schema_pairs(
@@ -111,6 +124,11 @@ def test_receipt_rejects_unsupported_or_future_schema_pairs(
     config = _receipt(tmp_path, monkeypatch, installed=installed, requested=requested)
     with pytest.raises(migration.PostgreSqlMigrationError):
         migration._load_runtime_receipt(config)
+
+
+@pytest.mark.parametrize("head", [_P0, "p0s000000016", "p0s000000017", "p0s000000018", _R, _S, _T])
+def test_projection_capability_is_only_present_in_model_schemas(head):
+    assert ("saas_model_projection" in migration._capability_roles(head)) == (head != _P0)
 
 
 @pytest.mark.parametrize("requested", [_R, _S, _T])

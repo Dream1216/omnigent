@@ -30,7 +30,11 @@ from tests._helpers.server_runner import server_runner
 from tests.e2e.conftest import configure_mock_llm, get_mock_requests, set_fallback_mock_llm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SERVER_BOOTSTRAP = "from tests.e2e._runner_binding_race_server import main; main()"
+_SERVER_BOOTSTRAP = (
+    "import runpy; "
+    f"runpy.run_path({str(Path(__file__).with_name('_runner_binding_race_server.py'))!r}, "
+    "run_name='__main__')"
+)
 _MODELS = json.loads((_REPO_ROOT / "tests/server/integration/repro_models.json").read_text())
 
 pytestmark = [

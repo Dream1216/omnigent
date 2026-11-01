@@ -4,17 +4,33 @@
   "evidence_kind": "production_enterprise_acceptance",
   "reviewed_at": "2026-09-18",
   "revision_contract": {
-    "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
+    "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
     "adapter_contract_version": "0.2.0",
-    "control_plane_schema_revision": "lm2t00000001"
+    "control_plane_schema_revision": "p0s000000018"
   },
   "evidence_directory": "saas/production/enterprise-evidence",
   "max_evidence_age_days": 30,
   "required_integrations": {
-    "staff_password_auth": ["argon2id", "persistent_lockout", "session_revocation"],
-    "customer_oidc": ["code_pkce", "domain_claim", "jit_policy"],
-    "customer_saml": ["signed_response", "audience_recipient", "replay_rejection"],
-    "scim": ["token_rotation", "out_of_order_convergence", "deprovision_no_resurrection"],
+    "staff_password_auth": [
+      "argon2id",
+      "persistent_lockout",
+      "session_revocation"
+    ],
+    "customer_oidc": [
+      "code_pkce",
+      "domain_claim",
+      "jit_policy"
+    ],
+    "customer_saml": [
+      "signed_response",
+      "audience_recipient",
+      "replay_rejection"
+    ],
+    "scim": [
+      "token_rotation",
+      "out_of_order_convergence",
+      "deprovision_no_resurrection"
+    ],
     "scim_microsoft_entra": [
       "test_connection",
       "on_demand_user_and_group",
@@ -92,7 +108,12 @@
     "privacy",
     "customer-admin"
   ],
-  "artifact_uri_schemes": ["s3", "gs", "az", "oci"],
+  "artifact_uri_schemes": [
+    "s3",
+    "gs",
+    "az",
+    "oci"
+  ],
   "verified_workflow_identities": [
     "spiffe://omnigent/enterprise-readiness-evidence"
   ]

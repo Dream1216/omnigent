@@ -121,10 +121,16 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
 
     assert set(workflow["on"]) == {"workflow_dispatch"}
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert set(inputs) == {"product_revision", "evidence_revision", "receipt_request_json"}
+    assert set(inputs) == {
+        "product_revision",
+        "evidence_revision",
+        "receipt_request_json",
+        "review_exception_request_json",
+    }
     job = workflow["jobs"]["production-admission"]
     assert job["environment"] == "production-evidence"
-    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["permissions"] == {"contents": "read", "actions": "read"}
+    assert job["env"]["GH_TOKEN"] == "${{ github.token }}"
     preflight = next(
         step["run"]
         for step in job["steps"]
@@ -145,9 +151,20 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     assert "--product-revision" in command
     assert "--evidence-revision" in command
     upload = next(
-        step for step in job["steps"] if "actions/upload-artifact@" in step.get("uses", "")
+        step for step in job["steps"] if step.get("name") == "Upload immutable admission reports"
     )
-    assert upload["if"] == "always()"
+    assert upload["if"] == "always() && inputs.review_exception_request_json == ''"
+    assert '[[ -z "$REVIEW_EXCEPTION_REQUEST_JSON" || -z "$RECEIPT_REQUEST_JSON" ]]' in preflight
+    waiver_upload = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Upload immutable review authorization"
+    )
+    assert waiver_upload["if"] == "inputs.review_exception_request_json != ''"
+    assert (
+        waiver_upload["with"]["name"]
+        == "production-review-authorization-${{ inputs.evidence_revision }}"
+    )
     assert upload["with"]["retention-days"] == "90"
 
     candidate_path = _repo() / ".github/workflows/saas-image-candidate.yml"

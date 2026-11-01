@@ -149,9 +149,7 @@ jobs:
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-control-plane.db
         run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_control_plane_migration_cli
       - name: Verify SaaS wheel contents
         run: |
           uv build --wheel --out-dir artifacts/saas-wheel

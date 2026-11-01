@@ -355,13 +355,13 @@ def test_v2_record_bytes_and_runtime_default_semantics_are_preserved() -> None:
     record = _v2_record()
     assert (
         record["record_sha256"]
-        == "7cf620beb26c17533433a2c4a4ca7b54b1caaea0c2d30195359d4bce4ad7f832"
+        == "5966eecda7061c10edc8ab9b916b370334dfd51e18d0cd51aaeddebe477da014"
     )
     assert (
         hashlib.sha256(
             json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
         ).hexdigest()
-        == "8407f0cfcba5a327247a369be098aee661c9ddec188e46de477c273f86a65586"
+        == "2365e3fd4fc5afbfbfde6d19dcdb07a8e36289e264a47a036be0cae0fed18aab"
     )
     report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
     assert report["status"] == "pass"

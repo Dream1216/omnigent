@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
+from saas.production.review_exception import apply_review_exception, review_verification_scope
 from saas.runtime_rls import load_runtime_rls_contract
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -183,6 +184,7 @@ def _validate_record(
     policy: Mapping[str, Any],
     now: datetime,
     expected_product_revision: str | None,
+    repo: Path | None = None,
 ) -> tuple[list[str], list[str], str | None]:
     violations: list[str] = []
     blockers: list[str] = []
@@ -331,6 +333,16 @@ def _validate_record(
 
     required_roles = _string_set(policy.get("required_attestation_roles"))
     attestations = record.get("attestations")
+    review = apply_review_exception(
+        repo,
+        attestations,
+        domain="recovery",
+        required_roles=required_roles,
+        product_revision=product_revision,
+        now=now,
+    )
+    violations.extend(review.violations)
+    required_roles, attestations = review.required_roles, review.attestations
     attested_roles: set[str] = set()
     if not isinstance(attestations, list):
         violations.append(f"{label}: attestations must be a list")
@@ -361,6 +373,7 @@ def _validate_record(
     return violations, blockers, scope if isinstance(scope, str) else None
 
 
+@review_verification_scope
 def validate_recovery_readiness(
     repo: Path,
     policy: Mapping[str, Any],
@@ -384,6 +397,7 @@ def validate_recovery_readiness(
             policy=policy,
             now=current,
             expected_product_revision=expected_product_revision,
+            repo=repo,
         )
         violations.extend(record_violations)
         blockers.extend(record_blockers)

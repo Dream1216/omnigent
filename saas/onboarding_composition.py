@@ -311,6 +311,10 @@ class TenantOnboardingComposition:
     publisher: OnboardingOutboxPublisher
     first_run_observer: CommittedRunAdmissionObserver
 
+    @property
+    def claim_routes(self):
+        return self.publisher.claim_routes
+
     def validate_outbox_configuration(self) -> None:
         """Fail process startup if workflow routing was not preserved."""
 

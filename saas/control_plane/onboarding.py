@@ -41,7 +41,7 @@ from saas.control_plane.onboarding_models import (
     SelfServiceRegistrationRecord,
     TenantOnboardingRecord,
 )
-from saas.control_plane.outbox import OutboxPublisher, OutboxPublishError
+from saas.control_plane.outbox import OutboxClaimRoute, OutboxPublisher, OutboxPublishError
 from saas.control_plane.privacy_lifecycle import password_email_locator_hash
 from saas.control_plane.privacy_models import PrivacyIdentityTombstoneRecord
 from saas.control_plane.rls import (
@@ -1979,6 +1979,17 @@ class OnboardingOutboxPublisher:
         self._email_sender = email_sender
         self._workflow = workflow
         self._fallback = fallback
+
+    @property
+    def claim_routes(self) -> tuple[OutboxClaimRoute, ...] | None:
+        # A configured fallback retains its original complete envelope contract.
+        if self._fallback is not None:
+            return None
+        return (
+            OutboxClaimRoute("self_service_registration", _EMAIL_EVENT),
+            OutboxClaimRoute("tenant_onboarding", _TENANT_EVENT),
+            *(OutboxClaimRoute("tenant_onboarding", name) for name in sorted(_WORKFLOW_EVENTS)),
+        )
 
     def publish(
         self,

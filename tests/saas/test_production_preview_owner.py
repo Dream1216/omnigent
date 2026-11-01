@@ -11,8 +11,8 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from omnigent.runner.identity import token_bound_runner_id
-from omnigent.runner.transports.ws_tunnel.frames import HelloFrame
+from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
+from omnigent.runner.transports.ws_tunnel.frames import HelloFrame, encode_frame
 from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
 from saas.control_plane import PreviewRouteGrant
 from saas.control_plane.preview_tunnel_registration import (
@@ -240,6 +240,54 @@ def test_owner_app_exposes_only_guarded_tunnel_and_health() -> None:
     assert ("/livez", "APIRoute") in paths
     assert ("/readyz", "APIRoute") in paths
     assert all("/token" not in path and path != "/v1/runners" for path, _kind in paths)
+
+
+def test_guarded_websocket_redeems_and_releases_runner_registration() -> None:
+    token = "w" * 48
+    official_runner_id = token_bound_runner_id(token)
+    grant = _grant(official_runner_id=official_runner_id)
+    redeemed = threading.Event()
+    released = threading.Event()
+
+    class ObservedAuthority(_Authority):
+        def redeem(
+            self, *, official_runner_id: str, registration_token: str
+        ) -> PreviewTunnelBindingGrant:
+            current = super().redeem(
+                official_runner_id=official_runner_id, registration_token=registration_token
+            )
+            redeemed.set()
+            return current
+
+        def disconnect(self, *, official_runner_id: str, registration_token: str) -> bool:
+            current = super().disconnect(
+                official_runner_id=official_runner_id, registration_token=registration_token
+            )
+            if current:
+                released.set()
+            return current
+
+    authority = ObservedAuthority(grant)
+    registry = TunnelRegistry()
+    bindings = LocalRunnerTunnelBindings(registry)
+    app, _lifecycle = create_preview_owner_tunnel_app(
+        registry=registry, bindings=bindings, authority=authority
+    )
+
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            f"/v1/runners/{official_runner_id}/tunnel",
+            headers={RUNNER_TUNNEL_TOKEN_HEADER: token},
+        ) as websocket:
+            websocket.send_text(encode_frame(_hello()))
+            assert redeemed.wait(5), "official tunnel callback did not redeem registration"
+            assert registry.get(official_runner_id) is not None
+            websocket.close()
+            assert released.wait(5), "closed tunnel did not release registration"
+        assert authority.disconnections == 1
+        assert registry.get(official_runner_id) is None
+        with pytest.raises(PreviewTunnelAdapterError):
+            bindings.resolve(_route(grant))
 
 
 def test_owner_readiness_is_content_blind_and_authority_backed() -> None:

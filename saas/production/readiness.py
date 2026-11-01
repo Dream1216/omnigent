@@ -19,6 +19,13 @@ from saas.production.deployment import (
     validate_deployment_readiness,
 )
 from saas.production.recovery import load_recovery_evidence, validate_recovery_readiness
+from saas.production.review_exception import (
+    RECORD_DIRECTORY as _REVIEW_RECORD_DIRECTORY,
+)
+from saas.production.review_exception import (
+    governed_review_record,
+    review_verification_scope,
+)
 from saas.production.slo_capacity import (
     load_slo_capacity_evidence,
     validate_slo_capacity_readiness,
@@ -75,7 +82,9 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _evidence_only_path(value: str) -> bool:
+def _evidence_only_path(value: str, repo: Path | None = None) -> bool:
+    if value.startswith(_REVIEW_RECORD_DIRECTORY + "/"):
+        return repo is not None and governed_review_record(repo, value) is not None
     return value in _EVIDENCE_ONLY_EXACT_PATHS or (
         value.endswith(".json")
         and any(value.startswith(prefix) for prefix in _EVIDENCE_ONLY_PREFIXES)
@@ -135,7 +144,9 @@ def validate_candidate_revision(value: str | None, repo: Path | None = None) -> 
             "blockers": [],
         }
     non_evidence_paths = sorted(
-        path for path in changed.stdout.splitlines() if path and not _evidence_only_path(path)
+        path
+        for path in changed.stdout.splitlines()
+        if path and not _evidence_only_path(path, repo)
     )
     if non_evidence_paths:
         blockers.append(
@@ -430,6 +441,7 @@ def validate_gate_ledger(
     return violations
 
 
+@review_verification_scope
 def validate_production_readiness(
     repo: Path,
     *,
