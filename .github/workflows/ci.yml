@@ -361,7 +361,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install system MySQL client library
-        run: sudo apt-get update -qq && sudo apt-get install -y -q libmysqlclient-dev
+        run: bash saas/scripts/ci_install_ubuntu_packages.sh libmysqlclient-dev
       - name: Install dependencies
         run: uv sync --locked --extra all --group test --extra databricks && uv pip install mysqlclient
       - name: Run store + DB tests against MySQL

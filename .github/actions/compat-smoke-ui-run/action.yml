@@ -112,8 +112,7 @@ runs:
     - name: Install bubblewrap and tmux
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y bubblewrap tmux
+        bash saas/scripts/ci_install_ubuntu_packages.sh bubblewrap tmux
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
     - name: Cache Playwright browsers
@@ -126,7 +125,9 @@ runs:
 
     - name: Install Playwright Chromium
       shell: bash
-      run: uv run playwright install --with-deps chromium
+      run: |
+        bash saas/scripts/ci_install_ubuntu_packages.sh --configure-only
+        uv run playwright install --with-deps chromium
 
     - name: Build HEAD SPA
       # Tests run with --ui-skip-build, so the built_spa fixture never builds

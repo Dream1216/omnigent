@@ -67,7 +67,9 @@ jobs:
           psql --host localhost --username postgres --dbname postgres \
             --file saas/control_plane/postgresql_database.psql
       - name: Install P2 browser runtime
-        run: uv run playwright install --with-deps chromium
+        run: |
+          bash saas/scripts/ci_install_ubuntu_packages.sh --configure-only
+          uv run playwright install --with-deps chromium
       - name: Set up login UI build runtime
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -79,8 +81,7 @@ jobs:
         run: npm ci --no-audit --no-fund && npm run build && npm run format:check
       - name: Install hard sandbox runtime
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes bubblewrap
+          bash saas/scripts/ci_install_ubuntu_packages.sh bubblewrap
           # ubuntu-latest enables AppArmor's unprivileged-userns restriction;
           # the official Omnigent Linux sandbox workflows disable it only on
           # the ephemeral runner so bwrap can create its user/network namespaces.
