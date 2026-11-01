@@ -59,6 +59,7 @@ from playwright.sync_api import APIResponse, Error, Locator, Page, Route, expect
 from tests._helpers.compat import (
     apply_server_env,
     compat_server_cwd,
+    compat_server_python,
     server_executable,
 )
 from tests._helpers.native_session import create_native_session
@@ -661,6 +662,35 @@ def seed_committed_items(session_id: str, items: list[Any]) -> None:
             "seeding needs the spawned server's database; it is "
             "unavailable with --ui-base-url or a workflow-owned reproduction environment."
         )
+    if compat_server_python() is not None:
+        # Seed through the same schema and entity models as the pinned server.
+        subprocess.run(
+            [
+                server_executable(),
+                "-c",
+                "import json, sys; "
+                "from omnigent.entities import NewConversationItem; "
+                "from omnigent.stores.conversation_store.sqlalchemy_store "
+                "import SqlAlchemyConversationStore; "
+                "payload = json.load(sys.stdin); "
+                "SqlAlchemyConversationStore(payload['database_uri']).append("
+                "payload['session_id'], "
+                "[NewConversationItem.model_validate(item) for item in payload['items']])",
+            ],
+            input=json.dumps(
+                {
+                    "database_uri": str(database_uri),
+                    "session_id": session_id,
+                    "items": [item.model_dump(mode="json") for item in items],
+                }
+            ),
+            text=True,
+            check=True,
+            timeout=30,
+            env=apply_server_env(dict(os.environ), _REPO_ROOT),
+            cwd=compat_server_cwd(),
+        )
+        return
     SqlAlchemyConversationStore(str(database_uri)).append(session_id, items)
 
 

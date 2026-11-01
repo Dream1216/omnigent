@@ -715,8 +715,15 @@ def live_server(
         # server's venv python in compat mode. The runner below stays on
         # sys.executable (it tracks the test process / client version).
         server_executable(),
-        "-m",
-        "omnigent.cli",
+        "-c",
+        # Load only this trusted fixture, without shadowing the pinned server.
+        "import importlib.util, sys; "
+        "spec = importlib.util.spec_from_file_location("
+        "'tests.integration._stdio_image_tool', "
+        f"{str(_REPO_ROOT / 'tests/integration/_stdio_image_tool.py')!r}); "
+        "module = importlib.util.module_from_spec(spec); "
+        "sys.modules[spec.name] = module; spec.loader.exec_module(module); "
+        "from omnigent.cli import main; main()",
         "server",
         "--port",
         str(port),
@@ -730,13 +737,14 @@ def live_server(
         server_cfg.write_text(
             yaml.safe_dump(
                 {
+                    "policy_modules": ["tests.integration._stdio_image_tool"],
                     "llm": {
                         "model": "_policy_llm_",
                         "connection": {
                             "base_url": f"{mock_llm_server_url}/v1",
                             "api_key": "mock-key",
                         },
-                    }
+                    },
                 }
             )
         )
@@ -746,6 +754,7 @@ def live_server(
         server_cfg.write_text(
             yaml.safe_dump(
                 {
+                    "policy_modules": ["tests.integration._stdio_image_tool"],
                     "llm": {
                         # Stable key: session-scoped server must not
                         # depend on which test boots it first.
@@ -754,9 +763,15 @@ def live_server(
                             "base_url": f"{databricks_workspace_host}/serving-endpoints",
                             "api_key": llm_api_key,
                         },
-                    }
+                    },
                 }
             )
+        )
+        server_args.extend(["--config", str(server_cfg)])
+    else:
+        server_cfg = tmp_path_factory.mktemp("e2e_server_cfg") / "server.yaml"
+        server_cfg.write_text(
+            yaml.safe_dump({"policy_modules": ["tests.integration._stdio_image_tool"]})
         )
         server_args.extend(["--config", str(server_cfg)])
 
@@ -821,7 +836,7 @@ def live_server(
                 and status_resp.json()["online"] is True
             ):
                 break
-        except httpx.ConnectError:
+        except httpx.TransportError:
             pass
         time.sleep(POLL_INTERVAL_S)
     else:
