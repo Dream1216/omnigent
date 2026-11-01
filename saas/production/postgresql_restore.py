@@ -2117,7 +2117,7 @@ def _normalize(value: Any) -> Any:
 
 
 def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
-    if head in {"cd4a00000001", "cd4b00000001"}:
+    if head in {"cd4a00000001", "cd4b00000001", "cd4c00000001"}:
         return (
             *_digest_tables_for_schema("cd3b00000001"),
             "saas_identity_event_inbox",

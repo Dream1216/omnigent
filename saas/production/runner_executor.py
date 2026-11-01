@@ -375,6 +375,7 @@ def _runner_agent_schema_contract(
         "cd3b00000001",
         "cd4a00000001",
         "cd4b00000001",
+        "cd4c00000001",
     }:
         return (
             selected,

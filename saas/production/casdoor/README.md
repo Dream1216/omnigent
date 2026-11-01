@@ -206,6 +206,14 @@ migration lane before deployment. The Casdoor candidate workflow's manual
 `discover_source_catalogs` option collects review candidates only. Its catalogs
 cannot serve as production acceptance or update release anchors automatically.
 
+The `cd4c00000001` workspace INSERT policy requires an active account and a
+verified email or authoritative Casdoor phone baseline at the database boundary.
+Unverified, unchecked, disabled or deleted phone identities cannot create intents.
+The actor, source, registration and status constraints still apply to both paths.
+Downgrading preserves existing intents and restores the prior email-only check.
+Stop new workspace admission and drain writers before rolling the policy back;
+the previous application cannot admit phone creation against that policy.
+
 Real delivery, number recycling, the full signup-to-first-Run journey and the
 new provider's live HTTP recovery/readback paths still require acceptance.
 

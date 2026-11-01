@@ -149,6 +149,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/member_http.py",
     "saas/control_plane/migrations/env.py",
     "saas/control_plane/migrations/versions/cd4b00000001_verified_phone.py",
+    "saas/control_plane/migrations/versions/cd4c00000001_workspace_verified_contact.py",
     "saas/control_plane/migrations/script.py.mako",
     "saas/control_plane/migrations/versions/p1a000000001_identity_tenant_placement.py",
     "saas/control_plane/migrations/versions/p1a000000002_identity_lifecycle.py",

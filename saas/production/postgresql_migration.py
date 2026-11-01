@@ -218,6 +218,16 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "e6589bd3b5b0c6e63ddc20084da28dcf689da1e2893fdce2838923fa7d98fda7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "ab0f6b00d420ef164be5e638904b3322a33f32babf6ac303092a8c4278a478aa",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "cd4b00000001",
     ): "e6589bd3b5b0c6e63ddc20084da28dcf689da1e2893fdce2838923fa7d98fda7",
     (
@@ -639,6 +649,16 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "b0347b1b5238b94fedff9e93a83018a598d30a44aa8210f18cdcd2c7ac38325e",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "029851a800ec47c89f4b5b8993443f34621b1f7a1ce54247a0b7dbafd445f6d7",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "cd4b00000001",
     ): "7a703f0381922a2fa12e80f963a7b49a37129a90d0ef08c87825554f410feb9e",
     (
@@ -1057,6 +1077,16 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "373ee6528d67cfba24cebddefd7c3960d0bd02faf8e8b20b90f528a072da09c6",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "123e06f32436ad27b988654d144d1544c53088db48229019f3cb48a2434b210b",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "cd4b00000001",
     ): "d84f28cf69fc43adb70115f6ec02a37356050fd6215c06df3b074cc6646cc600",
     (
@@ -1445,6 +1475,16 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "5c77c8b6684ea8ac6e6003e7c05ac0d5e9a024286cd473c5cd01bfb082a70fe4",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "103f1aab96aea8784101586efd2775623276598a1841514c8390a3ac1ef637c8",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "cd4b00000001",
     ): "172612a5f753c563d06457b79a0a189f90f8371dae46f6afc3505e807b15f1a1",
     (
@@ -1828,6 +1868,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "2a0f0d698149538fb9aca8d83113a49c6b164752c0f4189a24f5ff87a7efae2f",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "19e9c36f71bd1d8c497150c40b2402593eda1b3edfce330535f4a4462321c38c",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "cd4b00000001",
     ): "2a0f0d698149538fb9aca8d83113a49c6b164752c0f4189a24f5ff87a7efae2f",
     (
@@ -2183,6 +2233,16 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "f6457c9e583a830cde3666cf7e728b9e9b41f78c96fbe57263c9331df0aca871",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "9d29ea94c9557b16b753c4097077c7fc6b8076eabe3bf253af68cda84d2b989b",
     (
         16,
         "mm1a2b3c4d5e",
@@ -2551,6 +2611,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
     (
         16,
         "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "3f9a6af3e2ccf65c5ee7e830797ef8c262146896692b9312e38acef668892a63",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "c3bea2c304bdc77f9bef0bd3adb8924bf0062e9fce4b060d514dc30b0c56d3f4",
+    (
+        16,
+        "mm1a2b3c4d5e",
         "cd4b00000001",
     ): "9ba6c74ef099c83c092cb230f40aac62eac648c372290e921b12b1a89f2c82b9",
     (
@@ -2878,6 +2948,16 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "343d9659defcc49e68394102171b091064cffb736e6823ed1ba4e9a15171b690",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4c00000001",
+    ): "670549fbab6d197fd3a94f8bbe0e9f3f402a2ba92134709e6c440d82ba10649d",
     (
         16,
         "mm1a2b3c4d5e",
@@ -4553,6 +4633,7 @@ def _runtime_saas_head(requested: object) -> str:
         "cd3b00000001": ("cd3b00000001",),
         "cd4a00000001": ("cd4a00000001",),
         "cd4b00000001": ("cd4b00000001",),
+        "cd4c00000001": ("cd4c00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")
@@ -5394,6 +5475,7 @@ _CREDENTIAL_GUARD_SOURCE_SHA256 = {
     "cd3b00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
     "cd4a00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
     "cd4b00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
+    "cd4c00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
 }
 
 
