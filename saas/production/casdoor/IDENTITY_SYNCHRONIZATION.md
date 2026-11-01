@@ -102,14 +102,29 @@ The read service additionally receives:
 
 | File setting | Contents |
 | --- | --- |
-| `OMNIGENT_SAAS_IDENTITY_BROKER_PROVIDER_CONFIG_FILE` | `{"schema_version":1,"provider_client_id":"DEDICATED_ORG_APP_CLIENT_ID","provider_ca_file":null}` |
+| `OMNIGENT_SAAS_IDENTITY_BROKER_PROVIDER_CONFIG_FILE` | `{"schema_version":1,"provider_application":"private-state-reader","provider_client_id":"DEDICATED_ORG_APP_CLIENT_ID","provider_ca_file":null}` |
 | `OMNIGENT_SAAS_IDENTITY_BROKER_PROVIDER_SECRET_FILE` | That organization's dedicated provider API secret; never the public web application's secret |
 | `OMNIGENT_SAAS_IDENTITY_READER_KEYS_FILE` | `{"schema_version":1,"keys":{"current":"INDEPENDENT_RANDOM_READER_SECRET"}}` |
+
+The dedicated application must belong to the configured customer organization,
+be unshared, and permit only `client_credentials`. Disable registration,
+self-signup, interactive sign-in, password/guest/auto/code/session/WebAuthn
+sign-in, external providers, redirects, backchannel logout and active sign-in
+methods. Built-in, public customer and dynamic-registration applications are
+rejected. Before every subject read the broker verifies the exact application,
+client ID and authenticated unmasked secret, then the organization's password
+policy. Anonymous application metadata with a masked secret cannot qualify an
+invalid Basic credential or turn a failed credential into a false deletion.
 
 The worker additionally receives the existing credential-worker public role
 bindings/graph and sealed migration receipt, plus only
 `OMNIGENT_SAAS_AUTHENTICATOR_DATABASE_URL_FILE`. Startup reuses the full source
 catalog and role verifier through that exact non-bypass login, without SET ROLE.
+Connections have a five-second connect and pool-wait budget, a five-second lock
+timeout, a ten-second statement timeout and a fifteen-second idle transaction
+timeout. The pool is bounded at `min(concurrency + 2, 8)` with no overflow.
+These source-owned settings apply before startup verification; timeout rolls
+back the transaction and retains the durable claim for bounded retry.
 It also receives:
 
 | File setting | Contents |
@@ -183,6 +198,9 @@ cohort. Dead-letter review/replay and matched restore remain release requirement
   the read service and DNS; the read service needs only Casdoor and DNS. No
   public product ingress should expose either private process. These deployment
   and monitoring resources still require end-to-end qualification.
+  The [identity stage renderer](../../deployment/identity/README.md) supplies
+  disabled, release-bound resources and preserves the parent release bytes.
+  Its final activation remains blocked pending identity-specific admission.
 - Verify the exact serving revision, subject fences, worker source/image and
   paired schema receipt before enabling processing. Follow the credential
   migration runbook's replica-drain requirements for older serving revisions.

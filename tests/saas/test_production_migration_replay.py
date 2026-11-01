@@ -21,6 +21,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from saas.production import postgresql_migration as migration
+from saas.production.credential_worker_config import (
+    CredentialWorkerDatabaseLimits,
+    create_credential_worker_engine,
+)
 from saas.production.server import create_role_session_factories
 from saas.production.server_config import ProductionMigrationReceipt
 from saas.production.service_bindings import (
@@ -411,6 +415,17 @@ def _verify_credential_worker_startup(plan, receipt, tmp_path):
             database_url=url,
             config=narrow,
         )
+        bounded = create_credential_worker_engine(url, limits=CredentialWorkerDatabaseLimits())
+        try:
+            migration.verify_credential_worker_postgresql_state(
+                engine=bounded, database_url=url, config=narrow
+            )
+            with bounded.connect() as connection:
+                assert connection.scalar(sa.text("SHOW statement_timeout")) == "10s"
+                assert connection.scalar(sa.text("SHOW lock_timeout")) == "5s"
+                assert connection.scalar(sa.text("SELECT current_user=session_user"))
+        finally:
+            bounded.dispose()
         with pytest.raises(
             migration.PostgreSqlMigrationError, match="service_url_binding_mismatch"
         ):

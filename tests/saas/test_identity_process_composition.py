@@ -53,7 +53,11 @@ def test_wrong_installed_source_stops_worker_before_opening_database(processes, 
 @pytest.mark.parametrize("context", [False, ssl._create_unverified_context()])
 def test_provider_reader_cannot_disable_certificate_or_hostname_verification(config, context):
     with pytest.raises(ValueError, match="TLS verification"):
-        CasdoorIdentityStateProvider(replace(config, marker_keyring=None), tls_context=context)
+        CasdoorIdentityStateProvider(
+            replace(config, marker_keyring=None),
+            application="private-state-reader",
+            tls_context=context,
+        )
 
 
 def test_worker_startup_does_not_print_driver_parameters_or_credentials(

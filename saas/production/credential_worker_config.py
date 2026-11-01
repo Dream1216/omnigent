@@ -135,8 +135,63 @@ class CredentialWorkerSessions:
         self._engine.dispose()
 
 
-def create_credential_worker_sessions(config: CredentialWorkerConfig) -> CredentialWorkerSessions:
-    engine = sa.create_engine(config.database_url, pool_pre_ping=True)
+@dataclass(frozen=True, slots=True)
+class CredentialWorkerDatabaseLimits:
+    pool_size: int = 6
+    pool_timeout_seconds: int = 5
+    connect_timeout_seconds: int = 5
+    lock_timeout_ms: int = 5000
+    statement_timeout_ms: int = 10000
+    idle_transaction_timeout_ms: int = 15000
+
+    def __post_init__(self) -> None:
+        values = (
+            self.pool_size,
+            self.pool_timeout_seconds,
+            self.connect_timeout_seconds,
+            self.lock_timeout_ms,
+            self.statement_timeout_ms,
+            self.idle_transaction_timeout_ms,
+        )
+        if (
+            any(type(value) is not int for value in values)
+            or not 1 <= self.pool_size <= 8
+            or not 1 <= self.pool_timeout_seconds <= 5
+            or not 1 <= self.connect_timeout_seconds <= 5
+            or not 1 <= self.lock_timeout_ms < self.statement_timeout_ms <= 10000
+            or not self.statement_timeout_ms <= self.idle_transaction_timeout_ms <= 20000
+        ):
+            raise ValueError("credential worker database limits are invalid")
+
+
+def create_credential_worker_engine(
+    database_url: str, *, limits: CredentialWorkerDatabaseLimits | None = None
+) -> Engine:
+    if limits is None:
+        return sa.create_engine(database_url, pool_pre_ping=True)
+    # Source-owned timeout options apply before catalog verification or any
+    # application transaction; no ambient PGOPTIONS or role defaults are changed.
+    return sa.create_engine(
+        database_url,
+        pool_pre_ping=True,
+        pool_size=limits.pool_size,
+        max_overflow=0,
+        pool_timeout=limits.pool_timeout_seconds,
+        connect_args={
+            "connect_timeout": limits.connect_timeout_seconds,
+            "options": (
+                f"-c lock_timeout={limits.lock_timeout_ms} "
+                f"-c statement_timeout={limits.statement_timeout_ms} "
+                f"-c idle_in_transaction_session_timeout={limits.idle_transaction_timeout_ms}"
+            ),
+        },
+    )
+
+
+def create_credential_worker_sessions(
+    config: CredentialWorkerConfig, *, limits: CredentialWorkerDatabaseLimits | None = None
+) -> CredentialWorkerSessions:
+    engine = create_credential_worker_engine(config.database_url, limits=limits)
     try:
         if engine.dialect.name != "postgresql":
             raise ProductionServerConfigError("credential worker requires PostgreSQL")

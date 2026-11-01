@@ -15,6 +15,7 @@ from saas.control_plane.identity_private_channel import PrivateIdentityKeys
 from saas.control_plane.identity_sync import IdentityStateSyncService
 from saas.control_plane.identity_sync_worker import IdentitySyncWorker
 from saas.production.credential_worker_config import (
+    CredentialWorkerDatabaseLimits,
     CredentialWorkerSessions,
     create_credential_worker_sessions,
 )
@@ -75,7 +76,10 @@ def build_identity_sync_server(
     config: IdentityWorkerConfig,
 ) -> tuple[FastAPI, CredentialWorkerSessions]:
     verify_installed_build_lineage(config.release)
-    sessions = create_credential_worker_sessions(config.release)
+    sessions = create_credential_worker_sessions(
+        config.release,
+        limits=CredentialWorkerDatabaseLimits(pool_size=min(config.concurrency + 2, 8)),
+    )
     try:
         service = IdentityStateSyncService(
             sessions.authenticator,

@@ -21,7 +21,9 @@ from saas.production.server_config import ProductionServerConfigError
 def build_identity_read_broker(config: IdentityReadBrokerConfig) -> FastAPI:
     verify_installed_build_lineage(config.build)
     provider = CasdoorIdentityStateProvider(
-        config.provider, tls_context=config.provider_tls_context
+        config.provider,
+        application=config.provider_application,
+        tls_context=config.provider_tls_context,
     )
     provider.verify_organization()
     return create_identity_read_broker(

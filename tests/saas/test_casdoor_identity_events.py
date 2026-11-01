@@ -117,6 +117,29 @@ def test_malformed_notification_is_bounded_and_content_free(changes):
 class Remote:
     def __init__(self):
         self.organization = {"name": "customers", "passwordType": "argon2id", "passwordSalt": ""}
+        self.application = {
+            "owner": "admin",
+            "name": "private-state-reader",
+            "organization": "customers",
+            "clientId": "private-migration-app",
+            "clientSecret": "dedicated-service-secret-material",
+            "isShared": False,
+            "enableSignUp": False,
+            "disableSelfSignup": True,
+            "disableSignin": True,
+            "enablePassword": False,
+            "enableGuestSignin": False,
+            "enableAutoSignin": False,
+            "enableCodeSignin": False,
+            "enableSigninSession": False,
+            "enableWebAuthn": False,
+            "grantTypes": ["client_credentials"],
+            "redirectUris": [],
+            "backchannelLogoutUri": "",
+            "providers": [],
+            "signinMethods": [{"name": "Face ID", "rule": "None"}],
+            "tags": [],
+        }
         self.user = {
             "owner": "customers",
             "id": SUBJECT,
@@ -146,6 +169,9 @@ class Remote:
         if request.url.path == "/api/get-organization":
             assert dict(request.url.params) == {"id": "admin/customers"}
             return httpx.Response(200, json={"status": "ok", "data": self.organization})
+        if request.url.path == "/api/get-application":
+            assert dict(request.url.params) == {"id": "admin/private-state-reader"}
+            return httpx.Response(200, json={"status": "ok", "data": self.application})
         assert request.url.path == "/api/get-user"
         assert dict(request.url.params) == {"owner": "customers", "userId": SUBJECT}
         return httpx.Response(
@@ -156,7 +182,9 @@ class Remote:
 def reader(config):
     remote = Remote()
     provider = CasdoorIdentityStateProvider(
-        replace(config, marker_keyring=None), transport=httpx.MockTransport(remote)
+        replace(config, marker_keyring=None),
+        application="private-state-reader",
+        transport=httpx.MockTransport(remote),
     )
     provider.verify_organization()
     return provider, remote
@@ -234,3 +262,57 @@ def test_invalid_readback_cannot_be_used_for_identity_sync(config, mutation):
     remote.user.update(mutation)
     with pytest.raises(IdentitySyncError, match="identity_provider_response_invalid"):
         provider.read_identity(SUBJECT)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"owner": "foreign"},
+        {"name": "another-app"},
+        {"organization": "built-in"},
+        {"clientId": "another-client"},
+        {"clientSecret": "***"},
+        {"clientSecret": "wrong"},
+        {"isShared": True},
+        {"enableSignUp": True},
+        {"disableSelfSignup": False},
+        {"disableSignin": False},
+        {"enablePassword": True},
+        {"enableGuestSignin": True},
+        {"enableAutoSignin": True},
+        {"enableCodeSignin": True},
+        {"enableSigninSession": True},
+        {"enableWebAuthn": True},
+        {"grantTypes": ["authorization_code"]},
+        {"redirectUris": ["https://attacker.test/callback"]},
+        {"backchannelLogoutUri": "https://attacker.test"},
+        {"providers": [{"name": "public-login"}]},
+        {"signinMethods": [{"rule": "All"}]},
+        {"tags": ["dcr"]},
+        {"tags": ["cimd"]},
+        {"isShared": 0},
+    ],
+)
+def test_reader_rejects_unqualified_or_publicly_masked_application_and_clears_old_policy(
+    config, mutation
+):
+    provider, remote = reader(config)
+    remote.application.update(mutation)
+    remote.user = None
+    with pytest.raises(IdentitySyncError, match="application_unqualified"):
+        provider.verify_organization()
+    with pytest.raises(IdentitySyncError, match="password_policy_unqualified"):
+        provider.read_identity(SUBJECT)
+
+
+def test_invalid_basic_secret_cannot_turn_a_public_null_user_lookup_into_deletion(config):
+    remote = Remote()
+    remote.user = None
+    provider = CasdoorIdentityStateProvider(
+        replace(config, marker_keyring=None, migration_client_secret="incorrect-but-long-enough"),
+        application="private-state-reader",
+        transport=httpx.MockTransport(remote),
+    )
+    with pytest.raises(IdentitySyncError, match="application_unqualified"):
+        provider.verify_organization()
+    assert [request.url.path for request in remote.requests] == ["/api/get-application"]

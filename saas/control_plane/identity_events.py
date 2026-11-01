@@ -36,6 +36,7 @@ _SAFE_IDENTITY_ERRORS = frozenset(
         "identity_notification_attempts_exhausted",
         "identity_provider_locator_mismatch",
         "identity_provider_password_policy_unqualified",
+        "identity_provider_application_unqualified",
         "identity_provider_response_invalid",
         "identity_provider_subject_invalid",
         "identity_provider_unavailable",

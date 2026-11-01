@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -65,6 +66,7 @@ class IdentityReadBrokerConfig:
     keys: PrivateIdentityKeys
     tls: IdentityProcessTls
     concurrency: int
+    provider_application: str
     provider_tls_context: ssl.SSLContext | bool = field(default=True, repr=False)
 
 
@@ -242,11 +244,18 @@ def load_identity_read_broker_config(
         provider_config = _document(source, _PROVIDER_CONFIG)
         if (
             not isinstance(provider_config, dict)
-            or set(provider_config) != {"schema_version", "provider_client_id", "provider_ca_file"}
+            or set(provider_config)
+            != {"schema_version", "provider_application", "provider_client_id", "provider_ca_file"}
             or type(provider_config["schema_version"]) is not int
             or provider_config["schema_version"] != 1
             or not isinstance(provider_config["provider_client_id"], str)
             or provider_config["provider_client_id"] == identity.client_id
+            or not isinstance(provider_config["provider_application"], str)
+            or provider_config["provider_application"] in {"app-built-in", identity.application}
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", provider_config["provider_application"]
+            )
+            is None
             or (
                 provider_config["provider_ca_file"] is not None
                 and not isinstance(provider_config["provider_ca_file"], str)
@@ -273,7 +282,14 @@ def load_identity_read_broker_config(
             )
             context = ssl.create_default_context(cafile=str(ca))
         return IdentityReadBrokerConfig(
-            build, pins, provider, keys, _tls(source), settings["concurrency"], context
+            build,
+            pins,
+            provider,
+            keys,
+            _tls(source),
+            settings["concurrency"],
+            provider_config["provider_application"],
+            context,
         )
     except (OSError, ValueError, TypeError, UnicodeError):
         raise ProductionServerConfigError(

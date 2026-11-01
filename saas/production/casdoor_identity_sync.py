@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hmac
 import json
+import re
 import ssl
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -24,11 +26,18 @@ class CasdoorIdentityStateProvider:
         self,
         config: CasdoorCredentialImportConfig,
         *,
+        application: str,
         transport: httpx.BaseTransport | None = None,
         tls_context: ssl.SSLContext | bool = True,
     ):
         if config.marker_keyring is not None:
             raise ValueError("identity sync must not hold credential import marker keys")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", application) or application in {
+            "app-built-in",
+            config.customer_application,
+        }:
+            raise ValueError("identity reader requires a dedicated provider application")
+        self._application = application
         self._config, self._transport = config, transport
         self._tls_context = verified_identity_tls_context(tls_context)
         self._organization_verified = False
@@ -59,6 +68,7 @@ class CasdoorIdentityStateProvider:
 
     def verify_organization(self) -> None:
         self._organization_verified = False
+        self._verify_application()
         data = self._read("/api/get-organization", {"id": "admin/" + self._config.organization})
         if (
             not isinstance(data, dict)
@@ -68,6 +78,50 @@ class CasdoorIdentityStateProvider:
         ):
             raise IdentitySyncError("identity_provider_password_policy_unqualified")
         self._organization_verified = True
+
+    def _verify_application(self) -> None:
+        config = self._config
+        data = self._read("/api/get-application", {"id": "admin/" + self._application})
+        if (
+            not isinstance(data, dict)
+            or data.get("owner") != "admin"
+            or data.get("name") != self._application
+            or data.get("organization") != config.organization
+            or data.get("clientId") != config.migration_client_id
+            or not isinstance(data.get("clientSecret"), str)
+            or not hmac.compare_digest(
+                data["clientSecret"].encode(), config.migration_client_secret.encode()
+            )
+            or any(
+                data.get(name) is not value
+                for name, value in {
+                    "isShared": False,
+                    "enableSignUp": False,
+                    "disableSelfSignup": True,
+                    "disableSignin": True,
+                    "enablePassword": False,
+                    "enableGuestSignin": False,
+                    "enableAutoSignin": False,
+                    "enableCodeSignin": False,
+                    "enableSigninSession": False,
+                    "enableWebAuthn": False,
+                }.items()
+            )
+            or data.get("grantTypes") != ["client_credentials"]
+            or data.get("redirectUris") != []
+            or data.get("backchannelLogoutUri") != ""
+            or data.get("providers") not in (None, [])
+            or not isinstance(data.get("signinMethods"), list)
+            or any(
+                not isinstance(method, dict) or method.get("rule") != "None"
+                for method in data["signinMethods"]
+            )
+            or not isinstance(data.get("tags"), list)
+            or any(not isinstance(tag, str) or tag in {"dcr", "cimd"} for tag in data["tags"])
+        ):
+            # Non-admin reads mask clientSecret; public metadata must not
+            # authenticate an invalid Basic credential before a null user lookup.
+            raise IdentitySyncError("identity_provider_application_unqualified")
 
     def read_identity(self, subject: str) -> ProviderIdentityState:
         if not self._organization_verified:

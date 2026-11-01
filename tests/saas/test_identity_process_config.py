@@ -105,6 +105,7 @@ def processes(tmp_path):
         tmp_path / "broker-provider.json",
         {
             "schema_version": 1,
+            "provider_application": "private-state-reader",
             "provider_client_id": "dedicated-broker-admin-client",
             "provider_ca_file": None,
         },
@@ -240,6 +241,7 @@ def test_broker_does_not_reuse_web_application_or_reader_secret_as_provider_auth
         json.dumps(
             {
                 "schema_version": 1,
+                "provider_application": "private-state-reader",
                 "provider_client_id": "public-oidc-client",
                 "provider_ca_file": None,
             }
@@ -251,6 +253,7 @@ def test_broker_does_not_reuse_web_application_or_reader_secret_as_provider_auth
         json.dumps(
             {
                 "schema_version": 1,
+                "provider_application": "private-state-reader",
                 "provider_client_id": "dedicated-broker-admin-client",
                 "provider_ca_file": None,
             }
