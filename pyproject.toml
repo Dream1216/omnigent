@@ -510,20 +510,7 @@ exclude = ["saas.login_web*"]
 "saas.admin_ui" = ["*.html", "*.css", "*.js"]
 "saas.onboarding_ui" = ["*.html", "*.css", "*.js"]
 "saas.login_ui" = ["static/**/*"]
-"saas.production" = [
-  "*.json",
-  "runbooks/*.md",
-  "adrs/*.md",
-  "adr-approvals/*.json",
-  "adr-approvals/*.md",
-  "evidence-admission-receipts/*.json",
-  "evidence-admission-receipts/*.md",
-  "casdoor/source-lock.json",
-  "casdoor/config.example.json",
-  "casdoor/Dockerfile",
-  "casdoor/patches/*.patch",
-  "casdoor/*.md",
-]
+"saas.production" = ["*.json", "runbooks/*.md", "adrs/*.md", "adr-approvals/*.json", "adr-approvals/*.md", "evidence-admission-receipts/*.json", "evidence-admission-receipts/*.md"]
 "saas.deployment.preview_gateway" = ["*.json", "*.md", "*.service", "*.yaml"]
 "saas.deployment.data" = ["*.md", "*.json"]
 "saas.deployment.server" = ["*.md", "*.yaml"]

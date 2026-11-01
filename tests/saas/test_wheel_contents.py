@@ -5,6 +5,7 @@ from pathlib import Path
 
 import tomllib
 import yaml
+from setuptools._distutils.filelist import FileList
 
 from saas.scripts.check_wheel_contents import REQUIRED_WHEEL_PATHS, find_missing_paths
 
@@ -21,8 +22,6 @@ def test_missing_wheel_artifact_is_reported() -> None:
 
 def test_casdoor_source_lock_and_referenced_patch_kit_are_packaged() -> None:
     root = Path(__file__).resolve().parents[2]
-    project = tomllib.loads((root / "pyproject.toml").read_text())
-    patterns = project["tool"]["setuptools"]["package-data"]["saas.production"]
     lock = json.loads((root / "saas/production/casdoor/source-lock.json").read_text())
     resources = [
         "casdoor/source-lock.json",
@@ -35,10 +34,21 @@ def test_casdoor_source_lock_and_referenced_patch_kit_are_packaged() -> None:
         "casdoor/CUSTOMER_AUTH_RESTORE.md",
         *["casdoor/" + patch["path"] for patch in lock["patches"]],
     ]
+    manifest = FileList()
+    manifest.set_allfiles(["saas/production/" + resource for resource in resources])
+    for line in (root / "MANIFEST.in").read_text().splitlines():
+        manifest.process_template_line(line)
     for resource in resources:
-        assert any(Path(resource).match(pattern) for pattern in patterns), resource
+        assert "saas/production/" + resource in manifest.files, resource
         assert "saas/production/" + resource in REQUIRED_WHEEL_PATHS
         assert (root / "saas/production" / resource).is_file()
+
+
+def test_server_image_stages_the_source_manifest_for_package_data() -> None:
+    root = Path(__file__).resolve().parents[2]
+    recipe = (root / "deploy/docker/Dockerfile").read_text()
+    copied = next(line for line in recipe.splitlines() if line.startswith("COPY pyproject.toml "))
+    assert {"pyproject.toml", "setup.py", "uv.lock", "MANIFEST.in"} <= set(copied.split()[1:-1])
 
 
 def test_candidate_builds_and_checks_real_backend_wheel_before_oci_builds() -> None:
@@ -53,6 +63,10 @@ def test_candidate_builds_and_checks_real_backend_wheel_before_oci_builds() -> N
     assert step["env"] == {"OMNIGENT_SKIP_WEB_UI": "true"}
     assert "uv build --wheel --no-build-isolation" in step["run"]
     assert 'check_wheel_contents "$RUNNER_TEMP/identity-wheel"' in step["run"]
+    assert any(
+        "tests/saas/test_n1_merge_gate_candidate.py" in row.get("run", "")
+        for row in preflight["steps"]
+    )
     assert "verify-candidate-preflight" in document["jobs"]["build-candidate"]["needs"]
 
 

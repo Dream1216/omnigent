@@ -94,3 +94,10 @@ runbooks. The full reader/worker and credential-import configuration loaders
 read that installed source lock; a source checkout or fixture-composed service
 can hide a missing wheel resource. A passing member check still requires the
 real image's closed configuration, entrypoints and installed metadata tests.
+
+`MANIFEST.in` includes the source kit in source distributions and wheels through
+the existing `include-package-data` setting. The Server builder stages that
+manifest alongside its packaging inputs. This preserves the exact trusted
+`pyproject.toml` bytes required by the N-1 workflow policy. Candidate preflight
+also checks all 21 trusted N-1 inputs before starting the complete regressions;
+do not replace those policy digests to accommodate unrelated packaging changes.
