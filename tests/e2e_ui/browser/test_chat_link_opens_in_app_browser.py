@@ -13,9 +13,9 @@ from playwright.sync_api import Page, expect
 from tests.e2e_ui.conftest import seed_committed_turn
 
 # Loopback, so a click that leaks to a real navigation never leaves the host.
-LINK_URL = "http://127.0.0.1:9/product-docs"
-SECOND_LINK_URL = "http://127.0.0.1:9/release-notes"
-THIRD_LINK_URL = "http://127.0.0.1:9/api-guide"
+LINK_URL = "http://127.0.0.1:8080/product-docs"
+SECOND_LINK_URL = "http://127.0.0.1:8080/release-notes"
+THIRD_LINK_URL = "http://127.0.0.1:8080/api-guide"
 
 _NOOP_SUBSCRIPTIONS = ", ".join(
     f"{name}: () => () => {{}}"
@@ -79,6 +79,12 @@ def test_setting_routes_plain_clicks_in_app(page: Page, seeded_session: tuple[st
             f"and [API guide]({THIRD_LINK_URL})"
         ),
     )
+    page.context.route(
+        "http://127.0.0.1:8080/**",
+        lambda route: route.fulfill(
+            content_type="text/html", body="<title>Documentation fixture</title>"
+        ),
+    )
     page.add_init_script(_SHELL_STUB)
     page.goto(f"{base_url}/c/{session_id}")
     link = page.get_by_role("link", name="Product docs", exact=True)
@@ -86,6 +92,7 @@ def test_setting_routes_plain_clicks_in_app(page: Page, seeded_session: tuple[st
     # Default: the click keeps its external _blank path.
     with page.expect_popup() as popup:
         link.click()
+    expect(popup.value).to_have_url(LINK_URL)
     popup.value.close()
     assert page.evaluate("window.__calls") == []
 
@@ -165,5 +172,6 @@ def test_setting_routes_plain_clicks_in_app(page: Page, seeded_session: tuple[st
 
     with page.context.expect_page() as popup:
         link.click(modifiers=["Shift"])
+    expect(popup.value).to_have_url(LINK_URL)
     popup.value.close()
     assert page.evaluate("window.__calls.length") == 3
