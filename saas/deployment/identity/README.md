@@ -169,3 +169,8 @@ after verifying a matched product/IdP/key backup. It requires an isolated target
 with every writer drained and an exact bounded review before invalidating
 restored sessions, OIDC transactions and worker leases. Replaying post-backup
 security facts and qualifying the full production recovery remain required.
+
+For isolated qualification of the actual image and its full entrypoints, use
+[the exact unsigned OCI validation export](../../production/OCI_RUNTIME_VALIDATION.md).
+Manual validation must explicitly retain the checked bytes; build/scan JSON
+alone cannot prove the executable runtime. This does not grant release admission.

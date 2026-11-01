@@ -72,6 +72,11 @@ on:
         required: true
         type: boolean
         default: false
+      retain_unsigned_oci:
+        description: Retain successfully checked unsigned OCI bytes for isolated runtime validation
+        required: true
+        type: boolean
+        default: false
       product_revision:
         description: Exact 40-character main revision; required when publish_signed is enabled
         required: false
@@ -139,9 +144,11 @@ jobs:
           tests/saas/test_image_supply_chain.py
           tests/saas/test_scan_oci_candidates.py
           tests/saas/test_oci_candidate_build_capacity.py
+          tests/saas/test_oci_candidate_validation_export.py
           tests/saas/test_oci_promotion.py
           tests/saas/test_runtime_security_overlays.py
           tests/saas/test_host_fleet_cli_supply.py
+          tests/saas/test_legacy_domain_discovery.py::test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged
           -q
       - name: Verify image supply-chain policy
         run: uv run python -m saas.scripts.check_image_supply_chain
@@ -412,10 +419,12 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 30
-      - name: Upload unsigned OCI bytes for isolated PR validation
+      - name: Upload unsigned OCI bytes for isolated validation
         if: >-
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
+          (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository) ||
+          (github.event_name == 'workflow_dispatch' &&
+          inputs.retain_unsigned_oci && !inputs.publish_signed)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: saas-oci-validation-${{ env.CANDIDATE_REVISION }}
