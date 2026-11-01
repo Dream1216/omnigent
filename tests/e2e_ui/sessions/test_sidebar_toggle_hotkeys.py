@@ -7,8 +7,8 @@ opens or focuses on ⌘/Ctrl + ⌥/Alt + ``]`` and closes when focus is inside i
 tab strip. The hook matches the physical ``e.code``
 (``BracketLeft`` / ``BracketRight``) rather than the character, because ⌥ on
 macOS turns ``[``/``]`` into ``“``/``‘`` — only a code match survives the
-modifier. CI runs Linux chromium, so this presses the ``Control+Alt`` chord
-(the hook also accepts Cmd via ``metaKey`` on macOS).
+modifier. Playwright resolves ``ControlOrMeta`` to Control on Linux and Meta on macOS,
+matching the hook's platform-specific command modifier.
 
 Two design points this exercises end-to-end that the unit test cannot:
 
@@ -36,8 +36,8 @@ import re
 from playwright.sync_api import Page, expect
 
 _COMPOSER = "Send a message…"
-_LEFT_CHORD = "Control+Alt+BracketLeft"
-_RIGHT_CHORD = "Control+Alt+BracketRight"
+_LEFT_CHORD = "ControlOrMeta+Alt+BracketLeft"
+_RIGHT_CHORD = "ControlOrMeta+Alt+BracketRight"
 
 # The left sidebar stays mounted when collapsed (it animates to width 0), so
 # its open-state reads off ``data-collapsed`` rather than presence. The right
@@ -161,5 +161,9 @@ def test_sidebar_peek_is_opaque_in_dark_mode(
           probe.remove();
           return { actual, expected };
         }"""
+    )
+    expect(conversations).to_have_css("background-color", colors["expected"])
+    colors["actual"] = conversations.evaluate(
+        "element => getComputedStyle(element).backgroundColor"
     )
     assert colors["actual"] == colors["expected"]

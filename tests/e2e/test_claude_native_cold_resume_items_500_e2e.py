@@ -109,11 +109,8 @@ def _seed_large_history(database_uri: str, session_id: str) -> None:
     :param session_id: Conversation to append to.
     """
     from omnigent.entities import MessageData, NewConversationItem
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
+    from tests._helpers.server_stores import append_server_items
 
-    store = SqlAlchemyConversationStore(database_uri)
     chunk = "x" * 15000
     items = []
     for i in range(600):
@@ -135,7 +132,7 @@ def _seed_large_history(database_uri: str, session_id: str) -> None:
             )
         )
     for start in range(0, len(items), 50):
-        store.append(session_id, items[start : start + 50])
+        append_server_items(database_uri, session_id, items[start : start + 50])
 
 
 def test_cold_resume_resumes_history_when_large_item_page_500s(
@@ -177,15 +174,20 @@ def test_cold_resume_resumes_history_when_large_item_page_500s(
     def _terminal_launch_argv() -> list[str] | None:
         """The interactive terminal launch's argv, once recorded.
 
-        :returns: The argv of the first recorded non-headless invocation
-            (the catalog probes all run ``-p "/model"``), or ``None``.
+        :returns: The first interactive adapter argv after known auth/catalog
+            probes, or ``None`` while no interactive invocation is recorded.
         """
         if not argv_file.exists():
             return None
         for line in argv_file.read_text().splitlines():
             argv = line.split("\x1f")[:-1]
-            if argv and "-p" not in argv:
-                return argv
+            if argv == ["auth", "status"] or "-p" in argv:
+                continue
+            if not argv or "--mcp-config" not in argv or "--settings" not in argv:
+                raise AssertionError(
+                    "unexpected Claude invocation outside the interactive contract"
+                )
+            return argv
         return None
 
     with server_runner(tmp_path, server_bootstrap=_SERVER_BOOTSTRAP) as stack:

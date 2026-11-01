@@ -54,6 +54,7 @@ from tests._helpers.compat import (
     runner_executable,
     server_executable,
 )
+from tests._helpers.operator_agents import operator_agent_store, post_operator_session
 from tests._helpers.session import post_session_bundle
 from tests._model_pools import current_attempt, resolve_model
 from tests.e2e._harness_probes import skip_if_harness_cli_missing
@@ -715,8 +716,15 @@ def live_server(
         # server's venv python in compat mode. The runner below stays on
         # sys.executable (it tracks the test process / client version).
         server_executable(),
-        "-m",
-        "omnigent.cli",
+        "-c",
+        # Load only this trusted fixture, without shadowing the pinned server.
+        "import importlib.util, sys; "
+        "spec = importlib.util.spec_from_file_location("
+        "'tests.integration._stdio_image_tool', "
+        f"{str(_REPO_ROOT / 'tests/integration/_stdio_image_tool.py')!r}); "
+        "module = importlib.util.module_from_spec(spec); "
+        "sys.modules[spec.name] = module; spec.loader.exec_module(module); "
+        "from omnigent.cli import main; main()",
         "server",
         "--port",
         str(port),
@@ -730,13 +738,14 @@ def live_server(
         server_cfg.write_text(
             yaml.safe_dump(
                 {
+                    "policy_modules": ["tests.integration._stdio_image_tool"],
                     "llm": {
                         "model": "_policy_llm_",
                         "connection": {
                             "base_url": f"{mock_llm_server_url}/v1",
                             "api_key": "mock-key",
                         },
-                    }
+                    },
                 }
             )
         )
@@ -746,6 +755,7 @@ def live_server(
         server_cfg.write_text(
             yaml.safe_dump(
                 {
+                    "policy_modules": ["tests.integration._stdio_image_tool"],
                     "llm": {
                         # Stable key: session-scoped server must not
                         # depend on which test boots it first.
@@ -754,9 +764,15 @@ def live_server(
                             "base_url": f"{databricks_workspace_host}/serving-endpoints",
                             "api_key": llm_api_key,
                         },
-                    }
+                    },
                 }
             )
+        )
+        server_args.extend(["--config", str(server_cfg)])
+    else:
+        server_cfg = tmp_path_factory.mktemp("e2e_server_cfg") / "server.yaml"
+        server_cfg.write_text(
+            yaml.safe_dump({"policy_modules": ["tests.integration._stdio_image_tool"]})
         )
         server_args.extend(["--config", str(server_cfg)])
 
@@ -821,7 +837,7 @@ def live_server(
                 and status_resp.json()["online"] is True
             ):
                 break
-        except httpx.ConnectError:
+        except httpx.TransportError:
             pass
         time.sleep(POLL_INTERVAL_S)
     else:
@@ -851,7 +867,8 @@ def live_server(
         )
 
     try:
-        yield base_url
+        with operator_agent_store(base_url, f"sqlite:///{db_path}", artifact_dir):
+            yield base_url
     finally:
         runner_proc = _live_runner_state.get("process", runner_proc)
         if runner_proc.poll() is None:
@@ -1160,7 +1177,7 @@ def register_dir_agent_with_mock_llm(
                 tar.add(str(entry), arcname=str(entry.relative_to(agent_dir)))
         bundle = buf.getvalue()
 
-    resp = post_session_bundle(
+    resp = post_operator_session(
         client.post, "/v1/sessions", bundle, headers={"Origin": OMNIGENT_INTERNAL_WS_ORIGIN}
     )
     if resp.status_code not in (200, 201, 409):
@@ -1578,6 +1595,7 @@ def create_runner_bound_session(
     *,
     agent_name: str,
     runner_id: str,
+    workspace: str | None = None,
 ) -> str:
     """
     Create a session bound to *agent_name* and to *runner_id*.
@@ -1592,14 +1610,18 @@ def create_runner_bound_session(
     :param agent_name: Display name of an already-uploaded agent.
     :param runner_id: Registered runner id (e.g. the
         :func:`live_runner_id` fixture).
+    :param workspace: Explicit owned session workspace, separate from the uploaded spec.
     :returns: The session/conversation id, e.g. ``"conv_abc"``.
     """
     agent_id = lookup_agent_id(client, agent_name)
     # First-party sentinel Origin so the create passes the
     # require_trusted_origin guard regardless of which client is passed.
+    metadata: dict[str, Any] = {"agent_id": agent_id}
+    if workspace is not None:
+        metadata["workspace"] = workspace
     resp = client.post(
         "/v1/sessions",
-        json={"agent_id": agent_id},
+        json=metadata,
         headers={"Origin": OMNIGENT_INTERNAL_WS_ORIGIN},
     )
     resp.raise_for_status()

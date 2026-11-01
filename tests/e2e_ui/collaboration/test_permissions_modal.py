@@ -179,12 +179,26 @@ def test_permissions_modal_controls_drive_server_state(
     _open_share_modal(page)
     dialog = page.get_by_role("dialog")
 
-    # ── Public access switch: off → on creates a __public__ grant ────
-    public_switch = dialog.get_by_role("switch")
-    expect(public_switch).not_to_be_checked()
+    # Both supported public-access controls create the same Read grant.
+    legacy = dialog.locator(
+        '[data-component-id="diagnostics.permissions.public_toggle"][role="switch"]'
+    )
+    general_access = dialog.get_by_role("combobox", name="General access", exact=True)
+    public_control = legacy.or_(general_access)
+    expect(public_control).to_be_visible()
+    expect(public_control).to_have_count(1)
+    legacy_ui = legacy.count() == 1
+    if legacy_ui:
+        expect(public_control).not_to_be_checked()
+    else:
+        expect(public_control).to_have_text("No access")
     assert _PUBLIC_USER not in _permissions(base_url, session_id)
-    public_switch.click()
-    expect(public_switch).to_be_checked()
+    public_control.click()
+    if legacy_ui:
+        expect(public_control).to_be_checked()
+    else:
+        page.get_by_role("option", name="Read", exact=True).click()
+        expect(public_control).to_have_text("Read")
     # The grant lands server-side (poll briefly: the toggle fires an async
     # mutation, so the REST read can race the optimistic UI flip).
     _wait_for(lambda: _permissions(base_url, session_id).get(_PUBLIC_USER) == _LEVEL_READ)

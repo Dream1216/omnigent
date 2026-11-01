@@ -10,7 +10,12 @@ import httpx
 import pytest
 from playwright.sync_api import Page, Route, expect
 
-from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from tests._helpers.server_stores import (
+    create_server_subagent,
+    get_server_conversation,
+    set_server_usage,
+    update_server_conversation,
+)
 from tests.e2e_ui.chat.test_session_usage_loading import _session_read_matcher
 from tests.e2e_ui.conftest import _server_state
 
@@ -137,23 +142,24 @@ def test_usage_report_link_and_chat_reload_keep_complete_subtree_usage(
     database_uri = _server_state.get("database_uri")
     if not database_uri:
         pytest.skip("usage seeding requires the isolated spawned server")
-    store = SqlAlchemyConversationStore(str(database_uri))
-    parent = store.get_conversation(session_id)
+    parent = get_server_conversation(str(database_uri), session_id)
     assert parent is not None
     title = f"Persisted subtree usage {session_id}"
-    store.update_conversation(session_id, title=title)
-    child = store.create_conversation(
-        agent_id=parent.agent_id, kind="sub_agent", parent_conversation_id=session_id
+    update_server_conversation(str(database_uri), session_id, title=title)
+    child = create_server_subagent(
+        str(database_uri), agent_id=parent.agent_id, parent_conversation_id=session_id
     )
-    store.update_conversation(child.id, archived=True)
-    store.set_session_usage(
+    update_server_conversation(str(database_uri), child.id, archived=True)
+    set_server_usage(
+        str(database_uri),
         session_id,
         {
             "total_cost_usd": 1.0,
             "by_model": {"parent-model": {"input_tokens": 100, "total_cost_usd": 1.0}},
         },
     )
-    store.set_session_usage(
+    set_server_usage(
+        str(database_uri),
         child.id,
         {
             "total_cost_usd": 2.5,
@@ -178,7 +184,8 @@ def test_usage_report_link_and_chat_reload_keep_complete_subtree_usage(
 
         for reloading, child_cost in ((False, 2.5), (True, 4.0)):
             if reloading:
-                store.set_session_usage(
+                set_server_usage(
+                    str(database_uri),
                     child.id,
                     {
                         "total_cost_usd": child_cost,

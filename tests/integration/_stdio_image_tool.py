@@ -35,6 +35,13 @@ BETWEEN_TEXT = "between-image-probe-8052"
 LATE_TEXT = "required-final-fact-8053: East 61; verification word amber."
 TRANSFORMED_TEXT = "image-result-replaced-8053"
 
+POLICY_REGISTRY = [
+    {"handler": "omnigent._e2e_policy_callables.block_on_sentinel", "kind": "callable"},
+    {"handler": "omnigent._e2e_policy_callables.taint_on_banana", "kind": "callable"},
+    {"handler": "omnigent.policies.function.make_fixed_action_callable", "kind": "factory"},
+    {"handler": "tests.integration._stdio_image_tool.replace_image_result", "kind": "factory"},
+]
+
 
 def replace_image_result() -> Callable[[dict[str, Any]], dict[str, str] | None]:
     """Return a policy callable that replaces the image-bearing output."""
