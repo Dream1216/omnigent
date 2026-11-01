@@ -148,6 +148,7 @@ jobs:
           tests/saas/test_download_oci_validation.py
           tests/saas/test_wheel_contents.py
           tests/saas/test_n1_merge_gate_candidate.py
+          tests/saas/test_identity_readiness.py
           tests/saas/test_oci_promotion.py
           tests/saas/test_runtime_security_overlays.py
           tests/saas/test_host_fleet_cli_supply.py

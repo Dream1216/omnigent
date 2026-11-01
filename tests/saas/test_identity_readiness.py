@@ -138,7 +138,7 @@ def _fixture(tmp_path):
             "signed_oidc_sessions": True,
         },
         "load": load,
-        "enabled_channels": ["email_password"],
+        "enabled_channels": list(policy["identity_contract"]["enabled_channels"]),
         "samples": samples,
     }
     acceptance["subject_hashes"] = [row["subject_sha256"] for row in samples]
@@ -204,6 +204,7 @@ def test_complete_synthetic_unit_fixture_validates_domain_facts_but_is_not_live_
         ("product_revision", "c" * 40),
         ("provider_source_lock_sha256", "c" * 64),
         ("enabled_channels", ["email_password", "github"]),
+        ("enabled_channels", ["email_password"]),
         ("schema_version", True),
         ("image_digest", "sha256:" + "c" * 64),
     ],
@@ -329,6 +330,30 @@ def test_policy_cannot_waive_five_minutes_or_enable_a_channel_without_its_real_c
     assert _validate(tmp_path, policy)["status"] == "fail"
     policy["identity_contract"]["maximum_convergence_milliseconds"] = 300000
     policy["identity_contract"]["enabled_channels"].append("github")
+    assert _validate(tmp_path, policy)["status"] == "fail"
+
+
+def test_current_release_cannot_remove_sms_registration_from_its_policy(tmp_path):
+    policy, _wrapper, _observation = _fixture(tmp_path)
+    policy["identity_contract"]["enabled_channels"] = ["email_password"]
+    policy["required_integrations"].pop("channel_sms_password")
+    assert _validate(tmp_path, policy)["status"] == "fail"
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        "actual_sms_delivery_and_signup",
+        "missing_wrong_expired_and_replayed_code_rejected",
+        "resend_attempt_and_spend_limits",
+        "phone_verification_fact_not_inferred_from_number",
+        "phone_change_and_number_reuse_do_not_take_over_accounts",
+        "phone_only_workspace_first_run",
+    ],
+)
+def test_sms_policy_cannot_replace_delivery_phone_proof_or_product_acceptance(tmp_path, check):
+    policy, _wrapper, _observation = _fixture(tmp_path)
+    policy["required_integrations"]["channel_sms_password"].remove(check)
     assert _validate(tmp_path, policy)["status"] == "fail"
 
 

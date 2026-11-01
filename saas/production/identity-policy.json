@@ -46,6 +46,18 @@
       "restored_old_session_invalidated",
       "old_callback_and_claim_fenced",
       "rollback_keeps_central_credential_authority"
+    ],
+    "channel_sms_password": [
+      "application_ownership_and_permissions",
+      "actual_sms_delivery_and_signup",
+      "missing_wrong_expired_and_replayed_code_rejected",
+      "resend_attempt_and_spend_limits",
+      "canonical_phone_country_and_duplicate_policy",
+      "phone_verification_fact_not_inferred_from_number",
+      "stable_issuer_subject_and_explicit_linking",
+      "phone_change_and_number_reuse_do_not_take_over_accounts",
+      "phone_only_workspace_first_run",
+      "customer_claims_do_not_expand_product_authority"
     ]
   },
   "required_checks": [
@@ -140,13 +152,14 @@
     "spiffe://omnigent/casdoor-identity-readiness-evidence"
   ],
   "identity_contract": {
-    "provider_source_lock_sha256": "756eff14f258f4d0472d038bc0d56ca07bac929a8f791c41e788d2cd4d2d5ad4",
+    "provider_source_lock_sha256": "b7011a69de25d99a3203d18fea7e7aa7f59f2b133f21bfb9e94385d0d38ef54b",
     "maximum_convergence_milliseconds": 300000,
     "minimum_worker_replicas": 2,
     "minimum_subjects_per_case": 2,
     "minimum_load_seconds": 900,
     "enabled_channels": [
-      "email_password"
+      "email_password",
+      "sms_password"
     ]
   }
 }

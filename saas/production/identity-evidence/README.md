@@ -39,6 +39,14 @@ the corresponding approved URI/workflow in that acceptance record. The record's
 `record_sha256` is the existing canonical business-record digest; it is separate
 from, and does not replace, the production admission signature.
 
+The first release requires both `email_password` and `sms_password`. SMS has a
+separate `channel_sms_password` integration: actual delivery, direct signup and
+code rejection/replay, resend/attempt/spend limits, phone normalization and
+ownership proof, safe number changes/reuse, and the phone-only workspace/first
+Run journey must all pass. An owned HTTP SMS capture, a parseable phone claim or
+an email-only acceptance cannot satisfy this production record. Additional
+social and enterprise channels retain their own callback and authority checks.
+
 The observation document has exactly these fields:
 
 - `schema_version`, `environment=production`, `product_revision` and `image_digest`.

@@ -31,6 +31,7 @@ _CASES = {
 _PERIODIC = {"missed_password_reset", "missed_provider_disable", "missed_provider_delete"}
 _CHANNELS = {
     "email_password",
+    "sms_password",
     "wechat",
     "dingtalk",
     "lark",
@@ -38,6 +39,18 @@ _CHANNELS = {
     "google",
     "enterprise_oidc",
     "enterprise_saml",
+}
+_SMS_CHECKS = {
+    "application_ownership_and_permissions",
+    "actual_sms_delivery_and_signup",
+    "missing_wrong_expired_and_replayed_code_rejected",
+    "resend_attempt_and_spend_limits",
+    "canonical_phone_country_and_duplicate_policy",
+    "phone_verification_fact_not_inferred_from_number",
+    "stable_issuer_subject_and_explicit_linking",
+    "phone_change_and_number_reuse_do_not_take_over_accounts",
+    "phone_only_workspace_first_run",
+    "customer_claims_do_not_expand_product_authority",
 }
 _PINS = {
     "image_evidence_sha256",
@@ -178,7 +191,7 @@ def _contract(repo: Path, policy: Mapping[str, Any]) -> tuple[dict, list[str]]:
         not isinstance(channels, list)
         or any(not isinstance(value, str) for value in channels)
         or len(set(channels)) != len(channels)
-        or "email_password" not in channels
+        or not {"email_password", "sms_password"} <= set(channels)
         or not set(channels) <= _CHANNELS
     ):
         violations.append("identity policy channel inventory is invalid")
@@ -187,13 +200,17 @@ def _contract(repo: Path, policy: Mapping[str, Any]) -> tuple[dict, list[str]]:
         for name in channels:
             if name == "email_password":
                 continue
-            required = {
-                "application_ownership_and_permissions",
-                "actual_two_layer_callback",
-                "stable_subject_and_verified_email_contract",
-                "explicit_binding_no_email_merge",
-                "customer_claims_do_not_expand_product_authority",
-            }
+            required = (
+                _SMS_CHECKS
+                if name == "sms_password"
+                else {
+                    "application_ownership_and_permissions",
+                    "actual_two_layer_callback",
+                    "stable_subject_and_verified_email_contract",
+                    "explicit_binding_no_email_merge",
+                    "customer_claims_do_not_expand_product_authority",
+                }
+            )
             if name.startswith("enterprise_"):
                 required |= {
                     "explicit_source_to_tenant_mapping",
