@@ -556,13 +556,22 @@ def reviewed_source_bytes(root, relative, expected):
     body = (root / relative).read_bytes()
     if isinstance(expected, str):
         return body
-    correction = expected.get("type_and_context_correction")
-    if correction is not None:
+    for name in ("type_and_context_correction", "diagnostics_correction"):
+        correction = expected.get(name)
+        if correction is None:
+            continue
         assert hashlib.sha256(body).hexdigest() == correction["corrected_sha256"]
         for fragment in correction["inverse_fragments"]:
             before, after = fragment["before"].encode(), fragment["after"].encode()
             assert before != after and body.count(after) == 1
             body = body.replace(after, before)
+    return body
+
+
+def verified_parent_source_bytes(root, relative, expected):
+    body = reviewed_source_bytes(root, relative, expected)
+    digest = expected if isinstance(expected, str) else expected["combined_sha256"]
+    assert hashlib.sha256(body).hexdigest() == digest
     return body
 
 
@@ -572,15 +581,9 @@ def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged
     )
     root = Path(__file__).resolve().parents[2]
     for relative, expected in parent.items():
-        body = (
-            (root / relative).read_bytes()
-            if isinstance(expected, str)
-            else reviewed_source_bytes(root, relative, expected)
-        )
+        body = verified_parent_source_bytes(root, relative, expected)
         if isinstance(expected, str):
-            assert hashlib.sha256(body).hexdigest() == expected
             continue
-        assert hashlib.sha256(body).hexdigest() == expected["combined_sha256"]
         if "retention_fragment" in expected:
             fragment = expected["retention_fragment"].encode()
             assert body.count(fragment) == 1
@@ -602,6 +605,33 @@ def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged
             node = functions[name]
             function = "\n".join(text.splitlines()[node.lineno - 1 : node.end_lineno]).encode()
             assert hashlib.sha256(function).hexdigest() == digest
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("timedelta(hours=24)", "timedelta(hours=25)"),
+        ('SEVERITIES = ("Critical", "High")', 'SEVERITIES = ("Critical",)'),
+        ("ignored != []", "ignored is None"),
+    ],
+)
+def test_scanner_diagnostics_delta_cannot_hide_changed_admission_policy(tmp_path, before, after):
+    relative = "saas/scripts/scan_oci_candidates.py"
+    expected = json.loads(
+        (RESOURCE.parent / "native-domain-discovery-parent-hashes.json").read_text()
+    )[relative]
+    body = (Path(__file__).resolve().parents[2] / relative).read_text()
+    assert body.count(before) == 1
+    body = body.replace(before, after)
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    target.write_text(body)
+    # Updating only the new diagnostic hash must not change the original policy pin.
+    expected["diagnostics_correction"]["corrected_sha256"] = hashlib.sha256(
+        body.encode()
+    ).hexdigest()
+    with pytest.raises(AssertionError):
+        verified_parent_source_bytes(tmp_path, relative, expected)
 
 
 @pytest.mark.parametrize("failure", [False, True])

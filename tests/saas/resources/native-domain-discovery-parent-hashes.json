@@ -264,6 +264,57 @@
       ]
     }
   },
-  "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
+  "saas/scripts/scan_oci_candidates.py": {
+    "parent_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
+    "combined_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
+    "approved_change": "3983b49ab adds content-blind failure diagnostics only. Exact inverse restores the entire preceding scanner, including freshness, severity, ignored-match and architecture checks; this is not production admission.",
+    "preserved_functions": {
+      "parse_database_status": "8278842657507f9545191b9bd62169de87698f8e9668409f07fe46b383dedb19",
+      "scan_report": "b7dfe6a0e66e09b16475d9bfdc5a9c9ca65cccfaaeba17c9770c6af6aebce0d3",
+      "validate_image_scope": "c5ecdf8a1e058f6a7e273cb33076d9e72e267ee427994b1385c3e58f717a083f",
+      "install_grype": "1ab373123d271623f9db6a388038f6523e0e9d95305f396c19d51c1f23e13e49",
+      "file_sha256": "36a7c640b710db0d294f9e123e9d2618df89172dfe3d935d9cc519a1ee6a9deb",
+      "main": "7def65db07cc25a3715bac2da21a39e7a38353305df76c8657093c97e7b0d242"
+    },
+    "approved_functions": {},
+    "diagnostics_correction": {
+      "corrected_sha256": "f5ca09d9541ebf4790feca19a01be66464f01ac64c75f7654ff4399b4ef759af",
+      "inverse_fragments": [
+        {
+          "before": "from datetime import UTC, datetime, timedelta\nfrom pathlib import Path\nfrom typing import TypedDict\n\nGRYPE_VERSION = \"0.120.1\"\n",
+          "after": "from datetime import UTC, datetime, timedelta\nfrom pathlib import Path\nfrom types import TracebackType\nfrom typing import Self, TypedDict\n\nGRYPE_VERSION = \"0.120.1\"\n"
+        },
+        {
+          "before": "    counts: dict[str, int]\n    findings: list[dict[str, object]]\n\n\n",
+          "after": "    counts: dict[str, int]\n    findings: list[dict[str, object]]\n\n\ndef summary_name(scope: str) -> str:\n    return (\n        \"server-preflight-scan-summary.json\"\n        if scope == \"server-preflight\"\n        else \"candidate-scan-summary.json\"\n    )\n\n\nclass ScanFailureRecorder:\n    \"\"\"Keep diagnostics even when database admission fails before the first scan.\"\"\"\n\n    def __init__(self, output: Path, scope: str) -> None:\n        self.output, self.scope = output, scope\n        self.stage = \"install_scanner\"\n        self.completed_scan_count = 0\n        self.database_status: dict[str, object] = {}\n\n    def __enter__(self) -> Self:\n        (self.output / summary_name(self.scope)).unlink(missing_ok=True)\n        (self.output / \"scan-failure.json\").unlink(missing_ok=True)\n        return self\n\n    def __exit__(\n        self,\n        error_type: type[BaseException] | None,\n        error: BaseException | None,\n        traceback: TracebackType | None,\n    ) -> None:\n        if not isinstance(error, Exception):\n            return\n        record = {\n            \"status\": \"error\",\n            \"scanner\": f\"grype {GRYPE_VERSION}\",\n            \"scope\": self.scope,\n            \"stage\": self.stage,\n            \"error_type\": type(error).__name__,\n            \"exit_code\": error.returncode\n            if isinstance(error, subprocess.CalledProcessError)\n            else None,\n            \"database_maximum_age_hours\": 24,\n            \"database_status\": self.database_status,\n            \"completed_scan_count\": self.completed_scan_count,\n            \"expected_scan_count\": len(SCAN_SCOPES[self.scope]) * len(PLATFORMS),\n            \"recorded_at\": datetime.now(UTC).isoformat(),\n        }\n        (self.output / \"scan-failure.json\").write_text(\n            json.dumps(record, indent=2, sort_keys=True) + \"\\n\"\n        )\n\n\n"
+        },
+        {
+          "before": "\n    args.output.mkdir(parents=True, exist_ok=True)\n    with tempfile.TemporaryDirectory(prefix=\"omnigent-grype-\") as temporary:\n        scanner_root = Path(temporary)\n        scanner = install_grype(scanner_root)\n",
+          "after": "\n    args.output.mkdir(parents=True, exist_ok=True)\n    with (\n        ScanFailureRecorder(args.output, args.scope) as progress,\n        tempfile.TemporaryDirectory(prefix=\"omnigent-grype-\") as temporary,\n    ):\n        scanner_root = Path(temporary)\n        scanner = install_grype(scanner_root)\n"
+        },
+        {
+          "before": "            \"  max-allowed-built-age: 24h\\n\"\n        )\n        subprocess.run([str(scanner), \"-c\", str(config), \"db\", \"update\"], check=True)\n        status = json.loads(\n            subprocess.check_output(\n",
+          "after": "            \"  max-allowed-built-age: 24h\\n\"\n        )\n        progress.stage = \"database_update\"\n        subprocess.run([str(scanner), \"-c\", str(config), \"db\", \"update\"], check=True)\n        progress.stage = \"database_status\"\n        status = json.loads(\n            subprocess.check_output(\n"
+        },
+        {
+          "before": "            )\n        )\n        database_built_at = parse_database_status(status, now=datetime.now(UTC))\n        summaries = []\n",
+          "after": "            )\n        )\n        progress.database_status = {\n            key: status[key] for key in (\"valid\", \"built\", \"schemaVersion\") if key in status\n        }\n        progress.stage = \"database_validation\"\n        database_built_at = parse_database_status(status, now=datetime.now(UTC))\n        summaries = []\n"
+        },
+        {
+          "before": "            archive_digest = file_sha256(archive)\n            for platform in PLATFORMS:\n                output = args.output / f\"{name}-{platform.split('/')[-1]}-grype.json\"\n                result = subprocess.run(\n",
+          "after": "            archive_digest = file_sha256(archive)\n            for platform in PLATFORMS:\n                progress.stage = f\"scan_{name}_{platform.split('/')[-1]}\"\n                output = args.output / f\"{name}-{platform.split('/')[-1]}-grype.json\"\n                result = subprocess.run(\n"
+        },
+        {
+          "before": "                    }\n                )\n    receipt = {\n        \"scanner\": f\"grype {GRYPE_VERSION}\",\n",
+          "after": "                    }\n                )\n                progress.completed_scan_count += 1\n    receipt = {\n        \"scanner\": f\"grype {GRYPE_VERSION}\",\n"
+        },
+        {
+          "before": "        \"images\": summaries,\n    }\n    summary_name = (\n        \"server-preflight-scan-summary.json\"\n        if args.scope == \"server-preflight\"\n        else \"candidate-scan-summary.json\"\n    )\n    (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + \"\\n\")\n    return 2 if blocked else 0\n\n",
+          "after": "        \"images\": summaries,\n    }\n    (args.output / summary_name(args.scope)).write_text(\n        json.dumps(receipt, indent=2, sort_keys=True) + \"\\n\"\n    )\n    return 2 if blocked else 0\n\n"
+        }
+      ],
+      "diagnostics_are_not_admission_evidence": true
+    }
+  },
   "saas/scripts/compare_oci_rebuilds.py": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
 }
