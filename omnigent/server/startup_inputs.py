@@ -512,11 +512,25 @@ class ManagedStartupInputs:
                 )
         return changed
 
-    async def cancel(self, session_id: str) -> None:
+    async def cancel(self, session_id: str, *, conversation: Conversation | None = None) -> None:
+        """Cancel inputs observed before forwarding this control request.
+
+        The route supplies its freshly authorized conversation; rereading the
+        complete row would add metadata/label queries to every warm interrupt.
+        Pending inputs are still read here, including those saved after route
+        authorization. A later startup label on a warm session does not cancel
+        an input that arrived after this pending-input read.
+        Callers without a request snapshot retain the ordinary store lookup.
+        """
+        if conversation is not None and conversation.id != session_id:
+            raise ValueError("startup cancellation conversation does not match session")
         items = await asyncio.to_thread(self.conversations.list_pending_inputs, session_id)
-        conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
-        if not items and (conv is None or conv.labels.get(STARTUP_LABEL) != "pending"):
-            return
+        if not items:
+            conv = conversation
+            if conv is None:
+                conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
+            if conv is None or conv.labels.get(STARTUP_LABEL) != "pending":
+                return
         await asyncio.to_thread(
             self.conversations.set_labels, session_id, {STARTUP_LABEL: "cancelled"}
         )

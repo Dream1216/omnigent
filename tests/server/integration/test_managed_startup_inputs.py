@@ -17,7 +17,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from starlette.datastructures import Headers
 
-from omnigent.entities.conversation import ErrorData
+from omnigent.entities.conversation import ErrorData, NewConversationItem
 from omnigent.harness_plugins import CLAUDE_NATIVE_CODING_AGENT, CODEX_NATIVE_CODING_AGENT
 from omnigent.host.frames import HostHelloFrame
 from omnigent.runtime import pending_inputs
@@ -35,6 +35,7 @@ from omnigent.server.startup_inputs import (
 )
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
+from omnigent.stores.conversation_store import PENDING_INPUT_RESPONSE_ID
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
@@ -346,6 +347,97 @@ async def test_stop_before_host_ready_cancels_all_saved_inputs(
     finally:
         await runner.aclose()
     assert forwarded == []
+
+
+@pytest.mark.parametrize("request_snapshot", [False, True])
+async def test_warm_stop_reuses_authorized_conversation_without_reloading_it(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch, request_snapshot: bool
+) -> None:
+    env = startup_env
+    session_id = await _create(env)
+    for item in env.conv_store.list_pending_inputs(session_id):
+        assert env.conv_store.transition_pending_input(
+            session_id, item.id, expected=item.status, status=None
+        )
+    env.conv_store.delete_label(session_id, STARTUP_LABEL)
+    authorized = env.conv_store.get_conversation(session_id)
+    assert authorized is not None
+    original = env.conv_store.get_conversation
+    lookups: list[str] = []
+
+    def recorded_lookup(value: str):
+        lookups.append(value)
+        return original(value)
+
+    monkeypatch.setattr(env.conv_store, "get_conversation", recorded_lookup)
+    await env.app.state.startup_inputs.cancel(
+        session_id, conversation=authorized if request_snapshot else None
+    )
+    assert lookups == ([] if request_snapshot else [session_id])
+    assert env.conv_store.list_pending_inputs(session_id) == []
+    current = original(session_id)
+    assert current is not None and STARTUP_LABEL not in current.labels
+
+
+@pytest.mark.parametrize("saved_after_read", [False, True])
+async def test_stop_cancellation_boundary_preserves_only_later_inputs(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch, saved_after_read: bool
+) -> None:
+    env = startup_env
+    session_id = await _create(env)
+    prior = env.conv_store.list_pending_inputs(session_id)[0]
+    assert env.conv_store.transition_pending_input(
+        session_id, prior.id, expected=prior.status, status=None
+    )
+    env.conv_store.delete_label(session_id, STARTUP_LABEL)
+    authorized = env.conv_store.get_conversation(session_id)
+    assert authorized is not None
+    original = env.conv_store.list_pending_inputs
+    later = NewConversationItem(
+        type=prior.type,
+        data=prior.data,
+        response_id=PENDING_INPUT_RESPONSE_ID,
+        status="in_progress",
+        stable_id=uuid4().hex,
+    )
+    later_ids: list[str] = []
+
+    def save_later(value: str) -> None:
+        later_ids.extend(item.id for item in env.conv_store.append(value, [later]))
+        env.conv_store.set_labels(value, {STARTUP_LABEL: "pending"})
+
+    def capture_pending_inputs(value: str):
+        if not saved_after_read:
+            save_later(value)
+        snapshot = original(value)
+        if saved_after_read:
+            assert snapshot == []
+            save_later(value)
+        return snapshot
+
+    monkeypatch.setattr(env.conv_store, "list_pending_inputs", capture_pending_inputs)
+    await env.app.state.startup_inputs.cancel(session_id, conversation=authorized)
+    assert len(later_ids) == 1
+    assert [item.id for item in original(session_id)] == (later_ids if saved_after_read else [])
+    current = env.conv_store.get_conversation(session_id)
+    assert current is not None
+    assert current.labels[STARTUP_LABEL] == ("pending" if saved_after_read else "cancelled")
+
+
+async def test_startup_stop_rejects_a_different_conversation_before_store_access(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = startup_env
+    session_id = await _create(env)
+    authorized = env.conv_store.get_conversation(session_id)
+    assert authorized is not None
+
+    def unexpected_lookup(*_: Any):
+        raise AssertionError("mismatched cancellation must not read another session")
+
+    monkeypatch.setattr(env.conv_store, "list_pending_inputs", unexpected_lookup)
+    with pytest.raises(ValueError, match="conversation does not match session"):
+        await env.app.state.startup_inputs.cancel(uuid4().hex, conversation=authorized)
 
 
 async def test_stop_cancels_local_dispatch_and_clears_saved_input(startup_env: _Env) -> None:

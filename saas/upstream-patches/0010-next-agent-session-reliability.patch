@@ -537,7 +537,7 @@ index 83b04a080c..0a82dc9c85 100644
 -        comments_fingerprints = await _comments_fingerprints_for(conv_ids)
 -        pull_requests = await _pull_requests_for(conv_ids)
 diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
-index ad3f08c8103e9135e2d61ce344eaca8c36929340..e7834c88c2814a7d57ad8f5bca829d2d1cfa739f 100644
+index ad3f08c8103e9135e2d61ce344eaca8c36929340..581c1f2e2d7e1c0c537efbbae35ad655f1d4f697 100644
 --- a/omnigent/server/routes/sessions/routes_events.py
 +++ b/omnigent/server/routes/sessions/routes_events.py
 @@ -168,0 +169 @@ from omnigent.server.routes._sessions.common import (
@@ -546,6 +546,9 @@ index ad3f08c8103e9135e2d61ce344eaca8c36929340..e7834c88c2814a7d57ad8f5bca829d2d
 +# A caller may leave a shared native bootstrap running after this total wait.
 +_NATIVE_BOOTSTRAP_CALLER_WAIT_S = _RUNNER_SESSION_INIT_TIMEOUT_S
 +
+@@ -1777 +1781 @@ def register_events_routes(
+-                await startup.cancel(session_id)
++                await startup.cancel(session_id, conversation=conv)
 @@ -2886,0 +2891 @@ def register_events_routes(
 +                    startup_input=request if isinstance(request, StartupInputContext) else None,
 @@ -3026 +3031,3 @@ def register_events_routes(
@@ -607,7 +610,7 @@ index ad3f08c8103e9135e2d61ce344eaca8c36929340..e7834c88c2814a7d57ad8f5bca829d2d
 +                    "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
 +                }
 diff --git a/omnigent/server/startup_inputs.py b/omnigent/server/startup_inputs.py
-index fe64e5c8d8f64050747be134ddee98dc1a9f50a3..dd20184ff45039c5988faa72d5a36c4bd202418e 100644
+index fe64e5c8d8f64050747be134ddee98dc1a9f50a3..73bd1ecfa398611ba33e6ac3f7d3748e769a3c05 100644
 --- a/omnigent/server/startup_inputs.py
 +++ b/omnigent/server/startup_inputs.py
 @@ -29,0 +30 @@ from omnigent.server.host_registry import HostConnection, HostRegistry
@@ -661,4 +664,28 @@ index fe64e5c8d8f64050747be134ddee98dc1a9f50a3..dd20184ff45039c5988faa72d5a36c4b
 +                )
 +            ):
 +                # No submission occurred; the host worker can try after reconnect.
++                return
+@@ -489 +515,12 @@ class ManagedStartupInputs:
+-    async def cancel(self, session_id: str) -> None:
++    async def cancel(self, session_id: str, *, conversation: Conversation | None = None) -> None:
++        """Cancel inputs observed before forwarding this control request.
++
++        The route supplies its freshly authorized conversation; rereading the
++        complete row would add metadata/label queries to every warm interrupt.
++        Pending inputs are still read here, including those saved after route
++        authorization. A later startup label on a warm session does not cancel
++        an input that arrived after this pending-input read.
++        Callers without a request snapshot retain the ordinary store lookup.
++        """
++        if conversation is not None and conversation.id != session_id:
++            raise ValueError("startup cancellation conversation does not match session")
+@@ -491,3 +528,6 @@ class ManagedStartupInputs:
+-        conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
+-        if not items and (conv is None or conv.labels.get(STARTUP_LABEL) != "pending"):
+-            return
++        if not items:
++            conv = conversation
++            if conv is None:
++                conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
++            if conv is None or conv.labels.get(STARTUP_LABEL) != "pending":
 +                return
