@@ -1,0 +1,135 @@
+name: Aliyun native ARM64 SDK diagnostic
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/saas-aliyun-native-arm-sdk-diagnostic.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aliyun-native-sdk-diagnostic-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    uses: ./.github/workflows/security-gate.yml
+
+  native-arm64:
+    needs: gate
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      SOURCE_REF: ada131fe7fbf0de4728eb279705392217bdeba57
+    steps:
+      - name: Checkout the approved frozen SDK source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ada131fe7fbf0de4728eb279705392217bdeba57
+          persist-credentials: false
+      - name: Verify native hardware and frozen source
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ARCH" = ARM64
+          test "$(uname -m)" = aarch64
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          test -z "$(git status --porcelain)"
+          mkdir -p artifacts
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5
+        with:
+          version: v29.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+        with:
+          driver-opts: image=moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - name: Build the full Server runtime on native ARM64
+        run: |
+          set -euo pipefail
+          test "$(docker version --format '{{.Server.Version}}')" = 29.5.2
+          docker buildx build --file deploy/docker/Dockerfile --target runtime \
+            --platform linux/arm64 --progress plain --provenance mode=max --sbom=true \
+            --metadata-file artifacts/native-arm-build.json \
+            --output "type=oci,dest=${RUNNER_TEMP}/server-arm64.tar,rewrite-timestamp=true" \
+            --build-arg PYTHON_IMAGE=python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159 \
+            --build-arg RUNTIME_IMAGE=cgr.dev/chainguard/wolfi-base@sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e \
+            --build-arg NODE_IMAGE=node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da \
+            --build-arg GO_IMAGE=golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d \
+            --build-arg SOURCE_DATE_EPOCH=1793474116 \
+            --build-arg SOURCE_REVISION="$SOURCE_REF" \
+            --build-arg UPSTREAM_REVISION=825f8500d7cc8e997e5562fa55694cd146165f3c \
+            --build-arg ADAPTER_CONTRACT_VERSION=0.2.0 \
+            --build-arg CONTROL_PLANE_SCHEMA_REVISION=lm2t00000001 \
+            --build-arg OMNIGENT_EXTRAS=kubernetes,e2b,aliyun-sandbox-control .
+      - name: Execute the unchanged SDK program with its original limits
+        run: |
+          python - <<'PY'
+          import ast, hashlib, json, os, re, secrets, subprocess, tarfile, textwrap, time
+          from pathlib import Path
+          assert os.uname().machine == "aarch64" and os.environ["RUNNER_ARCH"] == "ARM64"
+          revision = os.environ["SOURCE_REF"]
+          archive = Path(os.environ["RUNNER_TEMP"]) / "server-arm64.tar"
+          source = Path(".github/workflows/saas-image-candidate.yml").read_text()
+          block = source.split("      - name: Verify executable Server candidate SDK on both architectures\n", 1)[1].split("      - name: Preflight scan exact server candidate on both architectures\n", 1)[0]
+          script = textwrap.dedent(block.split("python - <<'PY'\n", 1)[1].rsplit("\n          PY", 1)[0])
+          calls = [node for node in ast.walk(ast.parse(script)) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "run" and node.args and isinstance(node.args[0], ast.List) and len(node.args[0].elts) > 1 and isinstance(node.args[0].elts[1], ast.Constant) and node.args[0].elts[1].value == "run"]
+          assert len(calls) == 1
+          with archive.open("rb") as stream:
+              archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          with tarfile.open(archive) as stream:
+              def blob(digest):
+                  assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+                  raw = stream.extractfile("blobs/sha256/" + digest.split(":")[1]).read()
+                  assert hashlib.sha256(raw).hexdigest() == digest.split(":")[1]
+                  return json.loads(raw)
+              descriptors = json.load(stream.extractfile("index.json"))["manifests"]
+              assert len(descriptors) == 1
+              root = descriptors[0]["digest"]
+              index = blob(root)
+              selected = [item for item in index["manifests"] if item.get("platform", {}).get("architecture") == "arm64" and item.get("platform", {}).get("os") == "linux"]
+              assert len(selected) == 1
+              manifest = blob(selected[0]["digest"])
+              config = blob(manifest["config"]["digest"])
+          subprocess.run(["docker", "load", "-i", str(archive)], check=True, timeout=300)
+          name = "omnigent-native-sdk-" + secrets.token_hex(16)
+          errors = []
+          cleanup_errors = []
+          report = {"source_revision": revision, "archive_sha256": archive_sha256, "native_architecture": os.uname().machine, "diagnostic_only": True, "production_admission": False, "timeout_seconds": 180, "sdk_passed": False}
+          try:
+              actual = json.loads(subprocess.check_output(["docker", "image", "inspect", "--platform", "linux/arm64", root]))[0]
+              assert actual["Descriptor"]["digest"] == actual["Id"] == selected[0]["digest"]
+              assert actual["RootFS"]["Layers"] == config["rootfs"]["diff_ids"]
+              assert actual["Config"]["Labels"]["org.opencontainers.image.revision"] == revision
+              command = eval(compile(ast.Expression(calls[0].args[0]), "frozen-sdk-command", "eval"), {"platform": "linux/arm64", "root": root, "revision": revision})
+              assert hashlib.sha256(command[-2].encode()).hexdigest() == "5856330ae0bb078c9fa209f184b745b3b60d1c2499a5e0d0c054f67b29a1ff22"
+              command.remove("--rm")
+              command[2:2] = ["--name", name, "--no-healthcheck"]
+              started = time.monotonic()
+              subprocess.run(command, check=True, timeout=180)
+              report.update(sdk_passed=True, elapsed_seconds=time.monotonic() - started)
+          except BaseException as error:
+              errors.append(error)
+          finally:
+              for command in (["docker", "container", "rm", "--force", name], ["docker", "image", "rm", root]):
+                  try:
+                      subprocess.run(command, check=True, timeout=30)
+                  except BaseException as error:
+                      errors.append(error)
+                      cleanup_errors.append(error)
+              report["cleanup_passed"] = not cleanup_errors
+              Path("artifacts/native-arm-sdk.json").write_text(json.dumps(report, indent=2) + "\n")
+              if errors:
+                  raise BaseExceptionGroup("Native SDK diagnostic failed", errors)
+          PY
+      - name: Retain diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aliyun-native-arm-sdk-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
