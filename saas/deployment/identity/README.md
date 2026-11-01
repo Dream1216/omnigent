@@ -124,3 +124,42 @@ annotation, and check that reader and worker Secret sets are disjoint except
 public configuration. Run `pytest tests/saas/test_render_identity_release.py`
 to reproduce source-drift, overwrite, authority, network and closed-loader
 checks without connecting to production.
+## Monitoring and operations
+
+Load `alerts.rules.yaml` into the approved Prometheus installation. Scrape each
+worker endpoint directly using `job="identity-sync"`; preserve stable
+`namespace`/`service` labels and a distinct `instance` per worker. Scraping only
+the load-balanced Service address cannot prove both replicas are available.
+Use HTTPS with the approved CA and certificate DNS name, keep certificate
+verification enabled, and allow the monitoring workload through the existing
+private NetworkPolicy selectors. Metrics require no provider or database key.
+
+The rules aggregate shared database gauges with `max`, avoiding duplicate
+dead-letter counts across replicas. They detect provider/Inbox ages over 300
+seconds, any retained dead letter, readback failures lasting two minutes,
+stopped worker progress, unavailable scrape endpoints, a missing scrape job
+and an absent worker-health metric. The latter catches incomplete or old
+metric exporters even if their HTTP request succeeds.
+
+Validate the rules with Prometheus 3.15.1 before loading them:
+
+```sh
+promtool check rules saas/deployment/identity/alerts.rules.yaml
+promtool test rules saas/deployment/identity/alerts.test.yaml
+```
+
+Candidate CI downloads the exact upstream Linux release with its fixed SHA-256
+and runs both checks. The test cases cover replica aggregation, the exact
+300-second boundary, pending durations, missing discovery and a live HTTP
+server whose worker-health metric is false or absent.
+
+Route alerts only through the approved Alertmanager and operations receiver.
+Installed production scrape targets, receiver routing, actual firing and
+resolution must be captured as release evidence; a rules file, Promtool test
+or local capture sink does not prove that deployment. Provider failure must
+not remove healthy existing product runtimes from service.
+
+Use [the reviewed dead-letter recovery runbook](../../production/casdoor/IDENTITY_DEAD_LETTERS.md)
+for the separate offline-authorized operations command. It is not mounted into
+either online identity Deployment. The current stage manifests remain at zero
+replicas pending admission; this monitoring guidance does not activate them.

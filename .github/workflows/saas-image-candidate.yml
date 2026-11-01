@@ -114,6 +114,19 @@ jobs:
         run: uv sync --frozen --extra all --group dev --extra saas
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
+      - name: Verify identity alert rules with pinned Prometheus
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/identity-promtool.tar.gz"
+          directory="$RUNNER_TEMP/identity-promtool"
+          curl --fail --location --retry 3 --max-time 120 \
+            https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-3.15.1.linux-amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84 "$archive" | sha256sum --check
+          mkdir -p "$directory"
+          tar -xzf "$archive" -C "$directory" --strip-components=1 prometheus-3.15.1.linux-amd64/promtool
+          "$directory/promtool" check rules saas/deployment/identity/alerts.rules.yaml
+          "$directory/promtool" test rules saas/deployment/identity/alerts.test.yaml
       - name: Set up crane for exact OCI transfer regression
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:

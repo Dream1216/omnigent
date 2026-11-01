@@ -1,0 +1,52 @@
+groups:
+  - name: omnigent-identity-sync
+    rules:
+      - alert: IdentitySyncConvergenceLag
+        expr: >-
+          max by (namespace, service) (omnigent_identity_sync_reconcile_age_seconds{job="identity-sync"}) > 300
+          or max by (namespace, service) (omnigent_identity_sync_event_age_seconds{job="identity-sync"}) > 300
+        labels:
+          severity: critical
+        annotations:
+          summary: Identity state convergence exceeded five minutes
+      - alert: IdentitySyncDeadLetters
+        expr: max by (namespace, service) (omnigent_identity_sync_dead_events_total{job="identity-sync"}) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Identity events require reviewed dead-letter recovery
+      - alert: IdentitySyncReadbackFailure
+        expr: max by (namespace, service) (omnigent_identity_sync_readback_failed_connections{job="identity-sync"}) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Identity state readback failures persist
+      - alert: IdentitySyncWorkerUnhealthy
+        expr: omnigent_identity_sync_worker_healthy{job="identity-sync"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: An identity worker cannot make progress
+      - alert: IdentitySyncMetricsUnavailable
+        expr: up{job="identity-sync"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: An identity worker metrics endpoint is unavailable
+      - alert: IdentitySyncMetricsMissing
+        expr: absent(up{job="identity-sync"})
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Identity worker scrape targets are missing
+      - alert: IdentitySyncHealthMetricMissing
+        expr: up{job="identity-sync"} == 1 unless on (job, instance) omnigent_identity_sync_worker_healthy{job="identity-sync"}
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Identity worker health metrics are missing

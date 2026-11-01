@@ -1,0 +1,88 @@
+rule_files:
+  - alerts.rules.yaml
+evaluation_interval: 15s
+tests:
+  - name: Dead letters aggregate shared database state across replicas
+    interval: 15s
+    input_series:
+      - series: 'omnigent_identity_sync_dead_events_total{job="identity-sync",namespace="qa",service="identity-sync",instance="one"}'
+        values: '1x16'
+      - series: 'omnigent_identity_sync_dead_events_total{job="identity-sync",namespace="qa",service="identity-sync",instance="two"}'
+        values: '1x16'
+    alert_rule_test:
+      - eval_time: 15s
+        alertname: IdentitySyncDeadLetters
+        exp_alerts:
+          - exp_labels: {namespace: qa, service: identity-sync, severity: warning}
+            exp_annotations: {summary: Identity events require reviewed dead-letter recovery}
+  - name: Five minute convergence threshold is strict
+    interval: 15s
+    input_series:
+      - series: 'omnigent_identity_sync_reconcile_age_seconds{job="identity-sync",namespace="qa",service="identity-sync"}'
+        values: '300x4 301x4'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: IdentitySyncConvergenceLag
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: IdentitySyncConvergenceLag
+        exp_alerts:
+          - exp_labels: {namespace: qa, service: identity-sync, severity: critical}
+            exp_annotations: {summary: Identity state convergence exceeded five minutes}
+  - name: Sustained provider failure respects the pending period
+    interval: 15s
+    input_series:
+      - series: 'omnigent_identity_sync_readback_failed_connections{job="identity-sync",namespace="qa",service="identity-sync"}'
+        values: '1x16'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: IdentitySyncReadbackFailure
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: IdentitySyncReadbackFailure
+        exp_alerts:
+          - exp_labels: {namespace: qa, service: identity-sync, severity: warning}
+            exp_annotations: {summary: Identity state readback failures persist}
+  - name: Failed TLS or metrics transport remains visible per replica
+    interval: 15s
+    input_series:
+      - series: 'up{job="identity-sync",namespace="qa",service="identity-sync",instance="one"}'
+        values: '0x16'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: IdentitySyncMetricsUnavailable
+        exp_alerts:
+          - exp_labels: {job: identity-sync, namespace: qa, service: identity-sync, instance: one, severity: critical}
+            exp_annotations: {summary: An identity worker metrics endpoint is unavailable}
+  - name: A live HTTP server does not hide stopped worker threads
+    interval: 15s
+    input_series:
+      - series: 'up{job="identity-sync",namespace="qa",service="identity-sync",instance="one"}'
+        values: '1x16'
+      - series: 'omnigent_identity_sync_worker_healthy{job="identity-sync",namespace="qa",service="identity-sync",instance="one"}'
+        values: '0x16'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: IdentitySyncWorkerUnhealthy
+        exp_alerts:
+          - exp_labels: {job: identity-sync, namespace: qa, service: identity-sync, instance: one, severity: critical}
+            exp_annotations: {summary: An identity worker cannot make progress}
+  - name: A missing scrape job cannot report a healthy empty population
+    interval: 15s
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: IdentitySyncMetricsMissing
+        exp_alerts:
+          - exp_labels: {job: identity-sync, severity: critical}
+            exp_annotations: {summary: Identity worker scrape targets are missing}
+  - name: Legacy or incomplete metrics cannot hide worker health
+    interval: 15s
+    input_series:
+      - series: 'up{job="identity-sync",namespace="qa",service="identity-sync",instance="one"}'
+        values: '1x16'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: IdentitySyncHealthMetricMissing
+        exp_alerts:
+          - exp_labels: {job: identity-sync, namespace: qa, service: identity-sync, instance: one, severity: critical}
+            exp_annotations: {summary: Identity worker health metrics are missing}

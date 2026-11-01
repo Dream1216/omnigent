@@ -109,6 +109,15 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   `tests/saas/test_identity_sync_worker_postgresql.py`.
   Private process source/transport tests do not qualify production secret mounts,
   network policy, direct provider notification or complete browser convergence.
+- Scoped dead-letter inspection, offline Ed25519 approval, atomic audit/replay,
+  parallel operations and expiry after real database lock waits:
+  `tests/saas/test_identity_replay.py`,
+  `tests/saas/test_identity_replay_operations.py`, and
+  `tests/saas/test_identity_replay_postgresql.py`.
+  Follow `saas/production/casdoor/IDENTITY_DEAD_LETTERS.md`; there is no public
+  replay route or online signing key. Alert evaluation uses the pinned Promtool
+  preflight and `saas/deployment/identity/alerts.test.yaml`; production routing
+  and receiver qualification remain separate release evidence.
 - Private bounded batches and fresh-password authorization:
   `tests/saas/test_credential_migration_cli.py` and
   `tests/saas/test_credential_recovery.py`. Use the synthetic procedure in

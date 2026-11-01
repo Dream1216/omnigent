@@ -176,12 +176,17 @@ or credential labels:
   `omnigent_identity_sync_event_backlog`: current outstanding work.
 - `omnigent_identity_sync_dead_events_total`, `..._failures_total`,
   `..._events_total` and `..._reconciled_total`: dead letters and processing counts.
+- `omnigent_identity_sync_worker_healthy`: current worker-thread progress, even
+  when the metrics HTTP endpoint itself remains reachable.
 
 Missing caches are included in lag; inactive product users, local revocations
 and terminal provider deletion are excluded. Install and exercise alerts for
 age above 300 seconds, new dead letters, sustained readback failures and missing
 worker probes before rollout. Complete the initial baseline before admitting a
-cohort. Dead-letter review/replay and matched restore remain release requirements.
+cohort. The [alert rules and deployment guidance](../../deployment/identity/README.md#monitoring-and-operations)
+and [offline-reviewed dead-letter workflow](IDENTITY_DEAD_LETTERS.md) implement
+the operations path; actual installed alert routing, reviewed replay and
+matched restore remain release requirements.
 
 ## Release and restore requirements
 

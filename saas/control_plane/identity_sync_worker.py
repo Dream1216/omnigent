@@ -193,6 +193,7 @@ class IdentitySyncWorker:
 
         return {
             **counts,
+            "worker_healthy": int(self.healthy()),
             "connections": provider_count,
             "unchecked_connections": missing_count,
             "readback_failed_connections": failure_count,

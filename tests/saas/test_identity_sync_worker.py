@@ -207,7 +207,9 @@ def test_worker_has_one_start_stop_lifecycle_and_bounded_capacity(source):
     worker.start()
     with pytest.raises(RuntimeError):
         worker.start()
+    assert worker.snapshot()["worker_healthy"] == 1
     worker.stop()
+    assert worker.snapshot()["worker_healthy"] == 0
     with pytest.raises(RuntimeError):
         worker.start()
     assert not worker.healthy()
