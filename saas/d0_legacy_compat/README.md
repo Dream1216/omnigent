@@ -73,3 +73,9 @@ verified original wheel; all dependency, version, extra and other headers must
 remain byte-identical, and no alternate description is accepted. METADATA is
 never included in the overlay. The original first image-build refusal remains
 evidence; this packaging distinction does not permit a dependency change.
+
+Only the new overlay's file/directory timestamps are normalized before COPY.
+The exporter must not request global timestamp rewriting of existing layers:
+exact compressed base descriptors and rootfs diff-id prefixes remain mandatory.
+Original repeat comparisons and signed base layer descriptors are retained
+before any rejection to make drift diagnosable without weakening that check.

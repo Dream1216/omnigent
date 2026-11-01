@@ -164,6 +164,7 @@ def test_pr_can_only_build_unsigned_and_protected_main_signs_without_rebuild():
         assert step["with"]["platforms"] == "linux/amd64,linux/arm64"
         assert step["with"]["no-cache"] is step["with"]["pull"] is True
         assert step["with"]["push"] is False
+        assert "rewrite-timestamp" not in step["with"]["outputs"]
     assert jobs["publish-pair"]["environment"] == "production-image"
     assert "inputs.product_revision == github.sha" in jobs["publish-pair"]["if"]
     assert "refs/heads/main" in jobs["publish-pair"]["if"]

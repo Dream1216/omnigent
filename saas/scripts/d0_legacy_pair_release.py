@@ -168,7 +168,16 @@ def verify_overlay(archive_path, facts, materials, bases, role, revision, epoch)
             )
 
 
-def candidate(repository: Path, first: Path, second: Path, bases: Path, revision: str, epoch: int):
+def candidate(
+    repository: Path,
+    first: Path,
+    second: Path,
+    bases: Path,
+    revision: str,
+    epoch: int,
+    *,
+    diagnostics: Path | None = None,
+):
     materials = recipe.load_manifest(repository)
     images = {}
     labels = {
@@ -180,6 +189,19 @@ def candidate(repository: Path, first: Path, second: Path, bases: Path, revision
     for role in ROLES:
         left, right = first / (role + ".tar"), second / (role + ".tar")
         facts = compare.compare_archives(left, right, label_profile="executable")
+        if diagnostics is not None:
+            expected_base = {
+                platform: base_config(bases, role, platform, materials)[0]["layers"]
+                for platform in scans.PLATFORMS
+            }
+            (diagnostics / (role + "-original-repeat-comparison.json")).write_text(
+                json.dumps(
+                    {"comparison": facts, "signed_base_layers": expected_base},
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
         shared.require(
             facts["matching_platform_manifest_and_config"], "repeated image builds differ"
         )
@@ -548,7 +570,13 @@ def main():
         return
     if args.command == "candidate":
         value = candidate(
-            args.repository, args.first, args.second, args.bases, args.revision, args.epoch
+            args.repository,
+            args.first,
+            args.second,
+            args.bases,
+            args.revision,
+            args.epoch,
+            diagnostics=args.root,
         )
         path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
         return

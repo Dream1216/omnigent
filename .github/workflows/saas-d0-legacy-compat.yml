@@ -83,7 +83,7 @@ jobs:
           file: artifacts/d0-compat/context/Dockerfile
           target: d0-legacy-compatible
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/server-1.tar,rewrite-timestamp=true
+          outputs: type=oci,dest=${{ runner.temp }}/server-1.tar
           provenance: mode=max
           sbom: true
           push: false
@@ -100,7 +100,7 @@ jobs:
           file: artifacts/d0-compat/context/Dockerfile
           target: d0-legacy-compatible
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/server-2.tar,rewrite-timestamp=true
+          outputs: type=oci,dest=${{ runner.temp }}/server-2.tar
           provenance: mode=max
           sbom: true
           push: false
@@ -117,7 +117,7 @@ jobs:
           file: artifacts/d0-compat/context/Dockerfile
           target: d0-legacy-compatible
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/host-1.tar,rewrite-timestamp=true
+          outputs: type=oci,dest=${{ runner.temp }}/host-1.tar
           provenance: mode=max
           sbom: true
           push: false
@@ -134,7 +134,7 @@ jobs:
           file: artifacts/d0-compat/context/Dockerfile
           target: d0-legacy-compatible
           platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/host-2.tar,rewrite-timestamp=true
+          outputs: type=oci,dest=${{ runner.temp }}/host-2.tar
           provenance: mode=max
           sbom: true
           push: false
