@@ -2218,6 +2218,10 @@ async def _report_runner_exited(
     accepted = await comm.receive_output(timeout=5.0)
     assert accepted["type"] == "websocket.accept", f"tunnel refused: {accepted!r}"
     await comm.send_input({"type": "websocket.receive", "text": _make_hello()})
+    # Exit reports describe an admitted Host; finish registration before reporting.
+    await poll_until_async(
+        lambda: app.state.host_registry.get(_HOST_ID) is not None, timeout_s=5.0
+    )
     report = json.loads(
         encode_host_frame(HostRunnerExitedFrame(runner_id=runner_id, error="exited with code 1"))
     )
