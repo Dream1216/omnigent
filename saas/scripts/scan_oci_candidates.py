@@ -11,7 +11,8 @@ import tempfile
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TypedDict
+from types import TracebackType
+from typing import Self, TypedDict
 
 GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
@@ -23,6 +24,56 @@ SCAN_SCOPES = {"complete": {"server", "host"}, "server-preflight": {"server"}}
 class ScanReport(TypedDict):
     counts: dict[str, int]
     findings: list[dict[str, object]]
+
+
+def summary_name(scope: str) -> str:
+    return (
+        "server-preflight-scan-summary.json"
+        if scope == "server-preflight"
+        else "candidate-scan-summary.json"
+    )
+
+
+class ScanFailureRecorder:
+    """Keep diagnostics even when database admission fails before the first scan."""
+
+    def __init__(self, output: Path, scope: str) -> None:
+        self.output, self.scope = output, scope
+        self.stage = "install_scanner"
+        self.completed_scan_count = 0
+        self.database_status: dict[str, object] = {}
+
+    def __enter__(self) -> Self:
+        (self.output / summary_name(self.scope)).unlink(missing_ok=True)
+        (self.output / "scan-failure.json").unlink(missing_ok=True)
+        return self
+
+    def __exit__(
+        self,
+        error_type: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if not isinstance(error, Exception):
+            return
+        record = {
+            "status": "error",
+            "scanner": f"grype {GRYPE_VERSION}",
+            "scope": self.scope,
+            "stage": self.stage,
+            "error_type": type(error).__name__,
+            "exit_code": error.returncode
+            if isinstance(error, subprocess.CalledProcessError)
+            else None,
+            "database_maximum_age_hours": 24,
+            "database_status": self.database_status,
+            "completed_scan_count": self.completed_scan_count,
+            "expected_scan_count": len(SCAN_SCOPES[self.scope]) * len(PLATFORMS),
+            "recorded_at": datetime.now(UTC).isoformat(),
+        }
+        (self.output / "scan-failure.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n"
+        )
 
 
 def parse_database_status(data: dict[str, object], *, now: datetime) -> str:
@@ -125,7 +176,10 @@ def main() -> int:
         parser.error(str(error))
 
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="omnigent-grype-") as temporary:
+    with (
+        ScanFailureRecorder(args.output, args.scope) as progress,
+        tempfile.TemporaryDirectory(prefix="omnigent-grype-") as temporary,
+    ):
         scanner_root = Path(temporary)
         scanner = install_grype(scanner_root)
         config = scanner_root / "grype.yaml"
@@ -135,18 +189,25 @@ def main() -> int:
             "  auto-update: true\n  validate-age: true\n"
             "  max-allowed-built-age: 24h\n"
         )
+        progress.stage = "database_update"
         subprocess.run([str(scanner), "-c", str(config), "db", "update"], check=True)
+        progress.stage = "database_status"
         status = json.loads(
             subprocess.check_output(
                 [str(scanner), "-c", str(config), "db", "status", "-o", "json"], text=True
             )
         )
+        progress.database_status = {
+            key: status[key] for key in ("valid", "built", "schemaVersion") if key in status
+        }
+        progress.stage = "database_validation"
         database_built_at = parse_database_status(status, now=datetime.now(UTC))
         summaries = []
         blocked = False
         for name, archive in sorted(images.items()):
             archive_digest = file_sha256(archive)
             for platform in PLATFORMS:
+                progress.stage = f"scan_{name}_{platform.split('/')[-1]}"
                 output = args.output / f"{name}-{platform.split('/')[-1]}-grype.json"
                 result = subprocess.run(
                     [
@@ -181,18 +242,16 @@ def main() -> int:
                         "findings": parsed["findings"],
                     }
                 )
+                progress.completed_scan_count += 1
     receipt = {
         "scanner": f"grype {GRYPE_VERSION}",
         "database_built_at": database_built_at,
         "exceptions": [],
         "images": summaries,
     }
-    summary_name = (
-        "server-preflight-scan-summary.json"
-        if args.scope == "server-preflight"
-        else "candidate-scan-summary.json"
+    (args.output / summary_name(args.scope)).write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n"
     )
-    (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return 2 if blocked else 0
 
 

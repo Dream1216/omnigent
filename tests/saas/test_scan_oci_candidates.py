@@ -1,16 +1,78 @@
 """Safety checks for exact OCI candidate scan receipts."""
 
+import json
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 import yaml
 
+from saas.scripts import scan_oci_candidates as scanner
 from saas.scripts.scan_oci_candidates import (
     parse_database_status,
     scan_report,
     validate_image_scope,
 )
+
+
+@pytest.mark.parametrize(
+    "failure_stage", ["install_scanner", "database_status", "database_validation"]
+)
+def test_initialization_failure_keeps_uploadable_diagnostics_and_removes_stale_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str
+) -> None:
+    image = tmp_path / "server.tar"
+    image.write_bytes(b"owned test archive")
+    output = tmp_path / "reports"
+    output.mkdir()
+    summary = output / "server-preflight-scan-summary.json"
+    summary.write_text('{"images": ["stale"]}')
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scan",
+            "--image",
+            f"server={image}",
+            "--scope",
+            "server-preflight",
+            "--output",
+            str(output),
+        ],
+    )
+
+    def install(destination: Path) -> Path:
+        if failure_stage == "install_scanner":
+            raise ValueError("release archive hash mismatch")
+        return destination / "grype"
+
+    def database_status(*args, **kwargs):
+        if failure_stage == "database_status":
+            raise subprocess.CalledProcessError(
+                1, ["grype", "db", "status"], stderr="private diagnostic"
+            )
+        return json.dumps(
+            {
+                "valid": True,
+                "schemaVersion": "v6.1.10",
+                "built": (datetime.now(UTC) - timedelta(hours=25)).isoformat(),
+            }
+        )
+
+    monkeypatch.setattr(scanner, "install_grype", install)
+    monkeypatch.setattr(scanner.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(scanner.subprocess, "check_output", database_status)
+    with pytest.raises((ValueError, subprocess.CalledProcessError)):
+        scanner.main()
+    failure = json.loads((output / "scan-failure.json").read_text())
+    assert failure["status"] == "error" and failure["stage"] == failure_stage
+    assert failure["database_maximum_age_hours"] == 24
+    assert failure["completed_scan_count"] == 0 and failure["expected_scan_count"] == 2
+    assert failure["exit_code"] == (1 if failure_stage == "database_status" else None)
+    assert "private diagnostic" not in json.dumps(failure)
+    assert not summary.exists()
 
 
 def test_database_must_be_fresh_and_timezone_bound() -> None:
