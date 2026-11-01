@@ -66,9 +66,15 @@ def symlinked_workspace_session(
 
     respawned = _ensure_runner_online(live_server, tmp_path_factory)
     runner_id = str(_server_state["runner_id"])
-    yaml_text = _PROJECT_AGENT_YAML.format(workspace=workspace)
+    yaml_text = _PROJECT_AGENT_YAML.format(workspace=".")
     bundle = bundle_files({"symlinked_project.yaml": yaml_text.encode()})
-    create = post_session_bundle(httpx.post, f"{live_server}/v1/sessions", bundle, timeout=30.0)
+    create = post_session_bundle(
+        httpx.post,
+        f"{live_server}/v1/sessions",
+        bundle,
+        metadata={"workspace": str(workspace)},
+        timeout=30.0,
+    )
     create.raise_for_status()
     session_id = create.json()["session_id"]
     bind_session_runner(httpx.patch, live_server, session_id, runner_id, timeout=10.0)

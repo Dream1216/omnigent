@@ -29,8 +29,6 @@ from omnigent.harnesses.claude_native.bridge import (
     bridge_dir_for_bridge_id,
 )
 from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN, token_bound_runner_id
-from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
-from omnigent.stores.host_store import HostStore
 from tests._helpers.compat import apply_server_env, compat_server_cwd, server_executable
 from tests._helpers.live_server import find_free_port
 from tests._helpers.session import bundle_files, post_session_bundle
@@ -353,10 +351,17 @@ def test_permission_prompt_returns_to_web_after_bearer_lapse(
             # Bind the runner to Alice's session the way a managed launch does,
             # so its binding token mints Alice's bearer.
             host_id = secrets.token_hex(16)
-            HostStore(server.db_uri).upsert_on_connect(host_id, "auth-lapse-host", _OWNER)
-            conversations = SqlAlchemyConversationStore(server.db_uri)
-            conversations.set_host_id(session_id, host_id, workspace=str(workspace))
-            conversations.replace_runner_id(session_id, runner_id)
+            from tests._helpers.server_stores import bind_server_managed_session
+
+            bind_server_managed_session(
+                server.db_uri,
+                host_id=host_id,
+                host_name="auth-lapse-host",
+                owner=_OWNER,
+                session_id=session_id,
+                workspace=str(workspace),
+                runner_id=runner_id,
+            )
 
             with (tmp_path / "runner-stdout.log").open("w") as log:
                 runner = subprocess.Popen(

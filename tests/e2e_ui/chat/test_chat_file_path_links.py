@@ -60,7 +60,7 @@ def _agent_bundle(cwd: str) -> bytes:
     ``external_assistant_message``). The ``*.yaml`` arcname routes the bundle
     through the omnigent compat adapter, matching the conftest helpers.
 
-    :param cwd: Absolute workspace directory the runner should use as root.
+    :param cwd: Relative directory within the session workspace.
     :returns: ``.tar.gz`` bytes for multipart upload.
     """
     yaml_text = f"""\
@@ -113,7 +113,11 @@ def linkify_session(
     (ws / _ROOT_FILE).write_text(_README_CONTENT)
 
     create_resp = post_session_bundle(
-        httpx.post, f"{live_server}/v1/sessions", _agent_bundle(str(ws)), timeout=30.0
+        httpx.post,
+        f"{live_server}/v1/sessions",
+        _agent_bundle("."),
+        metadata={"workspace": str(ws)},
+        timeout=30.0,
     )
     create_resp.raise_for_status()
     session_id = create_resp.json()["session_id"]
@@ -239,7 +243,11 @@ def test_chat_link_opens_file_beyond_first_large_directory_page(
     target.write_text("# File beyond the first page\n")
 
     create_resp = post_session_bundle(
-        httpx.post, f"{live_server}/v1/sessions", _agent_bundle(str(tmp_path)), timeout=30.0
+        httpx.post,
+        f"{live_server}/v1/sessions",
+        _agent_bundle("."),
+        metadata={"workspace": str(tmp_path)},
+        timeout=30.0,
     )
     create_resp.raise_for_status()
     session_id = create_resp.json()["session_id"]

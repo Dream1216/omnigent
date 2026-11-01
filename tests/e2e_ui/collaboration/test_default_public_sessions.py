@@ -69,6 +69,29 @@ def _share_dialog_general_access(page: Page, url: str) -> Locator:
     return dialog.get_by_role("combobox", name="General access")
 
 
+def _choose_all_new_sessions(page: Page) -> tuple[Locator, Locator | None]:
+    """Drive exactly one of the two supported default-sharing controls."""
+    legacy_group = page.get_by_role("group", name=_GROUP, exact=True)
+    default_toggle = page.get_by_role("switch", name="Share new sessions by default", exact=True)
+    controls = legacy_group.or_(default_toggle)
+    expect(controls).to_be_visible(timeout=60_000)
+    expect(controls).to_have_count(1)
+    if legacy_group.count() == 1:
+        expect(legacy_group.locator('input[value="off"]')).to_be_checked()
+        legacy_group.get_by_text("All sessions public", exact=True).click()
+        all_sessions = legacy_group.locator('input[value="all"]')
+        default_toggle = None
+    else:
+        expect(default_toggle).not_to_be_checked()
+        default_toggle.click()
+        expect(default_toggle).to_be_checked()
+        automatic = page.get_by_role("group", name="Automatically share", exact=True)
+        all_sessions = automatic.locator('input[value="all"]')
+        all_sessions.check()
+    expect(all_sessions).to_be_checked()
+    return all_sessions, default_toggle
+
+
 def test_admin_default_public_all_makes_new_sessions_public(
     browser: Browser,
     default_public_server: MultiUserServer,
@@ -77,17 +100,13 @@ def test_admin_default_public_all_makes_new_sessions_public(
     with user_page(browser, headers=_ADMIN_HEADERS) as page:
         # ── Admin picks "All sessions public" on Settings > Sharing ──────
         page.goto(f"{server.public_url}/settings/sharing")
-        group = page.get_by_role("group", name=_GROUP)
-        expect(group).to_be_visible(timeout=60_000)
-        expect(group.locator('input[value="off"]')).to_be_checked()
-        group.get_by_text("All sessions public").click()
-        expect(group.locator('input[value="all"]')).to_be_checked()
+        all_sessions, default_toggle = _choose_all_new_sessions(page)
 
         # Persisted server-side: survives a reload.
         page.reload()
-        expect(page.get_by_role("group", name=_GROUP).locator('input[value="all"]')).to_be_checked(
-            timeout=30_000
-        )
+        if default_toggle is not None:
+            expect(default_toggle).to_be_checked()
+        expect(all_sessions).to_be_checked(timeout=30_000)
 
         # ── A session created now starts public; the older one does not ──
         new_session = create_user_session(server.base_url, headers=_ADMIN_HEADERS)

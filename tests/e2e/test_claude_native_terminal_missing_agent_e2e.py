@@ -195,9 +195,9 @@ def test_native_claude_terminal_ensure_fails_when_agent_missing(
         # be cached first. This is a genuine precondition (agent
         # deleted/rotated/GC'd while the session persists), not a fabricated
         # end-state — the failure body itself is produced by the live path.
-        from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+        from tests._helpers.server_stores import delete_server_agent
 
-        deleted = SqlAlchemyAgentStore(database_uri).delete(agent_id)
+        deleted = delete_server_agent(database_uri, agent_id)
         assert deleted is True, f"expected to delete agent {agent_id!r} from the store"
 
         # Sanity: the server can no longer serve the agent bundle the runner's
@@ -360,9 +360,9 @@ def test_native_claude_turn_fails_when_agent_missing(tmp_path: Path) -> None:
         # store before the terminal ever comes up, so the turn's ensure must
         # resolve the (now-missing) spec and fail. Applied via the real store
         # API — a genuine precondition, not a fabricated end-state.
-        from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+        from tests._helpers.server_stores import delete_server_agent
 
-        deleted = SqlAlchemyAgentStore(database_uri).delete(agent_id)
+        deleted = delete_server_agent(database_uri, agent_id)
         assert deleted is True, f"expected to delete agent {agent_id!r} from the store"
 
         contents = _http.get(

@@ -159,7 +159,7 @@ def test_codex_native_parent_woken_by_independent_child(
         },
         "os_env": {
             "type": "caller_process",
-            "cwd": str(_workspace),
+            "cwd": ".",
             "sandbox": {"type": "none"},
         },
     }
@@ -223,7 +223,9 @@ def test_codex_native_parent_woken_by_independent_child(
     )
 
     agent_name = upload_agent(client, bundle)
-    parent_id = create_runner_bound_session(client, agent_name=agent_name, runner_id=runner_id)
+    parent_id = create_runner_bound_session(
+        client, agent_name=agent_name, runner_id=runner_id, workspace=str(_workspace)
+    )
     try:
         send = client.post(
             f"/v1/sessions/{parent_id}/events",

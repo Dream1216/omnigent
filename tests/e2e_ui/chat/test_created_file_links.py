@@ -71,7 +71,11 @@ def created_file_session(
     model = f"created-file-probe-{uuid.uuid4().hex[:8]}"
 
     create_resp = post_session_bundle(
-        httpx.post, f"{live_server}/v1/sessions", _agent_bundle(name, model, str(ws)), timeout=30.0
+        httpx.post,
+        f"{live_server}/v1/sessions",
+        _agent_bundle(name, model, "."),
+        metadata={"workspace": str(ws)},
+        timeout=30.0,
     )
     create_resp.raise_for_status()
     session_id = create_resp.json()["session_id"]

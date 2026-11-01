@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from playwright.sync_api import Page, expect
 
-from tests.e2e_ui.conftest import _server_state
+from tests.e2e_ui.conftest import seed_committed_items
 
 _TURNS = 80
 _ANCHOR_TOLERANCE_PX = 24
@@ -13,9 +13,6 @@ _TARGET_PROMPT = "alpha prompt 60"
 
 def _seed_turns(session_id: str, prefix: str) -> None:
     from omnigent.entities import MessageData, NewConversationItem
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
 
     items: list[NewConversationItem] = []
     for turn in range(_TURNS):
@@ -49,7 +46,7 @@ def _seed_turns(session_id: str, prefix: str) -> None:
                 ),
             ]
         )
-    SqlAlchemyConversationStore(str(_server_state["database_uri"])).append(session_id, items)
+    seed_committed_items(session_id, items)
 
 
 _FIND_SCROLLER = """

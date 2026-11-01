@@ -27,7 +27,7 @@ import httpx
 from playwright.sync_api import Page, expect
 
 from tests.e2e_ui.chat.test_claude_model_picker import _patch_session_as_claude_native
-from tests.e2e_ui.conftest import seed_committed_turn
+from tests.e2e_ui.conftest import seed_committed_items, seed_committed_turn
 
 # The router's pick: an AI-Gateway serving-endpoint id. Deliberately absent
 # from the claude-native alias catalog (opus / sonnet / haiku) — that mismatch
@@ -47,9 +47,6 @@ def _seed_routed_first_turn(session_id: str, *, prompt: str, reply: str) -> None
     """
     from omnigent.entities import NewConversationItem
     from omnigent.entities.conversation import parse_item_data
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
     from tests.e2e_ui.conftest import _server_state
 
     database_uri = _server_state.get("database_uri")
@@ -63,8 +60,7 @@ def _seed_routed_first_turn(session_id: str, *, prompt: str, reply: str) -> None
         "decision_id": "e2e-decision-1",
         "router_source": "databricks-aigw",
     }
-    store = SqlAlchemyConversationStore(str(database_uri))
-    store.append(
+    seed_committed_items(
         session_id,
         [
             NewConversationItem(
@@ -134,16 +130,12 @@ def test_spawn_chip_says_the_short_harness_name(
     """
     from omnigent.entities import NewConversationItem
     from omnigent.entities.conversation import parse_item_data
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
     from tests.e2e_ui.conftest import _server_state
 
     base_url, session_id = seeded_session
     database_uri = _server_state.get("database_uri")
     assert database_uri, "needs the spawned server's database (not --ui-base-url)"
-    store = SqlAlchemyConversationStore(str(database_uri))
-    store.append(
+    seed_committed_items(
         session_id,
         [
             NewConversationItem(

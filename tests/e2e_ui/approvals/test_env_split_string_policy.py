@@ -124,8 +124,8 @@ def _gated_session(base_url: str, runner_id: str, mock_url: str, command: str) -
     )
     set_fallback_mock_llm(mock_url, model, _REPLY)
 
-    yaml_text = _AGENT_YAML.format(name=name, model=model, cwd=str(workspace))
-    session_id = _create_bundled_session(base_url, runner_id, yaml_text)
+    yaml_text = _AGENT_YAML.format(name=name, model=model, cwd=".")
+    session_id = _create_bundled_session(base_url, runner_id, yaml_text, workspace=str(workspace))
     try:
         yield session_id
     finally:

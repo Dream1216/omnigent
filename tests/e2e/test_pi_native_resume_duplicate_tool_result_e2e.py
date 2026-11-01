@@ -85,11 +85,8 @@ def _seed_history_with_duplicate_output(database_uri: str, session_id: str) -> N
         MessageData,
         NewConversationItem,
     )
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
+    from tests._helpers.server_stores import append_server_items
 
-    store = SqlAlchemyConversationStore(database_uri)
     items = [
         NewConversationItem(
             type="message",
@@ -129,7 +126,7 @@ def _seed_history_with_duplicate_output(database_uri: str, session_id: str) -> N
             ),
         ),
     ]
-    store.append(session_id, items)
+    append_server_items(database_uri, session_id, items)
 
 
 def _written_pi_session_file(runner_home: Path, session_id: str) -> Path | None:

@@ -218,9 +218,11 @@ def test_large_markdown_source_autosaves(page: Page, seeded_session: tuple[str, 
         expect(viewer.locator(".tiptap")).to_have_count(0)
         expect(viewer.get_by_role("button", name="View mode", exact=False)).to_have_count(0)
         viewer.locator(".view-lines").click()
-        page.keyboard.press("ControlOrMeta+End")
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.press("ArrowRight")
         expect(viewer.locator(".view-lines")).to_contain_text("Large document end.")
-        page.keyboard.press("ControlOrMeta+Home")
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.press("ArrowLeft")
         sentinel = "# Saved large Markdown\n"
         page.keyboard.type(sentinel)
         assert _wait_for_persisted(base_url, session_id, path, sentinel) == sentinel + original

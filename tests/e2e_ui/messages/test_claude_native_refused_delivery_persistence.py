@@ -23,7 +23,8 @@ from tests.e2e.test_native_terminal_start_error_log_correlation_e2e import (
     _ensure_claude_terminal,
     _native_stack,
 )
-from tests.e2e_ui.messages.test_message_render_parity import _ensure_chat_view
+from tests.e2e_ui.conftest import _BUILD_OUTPUT
+from tests.e2e_ui.messages.test_message_render_parity import _select_view_mode
 
 
 @pytest.mark.parametrize("refusal", ["missing_target", "draft_not_accepted"])
@@ -54,7 +55,7 @@ def test_claude_refused_message_survives_reload(
         contextlib.ExitStack() as resources,
     ):
         monkeypatch.setenv("TMPDIR", native_tmp)
-        stack = resources.enter_context(_native_stack(tmp_path, script))
+        stack = resources.enter_context(_native_stack(tmp_path, script, web_ui_dist=_BUILD_OUTPUT))
         client = resources.enter_context(httpx.Client(trust_env=False, timeout=15))
         session = create_native_session(client, stack.base_url, harness="claude")
         session_id = session["session_id"]
@@ -73,7 +74,7 @@ def test_claude_refused_message_survives_reload(
         if refusal == "missing_target":
             adverts[0].unlink()
         page.goto(f"{stack.base_url}/c/{session_id}")
-        _ensure_chat_view(page)
+        _select_view_mode(page, "Chat")
         composer = page.get_by_label("Message the agent")
         composer.fill(marker)
         composer.press("Enter")
@@ -116,7 +117,7 @@ def test_claude_refused_message_survives_reload(
         )
         assert alive.returncode == 0, alive.stderr.decode()
         page.reload()
-        _ensure_chat_view(page)
+        _select_view_mode(page, "Chat")
         expect(
             page.locator('[data-testid="message-bubble"][data-role="user"]', has_text=marker)
         ).to_have_count(1)

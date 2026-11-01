@@ -37,9 +37,18 @@ pytestmark = [
     pytest.mark.min_runner_version("0.18.0"),
 ]
 _REPO = Path(__file__).resolve().parents[2]
-_SERVER_BOOTSTRAP = """
+_SERVER_BOOTSTRAP = f"""
+import importlib.util
 import os
 import sys
+spec = importlib.util.spec_from_file_location(
+    "tests._helpers.runner_lifecycle_controls",
+    {str(_REPO / "tests/_helpers/runner_lifecycle_controls.py")!r},
+)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
 sys.argv.extend(["--config", os.environ["E2E_SERVER_CONFIG"]])
 from omnigent.cli import main
 main()

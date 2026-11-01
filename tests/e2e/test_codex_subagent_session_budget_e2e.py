@@ -171,7 +171,7 @@ def test_codex_child_enforces_root_cost_budget_without_parent_activity(
         },
         "os_env": {
             "type": "caller_process",
-            "cwd": str(workspace),
+            "cwd": ".",
             "sandbox": {"type": "none"},
         },
     }
@@ -232,7 +232,9 @@ def test_codex_child_enforces_root_cost_budget_without_parent_activity(
         key=_CHILD_MODEL,
     )
     agent_name = upload_agent(client, bundle)
-    parent_id = create_runner_bound_session(client, agent_name=agent_name, runner_id=runner_id)
+    parent_id = create_runner_bound_session(
+        client, agent_name=agent_name, runner_id=runner_id, workspace=str(workspace)
+    )
     attached = client.post(
         f"/v1/sessions/{parent_id}/policies",
         json={

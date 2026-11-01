@@ -7,7 +7,7 @@ import base64
 import httpx
 from playwright.sync_api import Page, expect
 
-from tests.e2e_ui.conftest import _server_state
+from tests.e2e_ui.conftest import seed_committed_items
 
 _IMAGE_NAME = "shot.png"
 _REPLY = "Reviewing the screenshot."
@@ -37,9 +37,6 @@ def _seed_image_turn(base_url: str, session_id: str) -> None:
     :param session_id: Session to attach the image to.
     """
     from omnigent.entities import MessageData, NewConversationItem
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
 
     upload = httpx.post(
         f"{base_url}/v1/sessions/{session_id}/resources/files",
@@ -49,7 +46,7 @@ def _seed_image_turn(base_url: str, session_id: str) -> None:
     upload.raise_for_status()
     file_id = upload.json()["id"]
 
-    SqlAlchemyConversationStore(str(_server_state["database_uri"])).append(
+    seed_committed_items(
         session_id,
         [
             NewConversationItem(

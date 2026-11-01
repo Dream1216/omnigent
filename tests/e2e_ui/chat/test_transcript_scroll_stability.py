@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from itertools import pairwise
 from typing import Any
-from unittest.mock import patch
 
 from playwright.sync_api import Page, expect
 
@@ -310,7 +309,7 @@ def _seed_tool_heavy_turns(session_id: str) -> None:
         MessageData,
         NewConversationItem,
     )
-    from omnigent.stores.conversation_store import sqlalchemy_store
+    from tests.e2e_ui.conftest import seed_committed_items
 
     items: list[NewConversationItem] = []
     for turn in range(_TOOL_TURNS + 1):
@@ -363,11 +362,8 @@ def _seed_tool_heavy_turns(session_id: str) -> None:
                 ),
             )
         )
-    store = sqlalchemy_store.SqlAlchemyConversationStore(str(_server_state["database_uri"]))
-    # Seed settled history beyond the UI's 15s recent-activity window.
     # Only this local append uses the old timestamp; browser timers run normally.
-    with patch.object(sqlalchemy_store, "now_epoch", return_value=int(time.time()) - 60):
-        store.append(session_id, items)
+    seed_committed_items(session_id, items, at_epoch=int(time.time()) - 60)
 
 
 def _wheel_gestures(page: Page, *, count: int, delta_y: int) -> None:
