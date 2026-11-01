@@ -328,7 +328,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, json, os, subprocess, tarfile
+          import hashlib, json, os, re, secrets, subprocess, tarfile
           from pathlib import Path
           from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
           archive = Path(os.environ["RUNNER_TEMP"]) / "server-1.tar"
@@ -340,6 +340,9 @@ jobs:
           root = descriptors[0]["digest"]
           subprocess.run(["docker", "load", "-i", str(archive)], check=True)
           verified = []
+          owner = secrets.token_hex(16)
+          probe_names = []
+          errors = []
           try:
               actual = json.loads(subprocess.check_output([
                   "docker", "image", "inspect", root,
@@ -353,8 +356,12 @@ jobs:
                   expected = facts["platforms"][platform]
                   assert actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]
                   assert actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]
+                  name = f"omnigent-sdk-{owner}-{arch}"
+                  probe_names.append(name)
                   subprocess.run([
-                      "docker", "run", "--rm", "--pull", "never", "--platform", platform,
+                      "docker", "run", "--pull", "never", "--platform", platform,
+                      "--name", name, "--label", f"io.omnigent.sdk-probe={owner}",
+                      "--no-healthcheck",
                       "--network", "none", "--user", "1000:1000", "--cap-drop", "ALL",
                       "--security-opt", "no-new-privileges:true", "--read-only",
                       "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
@@ -364,8 +371,30 @@ jobs:
                       revision,
                   ], check=True, timeout=180)
                   verified.append({"platform": platform, "config_digest": expected["config_digest"], "manifest_digest": expected["manifest_digest"]})
+          except BaseException as error:
+              errors.append(error)
           finally:
-              subprocess.run(["docker", "image", "rm", root], check=True)
+              for name in probe_names:
+                  try:
+                      identifiers = subprocess.check_output([
+                          "docker", "container", "ls", "--all", "--no-trunc",
+                          "--filter", f"name=^/{name}$",
+                          "--filter", f"label=io.omnigent.sdk-probe={owner}",
+                          "--format", "{{.ID}}",
+                      ], text=True, timeout=30).splitlines()
+                      for identifier in identifiers:
+                          assert re.fullmatch(r"[0-9a-f]{64}", identifier)
+                          subprocess.run(["docker", "container", "rm", "--force", identifier], check=True, timeout=30)
+                  except BaseException as error:
+                      errors.append(error)
+              try:
+                  subprocess.run(["docker", "image", "rm", root], check=True, timeout=30)
+              except BaseException as error:
+                  errors.append(error)
+              if len(errors) == 1:
+                  raise errors[0]
+              if errors:
+                  raise BaseExceptionGroup("SDK verification and cleanup failed", errors)
           with archive.open("rb") as stream:
               archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
           Path("artifacts/server-candidate-runtime.json").write_text(json.dumps({

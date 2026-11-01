@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import builtins
 import copy
 import hashlib
 import io
 import json
+import secrets
 import subprocess
 import tarfile
 from pathlib import Path
@@ -22,6 +24,7 @@ _STEP = "Verify executable Server candidate SDK on both architectures"
 _INDEX = "sha256:" + "1" * 64
 _REVISION = "2" * 40
 _PLATFORMS = ("linux/amd64", "linux/arm64")
+_OWNER = "a" * 32
 
 
 def _runtime_script() -> str:
@@ -55,12 +58,34 @@ class DockerResponses:
         self.events = []
         self.runtime_failure = None
         self.cleanup_failure = False
+        self.container_cleanup_failure = False
+        self.containers = {}
 
     def inspect_archive(self, archive, *, label_profile):
         assert archive == self.archive and label_profile == "executable"
         return copy.deepcopy(self.facts)
 
-    def check_output(self, command):
+    def check_output(self, command, *, text=False, timeout=None):
+        if command[:3] == ["docker", "container", "ls"]:
+            assert text is True and timeout == 30
+            name_filter = command[command.index("--filter") + 1]
+            name = name_filter.removeprefix("name=^/").removesuffix("$")
+            assert name in {f"omnigent-sdk-{_OWNER}-{arch}" for arch in ("amd64", "arm64")}
+            assert command == [
+                "docker",
+                "container",
+                "ls",
+                "--all",
+                "--no-trunc",
+                "--filter",
+                f"name=^/{name}$",
+                "--filter",
+                f"label=io.omnigent.sdk-probe={_OWNER}",
+                "--format",
+                "{{.ID}}",
+            ]
+            return self.containers.get(name, "") + ("\n" if name in self.containers else "")
+        assert text is False and timeout is None
         if command == ["docker", "image", "inspect", _INDEX]:
             self.events.append(("inspect-index", _INDEX))
             return json.dumps([self.index_metadata]).encode()
@@ -76,14 +101,27 @@ class DockerResponses:
             assert timeout is None
             self.events.append(("load", _INDEX))
         elif command == ["docker", "image", "rm", _INDEX]:
-            assert timeout is None
+            assert timeout == 30
             self.events.append(("cleanup", _INDEX))
-            if self.cleanup_failure:
+            if self.cleanup_failure or self.containers:
                 raise subprocess.CalledProcessError(1, command)
+        elif command[:4] == ["docker", "container", "rm", "--force"]:
+            assert timeout == 30 and len(command) == 5
+            name = next(
+                name for name, identifier in self.containers.items() if identifier == command[4]
+            )
+            self.events.append(("cleanup-container", name))
+            if self.container_cleanup_failure:
+                raise subprocess.CalledProcessError(1, command)
+            del self.containers[name]
         else:
             platform = command[command.index("--platform") + 1]
             assert platform in _PLATFORMS and timeout == 180
-            assert command[:6] == ["docker", "run", "--rm", "--pull", "never", "--platform"]
+            assert command[:5] == ["docker", "run", "--pull", "never", "--platform"]
+            assert "--rm" not in command and "--no-healthcheck" in command
+            name = command[command.index("--name") + 1]
+            assert name == f"omnigent-sdk-{_OWNER}-{platform.split('/')[-1]}"
+            assert command[command.index("--label") + 1] == f"io.omnigent.sdk-probe={_OWNER}"
             for option, value in (
                 ("--network", "none"),
                 ("--user", "1000:1000"),
@@ -101,6 +139,9 @@ class DockerResponses:
             assert command[entrypoint + 2 : entrypoint + 6] == [_INDEX, "-B", "-I", "-c"]
             assert command[-1] == _REVISION
             self.events.append(("sdk", platform))
+            if self.runtime_failure == (platform, "create"):
+                raise subprocess.CalledProcessError(1, command)
+            self.containers[name] = "c" * 63 + str(_PLATFORMS.index(platform) + 1)
             if self.runtime_failure == (platform, "exit"):
                 raise subprocess.CalledProcessError(1, command)
             if self.runtime_failure == (platform, "timeout"):
@@ -121,6 +162,7 @@ def docker_responses(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("CANDIDATE_REVISION", _REVISION)
     docker = DockerResponses(archive)
+    monkeypatch.setattr(secrets, "token_hex", lambda size: _OWNER if size == 16 else None)
     monkeypatch.setattr(compare_oci_rebuilds, "inspect_oci_archive", docker.inspect_archive)
     monkeypatch.setattr(subprocess, "check_output", docker.check_output)
     monkeypatch.setattr(subprocess, "run", docker.run)
@@ -148,6 +190,8 @@ def test_sdk_probe_binds_index_and_each_platform_before_runtime(docker_responses
         ("sdk", "linux/amd64"),
         ("inspect-platform", "linux/arm64"),
         ("sdk", "linux/arm64"),
+        ("cleanup-container", f"omnigent-sdk-{_OWNER}-amd64"),
+        ("cleanup-container", f"omnigent-sdk-{_OWNER}-arm64"),
         ("cleanup", _INDEX),
     ]
     receipt = json.loads(Path("artifacts/server-candidate-runtime.json").read_text())
@@ -216,12 +260,13 @@ def test_sdk_probe_rejects_wrong_selected_platform(docker_responses, platform, f
 
 
 @pytest.mark.parametrize("platform", _PLATFORMS)
-@pytest.mark.parametrize("fault", ["exit", "timeout"])
+@pytest.mark.parametrize("fault", ["create", "exit", "timeout"])
 def test_sdk_execution_failure_cannot_produce_pass_receipt(docker_responses, platform, fault):
     docker = docker_responses
     docker.runtime_failure = (platform, fault)
     _assert_rejected(docker, (subprocess.CalledProcessError, subprocess.TimeoutExpired))
     assert ("sdk", platform) in docker.events
+    assert docker.containers == {}
     if platform == "linux/amd64":
         assert ("inspect-platform", "linux/arm64") not in docker.events
 
@@ -233,11 +278,58 @@ def test_cleanup_failure_cannot_produce_pass_receipt(docker_responses):
     assert [("sdk", p) for p in _PLATFORMS] == [e for e in docker.events if e[0] == "sdk"]
 
 
+def test_timeout_retains_primary_error_when_container_and_image_cleanup_fail(docker_responses):
+    docker = docker_responses
+    docker.runtime_failure = ("linux/amd64", "timeout")
+    docker.container_cleanup_failure = True
+    with pytest.raises(builtins.ExceptionGroup) as caught:
+        _execute()
+    assert isinstance(caught.value.exceptions[0], subprocess.TimeoutExpired)
+    assert any(
+        isinstance(error, subprocess.CalledProcessError) for error in caught.value.exceptions[1:]
+    )
+    assert docker.events.count(("cleanup", _INDEX)) == 1
+    assert not Path("artifacts/server-candidate-runtime.json").exists()
+
+
+def test_timeout_retains_primary_error_when_image_cleanup_fails(docker_responses):
+    docker = docker_responses
+    docker.runtime_failure = ("linux/arm64", "timeout")
+    docker.cleanup_failure = True
+    with pytest.raises(builtins.ExceptionGroup) as caught:
+        _execute()
+    assert isinstance(caught.value.exceptions[0], subprocess.TimeoutExpired)
+    assert isinstance(caught.value.exceptions[-1], subprocess.CalledProcessError)
+    assert docker.containers == {}
+    assert not Path("artifacts/server-candidate-runtime.json").exists()
+
+
+@pytest.mark.parametrize("identifier", ["--all", "sha256:" + "c" * 64])
+def test_cleanup_rejects_non_container_identifiers(docker_responses, monkeypatch, identifier):
+    docker = docker_responses
+    original = docker.check_output
+
+    def inspect(command, **kwargs):
+        if command[:3] == ["docker", "container", "ls"]:
+            return identifier + "\n"
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "check_output", inspect)
+    _assert_rejected(docker, builtins.ExceptionGroup)
+    assert not any(event[0] == "cleanup-container" for event in docker.events)
+
+
 @pytest.mark.parametrize(
     "target",
     [
         'actual["Descriptor"]["digest"] == root and actual["Id"] == root',
         'actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]',
+        '"--no-healthcheck"',
+        '"--filter", f"name=^/{name}$"',
+        '"--filter", f"label=io.omnigent.sdk-probe={owner}"',
+        'assert re.fullmatch(r"[0-9a-f]{64}", identifier)',
+        '"docker", "container", "rm", "--force", identifier',
+        'raise BaseExceptionGroup("SDK verification and cleanup failed", errors)',
     ],
 )
 def test_candidate_contract_requires_both_identity_checks(tmp_path, target):
