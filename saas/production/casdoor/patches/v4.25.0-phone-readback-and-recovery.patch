@@ -1,0 +1,164 @@
+--- a/object/user.go
++++ b/object/user.go
+@@ -85,0 +86 @@
++	PhoneE164            string     `xorm:"-" json:"phoneE164"`
+@@ -745,0 +747,4 @@
++	user.PhoneE164 = ""
++	if user.PhoneVerified {
++		user.PhoneE164 = user.VerifiedPhone
++	}
+--- a/controllers/user.go
++++ b/controllers/user.go
+@@ -20,0 +21 @@
++	"time"
+@@ -688,0 +690,6 @@
++	// Recovery must remain bound to the currently verified email and a short deadline.
++	if code != "" && !object.IsEmailPasswordRecoveryProofValid(targetUser, c.GetSession("verifiedRecoveryEmail"), c.GetSession("verifiedRecoveryExpires"), time.Now()) {
++		c.ResponseError(c.T("verification:Use verified email or contact support to recover your password"))
++		return
++	}
++
+@@ -756,0 +764,2 @@
++		c.SetSession("verifiedRecoveryEmail", "")
++		c.SetSession("verifiedRecoveryExpires", "")
+--- a/controllers/verification.go
++++ b/controllers/verification.go
+@@ -21,0 +22 @@
++	"time"
+@@ -215,0 +217,5 @@
++	if vform.Method == ForgetVerification && vform.Type != object.VerifyTypeEmail {
++		c.ResponseError(c.T("verification:Use verified email or contact support to recover your password"))
++		return
++	}
++
+@@ -750,0 +757,4 @@
++	if verificationCodeType != object.VerifyTypeEmail || !object.IsVerifiedEmailRecoveryContact(user, checkDest) {
++		c.ResponseError(c.T("verification:Use verified email or contact support to recover your password"))
++		return
++	}
+@@ -780,0 +791,2 @@
++	c.SetSession("verifiedRecoveryEmail", user.Email)
++	c.SetSession("verifiedRecoveryExpires", time.Now().Add(5*time.Minute).UTC().Format(time.RFC3339))
+--- a/i18n/locales/en/data.json
++++ b/i18n/locales/en/data.json
+@@ -248,0 +249 @@
++    "Use verified email or contact support to recover your password": "Use verified email or contact support to recover your password",
+--- a/i18n/locales/zh/data.json
++++ b/i18n/locales/zh/data.json
+@@ -248,0 +249 @@
++    "Use verified email or contact support to recover your password": "请使用已验证邮箱或联系支持人员找回密码",
+--- /dev/null
++++ b/object/stbz_password_recovery.go
+@@ -0,0 +1,37 @@
++// Copyright 2021 The Casdoor Authors. All Rights Reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//      http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package object
++
++import (
++	"strings"
++	"time"
++)
++
++func IsVerifiedEmailRecoveryContact(user *User, dest string) bool {
++	return user != nil && user.EmailVerified && user.Email != "" && strings.EqualFold(user.Email, dest)
++}
++
++func IsEmailPasswordRecoveryProofValid(user *User, email interface{}, deadline interface{}, now time.Time) bool {
++	dest, ok := email.(string)
++	if !ok || !IsVerifiedEmailRecoveryContact(user, dest) {
++		return false
++	}
++	encoded, ok := deadline.(string)
++	if !ok {
++		return false
++	}
++	expires, err := time.Parse(time.RFC3339, encoded)
++	return err == nil && now.Before(expires) && !expires.After(now.Add(5*time.Minute))
++}
+--- /dev/null
++++ b/object/stbz_password_recovery_test.go
+@@ -0,0 +1,72 @@
++// Copyright 2021 The Casdoor Authors. All Rights Reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//      http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package object
++
++import (
++	"encoding/json"
++	"testing"
++	"time"
++)
++
++func TestStbzPhoneReadbackUsesOnlyPersistedCanonicalProof(t *testing.T) {
++	var user User
++	if err := json.Unmarshal([]byte(`{"phone":"2025550100","countryCode":"US","phoneVerified":true,"phoneE164":"+12025550100"}`), &user); err != nil {
++		t.Fatal(err)
++	}
++	masked, err := GetMaskedUser(&user, true)
++	if err != nil || masked.PhoneVerified || masked.PhoneE164 != "" {
++		t.Fatal("readback trusted posted metadata")
++	}
++	user.MarkPhoneVerified()
++	user.preparePhoneProofInsert()
++	masked, err = GetMaskedUser(&user, true)
++	if err != nil || !masked.PhoneVerified || masked.PhoneE164 != "+12025550100" {
++		t.Fatal("readback lost canonical proof")
++	}
++	user.Phone = "2025550101"
++	masked, err = GetMaskedUser(&user, true)
++	if err != nil || masked.PhoneVerified || masked.PhoneE164 != "" {
++		t.Fatal("readback retained mismatched proof")
++	}
++}
++
++func TestStbzPasswordRecoveryRequiresFreshCurrentlyVerifiedEmail(t *testing.T) {
++	now := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
++	user := &User{Email: "owned@example.test", EmailVerified: true}
++	valid := now.Add(5 * time.Minute).Format(time.RFC3339)
++	if !IsEmailPasswordRecoveryProofValid(user, "OWNED@example.test", valid, now) {
++		t.Fatal("valid email proof rejected")
++	}
++	cases := []struct {
++		email    interface{}
++		deadline interface{}
++	}{
++		{nil, nil}, {"+12025550100", valid}, {"other@example.test", valid},
++		{user.Email, now.Format(time.RFC3339)}, {user.Email, now.Add(6 * time.Minute).Format(time.RFC3339)},
++		{user.Email, 123}, {123, valid}, {user.Email, "invalid"},
++	}
++	for _, item := range cases {
++		if IsEmailPasswordRecoveryProofValid(user, item.email, item.deadline, now) {
++			t.Fatal("invalid recovery proof accepted")
++		}
++	}
++	user.EmailVerified = false
++	if IsEmailPasswordRecoveryProofValid(user, user.Email, valid, now) {
++		t.Fatal("unverified email recovered account")
++	}
++	if IsVerifiedEmailRecoveryContact(&User{Phone: "2025550100", CountryCode: "US"}, "2025550100") {
++		t.Fatal("recycled phone authorized recovery")
++	}
++}

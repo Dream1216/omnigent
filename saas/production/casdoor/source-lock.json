@@ -4,7 +4,7 @@
   "upstream_revision": "528a0213f01caf70b9f41009cbf7b2f67bdd67ec",
   "source_url": "https://codeload.github.com/casdoor/casdoor/legacy.tar.gz/528a0213f01caf70b9f41009cbf7b2f67bdd67ec",
   "source_sha256": "fc80ec9398d19d333cabb258b824c6c4614248f943800c31366ef76a4660f7ad",
-  "candidate_version": "v4.25.0-stbz.3",
+  "candidate_version": "v4.25.0-stbz.4",
   "patches": [
     {
       "path": "patches/v4.25.0-oidc-reliability.patch",
@@ -17,6 +17,10 @@
     {
       "path": "patches/v4.25.0-verified-phone-proof.patch",
       "sha256": "511dd4cf859fca82f98cbeaba8ef4ed9a34fefeb0c2b01c88a06ab2f80c24eb4"
+    },
+    {
+      "path": "patches/v4.25.0-phone-readback-and-recovery.patch",
+      "sha256": "83a45a063736758f29ab39c8f7db06934f0c327df88f3307a80b61d9a43ae89a"
     }
   ]
 }

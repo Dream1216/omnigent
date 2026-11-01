@@ -177,6 +177,16 @@ JSON exports intentionally omit it, so imported accounts need a fresh OTP proof.
 Qualify the schema change on the production database engine and exercise the
 new image's real signup and change paths before activation.
 
+The `stbz.4` patch returns `phoneE164` with `phoneVerified` on authenticated
+readback, deriving both from the stored binding. This lets the product reader
+consume the exact canonical address without guessing country prefixes.
+Password-only sign-in remains the initial SMS account policy. A phone OTP alone
+cannot authorize password recovery, including through a repurposed contact code.
+Email recovery requires the currently verified email, a one-time code and a
+five-minute server session proof; an email change or expired proof rejects the
+reset. Signed-in changes still require the current password. Phone-only users
+without that password need the controlled support recovery procedure.
+
 The current product still ignores phone claims and requires a verified email
 for self-service workspace creation and email invitations. SMS signup alone
 does not satisfy that existing workspace policy. Phone-only workspace support,

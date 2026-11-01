@@ -152,7 +152,7 @@
     "spiffe://omnigent/casdoor-identity-readiness-evidence"
   ],
   "identity_contract": {
-    "provider_source_lock_sha256": "1922c5e97eda4c4330d279923d6ffeac35d1f8454ec690bf67790b8791994845",
+    "provider_source_lock_sha256": "914ad7878b9293ff692c73521ff51fe68e3a6412a21cb97130eda8064c290e13",
     "maximum_convergence_milliseconds": 300000,
     "minimum_worker_replicas": 2,
     "minimum_subjects_per_case": 2,
