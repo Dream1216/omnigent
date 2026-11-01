@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "78e80038bbf0b56a45cb13de52b0c084e8948382e853e277fa4e497ea4a98ccb",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "4fbb0f03b530c18d46eace9473b22a0eab11a36d37aab24c869ad04a46b10fb1",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -615,6 +626,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "5b38bc7c83d75fcade7d7e364530ee612f99f9f77133cacf83cb53259023b6b5",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "4dee67a09c478ebc0bab527f69a2bb8bc4b70ee5a8f9d4f79a5672febdf6eff9",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -1012,6 +1034,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "ce5836e3b02f9dde03206ba2d1ea08979a758450e6401f54658df367d22ad5b7",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "8cc7b7bb23c85a57fd992918e1dac1cb63742c82a783fa343fa07dc55a40fe70",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -1379,6 +1412,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "fab1133e930cb5d1905171dd91630dc12927355d5cd6531ca9f49f4b3058f4f3",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "dd21cfa18403b8aead5b5680bbc8e4299a5e95111036c2e6be45046e8825b368",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -1741,6 +1785,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "4294f69798a2026854618312e09d949073d049c8a00a70948e4024bcc21507bf",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "83665321cee1fc532a1acd6490eec737500d6c4ad1a506ac90af7dafc2bdf227",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -2078,6 +2133,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "131a8812d47cbbeeb10176b2dc9703a38094de64392e090808cc98974a41b634",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "b8a1b292febb45cc7fb5e4c38f503f62d880f881f377772e30084b348b9acb3e",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -2422,6 +2488,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "539318b124096be58cb14f377b9eea624a5d31c021eae3c4e23f3e08242adc54",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "926333681887db8fbe582aa54f89caa3b14ad1d267efa328e24ac403a1367c26",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -2731,6 +2808,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Independent PG16/18 replay: durable identity Inbox and provider-state authority.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "d25eeb7f8b5114d1e47c75a4d867f9a856786649731096e2171df0edf236be04",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd4a00000001",
+    ): "ad45ff06ca63c9123477ef1f354f285c47cf2e9da36323cb0fde0bd013703880",
     # Independent PG16/18 source replay: verified existing-identity credential cutover.
     (
         16,
@@ -4383,6 +4471,7 @@ def _runtime_saas_head(requested: object) -> str:
         "cd2a00000001": ("cd2a00000001",),
         "cd3a00000001": ("cd3a00000001",),
         "cd3b00000001": ("cd3b00000001",),
+        "cd4a00000001": ("cd4a00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")
@@ -5222,6 +5311,7 @@ def _verify_preview_owner_lease_definers(
 _CREDENTIAL_GUARD_SOURCE_SHA256 = {
     "cd3a00000001": "4728f24d9fda1932c24c6dca42df7e6f54a9753ce9de825ba82314ed5c0126df",
     "cd3b00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
+    "cd4a00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
 }
 
 

@@ -22,6 +22,8 @@ explicit consent and fresh authentication. Product permissions remain local.
 - `credential-recovery`: offline authorization for a fresh password, with session
   and provider connection revocation and an immutable migration receipt. A
   separately signed return can restore only the original recovery-revoked identity.
+- `identity-state`: durable provider notifications, authoritative readback,
+  password/contact/disable/delete session invalidation and missed-event reconciliation.
 
 ## How to get to it (user POV)
 
@@ -83,6 +85,20 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   `tests/saas/test_credential_reconnection_postgresql.py`.
 - Narrow worker secret mounts, source and login bindings:
   `tests/saas/test_credential_worker_config.py`.
+- Identity state parsing/readback and persistent authenticated ingress:
+  `tests/saas/test_casdoor_identity_events.py`,
+  `tests/saas/test_identity_inbox.py`,
+  `tests/saas/test_identity_inbox_postgresql.py`, and
+  `tests/saas/test_identity_events_http.py`.
+- State application, callback fences, stale claims, first-snapshot races,
+  duplicate security events, migration and recovery restrictions:
+  `tests/saas/test_identity_sync.py`,
+  `tests/saas/test_identity_sync_credential_fences.py`,
+  `tests/saas/test_identity_sync_postgresql.py`, and
+  `tests/saas/test_identity_sync_migration.py`.
+  These are service/protocol/database proofs. Complete direct-ingress/worker/
+  signed-OIDC/browser convergence acceptance is still pending; follow
+  `saas/production/casdoor/IDENTITY_SYNCHRONIZATION.md` before enabling it.
 - Private bounded batches and fresh-password authorization:
   `tests/saas/test_credential_migration_cli.py` and
   `tests/saas/test_credential_recovery.py`. Use the synthetic procedure in
@@ -108,6 +124,12 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
 
 - Staff authentication, host credentials and Databricks sign-in are separate.
 - A captured notification replay is not proof of direct provider connectivity.
+- A provider state fixture with synthetic internal authentication assertions does
+  not prove signed-OIDC/browser behavior. A manual reconciliation tick does not
+  qualify worker uptime, admitted-load lag, HTTPS ingress or the five-minute SLO.
+- A locally active connection can have a disabled or deleted provider cache.
+  Such a connection cannot supply verified contact, reauthentication, cutover
+  or a usable backup sign-in method. A late duplicate must preserve fresh sessions.
 - Browser API fixtures prove the actual packaged UI, not provider availability.
 - A persisted workspace choice grants no permission; each request still checks
   current membership and allocation. Explicit scope requests retain their own choice.

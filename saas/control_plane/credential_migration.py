@@ -24,6 +24,10 @@ from saas.control_plane.db_models import (
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.identity import _add_event, _invalidate_sessions, _reject_deleted_identity
+from saas.control_plane.identity_event_models import (
+    IdentityProviderStateRecord,
+    provider_identity_available,
+)
 from saas.control_plane.lifecycle import LifecycleError, normalize_email
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -296,6 +300,7 @@ class CredentialMigrationService:
                 .where(
                     IdentityConnection.user_id == user_id,
                     IdentityConnection.status == "active",
+                    provider_identity_available(),
                     IdentityConnection.email_verified.is_(True),
                     IdentityConnection.email_normalized == email,
                 )
@@ -378,6 +383,7 @@ class CredentialMigrationService:
         if credential is None or credential.password_version != password_version:
             raise CredentialMigrationError("credential_version_conflict")
         connection = db.get(IdentityConnection, connection_id)
+        provider_state = db.get(IdentityProviderStateRecord, connection_id)
         if (
             connection is None
             or connection.user_id != user.id
@@ -386,6 +392,7 @@ class CredentialMigrationService:
             or connection.status != "active"
             or not connection.email_verified
             or connection.email_normalized is None
+            or (provider_state is not None and provider_state.status != "active")
         ):
             raise CredentialMigrationError("migration_existing_link_required")
         if (
@@ -394,6 +401,7 @@ class CredentialMigrationService:
                 .where(
                     IdentityConnection.user_id == user.id,
                     IdentityConnection.status == "active",
+                    provider_identity_available(),
                     IdentityConnection.email_verified.is_(True),
                     IdentityConnection.email_normalized == credential.login_email_normalized,
                 )
@@ -564,6 +572,10 @@ class CredentialMigrationService:
             or connection.subject != record.provider_subject
             or not connection.email_verified
             or connection.email_normalized is None
+            or (
+                (provider_state := db.get(IdentityProviderStateRecord, connection.id)) is not None
+                and provider_state.status != "active"
+            )
         ):
             return "migration_existing_link_required"
         if isinstance(proof, VerifiedLinkedCredentialIdentity) and (
@@ -812,6 +824,11 @@ class CredentialMigrationService:
                 connection.user_id != user.id
                 or connection.provider != "casdoor"
                 or connection.status != "active"
+                or (
+                    (provider_state := db.get(IdentityProviderStateRecord, connection.id))
+                    is not None
+                    and provider_state.status != "active"
+                )
             ):
                 self._fail(db, record, user, "provider_mapping_conflict", "conflict", checked_at)
                 return self._view(record)

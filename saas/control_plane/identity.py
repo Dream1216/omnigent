@@ -29,6 +29,10 @@ from saas.control_plane.db_models import (
     PasswordCredential,
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
+from saas.control_plane.identity_event_models import (
+    IdentityProviderStateRecord,
+    provider_identity_available,
+)
 from saas.control_plane.lifecycle import LifecycleError, normalize_email
 from saas.control_plane.privacy_lifecycle import oidc_identity_locator_hash
 from saas.control_plane.privacy_models import PrivacyIdentityTombstoneRecord
@@ -101,6 +105,14 @@ class IdentityConflictResolved:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _require_provider_identity_available(db: Session, connection_id: UUID) -> None:
+    state = db.get(IdentityProviderStateRecord, connection_id)
+    if state is not None and state.status != "active":
+        raise LifecycleError(
+            "oidc_identity_unavailable", "external identity connection is unavailable"
+        )
 
 
 def _comparable_time(value: datetime) -> datetime:
@@ -261,6 +273,7 @@ class IdentityManagementService:
             if existing is not None:
                 if existing.status != "active":
                     raise LifecycleError("identity_revoked", "identity connection is revoked")
+                _require_provider_identity_available(db, existing.id)
                 return existing.user_id
 
             _reject_unbound_migration_identity(db, assertion)
@@ -339,6 +352,7 @@ class IdentityManagementService:
             if existing is not None:
                 if existing.status != "active":
                     raise LifecycleError("identity_revoked", "identity connection is revoked")
+                _require_provider_identity_available(db, existing.id)
                 return IdentityLoginResolution(user_id=existing.user_id, conflict_id=None)
 
             _reject_unbound_migration_identity(db, assertion)
@@ -353,6 +367,7 @@ class IdentityManagementService:
                             IdentityConnection.email_normalized == email,
                             IdentityConnection.email_verified.is_(True),
                             IdentityConnection.status == "active",
+                            provider_identity_available(),
                             GlobalUser.status == "active",
                         )
                     ).scalars()
@@ -397,6 +412,7 @@ class IdentityManagementService:
                                 IdentityConnection.issuer == assertion.issuer,
                                 IdentityConnection.subject == assertion.subject,
                                 IdentityConnection.status == "active",
+                                provider_identity_available(),
                             )
                         ).scalar_one_or_none()
                         if linked is None:
@@ -597,6 +613,7 @@ class IdentityManagementService:
                         "identity_revoked", "revoked identities cannot be relinked"
                     )
                 else:
+                    _require_provider_identity_available(db, existing.id)
                     connection_id = existing.id
 
             conflict.status = "approved" if decision == "approve" else "rejected"
@@ -740,6 +757,7 @@ class IdentityManagementService:
                         "identity_conflict", "identity subject belongs to another Global User"
                     )
                 if existing.status == "active":
+                    _require_provider_identity_available(db, existing.id)
                     _approve_link_conflict(
                         db, conflict, user_id, existing.id, idempotency_key, request_hash
                     )
@@ -809,6 +827,7 @@ class IdentityManagementService:
                     IdentityConnection.issuer == assertion.issuer,
                     IdentityConnection.subject == assertion.subject,
                     IdentityConnection.status == "active",
+                    provider_identity_available(),
                 )
             )
             if identity is None:
@@ -892,6 +911,10 @@ class IdentityManagementService:
             remaining = any(
                 item.status == "active"
                 and item.id != connection_id
+                and (
+                    (state := db.get(IdentityProviderStateRecord, item.id)) is None
+                    or state.status == "active"
+                )
                 and item.provider != "password"
                 and (
                     self._available_identity_providers is None
@@ -1089,6 +1112,7 @@ class PasswordCredentialService:
                             IdentityConnection.user_id == user_id,
                             IdentityConnection.email_verified.is_(True),
                             IdentityConnection.status == "active",
+                            provider_identity_available(),
                             IdentityConnection.email_normalized.is_not(None),
                         )
                     ).scalars()

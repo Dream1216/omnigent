@@ -459,7 +459,7 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
     with engine.begin() as connection:
         original_owner = connection.scalar(sa.text("SELECT current_user"))
         connection.exec_driver_sql(f"CREATE ROLE {owner} NOLOGIN NOSUPERUSER NOBYPASSRLS")
-        connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {owner}")
+        connection.exec_driver_sql(f"GRANT USAGE, CREATE ON SCHEMA public TO {owner}")
         # Schema owners can reference tables used by existing RLS predicates.
         connection.exec_driver_sql(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {owner}")
         connection.exec_driver_sql(f"GRANT SELECT, UPDATE ON saas_alembic_version TO {owner}")
@@ -498,7 +498,7 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
             with engine.connect() as connection:
                 assert connection.scalar(
                     sa.text("SELECT version_num FROM saas_alembic_version")
-                ) == ("cd3b00000001")
+                ) == ("cd4a00000001")
                 table = (
                     "saas_oidc_login_transactions"
                     if retained == "oidc"

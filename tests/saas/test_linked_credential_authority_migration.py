@@ -66,7 +66,9 @@ def test_historical_hash_receipt_survives_mode_expansion_and_downgrade():
                 connection.scalar(sa.text("SELECT mode FROM saas_credential_migration_receipts"))
                 == "hash_import"
             )
+            command.upgrade(config, "head")
             command.check(config)
+            command.downgrade(config, _HEAD)
             command.downgrade(config, _PREDECESSOR)
             after = dict(
                 connection.execute(sa.text("SELECT * FROM saas_credential_migration_receipts"))

@@ -237,6 +237,10 @@ from saas.control_plane.identity import (
     PasswordCredentialService,
     VerifiedIdentityAssertion,
 )
+from saas.control_plane.identity_event_models import (
+    IdentityEventInboxRecord,
+    IdentityProviderStateRecord,
+)
 from saas.control_plane.isolation import (
     IsolationControlPlane,
     IsolationControlPlaneError,
@@ -785,8 +789,10 @@ __all__ = [
     "IdentityConflictCaseView",
     "IdentityConflictResolved",
     "IdentityConnection",
+    "IdentityEventInboxRecord",
     "IdentityLoginResolution",
     "IdentityManagementService",
+    "IdentityProviderStateRecord",
     "InitialPlatformStaffIdentity",
     "InvitationAccepted",
     "InvitationCreated",

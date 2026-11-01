@@ -17,6 +17,7 @@ _T = "lm2t00000001"
 _CASDOOR = "cd2a00000001"
 _CREDENTIAL = "cd3a00000001"
 _LINKED_CREDENTIAL = "cd3b00000001"
+_IDENTITY_SYNC = "cd4a00000001"
 _IDENTITY_TABLES = {
     "saas_oidc_login_transactions",
     "saas_oidc_session_fences",
@@ -81,7 +82,9 @@ def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope(head
     assert len(new) == len(set(new)) == len(old) + 15
 
 
-@pytest.mark.parametrize("head", [_P0, _R, _S, _T, _CASDOOR, _CREDENTIAL, _LINKED_CREDENTIAL])
+@pytest.mark.parametrize(
+    "head", [_P0, _R, _S, _T, _CASDOOR, _CREDENTIAL, _LINKED_CREDENTIAL, _IDENTITY_SYNC]
+)
 def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_connection, head):
     _populate(digest_connection, head)
     digest, counts = restore._digest_on_connection(digest_connection)
@@ -195,5 +198,26 @@ def test_fixture_limit_is_not_a_silent_truncation(digest_connection, head):
 def test_missing_r_table_is_not_treated_as_an_empty_restored_table(digest_connection, head):
     _populate(digest_connection, head)
     digest_connection.exec_driver_sql("DROP TABLE public.saas_model_gateway_evidence")
+    with pytest.raises(restore.PostgreSqlRestoreContractError, match="missing hash table"):
+        restore._digest_on_connection(digest_connection)
+
+
+@pytest.mark.parametrize("table", ["saas_identity_event_inbox", "saas_identity_provider_states"])
+def test_identity_sync_state_is_in_the_restore_digest_and_missing_tables_fail(
+    digest_connection, table
+):
+    before_tables = restore._digest_tables_for_schema(_LINKED_CREDENTIAL)
+    tables = restore._digest_tables_for_schema(_IDENTITY_SYNC)
+    assert tables[: len(before_tables)] == before_tables
+    assert set(tables) - set(before_tables) == {
+        "saas_identity_event_inbox",
+        "saas_identity_provider_states",
+    }
+    _populate(digest_connection, _IDENTITY_SYNC)
+    before, _ = restore._digest_on_connection(digest_connection)
+    digest_connection.exec_driver_sql(f"UPDATE public.{table} SET value='processed-or-disabled'")
+    after, _ = restore._digest_on_connection(digest_connection)
+    assert after != before
+    digest_connection.exec_driver_sql(f"DROP TABLE public.{table}")
     with pytest.raises(restore.PostgreSqlRestoreContractError, match="missing hash table"):
         restore._digest_on_connection(digest_connection)

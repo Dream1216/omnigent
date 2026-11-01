@@ -950,6 +950,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         "cd2a00000001",
         "cd3a00000001",
         "cd3b00000001",
+        "cd4a00000001",
     }:
         raise ReleaseRenderError("model projection profile requires a reviewed model schema")
     service_logins = {

@@ -16,6 +16,7 @@ _CASDOOR_HEADS = (
     "cd2a00000001",
     "cd3a00000001",
     "cd3b00000001",
+    "cd4a00000001",
 )
 
 
@@ -50,7 +51,7 @@ def test_t_support_does_not_relax_cluster_or_owner_admission():
     assert "'Runner cluster admission rejected: Runner API owner drifted'" in _SQL
 
 
-@pytest.mark.parametrize("head", ["cd3a00000001", "cd3b00000001"])
+@pytest.mark.parametrize("head", ["cd3a00000001", "cd3b00000001", "cd4a00000001"])
 def test_casdoor_executor_keeps_the_reviewed_interactive_recovery_api(head, monkeypatch):
     from saas.production import postgresql_migration
     from saas.production.runner_executor import _runner_agent_schema_contract

@@ -26,8 +26,39 @@ from saas.control_plane import (
     normalize_email,
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
+from saas.control_plane.identity_event_models import IdentityProviderStateRecord
 
 NOW = datetime(2026, 8, 4, 3, 0, tzinfo=timezone.utc)
+
+
+def test_disabled_provider_contact_cannot_accept_invitation(lifecycle):
+    created = lifecycle.service.create_invitation(
+        actor_id=lifecycle.actor_id,
+        tenant_id=lifecycle.tenant_id,
+        email="invitee@example.com",
+        tenant_role="member",
+        expires_at=NOW + timedelta(hours=1),
+        idempotency_key="disabled-provider-invite",
+        now=NOW,
+    )
+    with lifecycle.sessions.begin() as db:
+        connection_id = db.scalar(
+            sa.select(IdentityConnection.id).where(
+                IdentityConnection.user_id == lifecycle.invitee_id
+            )
+        )
+        assert connection_id is not None
+        db.add(
+            IdentityProviderStateRecord(
+                connection_id=connection_id, subject_locator_sha256="a" * 64, status="disabled"
+            )
+        )
+    with pytest.raises(LifecycleError, match="verified email identity"):
+        lifecycle.service.accept_invitation(
+            actor_id=lifecycle.invitee_id, token=created.token, now=NOW
+        )
+    with lifecycle.sessions() as db:
+        assert db.get(TenantMembership, (lifecycle.tenant_id, lifecycle.invitee_id)) is None
 
 
 @dataclass(frozen=True)

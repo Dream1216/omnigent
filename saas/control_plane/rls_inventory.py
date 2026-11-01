@@ -7,6 +7,8 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
         "saas_global_users",
         "saas_credential_migration_receipts",
         "saas_identity_connections",
+        "saas_identity_event_inbox",
+        "saas_identity_provider_states",
         "saas_identity_conflicts",
         "saas_oidc_login_transactions",
         "saas_oidc_session_fences",
@@ -141,5 +143,5 @@ CONTROL_PLANE_RLS_TABLES = frozenset(
     }
 )
 
-if len(CONTROL_PLANE_RLS_TABLES) != 134:
-    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 134 tables")
+if len(CONTROL_PLANE_RLS_TABLES) != 136:
+    raise RuntimeError("control-plane forced-RLS inventory must contain exactly 136 tables")

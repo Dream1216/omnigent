@@ -38,6 +38,7 @@ from saas.control_plane.db_models import (
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
 from saas.control_plane.identity import _add_event, _invalidate_sessions, _reject_deleted_identity
+from saas.control_plane.identity_event_models import IdentityProviderStateRecord
 from saas.control_plane.lifecycle import normalize_email
 
 RECONNECTION_SIGNATURE_DOMAIN = b"omnigent.credential-reconnection.v1\x00"
@@ -201,6 +202,13 @@ class CredentialReconnectionService:
         ):
             raise CredentialMigrationError("credential_reconnection_state_conflict")
         _reject_deleted_identity(db, connection.issuer, connection.subject)
+        provider_state = db.scalar(
+            sa.select(IdentityProviderStateRecord)
+            .where(IdentityProviderStateRecord.connection_id == connection.id)
+            .with_for_update()
+        )
+        if provider_state is not None and provider_state.status == "deleted":
+            raise CredentialMigrationError("credential_reconnection_state_conflict")
         if (
             db.scalar(
                 sa.select(IdentityConflict.id).where(
@@ -307,6 +315,16 @@ class CredentialReconnectionService:
             completed_at = _time(now)
             self._keys.verify(signed_grant, now=completed_at)
             current.status = "active"
+            provider_state = db.get(IdentityProviderStateRecord, current.id)
+            if provider_state is not None:
+                provider_state.status = "active"
+                provider_state.checked_at = None
+                provider_state.next_check_at = completed_at
+                provider_state.claim_token = None
+                provider_state.claim_sha256 = None
+                provider_state.lease_expires_at = None
+                provider_state.version += 1
+                provider_state.updated_at = completed_at
             security_version, revoked = _invalidate_sessions(db, user_id, completed_at)
             _add_event(
                 db,

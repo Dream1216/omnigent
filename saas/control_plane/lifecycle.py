@@ -28,6 +28,7 @@ from saas.control_plane.db_models import (
     TenantMembership,
 )
 from saas.control_plane.idempotency import scoped_idempotency_key
+from saas.control_plane.identity_event_models import provider_identity_available
 from saas.control_plane.rls import RlsContext, apply_rls_context
 
 _FRESH_AUTH_WINDOW = timedelta(minutes=5)
@@ -203,6 +204,7 @@ class MembershipLifecycleService:
                         IdentityConnection.issuer == external_identity.issuer,
                         IdentityConnection.subject == external_identity.subject,
                         IdentityConnection.status == "active",
+                        provider_identity_available(),
                     )
                 )
                 if connection is None:
@@ -495,6 +497,11 @@ class MembershipLifecycleService:
                 db,
                 RlsContext(actor_id=actor_id, invitation_token_hash=token_hash),
             )
+            user = db.scalar(
+                sa.select(GlobalUser).where(GlobalUser.id == actor_id).with_for_update()
+            )
+            if user is None or user.status != "active":
+                raise LifecycleError("user_inactive", "active user is required")
             invitation = db.execute(
                 sa.select(MembershipInvitation).where(
                     MembershipInvitation.token_hash == token_hash
@@ -519,13 +526,11 @@ class MembershipLifecycleService:
             ):
                 raise LifecycleError("invalid_invitation", "invitation is invalid or expired")
 
-            user = db.get(GlobalUser, actor_id)
-            if user is None or user.status != "active":
-                raise LifecycleError("user_inactive", "active user is required")
             verified_users = set(
                 db.execute(
                     sa.select(IdentityConnection.user_id).where(
                         IdentityConnection.status == "active",
+                        provider_identity_available(),
                         IdentityConnection.email_verified.is_(True),
                         IdentityConnection.email_normalized == invitation.email_normalized,
                     )

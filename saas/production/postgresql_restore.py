@@ -2117,6 +2117,12 @@ def _normalize(value: Any) -> Any:
 
 
 def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
+    if head == "cd4a00000001":
+        return (
+            *_digest_tables_for_schema("cd3b00000001"),
+            "saas_identity_event_inbox",
+            "saas_identity_provider_states",
+        )
     if head == "p0s000000015":
         return _SELECTED_HASH_TABLES
     if head in {"lm2r00000001", "lm2s00000001", "lm2t00000001"}:
