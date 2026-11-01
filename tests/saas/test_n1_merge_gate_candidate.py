@@ -35,6 +35,16 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
     policy = EVALUATOR.read_text(encoding="utf-8")
     trusted_inputs = _array_values(policy, "POSTGRESQL_N1_TRUSTED_INPUTS")
 
+    aliyun_inputs = _array_values(policy, "POSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS")
+    aliyun_hashes = dict(row.split("|", 1) for row in aliyun_inputs)
+    assert len(aliyun_inputs) == len(aliyun_hashes) == 4
+    assert set(aliyun_hashes) == {
+        "pyproject.toml",
+        "uv.lock",
+        "tests/saas/test_image_supply_chain.py",
+        "saas/scripts/compare_oci_rebuilds.py",
+    }
+    assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in aliyun_hashes.values())
     assert len(trusted_inputs) == 21
     for trusted_input in trusted_inputs:
         path, expected_digests = trusted_input.split("|", 1)
@@ -42,7 +52,7 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
         assert 1 <= len(allowed_digests) <= 2
         assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in allowed_digests)
         observed_digest = hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest()
-        assert observed_digest in allowed_digests, (
+        assert observed_digest in allowed_digests or observed_digest == aliyun_hashes.get(path), (
             f"trusted input digest drift for {path}: "
             f"observed {observed_digest}, expected one of {allowed_digests}"
         )

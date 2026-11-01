@@ -82,6 +82,7 @@ def _run_full_gate(
     check_suite_id: str | None = None,
     observed_job_id: str = "8001",
     older_successful_run: bool = False,
+    trusted_input_override: tuple[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     fixtures = tmp_path / "fixtures"
     fixtures.mkdir()
@@ -207,6 +208,8 @@ elif [[ "$args" =~ /contents/([^?]+)\?ref= ]]; then
   if [[ "$path" == tests/saas/test_n1_outbox_admission.py ]] \
     && [[ "$FAKE_TAMPER_HARNESS" == 1 ]]; then
     printf 'tampered\n'
+  elif [[ "$path" == "$FAKE_OVERRIDE_PATH" ]]; then
+    printf '%s\n' "$FAKE_OVERRIDE_HASH"
   else
     grep -F "\"$path|" "$FAKE_EVALUATOR" | head -n1 | cut -d'|' -f2 | cut -d'"' -f1 | cut -d',' -f1
   fi
@@ -249,6 +252,8 @@ fi
             "FAKE_EVALUATOR": str(EVALUATOR),
             "FAKE_GH_FIXTURES": str(fixtures),
             "FAKE_TAMPER_HARNESS": "1" if tamper_harness else "0",
+            "FAKE_OVERRIDE_PATH": trusted_input_override[0] if trusted_input_override else "",
+            "FAKE_OVERRIDE_HASH": trusted_input_override[1] if trusted_input_override else "",
             "FAKE_TAMPER_WORKFLOW": "1" if tamper_workflow else "0",
             "GH_TOKEN": "test-token",
             "PATH": f"{bin_dir}:{env['PATH']}",
@@ -456,3 +461,36 @@ def test_unrelated_pr_passes_without_n1_check(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "not required" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("path", "digest"),
+    [
+        ("pyproject.toml", "7b7bfc95d45ac928bb91cf6b383c94c48792474adf967e34fcfddca15d0c58a6"),
+        ("uv.lock", "51412e72b0d0119f388ad9349025fb40f1f5458e55695b736f9e79ab99395b5b"),
+        (
+            "tests/saas/test_image_supply_chain.py",
+            "109ac4d727d73b271613089acbb693944047f9705f10c33c4e676075fe52d4f7",
+        ),
+        (
+            "saas/scripts/compare_oci_rebuilds.py",
+            "fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732",
+        ),
+    ],
+)
+@pytest.mark.parametrize("registered", [True, False])
+def test_aliyun_registry_accepts_only_the_reviewed_exact_input(tmp_path, path, digest, registered):
+    observed = digest if registered else "0" * 64
+    result = _run_full_gate(tmp_path, trusted_input_override=(path, observed))
+    assert (result.returncode == 0) is registered
+    if not registered:
+        assert "trusted input drift" in result.stdout
+
+
+def test_aliyun_registry_cannot_admit_an_unrelated_trusted_path(tmp_path):
+    result = _run_full_gate(
+        tmp_path,
+        trusted_input_override=("tests/saas/test_n1_compat_patch.py", "0" * 64),
+    )
+    assert result.returncode != 0
+    assert "trusted input drift" in result.stdout
