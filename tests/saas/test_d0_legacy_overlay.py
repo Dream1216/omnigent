@@ -146,3 +146,21 @@ def test_invalid_base_is_refused_before_any_overlay_output(installed_base, tmp_p
 def test_build_identity_rejects_executable_code():
     with pytest.raises(ValueError):
         overlay.build_identity(b"raise RuntimeError('untrusted identity')")
+
+
+@pytest.mark.parametrize("form", ["full", "headers", "dependency", "version", "description"])
+def test_image_readme_omission_cannot_hide_dependency_or_metadata_changes(form):
+    headers = b"Name: omnigent\nVersion: 0.18.0.dev20261006\nRequires-Dist: pillow<14,>=13.0.0\n"
+    original = headers + b"\nExact signed README body\n"
+    actual = original if form == "full" else headers
+    if form == "dependency":
+        actual = actual.replace(b"pillow<14,>=13.0.0", b"pillow<13,>=12.2")
+    elif form == "version":
+        actual = actual.replace(b"0.18.0", b"0.17.0")
+    elif form == "description":
+        actual += b"\nDifferent description\n"
+    if form in {"full", "headers"}:
+        overlay.require_original_dependency_metadata(actual, original)
+    else:
+        with pytest.raises(ValueError, match="installed dependency metadata differs"):
+            overlay.require_original_dependency_metadata(actual, original)

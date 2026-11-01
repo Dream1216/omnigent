@@ -65,3 +65,11 @@ are recorded separately from the immutable original export digests.
 A successful pipeline qualifies candidate material only. Actual runtime/business
 compatibility, full data restore, mixed versions and production admission remain
 separate required evidence; no deployment or database write occurs here.
+
+The M3659 image build context omits README.md, so its installed METADATA keeps
+exactly the signed wheel headers and final newline, without the long README
+body. The exporter accepts only those two fixed byte forms derived from the
+verified original wheel; all dependency, version, extra and other headers must
+remain byte-identical, and no alternate description is accepted. METADATA is
+never included in the overlay. The original first image-build refusal remains
+evidence; this packaging distinction does not permit a dependency change.

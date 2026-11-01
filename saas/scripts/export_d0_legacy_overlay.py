@@ -95,6 +95,21 @@ def read_payload(repository, original_wheel, patched_wheel, materialization, rev
     return {name: patched[name] for name in changed if name != recipe.RECORD}, original, manifest
 
 
+def require_original_dependency_metadata(installed: bytes, original: bytes) -> None:
+    """Accept exact signed headers when image packaging omits the README body.
+
+    The digest-pinned M3659 image context lacks README.md. Its METADATA has the
+    exact wheel headers and final newline, without the wheel's long description.
+    No header, dependency, version, extra or alternative description may differ.
+    The installed metadata is retained; this exporter never copies METADATA.
+    """
+    headers, separator, _description = original.partition(b"\n\n")
+    allowed = {original}
+    if separator:
+        allowed.add(headers + b"\n")
+    recipe.require(installed in allowed, "installed dependency metadata differs")
+
+
 def export(repository, original_wheel, patched_wheel, materialization, revision, epoch, output):
     payload, original, manifest = read_payload(
         repository, original_wheel, patched_wheel, materialization, revision, epoch
@@ -126,10 +141,7 @@ def export(repository, original_wheel, patched_wheel, materialization, revision,
         == manifest["base_product_revision"],
         "installed base product differs",
     )
-    recipe.require(
-        (site / metadata).read_bytes() == original[metadata],
-        "installed dependency metadata differs",
-    )
+    require_original_dependency_metadata((site / metadata).read_bytes(), original[metadata])
     for name, pins in manifest["files"].items():
         target = site / name
         recipe.require(
@@ -187,6 +199,7 @@ def export(repository, original_wheel, patched_wheel, materialization, revision,
         "files": exported,
         "installed_base_mutated": False,
         "dependency_changes": False,
+        "base_distribution_metadata_sha256": recipe.digest((site / metadata).read_bytes()),
         "production_or_image_qualification": False,
     }
 
