@@ -157,6 +157,7 @@ class MembershipLifecycleService:
         now: datetime | None = None,
         external_identity: ExternalSessionIdentity | None = None,
         required_parent_session_id: UUID | None = None,
+        required_security_version: int | None = None,
     ) -> IssuedAuthSession:
         """Issue a revocable opaque bearer token for one active Global User."""
 
@@ -177,6 +178,13 @@ class MembershipLifecycleService:
             ).scalar_one_or_none()
             if user is None or user.status != "active":
                 raise LifecycleError("user_inactive", "active user is required")
+            if (
+                required_security_version is not None
+                and user.security_version != required_security_version
+            ):
+                raise LifecycleError(
+                    "authorization_snapshot_stale", "authentication proof is no longer current"
+                )
             external = {}
             active_scope = {}
             if external_identity is not None:

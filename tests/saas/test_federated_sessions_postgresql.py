@@ -20,6 +20,7 @@ from saas.control_plane import federated_sessions as federated
 from saas.control_plane.db_models import (
     AuthSessionRecord,
     ControlPlaneOutboxEvent,
+    GlobalUser,
     IdentityConflict,
     OidcSessionFence,
     Space,
@@ -30,7 +31,11 @@ from saas.control_plane.federated_sessions import (
     FederatedSessionService,
     VerifiedLogoutEvent,
 )
-from saas.control_plane.identity import IdentityManagementService, VerifiedIdentityAssertion
+from saas.control_plane.identity import (
+    IdentityManagementService,
+    PasswordCredentialService,
+    VerifiedIdentityAssertion,
+)
 from saas.control_plane.lifecycle import LifecycleError, MembershipLifecycleService
 
 
@@ -59,6 +64,131 @@ def postgres_federation(
         yield engine, sessions
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("first", ["rotation", "issuance"])
+def test_real_postgresql_password_proof_and_rotation_serialize_session_issue(
+    postgres_federation: tuple[sa.Engine, sessionmaker[Session]], first: str
+) -> None:
+    engine, sessions = postgres_federation
+    user = IdentityManagementService(sessions).provision_identity(
+        VerifiedIdentityAssertion(
+            provider="legacy",
+            issuer="urn:password-race",
+            subject="password-race",
+            email="password-race@example.test",
+            email_verified=True,
+        )
+    )
+    passwords = PasswordCredentialService(sessions)
+    passwords.set_password(
+        user_id=user,
+        new_password="initial-password-race",
+        expected_version=None,
+        idempotency_key="initial-password-race",
+    )
+    proof = passwords.authenticate_with_proof(
+        "password-race@example.test", "initial-password-race"
+    )
+    lifecycle = MembershipLifecycleService(sessions)
+    locked, release = threading.Event(), threading.Event()
+    waiting_pids: queue.Queue[int] = queue.Queue()
+
+    @sa.event.listens_for(engine, "before_cursor_execute")
+    def observe_waiter(connection, _cursor, statement, _parameters, _context, _many):
+        if (
+            threading.current_thread().name.startswith("password-second")
+            and "saas_global_users" in statement
+            and "FOR UPDATE" in statement
+        ):
+            waiting_pids.put(connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one())
+
+    @sa.event.listens_for(engine, "after_cursor_execute")
+    def pause_lock_holder(_connection, _cursor, statement, _parameters, _context, _many):
+        if (
+            threading.current_thread().name.startswith("password-first")
+            and "saas_global_users" in statement
+            and "FOR UPDATE" in statement
+            and not locked.is_set()
+        ):
+            locked.set()
+            assert release.wait(30), "first password transaction release timed out"
+
+    def issue():
+        return lifecycle.issue_auth_session(
+            user_id=proof.user_id,
+            authn_method="password",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            required_security_version=proof.security_version,
+        )
+
+    def rotate():
+        return passwords.set_password(
+            user_id=user,
+            new_password="replacement-password-race",
+            current_password="initial-password-race",
+            expected_version=proof.password_version,
+            idempotency_key="rotate-password-race",
+        )
+
+    with (
+        ThreadPoolExecutor(1, thread_name_prefix="password-first") as first_pool,
+        ThreadPoolExecutor(1, thread_name_prefix="password-second") as second_pool,
+    ):
+        a = first_pool.submit(rotate if first == "rotation" else issue)
+        try:
+            assert locked.wait(10), "first password transaction never acquired its user lock"
+            b = second_pool.submit(issue if first == "rotation" else rotate)
+            pid = waiting_pids.get(timeout=10)
+            deadline = time.monotonic() + 10
+            with engine.connect() as connection:
+                while time.monotonic() < deadline:
+                    waiting = connection.scalar(
+                        sa.text("SELECT wait_event_type FROM pg_stat_activity WHERE pid=:pid"),
+                        {"pid": pid},
+                    )
+                    if waiting == "Lock":
+                        break
+                    connection.commit()
+                    time.sleep(0.02)
+                else:
+                    pytest.fail("second password transaction was not waiting on a real row lock")
+            release.set()
+            if first == "rotation":
+                assert a.result(timeout=10).revoked_session_count == 0
+                with pytest.raises(LifecycleError) as stale:
+                    b.result(timeout=10)
+                assert stale.value.code == "authorization_snapshot_stale"
+            else:
+                issued = a.result(timeout=10)
+                assert b.result(timeout=10).revoked_session_count == 1
+                with pytest.raises(LifecycleError):
+                    lifecycle.validate_auth_session(issued.token)
+        finally:
+            release.set()
+
+    with sessions() as db:
+        assert db.get(GlobalUser, user).security_version == proof.security_version + 1
+        assert (
+            db.scalar(
+                sa.select(sa.func.count())
+                .select_from(AuthSessionRecord)
+                .where(AuthSessionRecord.revoked_at.is_(None))
+            )
+            == 0
+        )
+    current = passwords.authenticate_with_proof(
+        "password-race@example.test", "replacement-password-race"
+    )
+    fresh = lifecycle.issue_auth_session(
+        user_id=user,
+        authn_method="password",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        required_security_version=current.security_version,
+    )
+    assert (
+        lifecycle.validate_auth_session(fresh.token).security_version == current.security_version
+    )
 
 
 @pytest.mark.parametrize("first", ["logout", "login"])

@@ -1140,13 +1140,15 @@ def create_saas_auth_router(
                 LifecycleError("identity_provider_required", "use central sign-in"), 401
             )
         try:
-            user_id = passwords.authenticate(body.email, body.password)
+            proof = passwords.authenticate_with_proof(body.email, body.password)
+            user_id = proof.user_id
             now = datetime.now(timezone.utc)
             issued = lifecycle.issue_auth_session(
                 user_id=user_id,
                 authn_method="password",
                 expires_at=now + cookie_config.ttl,
                 now=now,
+                required_security_version=proof.security_version,
             )
         except LifecycleError as error:
             raise _http_error(error, 401) from error

@@ -407,6 +407,47 @@ def _login(client: TestClient) -> str:
     return token
 
 
+@pytest.mark.parametrize("invalidation", ["security_version", "password_rotation"])
+def test_password_login_rejects_proof_invalidated_before_session_issue(
+    monkeypatch: pytest.MonkeyPatch, invalidation: str
+) -> None:
+    from saas.control_plane.db_models import AuthSessionRecord, GlobalUser
+
+    app, scope = _build_fastapi_app()
+    sessions = app.state.saas_test_sessions
+    original = MembershipLifecycleService.issue_auth_session
+
+    def invalidate_then_issue(self: MembershipLifecycleService, **values: object):
+        if invalidation == "password_rotation":
+            PasswordCredentialService(sessions).set_password(
+                user_id=UUID(scope["user_id"]),
+                new_password="replacement-http-password",
+                current_password="initial-http-password",
+                expected_version=1,
+                idempotency_key="concurrent-password-rotation",
+            )
+        else:
+            with sessions.begin() as db:
+                db.execute(
+                    sa.update(GlobalUser)
+                    .where(GlobalUser.id == UUID(scope["user_id"]))
+                    .values(security_version=GlobalUser.security_version + 1)
+                )
+        return original(self, **values)
+
+    monkeypatch.setattr(MembershipLifecycleService, "issue_auth_session", invalidate_then_issue)
+    with TestClient(app) as client:
+        response = client.post(
+            "/saas/auth/login",
+            json={"email": "http@example.com", "password": "initial-http-password"},
+        )
+        assert response.status_code == 401
+        assert response.json()["detail"]["code"] == "authorization_snapshot_stale"
+        assert client.cookies.get("saas_session") is None
+    with sessions() as db:
+        assert db.scalar(sa.select(sa.func.count()).select_from(AuthSessionRecord)) == 0
+
+
 def test_saas_logout_requires_trusted_origin_and_revokes_with_stale_csrf() -> None:
     client, _scope = _build_app()
     csrf = _login(client)

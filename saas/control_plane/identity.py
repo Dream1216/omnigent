@@ -73,6 +73,15 @@ class PasswordChanged:
 
 
 @dataclass(frozen=True, slots=True)
+class PasswordAuthenticationProof:
+    """Security snapshot verified with a password, before session issuance."""
+
+    user_id: UUID
+    security_version: int
+    password_version: int
+
+
+@dataclass(frozen=True, slots=True)
 class IdentityLoginResolution:
     """OIDC login outcome: one user or one explicit conflict, never both."""
 
@@ -880,19 +889,28 @@ class PasswordCredentialService:
             )
 
     def authenticate(self, email: str, password: str, *, now: datetime | None = None) -> UUID:
+        """Verify credentials and return the stable Global User ID."""
+
+        return self.authenticate_with_proof(email, password, now=now).user_id
+
+    def authenticate_with_proof(
+        self, email: str, password: str, *, now: datetime | None = None
+    ) -> PasswordAuthenticationProof:
         """Authenticate one unambiguous verified email without revealing failure cause."""
 
         checked_at = now or _now()
         normalized = normalize_email(email)
         with self._session_factory() as db:
-            credential = db.execute(
-                sa.select(PasswordCredential)
+            record = db.execute(
+                sa.select(PasswordCredential, GlobalUser.security_version)
                 .join(GlobalUser, GlobalUser.id == PasswordCredential.user_id)
                 .where(
                     PasswordCredential.login_email_normalized == normalized,
                     GlobalUser.status == "active",
                 )
-            ).scalar_one_or_none()
+            ).one_or_none()
+            credential = record[0] if record is not None else None
+            security_version = record[1] if record is not None else None
 
         password_hash = (
             credential.password_hash if credential is not None else self._dummy_password_hash
@@ -948,7 +966,12 @@ class PasswordCredentialService:
             )
             if result.rowcount != 1:
                 raise LifecycleError("credentials_changed", "credential changed during login")
-        return credential.user_id
+        assert security_version is not None
+        return PasswordAuthenticationProof(
+            user_id=credential.user_id,
+            security_version=security_version,
+            password_version=credential.password_version,
+        )
 
     def set_password(
         self,
@@ -1051,7 +1074,9 @@ class PasswordCredentialService:
                     replayed=True,
                 )
 
-            user = db.get(GlobalUser, user_id)
+            user = db.scalar(
+                sa.select(GlobalUser).where(GlobalUser.id == user_id).with_for_update()
+            )
             if user is None or user.status != "active":
                 raise LifecycleError("user_inactive", "active user is required")
             credential = db.get(PasswordCredential, user_id)
