@@ -265,3 +265,50 @@ def test_complete_pair_scan_cannot_drop_or_filter_host_findings(tmp_path, fault)
             scans, components, summary_name="candidate-scan-summary.json"
         )
         assert len(result["reports"]) == 4
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "omitted",
+        "current-epoch",
+        "digest",
+        "size",
+        "media",
+        "url",
+        "foreign-annotation",
+        "foreign-epoch",
+        "count",
+    ],
+)
+def test_builder_epoch_annotation_never_permits_signed_layer_drift(fault):
+    signed = {
+        "digest": "sha256:" + "a" * 64,
+        "size": 123,
+        "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+        "annotations": {"buildkit/rewritten-timestamp": "100"},
+    }
+    actual = copy.deepcopy(signed)
+    if fault == "omitted":
+        actual.pop("annotations")
+    elif fault == "current-epoch":
+        actual["annotations"]["buildkit/rewritten-timestamp"] = "200"
+    elif fault == "digest":
+        actual["digest"] = "sha256:" + "b" * 64
+    elif fault == "size":
+        actual["size"] += 1
+    elif fault == "media":
+        actual["mediaType"] = "foreign"
+    elif fault == "url":
+        actual["urls"] = ["https://untrusted.invalid/blob"]
+    elif fault == "foreign-annotation":
+        actual["annotations"]["unreviewed"] = "foreign"
+    elif fault == "foreign-epoch":
+        actual["annotations"]["buildkit/rewritten-timestamp"] = "201"
+    expected = [signed, signed] if fault == "count" else [signed]
+    if fault in {None, "omitted", "current-epoch"}:
+        release.require_signed_base_layers([actual], expected, 200)
+    else:
+        with pytest.raises(ValueError):
+            release.require_signed_base_layers([actual], expected, 200)

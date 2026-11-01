@@ -76,6 +76,13 @@ evidence; this packaging distinction does not permit a dependency change.
 
 Only the new overlay's file/directory timestamps are normalized before COPY.
 The exporter must not request global timestamp rewriting of existing layers:
-exact compressed base descriptors and rootfs diff-id prefixes remain mandatory.
+exact compressed base layer digest/size/media-type/order, all other descriptor fields and rootfs diff-id prefixes remain mandatory.
 Original repeat comparisons and signed base layer descriptors are retained
 before any rejection to make drift diagnosable without weakening that check.
+
+BuildKit may retain, omit or update only its `buildkit/rewritten-timestamp`
+annotation when inheriting a signed base. The validator accepts only the signed
+value, omission or this committed source epoch for that annotation. Every other
+annotation and descriptor field, compressed blob identity, cardinality and
+rootfs diff-id prefix remains exact. The initial refusals and original native
+comparisons are retained; annotation handling never permits a base byte change.

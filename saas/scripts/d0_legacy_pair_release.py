@@ -79,6 +79,33 @@ def archive_blob(archive, digest):
     return raw
 
 
+def require_signed_base_layers(actual: list[dict], expected: list[dict], epoch: int) -> None:
+    """Keep exact compressed blobs and every descriptor field except builder epoch annotation."""
+    shared.require(len(actual) == len(expected), "legacy base layer count changed")
+    key = "buildkit/rewritten-timestamp"
+    for observed, signed in zip(actual, expected, strict=True):
+        observed_annotations = observed.get("annotations", {})
+        signed_annotations = signed.get("annotations", {})
+        shared.require(
+            isinstance(observed_annotations, dict) and isinstance(signed_annotations, dict),
+            "legacy base annotations malformed",
+        )
+        shared.require(
+            observed_annotations.get(key) in (None, signed_annotations.get(key), str(epoch)),
+            "legacy base timestamp annotation is not this source epoch",
+        )
+
+        def identity(descriptor):
+            value = dict(descriptor)
+            annotations = dict(value.pop("annotations", {}))
+            annotations.pop(key, None)
+            if annotations:
+                value["annotations"] = annotations
+            return value
+
+        shared.require(identity(observed) == identity(signed), "legacy base layers changed")
+
+
 def verify_overlay(archive_path, facts, materials, bases, role, revision, epoch):
     expected_paths = {SITE + name for name in materials["files"]}
     expected_paths |= {SITE + recipe.BUILD_INFO, SITE + recipe.RECORD}
@@ -88,9 +115,7 @@ def verify_overlay(archive_path, facts, materials, bases, role, revision, epoch)
             parent, parent_config = base_config(bases, role, platform, materials)
             manifest = json.loads(archive_blob(archive, fact["manifest_digest"]))
             config = json.loads(archive_blob(archive, fact["config_digest"]))
-            shared.require(
-                manifest["layers"][:-1] == parent["layers"], "legacy base layers changed"
-            )
+            require_signed_base_layers(manifest["layers"][:-1], parent["layers"], epoch)
             shared.require(
                 config["rootfs"]["diff_ids"][:-1] == parent_config["rootfs"]["diff_ids"]
                 and len(config["rootfs"]["diff_ids"])
@@ -194,9 +219,20 @@ def candidate(
                 platform: base_config(bases, role, platform, materials)[0]["layers"]
                 for platform in scans.PLATFORMS
             }
+            with tarfile.open(left) as original_archive:
+                original_layers = {
+                    platform: json.loads(archive_blob(original_archive, item["manifest_digest"]))[
+                        "layers"
+                    ]
+                    for platform, item in facts["first"]["platforms"].items()
+                }
             (diagnostics / (role + "-original-repeat-comparison.json")).write_text(
                 json.dumps(
-                    {"comparison": facts, "signed_base_layers": expected_base},
+                    {
+                        "comparison": facts,
+                        "signed_base_layers": expected_base,
+                        "original_candidate_layers": original_layers,
+                    },
                     indent=2,
                     sort_keys=True,
                 )
