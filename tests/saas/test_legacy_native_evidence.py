@@ -428,3 +428,32 @@ def test_persistence_error_cannot_be_swallowed_to_start_another_GET(tmp_path, mo
     assert receipt["capture_failed"] and receipt["invocation_raised"]
     assert receipt["native_requests_started"] == 1
     assert receipt["records"] == []
+
+
+@pytest.mark.parametrize("operation", ["job-log", "run-log", "artifact"])
+def test_bootstrap_direct_cap_prevents_each_actual_downloader_spawn(
+    operation, tmp_path, monkeypatch
+):
+    from saas.scripts import legacy_artifact_download as artifacts
+    from saas.scripts import legacy_domain_non_execution as audit
+    from saas.scripts import legacy_source_ci as source
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("cap exceeded but downloader spawned a native request")
+
+    monkeypatch.setattr(source.subprocess, "Popen", forbidden)
+    with pytest.raises(capture.NativeEvidenceFailure, match="direct download safety cap"):
+        with capture.preserve_native_evidence(tmp_path / "counted") as evidence:
+            evidence.enable_bootstrap_limits()
+            for index in range(256):
+                capture.reserve_native_download(f"prior/{index}")
+            destination = tmp_path / "must-not-exist"
+            if operation == "job-log":
+                source.download_job_log(1, destination)
+            elif operation == "run-log":
+                audit.download_run_logs(1, 1, destination)
+            else:
+                artifacts.download_artifact_bytes(
+                    1, destination, expected_size=1, expected_sha256="a" * 64
+                )
+    assert not destination.exists()
