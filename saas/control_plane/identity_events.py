@@ -26,6 +26,37 @@ class IdentityNotificationIgnored(RuntimeError):
     pass
 
 
+_SAFE_IDENTITY_ERRORS = frozenset(
+    {
+        "identity_inbox_claim_stale",
+        "identity_mapping_unavailable",
+        "identity_notification_idempotency_conflict",
+        "identity_notification_invalid",
+        "identity_notification_scope_mismatch",
+        "identity_notification_attempts_exhausted",
+        "identity_provider_locator_mismatch",
+        "identity_provider_password_policy_unqualified",
+        "identity_provider_response_invalid",
+        "identity_provider_subject_invalid",
+        "identity_provider_unavailable",
+        "identity_reader_authentication_failed",
+        "identity_reader_response_invalid",
+        "identity_reader_unavailable",
+        "identity_state_busy",
+        "identity_state_claim_stale",
+        "identity_sync_failed",
+    }
+)
+
+
+def safe_identity_error_code(error: IdentitySyncError) -> str:
+    return (
+        error.code
+        if isinstance(error.code, str) and error.code in _SAFE_IDENTITY_ERRORS
+        else "identity_sync_failed"
+    )
+
+
 def identity_digest(document: dict[str, object]) -> str:
     return sha256(
         json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()

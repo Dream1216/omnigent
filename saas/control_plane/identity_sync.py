@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -20,6 +19,7 @@ from saas.control_plane.identity_events import (
     IdentitySyncError,
     ProviderIdentityState,
     identity_digest,
+    safe_identity_error_code,
 )
 from saas.control_plane.identity_inbox import (
     IdentityEventInboxService,
@@ -29,7 +29,8 @@ from saas.control_plane.identity_inbox import (
     _utc,
     identity_locator,
 )
-from saas.control_plane.lifecycle import LifecycleError, normalize_email
+from saas.control_plane.identity_read_protocol import validate_provider_state
+from saas.control_plane.lifecycle import normalize_email
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,50 +250,14 @@ class IdentityStateSyncService:
 
     def _validate(
         self, claim: IdentityStateClaim, proof: ProviderIdentityState, checked: datetime
-    ):
-        if (
-            (proof.issuer, proof.organization, proof.subject)
-            != (claim.issuer, claim.organization, claim.subject)
-            or any(
-                type(getattr(proof, name)) is not bool
-                for name in (
-                    "exists",
-                    "email_verified",
-                    "disabled",
-                    "deleted",
-                    "normal_customer",
-                    "password_configured",
-                )
-            )
-            or (
-                proof.exists
-                and (not isinstance(proof.username, str) or not 1 <= len(proof.username) <= 128)
-            )
-            or (proof.email is not None and not isinstance(proof.email, str))
-            or (proof.email_verified and not proof.email)
-            or (
-                proof.password_revision_sha256 is not None
-                and (
-                    not isinstance(proof.password_revision_sha256, str)
-                    or re.fullmatch(r"[a-f0-9]{64}", proof.password_revision_sha256) is None
-                )
-            )
-            or (proof.exists and proof.password_revision_sha256 is None)
-            or (
-                proof.password_changed_at is not None
-                and (
-                    not isinstance(proof.password_changed_at, datetime)
-                    or proof.password_changed_at.tzinfo is None
-                    or proof.password_changed_at > checked + timedelta(seconds=60)
-                )
-            )
-        ):
-            raise IdentitySyncError("identity_provider_response_invalid", retryable=True)
-        try:
-            if proof.email:
-                normalize_email(proof.email)
-        except LifecycleError:
-            raise IdentitySyncError("identity_provider_response_invalid", retryable=True) from None
+    ) -> None:
+        validate_provider_state(
+            proof,
+            issuer=claim.issuer,
+            organization=claim.organization,
+            subject=claim.subject,
+            now=checked,
+        )
 
     @staticmethod
     def _release(state: IdentityProviderStateRecord) -> None:
@@ -414,11 +379,7 @@ class IdentityStateSyncService:
     ) -> None:
         with self._sessions.begin() as db:
             _user, _connection, state, checked = self._locked(db, claim, now)
-            state.last_error_code = (
-                error.code
-                if re.fullmatch(r"[a-z0-9_]{1,64}", error.code)
-                else "identity_sync_failed"
-            )
+            state.last_error_code = safe_identity_error_code(error)
             state.next_check_at = checked + timedelta(
                 seconds=min(60, 2 ** min(state.attempt_count, 6))
             )

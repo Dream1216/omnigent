@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import hmac
-import re
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable
 from datetime import datetime, timezone
-from types import MappingProxyType
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -19,33 +15,9 @@ from saas.control_plane.identity_events import (
     parse_casdoor_notification,
 )
 from saas.control_plane.identity_inbox import IdentityEventInboxService
+from saas.control_plane.identity_private_channel import PrivateIdentityKeys, private_identity_https
 
-
-@dataclass(frozen=True, slots=True)
-class IdentityEventIngressKeys:
-    keys: Mapping[str, str] = field(repr=False)
-    allow_insecure_loopback: bool = False
-
-    def __post_init__(self) -> None:
-        if not 1 <= len(self.keys) <= 8 or any(
-            not isinstance(key_id, str)
-            or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", key_id)
-            or not isinstance(secret, str)
-            or not 32 <= len(secret) <= 256
-            or not secret.isascii()
-            or any(ord(char) < 33 or ord(char) > 126 for char in secret)
-            for key_id, secret in self.keys.items()
-        ):
-            raise ValueError("identity event ingress keys are invalid")
-        object.__setattr__(self, "keys", MappingProxyType(dict(self.keys)))
-
-    def accepts(self, key_id: str, secret: str) -> bool:
-        expected = self.keys.get(key_id)
-        candidate = expected or "x" * 43
-        if len(secret) > 256 or not secret.isascii():
-            return False
-        matched = hmac.compare_digest(secret, candidate)
-        return expected is not None and matched
+IdentityEventIngressKeys = PrivateIdentityKeys
 
 
 def create_identity_event_router(
@@ -61,12 +33,9 @@ def create_identity_event_router(
 
     @router.post("/saas/identity-events/casdoor")
     async def receive(request: Request):
-        loopback = (
-            request.client is not None
-            and request.client.host in {"127.0.0.1", "::1"}
-            and request.url.hostname in {"localhost", "127.0.0.1", "::1"}
-        )
-        if request.url.scheme != "https" and not (keys.allow_insecure_loopback and loopback):
+        if not private_identity_https(
+            request, allow_insecure_loopback=keys.allow_insecure_loopback
+        ):
             return response(403, {"error": "identity_event_https_required"})
         if not keys.accepts(
             request.headers.get("X-Omnigent-Identity-Event-Key-Id", ""),

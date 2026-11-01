@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
@@ -10,6 +11,7 @@ import httpx
 
 from saas.control_plane.credential_migration import CredentialMigrationError
 from saas.control_plane.identity_events import IdentitySyncError, ProviderIdentityState, _aware
+from saas.control_plane.identity_private_channel import verified_identity_tls_context
 from saas.control_plane.lifecycle import LifecycleError, normalize_email
 from saas.production.credential_migration import (
     CasdoorCredentialImportConfig,
@@ -23,10 +25,12 @@ class CasdoorIdentityStateProvider:
         config: CasdoorCredentialImportConfig,
         *,
         transport: httpx.BaseTransport | None = None,
+        tls_context: ssl.SSLContext | bool = True,
     ):
         if config.marker_keyring is not None:
             raise ValueError("identity sync must not hold credential import marker keys")
         self._config, self._transport = config, transport
+        self._tls_context = verified_identity_tls_context(tls_context)
         self._organization_verified = False
 
     def _read(self, path: str, params: dict[str, str]):
@@ -40,6 +44,7 @@ class CasdoorIdentityStateProvider:
                 follow_redirects=False,
                 trust_env=False,
                 transport=self._transport,
+                verify=self._tls_context,
             ) as client:
                 response = CasdoorCredentialImportProvider._request(
                     client, "GET", path, params=params

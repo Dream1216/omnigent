@@ -99,6 +99,16 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   These are service/protocol/database proofs. Complete direct-ingress/worker/
   signed-OIDC/browser convergence acceptance is still pending; follow
   `saas/production/casdoor/IDENTITY_SYNCHRONIZATION.md` before enabling it.
+- Independent reader capability, separate process secrets, verified private TLS,
+  bounded automatic reconciliation, aggregate lag and provider-outage intake:
+  `tests/saas/test_identity_read_broker.py`,
+  `tests/saas/test_identity_read_tls.py`,
+  `tests/saas/test_identity_process_config.py`,
+  `tests/saas/test_identity_process_composition.py`,
+  `tests/saas/test_identity_sync_worker.py`, and
+  `tests/saas/test_identity_sync_worker_postgresql.py`.
+  Private process source/transport tests do not qualify production secret mounts,
+  network policy, direct provider notification or complete browser convergence.
 - Private bounded batches and fresh-password authorization:
   `tests/saas/test_credential_migration_cli.py` and
   `tests/saas/test_credential_recovery.py`. Use the synthetic procedure in

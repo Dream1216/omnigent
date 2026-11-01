@@ -18,6 +18,7 @@ from saas.control_plane.identity_events import (
     IdentityNotification,
     IdentitySyncError,
     identity_digest,
+    safe_identity_error_code,
 )
 
 
@@ -301,11 +302,7 @@ class IdentityEventInboxService:
             record.available_at = checked + timedelta(
                 seconds=min(60, 2 ** min(record.attempt_count, 6))
             )
-            record.last_error_code = (
-                error.code
-                if re.fullmatch(r"[a-z0-9_]{1,64}", error.code)
-                else "identity_sync_failed"
-            )
+            record.last_error_code = safe_identity_error_code(error)
             record.claim_token = None
             record.lease_expires_at = None
             record.version += 1

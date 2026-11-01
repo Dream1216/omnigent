@@ -1,8 +1,25 @@
 # Casdoor identity state synchronization
 
-The private identity ingress and state application services are in development.
-Do not enable them in production until the release-bound worker, controlled HTTPS
-ingress, source qualification, lag alerts and end-to-end acceptance are complete.
+Private TLS entrypoints, the read service and the periodic authenticator worker
+are implemented. Do not enable them in production until deployment/secret/network
+isolation, installed-image admission, lag alerts and complete end-to-end
+acceptance are verified.
+
+```mermaid
+flowchart LR
+    C[Casdoor] -->|authenticated notification| W[Private ingress and worker]
+    W -->|dedicated read key over TLS| B[State read service]
+    B -->|fixed organization and GET APIs| C
+    W -->|authenticator LOGIN only| D[Product PostgreSQL]
+```
+
+The read service is the capability boundary. Native Casdoor application
+credentials administer their organization; merely giving an application a
+different name does not make its credential read-only. The state service holds
+that provider credential and exposes only one fixed-subject read endpoint. It
+has no product database input. The worker holds a separate read key, never the
+provider credential, and cannot select upstream URLs, organizations or APIs.
+The normalized response contains a password revision digest but no hash or salt.
 
 ## Authority and durable state
 
@@ -48,8 +65,108 @@ provider-deleted cache. Recovery alone does not restore the old identity.
 
 Read failures remain operational failures. They do not imply deletion or revoke
 otherwise valid sessions. Periodic claims include missing caches and due active
-or disabled connections, with intervals/backoff bounded at 60 seconds. An actual
-worker and admitted load must still prove the five-minute convergence target.
+or disabled connections, with intervals/backoff bounded at 60 seconds. Bounded
+worker loops interleave periodic and Inbox work; a read failure does not starve
+notification intake. Actual deployed workers and admitted load must still prove
+the five-minute convergence target.
+
+## Process configuration
+
+Both processes require release product/upstream revisions, source SHA, image
+digest and the public `OMNIGENT_SAAS_CASDOOR_CONFIG_FILE` customer application
+pins. Installed wheel metadata must match the configured product revision.
+Neither process accepts import-marker, credential-recovery, web OIDC or artifact
+credentials. The reader and Webhook authentication keys must be independent.
+
+`OMNIGENT_SAAS_IDENTITY_SYNC_CONFIG_FILE` is public, closed-schema JSON:
+
+```json
+{
+  "schema_version": 1,
+  "reader_origin": "https://identity-reader.internal.example.test",
+  "reader_key_id": "current",
+  "reader_ca_file": null,
+  "provider_source_lock_sha256": "REPLACE_WITH_SHA256_OF_BUNDLED_SOURCE_LOCK",
+  "concurrency": 4,
+  "reconcile_seconds": 60,
+  "poll_seconds": 1
+}
+```
+
+The source-lock value must equal the bundled `source-lock.json` digest. A null
+CA file uses platform trust roots; an explicit regular CA file still requires
+certificate and hostname verification. Origins cannot contain credentials,
+paths, queries or fragments. Production loaders do not permit HTTP.
+
+The read service additionally receives:
+
+| File setting | Contents |
+| --- | --- |
+| `OMNIGENT_SAAS_IDENTITY_BROKER_PROVIDER_CONFIG_FILE` | `{"schema_version":1,"provider_client_id":"DEDICATED_ORG_APP_CLIENT_ID","provider_ca_file":null}` |
+| `OMNIGENT_SAAS_IDENTITY_BROKER_PROVIDER_SECRET_FILE` | That organization's dedicated provider API secret; never the public web application's secret |
+| `OMNIGENT_SAAS_IDENTITY_READER_KEYS_FILE` | `{"schema_version":1,"keys":{"current":"INDEPENDENT_RANDOM_READER_SECRET"}}` |
+
+The worker additionally receives the existing credential-worker public role
+bindings/graph and sealed migration receipt, plus only
+`OMNIGENT_SAAS_AUTHENTICATOR_DATABASE_URL_FILE`. Startup reuses the full source
+catalog and role verifier through that exact non-bypass login, without SET ROLE.
+It also receives:
+
+| File setting | Contents |
+| --- | --- |
+| `OMNIGENT_SAAS_IDENTITY_READER_SECRET_FILE` | One reader secret matching `reader_key_id`; no provider keyring or provider API secret |
+| `OMNIGENT_SAAS_CASDOOR_WEBHOOK_SECRET_FILE` | `{"schema_version":1,"keys":{"current":"DIFFERENT_RANDOM_WEBHOOK_SECRET"}}` |
+
+Both receive `OMNIGENT_SAAS_IDENTITY_TLS_CERT_FILE` and
+`OMNIGENT_SAAS_IDENTITY_TLS_KEY_FILE`. Secrets and private keys must be regular,
+non-symlink, owner-only files owned by the process user. Certificates and public
+configuration must not be writable by other users. Keep input mounts separate;
+source-level environment checks do not prove pod filesystem isolation.
+
+Run the pinned image with one of these module commands:
+
+```sh
+python -m saas.production.identity_read_broker_main
+python -m saas.production.identity_sync_main
+```
+
+They serve direct TLS on port 8443. Forwarded headers confer no HTTPS trust;
+access logs and WebSockets are disabled. The read service only exposes
+`GET /internal/casdoor/identity-state?subject=...` and a health probe. Its private
+headers are `X-Omnigent-Identity-Reader-Key-Id` and
+`X-Omnigent-Identity-Reader-Secret`. A successful authenticated null provider read
+can report a missing user; HTTP failure, redirection, wrong source pins or stale
+snapshots cannot. Each request rechecks the provider password policy.
+
+Webhook headers remain `X-Omnigent-Identity-Event-Key-Id` and
+`X-Omnigent-Identity-Event-Secret`. Retain overlapping old/new keys through
+deployment and the provider's durable retry backlog. Running processes snapshot
+their keyrings at startup; changing a file alone does not rotate an active
+process. Never reuse Webhook, reader, provider or web OAuth secrets.
+
+## Health and lag
+
+The private worker exposes `/healthz`, `/readyz` and `/metrics`. Readiness checks
+its database and worker lifecycle, independently of provider availability, so
+IdP read failures do not stop durable notification reception. The public product
+runtime does not use these worker probes as its readiness dependency.
+
+Metrics contain aggregate numbers only, without subject, username, email, event
+or credential labels:
+
+- `omnigent_identity_sync_reconcile_age_seconds` and
+  `omnigent_identity_sync_event_age_seconds`: oldest relevant snapshot/event age.
+- `omnigent_identity_sync_unchecked_connections`,
+  `omnigent_identity_sync_readback_failed_connections` and
+  `omnigent_identity_sync_event_backlog`: current outstanding work.
+- `omnigent_identity_sync_dead_events_total`, `..._failures_total`,
+  `..._events_total` and `..._reconciled_total`: dead letters and processing counts.
+
+Missing caches are included in lag; inactive product users, local revocations
+and terminal provider deletion are excluded. Install and exercise alerts for
+age above 300 seconds, new dead letters, sustained readback failures and missing
+worker probes before rollout. Complete the initial baseline before admitting a
+cohort. Dead-letter review/replay and matched restore remain release requirements.
 
 ## Release and restore requirements
 
@@ -57,9 +174,15 @@ worker and admitted load must still prove the five-minute convergence target.
   Header keyring and bounded requests. Forwarded protocol headers and browser
   cookies alone do not authenticate this channel.
 - Give the worker only its verified authenticator database login, public IdP
-  pins, release receipt and independently qualified read-only provider authority.
-  The local provider drills use an owned migration credential; those drills do
-  not qualify the production provider credential's write restrictions.
+  pins, release receipt and independent state-read capability. Keep the provider
+  administration secret in the database-free read service. This isolates the
+  worker; it does not claim native Casdoor application credentials lost their
+  organization administration authority.
+- Render and verify separate secret mounts, powerless ServiceAccounts, direct
+  TLS services and default-deny network policies. The worker needs PostgreSQL,
+  the read service and DNS; the read service needs only Casdoor and DNS. No
+  public product ingress should expose either private process. These deployment
+  and monitoring resources still require end-to-end qualification.
 - Verify the exact serving revision, subject fences, worker source/image and
   paired schema receipt before enabling processing. Follow the credential
   migration runbook's replica-drain requirements for older serving revisions.
@@ -80,13 +203,16 @@ Run from the repository root using the checkout's environment:
 PYTHONPATH=. python -m pytest -q tests/saas/test_identity_sync.py \
   tests/saas/test_identity_sync_credential_fences.py \
   tests/saas/test_identity_inbox.py tests/saas/test_identity_events_http.py
+PYTHONPATH=. python -m pytest -q tests/saas/test_identity_process_config.py \
+  tests/saas/test_identity_process_composition.py tests/saas/test_identity_read_broker.py \
+  tests/saas/test_identity_read_tls.py tests/saas/test_identity_sync_worker.py
 ```
 
 With `OMNIGENT_SAAS_TEST_POSTGRES_URL` pointing to a disposable test cluster, run:
 
 ```sh
 PYTHONPATH=. python -m pytest -q tests/saas/test_identity_sync_postgresql.py \
-  tests/saas/test_identity_sync_migration.py
+  tests/saas/test_identity_sync_migration.py tests/saas/test_identity_sync_worker_postgresql.py
 ```
 
 Repeat the PostgreSQL tests on both supported majors. They use isolated
