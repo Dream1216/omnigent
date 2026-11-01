@@ -41,3 +41,48 @@ Server/Host startup and business execution against the same migrated database;
 all mixed-version combinations; independently restored full encrypted data and
 the existing 900-second physical recovery limit. The native SQL and Store
 probes do not replace these requirements.
+
+## Paired image pipeline
+
+`.github/workflows/saas-d0-legacy-compat.yml` builds an unsigned review candidate
+on a pull request. It verifies native attestations for the exact original wheel
+and both base indexes before materialization, then builds each image twice for
+amd64 and arm64 without cache. Only the fixed eight payloads, source identity and
+installed RECORD may appear in the added layer. Every original compressed base
+layer, runtime command, user, environment, dependency and UI asset is retained.
+
+The exporter checks the actual installed base and refuses source/metadata drift,
+symlinks and existing cached bytecode; it never rewrites the installed base.
+Both four-platform raw scans must contain no High/Critical or ignored findings
+and use a database no older than 24 hours. Normal protected-main dispatch and the
+`production-image` environment are required to publish the verified original OCI
+archives, without rebuilding, under `compat-d0-<source-revision>` tags. Separate
+index provenance and per-platform complete SPDX signatures bind the fixed
+materials and pair. A separate read-only runner verifies all six native
+signatures, exact registry bytes and fresh raw scans. Repacked archive digests
+are recorded separately from the immutable original export digests.
+
+A successful pipeline qualifies candidate material only. Actual runtime/business
+compatibility, full data restore, mixed versions and production admission remain
+separate required evidence; no deployment or database write occurs here.
+
+The M3659 image build context omits README.md, so its installed METADATA keeps
+exactly the signed wheel headers and final newline, without the long README
+body. The exporter accepts only those two fixed byte forms derived from the
+verified original wheel; all dependency, version, extra and other headers must
+remain byte-identical, and no alternate description is accepted. METADATA is
+never included in the overlay. The original first image-build refusal remains
+evidence; this packaging distinction does not permit a dependency change.
+
+Only the new overlay's file/directory timestamps are normalized before COPY.
+The exporter must not request global timestamp rewriting of existing layers:
+exact compressed base layer digest/size/media-type/order, all other descriptor fields and rootfs diff-id prefixes remain mandatory.
+Original repeat comparisons and signed base layer descriptors are retained
+before any rejection to make drift diagnosable without weakening that check.
+
+BuildKit may retain, omit or update only its `buildkit/rewritten-timestamp`
+annotation when inheriting a signed base. The validator accepts only the signed
+value, omission or this committed source epoch for that annotation. Every other
+annotation and descriptor field, compressed blob identity, cardinality and
+rootfs diff-id prefix remains exact. The initial refusals and original native
+comparisons are retained; annotation handling never permits a base byte change.
