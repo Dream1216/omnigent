@@ -364,6 +364,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/production/casdoor/Dockerfile",
     "saas/production/casdoor/patches/v4.25.0-oidc-reliability.patch",
     "saas/production/casdoor/patches/v4.25.0-email-or-phone-signup.patch",
+    "saas/production/casdoor/patches/v4.25.0-verified-phone-proof.patch",
     "saas/production/casdoor/README.md",
     "saas/production/casdoor/CREDENTIAL_MIGRATION.md",
     "saas/production/casdoor/IDENTITY_SYNCHRONIZATION.md",

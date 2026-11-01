@@ -162,14 +162,27 @@ account without either address. Native Go regression cases run in the image
 build. A new patched image still needs real signup, resend/expiry/replay and
 signed OIDC acceptance before activation.
 
-The current product ignores phone claims and requires a verified email for
-self-service workspace creation and email invitations. SMS signup alone does
-not satisfy that existing workspace policy. The selected upstream also derives
-`phone_number_verified` from the presence of a parseable phone rather than a
-separate stored verification fact. Do not use that claim to grant workspace
-eligibility until phone proof, changes, recycling and product persistence have
-their own reviewed implementation and acceptance. Do not mark an absent email
-verified or use a phone number as an issuer/subject key.
+The `stbz.3` patch stores the exact canonical phone that passed the native signup
+or signed-in contact-change OTP check. Standard JWTs, userinfo and authenticated
+user readback derive verification from that stored binding. A parseable number,
+administrator JSON, batch import or syncer metadata cannot create the binding.
+Changing the number or country clears incompatible proof; changing back cannot
+revive it. Unrelated updates preserve existing proof. The internal binding is
+excluded from JSON and generic user-field writes. Native Go checks cover real
+SQLite persistence, forged metadata, contact changes and token claims.
+
+The added `verified_phone` database column starts empty for existing accounts;
+do not backfill it from number presence. Database backups must include it.
+JSON exports intentionally omit it, so imported accounts need a fresh OTP proof.
+Qualify the schema change on the production database engine and exercise the
+new image's real signup and change paths before activation.
+
+The current product still ignores phone claims and requires a verified email
+for self-service workspace creation and email invitations. SMS signup alone
+does not satisfy that existing workspace policy. Phone-only workspace support,
+safe recovery and number recycling still need product implementation and
+acceptance. Do not mark an absent email verified or use a phone number as an
+issuer/subject key.
 
 From this checkout, with its Python development and SaaS dependencies:
 
