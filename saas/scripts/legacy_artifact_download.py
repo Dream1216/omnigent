@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 from typing import BinaryIO, cast
 
+from saas.scripts.legacy_native_evidence import reserve_native_download
 from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import REPOSITORY
 
@@ -32,6 +33,7 @@ def download_artifact_bytes(
         and re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is not None,
         "invalid native artifact SHA256",
     )
+    reserve_native_download(f"repos/{REPOSITORY}/actions/artifacts/{artifact_id}/zip")
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     process = None
     timer = None

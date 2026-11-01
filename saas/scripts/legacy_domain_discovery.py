@@ -11,16 +11,24 @@ import hashlib
 import json
 import re
 import subprocess
+from collections import deque
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 from urllib.parse import urlencode
 
 from saas.scripts import legacy_check_history as history
 from saas.scripts import legacy_domain_native as domain
 from saas.scripts import legacy_domain_non_execution as nonexecution
 from saas.scripts.legacy_build_controller import control_context
-from saas.scripts.legacy_native_evidence import api, preserve_native_evidence
+from saas.scripts.legacy_native_evidence import (
+    NativeEvidenceFailure,
+    api,
+    preserve_native_evidence,
+)
 from saas.scripts.legacy_source_ci import (
     _instant,
     _job_pages,
@@ -622,6 +630,37 @@ def _refresh_attempt(row: dict[str, Any], destination: Path) -> None:
     )
 
 
+_T = TypeVar("_T")
+_R = TypeVar("_R")
+
+
+def _ordered_parallel(function: Callable[[_T], _R], items: list[_T]) -> list[_R]:
+    """Bound independent work; own contexts, ordered results and complete cleanup."""
+    values = iter(items)
+    results = []
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="legacy-domain-native") as pool:
+        pending: deque[Future[_R]] = deque()
+
+        def submit_one() -> None:
+            try:
+                item = next(values)
+            except StopIteration:
+                return
+            pending.append(pool.submit(copy_context().run, function, item))
+
+        try:
+            for _ in range(4):
+                submit_one()
+            while pending:
+                results.append(pending.popleft().result())
+                submit_one()
+        finally:
+            # Cancel only work not started; the executor waits for owned running work.
+            for future in pending:
+                future.cancel()
+    return results
+
+
 def discover_main_domain(
     profile: dict[str, Any],
     identity: dict[str, Any],
@@ -654,7 +693,10 @@ def discover_main_domain(
         *refusal_cancellation_rules,
     ]
     registered_audits = {_key(row) for row in audit_rules}
-    require(len(registered_audits) == len(audit_rules), "domain audit coordinate kinds overlap")
+    require(
+        len(registered_audits) == len(audit_rules),
+        "domain audit coordinate kinds overlap",
+    )
     if unattributed_policy is not None:
         nonexecution.validate_unattributed_policy(unattributed_policy, profile, identity)
     if bootstrap_policy is not None:
@@ -665,8 +707,8 @@ def discover_main_domain(
     registered = [_key(row) for row in rules]
     require(len(registered) == len(set(registered)), "domain registration is duplicated")
     before = discover_runs(created)
-    records, blockers = [], []
-    for run in before:
+
+    def inspect(run):
         record: dict[str, Any] = {
             "run_id": run["id"],
             "attachment_revision": run["head_sha"],
@@ -676,6 +718,10 @@ def discover_main_domain(
             "technical_gate_waiver": False,
             "attempts": [],
         }
+        local_observations = []
+        local_unattributed = []
+        local_expected = set()
+        local_blockers = []
         try:
             record = _inspect_run(
                 run,
@@ -685,39 +731,74 @@ def discover_main_domain(
                 record,
                 identity,
                 non_execution_rules,
-                observations,
+                local_observations,
                 infrastructure_cancellation_rules,
                 unattributed_policy,
                 bootstrap_policy,
-                unattributed_observations,
-                unattributed_expected,
+                local_unattributed,
+                local_expected,
                 refusal_cancellation_rules,
             )
-        except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
+        except NativeEvidenceFailure:
+            raise
+        except (
+            ValueError,
+            KeyError,
+            TypeError,
+            OSError,
+            subprocess.CalledProcessError,
+        ) as error:
             record.update(classification="unassignable", reason=str(error))
-            blockers.append({"run_id": run["id"], "reason": str(error)})
+            local_blockers.append({"run_id": run["id"], "reason": str(error)})
+        return (
+            record,
+            local_observations,
+            local_unattributed,
+            local_expected,
+            local_blockers,
+        )
+
+    records, blockers = [], []
+    for record, audits, unattributed, expected, failures in _ordered_parallel(inspect, before):
         records.append(record)
-    for record in records:
-        for row in record["attempts"]:
-            try:
-                _refresh_attempt(row, destination)
-            except (
-                ValueError,
-                KeyError,
-                TypeError,
-                OSError,
-                subprocess.CalledProcessError,
-            ) as error:
-                blockers.append(
-                    {"run_id": row["run_id"], "attempt": row["attempt"], "reason": str(error)}
-                )
+        observations.extend(audits)
+        unattributed_observations.extend(unattributed)
+        unattributed_expected.update(expected)
+        blockers.extend(failures)
+
+    def refresh_attempt(row):
+        try:
+            _refresh_attempt(row, destination)
+        except NativeEvidenceFailure:
+            raise
+        except (
+            ValueError,
+            KeyError,
+            TypeError,
+            OSError,
+            subprocess.CalledProcessError,
+        ) as error:
+            return [
+                {
+                    "run_id": row["run_id"],
+                    "attempt": row["attempt"],
+                    "reason": str(error),
+                }
+            ]
+        return []
+
+    attempts = [row for record in records for row in record["attempts"]]
+    for failures in _ordered_parallel(refresh_attempt, attempts):
+        blockers.extend(failures)
     expected_audits = {_key(row): row for row in audit_rules}
     observed_audits = {_key(proof.receipt) for proof in observations}
     if observed_audits != registered_audits or len(observed_audits) != len(observations):
         blockers.append(
             {"reason": "native zero-execution and registered coordinates are not equal"}
         )
-    for index, proof in enumerate(observations):
+
+    def refresh_registered(item):
+        index, proof = item
         row = proof.receipt
         try:
             run = api(f"{_ROOT}/actions/runs/{row['run_id']}/attempts/{row['attempt']}")
@@ -731,10 +812,26 @@ def discover_main_domain(
                 == proof,
                 "native zero-execution proof changed after full enumeration",
             )
-        except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
-            blockers.append(
-                {"run_id": row["run_id"], "attempt": row["attempt"], "reason": str(error)}
-            )
+        except NativeEvidenceFailure:
+            raise
+        except (
+            ValueError,
+            KeyError,
+            TypeError,
+            OSError,
+            subprocess.CalledProcessError,
+        ) as error:
+            return [
+                {
+                    "run_id": row["run_id"],
+                    "attempt": row["attempt"],
+                    "reason": str(error),
+                }
+            ]
+        return []
+
+    for failures in _ordered_parallel(refresh_registered, list(enumerate(observations))):
+        blockers.extend(failures)
     observed_unattributed = {
         (proof.receipt["run_id"], proof.receipt["attempt"]) for proof in unattributed_observations
     }
@@ -742,7 +839,9 @@ def discover_main_domain(
         unattributed_observations
     ):
         blockers.append({"reason": "unattributed native zero-execution and verified sets differ"})
-    for index, proof in enumerate(unattributed_observations):
+
+    def refresh_unattributed(item):
+        index, proof = item
         row = proof.receipt
         try:
             run = api(f"{_ROOT}/actions/runs/{row['run_id']}/attempts/{row['attempt']}")
@@ -751,15 +850,39 @@ def discover_main_domain(
             refresh.mkdir(mode=0o700)
             require(
                 nonexecution.collect_unattributed_audit(
-                    profile, identity, unattributed_policy, bootstrap_policy, run, jobs, refresh
+                    profile,
+                    identity,
+                    unattributed_policy,
+                    bootstrap_policy,
+                    run,
+                    jobs,
+                    refresh,
                 )
                 == proof,
                 "unattributed zero-execution proof changed after full enumeration",
             )
-        except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
-            blockers.append(
-                {"run_id": row["run_id"], "attempt": row["attempt"], "reason": str(error)}
-            )
+        except NativeEvidenceFailure:
+            raise
+        except (
+            ValueError,
+            KeyError,
+            TypeError,
+            OSError,
+            subprocess.CalledProcessError,
+        ) as error:
+            return [
+                {
+                    "run_id": row["run_id"],
+                    "attempt": row["attempt"],
+                    "reason": str(error),
+                }
+            ]
+        return []
+
+    for failures in _ordered_parallel(
+        refresh_unattributed, list(enumerate(unattributed_observations))
+    ):
+        blockers.extend(failures)
     after = discover_runs(created)
     # Other PR outcomes are observations, not gates on this product. The related
     # native attempt/job/check/log bytes were independently refreshed above.
@@ -776,7 +899,10 @@ def discover_main_domain(
         if attempt["classification"] == "related"
     ]
     observed = {_key(row) for row in related}
-    missing, orphaned = sorted(observed - set(registered)), sorted(set(registered) - observed)
+    missing, orphaned = (
+        sorted(observed - set(registered)),
+        sorted(set(registered) - observed),
+    )
     if missing or orphaned:
         blockers.append({"reason": "related native and registered coordinates are not equal"})
     require(len(observed) == len(related), "related native coordinates are duplicated")
