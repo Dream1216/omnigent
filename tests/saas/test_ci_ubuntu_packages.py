@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -13,9 +14,22 @@ SCRIPT = Path(__file__).resolve().parents[2] / "saas/scripts/ci_install_ubuntu_p
 
 
 @pytest.mark.parametrize(
-    "update_status,configure_only", [(0, False), (17, False), (100, False), (0, True)]
+    "update_status,configure_only,reuse",
+    [
+        (0, False, False),
+        (0, False, True),
+        (17, False, False),
+        (100, False, False),
+        (0, True, False),
+    ],
 )
-def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, configure_only):
+def test_signed_package_setup_stops_on_failed_update(
+    tmp_path, update_status, configure_only, reuse
+):
+    snapshot_path = tmp_path / "omnigent-ubuntu-snapshot"
+    cached = (datetime.now(UTC) - timedelta(hours=3)).strftime("%Y%m%dT%H0000Z")
+    if reuse:
+        snapshot_path.write_text(cached)
     commands = tmp_path / "commands"
     commands.mkdir()
     log = tmp_path / "commands.jsonl"
@@ -65,6 +79,14 @@ def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, co
         check=False,
     )
     assert result.returncode == update_status, result.stderr
+    snapshot = snapshot_path.read_text()
+    selected = datetime.strptime(snapshot, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    if reuse:
+        assert snapshot == cached
+    else:
+        assert timedelta(hours=1) <= datetime.now(UTC) - selected < timedelta(hours=2)
+    uri = f"https://snapshot.ubuntu.com/ubuntu/{snapshot}/"
+    assert f"Ubuntu CI snapshot: {uri}" in result.stdout
     commands = [json.loads(line) for line in log.read_text().splitlines()]
     configs = [row for row in commands if row["args"][0] == "tee"]
     assert any(
@@ -77,15 +99,14 @@ def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, co
         for row in configs
         if row["args"][1] == "/etc/apt/sources.list.d/ubuntu.sources"
     )
-    assert ubuntu.count("By-Hash: force") == 2
-    assert ubuntu.count("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg") == 2
-    assert "Suites: noble noble-updates\n" in ubuntu
-    assert "Suites: noble-security\n" in ubuntu
+    assert ubuntu.count("By-Hash: force") == 1
+    assert ubuntu.count("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg") == 1
+    assert f"URIs: {uri}\n" in ubuntu
+    assert "Suites: noble noble-updates noble-security\n" in ubuntu
     assert "trusted=yes" not in ubuntu and "http:" not in ubuntu
     assert all(
         row["args"][1]
         in {
-            "/etc/apt/apt-mirrors.txt",
             "/etc/apt/apt.conf.d/99-omnigent-ci-network",
             "/etc/apt/sources.list.d/ubuntu.sources",
         }
@@ -102,7 +123,12 @@ def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, co
             row["sources"].count("signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg") == 3
         )
         assert row["sources"].count("by-hash=force") == 3
+        assert row["sources"].count(uri) == 3
         assert "http:" not in row["sources"] and "azure" not in row["sources"]
+        assert "archive.ubuntu.com" not in row["sources"]
+        assert "security.ubuntu.com" not in row["sources"]
+    assert "Check-Valid-Until" not in ubuntu
+    assert "AllowInsecure" not in "\n".join(str(row) for row in commands)
     if not update_status and not configure_only:
         assert rows[1]["args"][-6:] == [
             "install",
@@ -113,6 +139,41 @@ def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, co
             "tmux",
         ]
     assert not list(tmp_path.glob("omnigent-ubuntu-sources.*"))
+
+
+@pytest.mark.parametrize("invalid", ["malformed", "stale", "future", "non-hour"])
+def test_invalid_cached_snapshot_refuses_before_privileged_commands(tmp_path, invalid):
+    now = datetime.now(UTC)
+    snapshot = {
+        "malformed": "not-a-snapshot",
+        "stale": (now - timedelta(hours=25)).strftime("%Y%m%dT%H0000Z"),
+        "future": (now + timedelta(hours=2)).strftime("%Y%m%dT%H0000Z"),
+        "non-hour": (now - timedelta(hours=2)).strftime("%Y%m%dT%H0100Z"),
+    }[invalid]
+    cache = tmp_path / "omnigent-ubuntu-snapshot"
+    cache.write_text(snapshot)
+    environment = tmp_path / "environment.sh"
+    environment.write_text(
+        "function .() { ID=ubuntu; VERSION_ID=24.04; VERSION_CODENAME=noble; }\n"
+        'function sudo() { touch "$RUNNER_TEMP/unexpected-privileged-command"; return 81; }\n'
+    )
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "tmux"],
+        env={
+            **os.environ,
+            "BASH_ENV": str(environment),
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_OS": "Linux",
+            "RUNNER_ARCH": "X64",
+            "RUNNER_TEMP": str(tmp_path),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert cache.read_text() == snapshot
+    assert not (tmp_path / "unexpected-privileged-command").exists()
 
 
 @pytest.mark.parametrize(
@@ -144,6 +205,7 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
         ".github/workflows/ci.yml",
         ".github/workflows/e2e-ui.yml",
         ".github/workflows/saas-upstream-compat.yml",
+        ".github/workflows/saas-image-candidate.yml",
         ".github/actions/e2e-run/action.yml",
         ".github/actions/integration-run/action.yml",
         ".github/actions/compat-smoke-run/action.yml",
@@ -162,4 +224,4 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
                     assert command.index(
                         "ci_install_ubuntu_packages.sh --configure-only"
                     ) < command.index("playwright install --with-deps")
-    assert browser_installs == 4
+    assert browser_installs == 5
