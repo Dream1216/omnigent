@@ -265,6 +265,67 @@ def _cookie_name(state: str) -> str:
     return "__Host-omnigent_saas_session_oidc_" + sha256(state.encode()).hexdigest()[:24]
 
 
+@pytest.mark.parametrize("mode", ["dual", "casdoor"])
+def test_central_only_mode_cannot_add_a_local_password_to_a_legacy_oidc_user(oidc_harness, mode):
+    from saas.control_plane.db_models import PasswordCredential
+    from saas.control_plane.federated_sessions import ExternalSessionIdentity
+
+    harness = oidc_harness
+    subject = "legacy-oidc-no-local-password"
+    user_id = harness.identities.provision_identity(
+        VerifiedIdentityAssertion("test", _ISSUER, subject, "mode-user@example.test", True)
+    )
+    lifecycle = MembershipLifecycleService(harness.sessions)
+    now = datetime.now(timezone.utc)
+    issued = lifecycle.issue_auth_session(
+        user_id=user_id,
+        authn_method="oidc:test",
+        now=now,
+        expires_at=now + timedelta(hours=1),
+        external_identity=ExternalSessionIdentity("test", _ISSUER, subject, now),
+    )
+    cookie = SaasCookieConfig(trusted_origins=frozenset({"https://testserver"}))
+    resolver = SqlAlchemyContextResolver(
+        harness.sessions,
+        RuntimeCompatibilityPolicy(
+            runtime_type="omnigent",
+            allowed_runtime_versions=frozenset({"0.9.0.dev0"}),
+            allowed_source_revisions=frozenset({"15dd7bec"}),
+            allowed_schema_revisions=frozenset({"schema"}),
+            adapter_contract_version="0.2.0",
+        ),
+    )
+    integration = create_saas_http_integration(
+        lifecycle=lifecycle,
+        identities=harness.identities,
+        passwords=harness.passwords,
+        context_resolver=resolver,
+        cookie_config=cookie,
+        oidc=harness.oidc,
+        auth_mode=mode,
+    )
+    app = FastAPI()
+    for router, prefix, tags in integration.extra_routers:
+        app.include_router(router, prefix=prefix, tags=tags)
+    integration.install_middleware(app)
+    with TestClient(app, base_url="https://testserver") as client:
+        client.cookies.set(cookie.name, issued.token)
+        changed = client.put(
+            "/saas/password",
+            headers={
+                "Origin": "https://testserver",
+                "X-CSRF-Token": issued.csrf_token,
+                "Idempotency-Key": "local-password-policy",
+            },
+            json={"new_password": "new-local-password-for-mode-test", "expected_version": None},
+        )
+    assert changed.status_code == (200 if mode == "dual" else 409)
+    if mode == "casdoor":
+        assert changed.json()["detail"]["code"] == "identity_provider_required"
+    with harness.sessions() as db:
+        assert (db.get(PasswordCredential, user_id) is not None) == (mode == "dual")
+
+
 def _start(
     harness: _Harness,
     *,

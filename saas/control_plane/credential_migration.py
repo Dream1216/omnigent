@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
@@ -99,6 +99,7 @@ class CredentialMigrationView:
     provider_subject: str
     version: int
     last_error_code: str | None
+    mode: str = "hash_import"
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,8 +116,12 @@ class CredentialImportClaim:
     claim_token: UUID
     password_hash: str = field(repr=False)
     email: str = field(repr=False)
+    mode: str = "hash_import"
+    provider_snapshot_sha256: str | None = None
 
     def marker_document(self) -> dict[str, object]:
+        if self.mode != "hash_import":
+            raise CredentialMigrationError("provider_import_claim_invalid")
         return {
             "receipt_id": str(self.receipt_id),
             "user_id": str(self.user_id),
@@ -168,6 +173,27 @@ class CredentialImportProvider(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedLinkedCredentialIdentity:
+    identity: VerifiedMigrationIdentity
+    password_configured: bool
+
+    def snapshot_sha256(self) -> str:
+        return _digest(
+            {
+                "identity_snapshot_sha256": self.identity.snapshot_sha256(),
+                "password_configured": self.password_configured,
+            }
+        )
+
+
+@runtime_checkable
+class LinkedCredentialIdentityProvider(Protocol):
+    def read_linked_identity(self, subject: str) -> VerifiedLinkedCredentialIdentity:
+        """Read a previously authenticated identity; never import or change its credential."""
+        ...
+
+
 class CredentialMigrationService:
     """Private worker authority; no public endpoint accepts imported identity mappings."""
 
@@ -194,6 +220,7 @@ class CredentialMigrationService:
             record.provider_subject,
             record.version,
             record.last_error_code,
+            record.mode,
         )
 
     @staticmethod
@@ -300,8 +327,190 @@ class CredentialMigrationService:
                 idempotency_key=key,
                 request_hash=request_hash,
                 status="pending",
+                mode="hash_import",
                 attempt_count=0,
                 version=1,
+                created_at=prepared_at,
+                updated_at=prepared_at,
+            )
+            db.add(record)
+            user.migration_state = "pending"
+            self._event(db, record, "prepared")
+            return self._view(record)
+
+    @staticmethod
+    def _existing_preparation(
+        db: Session, *, user_id: UUID, batch_id: str, key: str, request_hash: str
+    ) -> CredentialMigrationRecord | None:
+        record = db.scalar(
+            sa.select(CredentialMigrationRecord).where(
+                sa.or_(
+                    CredentialMigrationRecord.idempotency_key == key,
+                    sa.and_(
+                        CredentialMigrationRecord.user_id == user_id,
+                        CredentialMigrationRecord.batch_id == batch_id,
+                    ),
+                )
+            )
+        )
+        if record is not None and (
+            record.idempotency_key != key or record.request_hash != request_hash
+        ):
+            raise CredentialMigrationError("idempotency_conflict")
+        return record
+
+    def _linked_source(
+        self, db: Session, user: GlobalUser, connection_id: UUID, password_version: int
+    ) -> tuple[PasswordCredential, IdentityConnection, str]:
+        if user.status != "active" or user.credential_owner != "legacy":
+            raise CredentialMigrationError("migration_user_ineligible")
+        if (
+            db.scalar(
+                sa.select(CredentialMigrationRecord.id).where(
+                    CredentialMigrationRecord.user_id == user.id,
+                    CredentialMigrationRecord.status.in_(("pending", "imported")),
+                )
+            )
+            is not None
+        ):
+            raise CredentialMigrationError("migration_already_pending")
+        credential = db.get(PasswordCredential, user.id)
+        if credential is None or credential.password_version != password_version:
+            raise CredentialMigrationError("credential_version_conflict")
+        connection = db.get(IdentityConnection, connection_id)
+        if (
+            connection is None
+            or connection.user_id != user.id
+            or connection.provider != "casdoor"
+            or connection.issuer != self._policy.issuer
+            or connection.status != "active"
+            or not connection.email_verified
+            or connection.email_normalized is None
+        ):
+            raise CredentialMigrationError("migration_existing_link_required")
+        if (
+            db.scalar(
+                sa.select(IdentityConnection.id)
+                .where(
+                    IdentityConnection.user_id == user.id,
+                    IdentityConnection.status == "active",
+                    IdentityConnection.email_verified.is_(True),
+                    IdentityConnection.email_normalized == credential.login_email_normalized,
+                )
+                .limit(1)
+            )
+            is None
+        ):
+            raise CredentialMigrationError("verified_email_required")
+        _reject_deleted_identity(db, connection.issuer, connection.subject)
+        snapshot = _digest(
+            {
+                "user_id": str(user.id),
+                "security_version": user.security_version,
+                "password_version": credential.password_version,
+                "password_sha256": _hash(credential.password_hash),
+                "login_email_sha256": _hash(credential.login_email_normalized),
+                "connection_id": str(connection.id),
+                "subject": connection.subject,
+                "connection_email_sha256": _hash(connection.email_normalized),
+            }
+        )
+        return credential, connection, snapshot
+
+    def prepare_existing_link(
+        self,
+        *,
+        user_id: UUID,
+        connection_id: UUID,
+        batch_id: str,
+        expected_password_version: int,
+        idempotency_key: str,
+        now: datetime | None = None,
+    ) -> CredentialMigrationView:
+        prepared_at = _time(now)
+        if not _LABEL.fullmatch(batch_id) or not 1 <= len(idempotency_key) <= 128:
+            raise CredentialMigrationError("migration_request_invalid")
+        if not isinstance(self._provider, LinkedCredentialIdentityProvider):
+            raise CredentialMigrationError("linked_provider_unavailable", retryable=True)
+        key = scoped_idempotency_key("credential-migration", user_id, idempotency_key)
+        request_hash = _digest(
+            {
+                "mode": "existing_link",
+                "user_id": str(user_id),
+                "connection_id": str(connection_id),
+                "batch_id": batch_id,
+                "expected_password_version": expected_password_version,
+                "issuer": self._policy.issuer,
+                "organization": self._policy.organization,
+                "policy_sha256": self._policy.policy_sha256,
+            }
+        )
+        lookup = {
+            "user_id": user_id,
+            "batch_id": batch_id,
+            "key": key,
+            "request_hash": request_hash,
+        }
+        with self._sessions.begin() as db:
+            user = self._user(db, user_id)
+            existing = self._existing_preparation(db, **lookup)
+            if existing is not None:
+                return self._view(existing)
+            _credential, connection, source_snapshot = self._linked_source(
+                db, user, connection_id, expected_password_version
+            )
+            subject = connection.subject
+            email_sha256 = _hash(connection.email_normalized or "")
+        proof = self._provider.read_linked_identity(subject)
+        identity = proof.identity
+        if (
+            identity.issuer != self._policy.issuer
+            or identity.organization != self._policy.organization
+            or identity.subject != subject
+            or not 1 <= len(identity.username) <= 128
+        ):
+            raise CredentialMigrationError("provider_mapping_conflict")
+        if not identity.active or identity.is_admin or identity.is_global_admin:
+            raise CredentialMigrationError("provider_identity_ineligible")
+        try:
+            verified_email_sha256 = _hash(normalize_email(identity.email))
+        except LifecycleError:
+            raise CredentialMigrationError("provider_verified_email_mismatch") from None
+        if not identity.email_verified or verified_email_sha256 != email_sha256:
+            raise CredentialMigrationError("provider_verified_email_mismatch")
+        if not proof.password_configured:
+            raise CredentialMigrationError("provider_password_setup_required")
+        with self._sessions.begin() as db:
+            user = self._user(db, user_id)
+            existing = self._existing_preparation(db, **lookup)
+            if existing is not None:
+                return self._view(existing)
+            credential, connection, current_snapshot = self._linked_source(
+                db, user, connection_id, expected_password_version
+            )
+            if current_snapshot != source_snapshot:
+                raise CredentialMigrationError("source_credential_changed")
+            record = CredentialMigrationRecord(
+                id=uuid4(),
+                user_id=user_id,
+                batch_id=batch_id,
+                issuer=self._policy.issuer,
+                organization=self._policy.organization,
+                provider_subject=connection.subject,
+                provider_username=identity.username,
+                source_password_version=credential.password_version,
+                source_security_version=user.security_version,
+                source_password_sha256=_hash(credential.password_hash),
+                source_email_sha256=_hash(credential.login_email_normalized),
+                policy_sha256=self._policy.policy_sha256,
+                idempotency_key=key,
+                request_hash=request_hash,
+                mode="existing_link",
+                status="pending",
+                attempt_count=0,
+                version=1,
+                identity_connection_id=connection.id,
+                provider_snapshot_sha256=proof.snapshot_sha256(),
                 created_at=prepared_at,
                 updated_at=prepared_at,
             )
@@ -330,6 +539,39 @@ class CredentialMigrationService:
             return "source_credential_changed"
         return None
 
+    @staticmethod
+    def _linked_source_error(
+        db: Session,
+        user: GlobalUser,
+        record: CredentialMigrationRecord,
+        proof: VerifiedMigrationIdentity | VerifiedLinkedCredentialIdentity | None = None,
+    ) -> str | None:
+        if record.mode != "existing_link":
+            return None
+        connection = db.scalar(
+            sa.select(IdentityConnection)
+            .where(
+                IdentityConnection.id == record.identity_connection_id,
+                IdentityConnection.user_id == user.id,
+            )
+            .with_for_update()
+        )
+        if (
+            connection is None
+            or connection.status != "active"
+            or connection.provider != "casdoor"
+            or connection.issuer != record.issuer
+            or connection.subject != record.provider_subject
+            or not connection.email_verified
+            or connection.email_normalized is None
+        ):
+            return "migration_existing_link_required"
+        if isinstance(proof, VerifiedLinkedCredentialIdentity) and (
+            normalize_email(proof.identity.email) != connection.email_normalized
+        ):
+            return "provider_verified_email_mismatch"
+        return None
+
     def claim(
         self,
         receipt_id: UUID,
@@ -352,6 +594,7 @@ class CredentialMigrationService:
                 .with_for_update()
             )
             assert record is not None
+            claimed_at = _time(now)
             if record.status in _TERMINAL:
                 return self._view(record)
             if (
@@ -361,7 +604,9 @@ class CredentialMigrationService:
             ):
                 raise CredentialMigrationError("migration_claim_busy", retryable=True)
             credential = db.get(PasswordCredential, user_id)
-            error = self._source_error(user, credential, record)
+            error = self._source_error(user, credential, record) or self._linked_source_error(
+                db, user, record
+            )
             if error is not None:
                 self._fail(db, record, user, error, "conflict", claimed_at)
                 return self._view(record)
@@ -386,30 +631,47 @@ class CredentialMigrationService:
                 record.source_password_sha256,
                 record.source_email_sha256,
                 claim_token,
-                credential.password_hash,
-                credential.login_email_normalized,
+                credential.password_hash if record.mode == "hash_import" else "",
+                credential.login_email_normalized if record.mode == "hash_import" else "",
+                record.mode,
+                record.provider_snapshot_sha256 if record.mode == "existing_link" else None,
             )
 
     @staticmethod
     def _identity_error(
         claim: CredentialImportClaim,
-        identity: VerifiedMigrationIdentity,
+        proof: VerifiedMigrationIdentity | VerifiedLinkedCredentialIdentity,
     ) -> str | None:
+        identity = proof.identity if isinstance(proof, VerifiedLinkedCredentialIdentity) else proof
         if (
             identity.issuer != claim.issuer
             or identity.organization != claim.organization
             or identity.subject != claim.subject
             or identity.username != claim.username
-            or not identity.marker_verified
         ):
             return "provider_mapping_conflict"
+        if claim.mode == "hash_import":
+            if isinstance(proof, VerifiedLinkedCredentialIdentity) or not identity.marker_verified:
+                return "provider_mapping_conflict"
+        elif claim.mode == "existing_link":
+            if (
+                not isinstance(proof, VerifiedLinkedCredentialIdentity)
+                or not proof.password_configured
+            ):
+                return "provider_password_setup_required"
+            if proof.snapshot_sha256() != claim.provider_snapshot_sha256:
+                return "provider_link_snapshot_changed"
+        else:
+            return "migration_mode_invalid"
         if not identity.active or identity.is_admin or identity.is_global_admin:
             return "provider_identity_ineligible"
         try:
             email_sha256 = _hash(normalize_email(identity.email))
         except LifecycleError:
             return "provider_verified_email_mismatch"
-        if not identity.email_verified or email_sha256 != claim.source_email_sha256:
+        if not identity.email_verified or (
+            claim.mode == "hash_import" and email_sha256 != claim.source_email_sha256
+        ):
             return "provider_verified_email_mismatch"
         return None
 
@@ -424,7 +686,12 @@ class CredentialMigrationService:
         if isinstance(claim, CredentialMigrationView):
             return claim
         try:
-            identity = self._provider.ensure_import(claim)
+            if claim.mode == "existing_link":
+                if not isinstance(self._provider, LinkedCredentialIdentityProvider):
+                    raise CredentialMigrationError("linked_provider_unavailable", retryable=True)
+                identity = self._provider.read_linked_identity(claim.subject)
+            else:
+                identity = self._provider.ensure_import(claim)
             error = self._identity_error(claim, identity)
             if error is not None:
                 raise CredentialMigrationError(error)
@@ -436,8 +703,8 @@ class CredentialMigrationService:
         self,
         db: Session,
         claim: CredentialImportClaim,
-        checked_at: datetime,
-    ) -> tuple[GlobalUser, CredentialMigrationRecord]:
+        now: datetime | None,
+    ) -> tuple[GlobalUser, CredentialMigrationRecord, datetime]:
         user = self._user(db, claim.user_id)
         record = db.scalar(
             sa.select(CredentialMigrationRecord)
@@ -447,15 +714,33 @@ class CredentialMigrationService:
             )
             .with_for_update()
         )
+        checked_at = _time(now)
         if (
             record is None
             or record.status in _TERMINAL
             or record.claim_token != claim.claim_token
             or record.lease_expires_at is None
             or _stored_time(record.lease_expires_at) <= checked_at
+            or any(
+                getattr(claim, left) != getattr(record, right)
+                for left, right in (
+                    ("issuer", "issuer"),
+                    ("organization", "organization"),
+                    ("subject", "provider_subject"),
+                    ("username", "provider_username"),
+                    ("policy_sha256", "policy_sha256"),
+                    ("source_password_sha256", "source_password_sha256"),
+                    ("source_email_sha256", "source_email_sha256"),
+                    ("mode", "mode"),
+                )
+            )
+            or (
+                record.mode == "existing_link"
+                and claim.provider_snapshot_sha256 != record.provider_snapshot_sha256
+            )
         ):
             raise CredentialMigrationError("migration_claim_stale")
-        return user, record
+        return user, record, checked_at
 
     def record_failure(
         self,
@@ -464,9 +749,8 @@ class CredentialMigrationService:
         *,
         now: datetime | None = None,
     ) -> CredentialMigrationView:
-        checked_at = _time(now)
         with self._sessions.begin() as db:
-            user, record = self._locked_claim(db, claim, checked_at)
+            user, record, checked_at = self._locked_claim(db, claim, now)
             if not re.fullmatch(r"[a-z][a-z0-9_]{0,127}", error.code):
                 raise ValueError("migration errors must use content-blind codes")
             status = (
@@ -480,17 +764,20 @@ class CredentialMigrationService:
     def finish(
         self,
         claim: CredentialImportClaim,
-        identity: VerifiedMigrationIdentity,
+        identity: VerifiedMigrationIdentity | VerifiedLinkedCredentialIdentity,
         *,
         cutover: bool,
         now: datetime | None = None,
     ) -> CredentialMigrationView:
-        checked_at = _time(now)
+        proof = identity
+        identity = proof.identity if isinstance(proof, VerifiedLinkedCredentialIdentity) else proof
         with self._sessions.begin() as db:
-            user, record = self._locked_claim(db, claim, checked_at)
+            user, record, checked_at = self._locked_claim(db, claim, now)
             credential = db.get(PasswordCredential, user.id)
-            error = self._source_error(user, credential, record) or self._identity_error(
-                claim, identity
+            error = (
+                self._source_error(user, credential, record)
+                or self._identity_error(claim, proof)
+                or self._linked_source_error(db, user, record, proof)
             )
             if error is not None:
                 self._fail(db, record, user, error, "conflict", checked_at)
@@ -498,7 +785,8 @@ class CredentialMigrationService:
             _reject_deleted_identity(db, claim.issuer, claim.subject)
             first_import = record.imported_at is None
             record.status = "imported"
-            record.provider_snapshot_sha256 = identity.snapshot_sha256()
+            if record.mode == "hash_import":
+                record.provider_snapshot_sha256 = identity.snapshot_sha256()
             record.imported_at = record.imported_at or checked_at
             record.last_error_code = None
             record.claim_token = None
@@ -507,7 +795,9 @@ class CredentialMigrationService:
             record.updated_at = checked_at
             user.migration_state = "imported"
             if first_import:
-                self._event(db, record, "imported")
+                self._event(
+                    db, record, "imported" if record.mode == "hash_import" else "link_verified"
+                )
             if not cutover:
                 return self._view(record)
             connection = db.scalar(
@@ -591,6 +881,7 @@ class CredentialMigrationService:
             "receipt_id": str(record.id),
             "batch_id": record.batch_id,
             "status": record.status,
+            "mode": record.mode,
             "provider_snapshot_sha256": record.provider_snapshot_sha256,
             **(extra or {}),
         }

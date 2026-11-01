@@ -16,6 +16,7 @@ _S = "lm2s00000001"
 _T = "lm2t00000001"
 _CASDOOR = "cd2a00000001"
 _CREDENTIAL = "cd3a00000001"
+_LINKED_CREDENTIAL = "cd3b00000001"
 _IDENTITY_TABLES = {
     "saas_oidc_login_transactions",
     "saas_oidc_session_fences",
@@ -80,7 +81,7 @@ def test_r_digest_adds_all_fifteen_new_tables_without_removing_legacy_scope(head
     assert len(new) == len(set(new)) == len(old) + 15
 
 
-@pytest.mark.parametrize("head", [_P0, _R, _S, _T, _CASDOOR, _CREDENTIAL])
+@pytest.mark.parametrize("head", [_P0, _R, _S, _T, _CASDOOR, _CREDENTIAL, _LINKED_CREDENTIAL])
 def test_bounded_digest_preserves_the_existing_complete_canonical_bytes(digest_connection, head):
     _populate(digest_connection, head)
     digest, counts = restore._digest_on_connection(digest_connection)
@@ -106,11 +107,12 @@ def test_casdoor_digest_retains_old_scope_and_adds_identity_recovery_state():
     assert len(new) == len(set(new)) == len(old) + len(_IDENTITY_TABLES)
 
 
-def test_credential_digest_adds_receipt_and_covers_both_authority_fields(digest_connection):
+@pytest.mark.parametrize("head", [_CREDENTIAL, _LINKED_CREDENTIAL])
+def test_credential_digest_adds_receipt_and_covers_both_authority_fields(digest_connection, head):
     old = restore._digest_tables_for_schema(_CASDOOR)
-    new = restore._digest_tables_for_schema(_CREDENTIAL)
+    new = restore._digest_tables_for_schema(head)
     assert new == (*old, "saas_credential_migration_receipts")
-    _populate(digest_connection, _CREDENTIAL)
+    _populate(digest_connection, head)
     before, counts = restore._digest_on_connection(digest_connection)
     digest_connection.exec_driver_sql(
         "UPDATE public.saas_credential_migration_receipts SET value='recovered'"

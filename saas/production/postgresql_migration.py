@@ -215,6 +215,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "e450a494a71aa5663dd4f52635e768f48986e5be721b2b6d7fcc72e23ac08ba1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "927b25ab40e86bea1183455d97d4acd4733d8ba683c82e7799cfe228c6e83ce2",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -604,6 +615,17 @@ _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "2ad8a9980b6c18780079a2d0764e84c3cf63c9a23e2489b583b7918f2b7308fc",
 }
 _SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "6aadfc3b5f6090b2abf38cdb1986cede4793b5c12bd879fee316cfcb03aae515",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "e84ac93cd6475d545accf3654974a3bbe7b60dc8a8523a7aa5f1bbf2268e9dfb",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -990,6 +1012,17 @@ _SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "994a688be7fde4a234e7acd347bcf1b8fd47dc7a6856dd580ee530865f6003e9",
 }
 _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "5ff929c9e4091ff0833e30adb4bd375db028a3b19a2c713d9357a32cee4074fc",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "229424f87e0dd6dacc28c3d89c8da7989b8b51e627a0b4c91a51a78009d2f52b",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -1346,6 +1379,17 @@ _PLATFORM_MODEL_SOURCE_SECURITY_CATALOG_SHA256 = {
     ): "41b4d089dda30cccd75b99436463fd44e94e01073460d4b1c756cbd6c670207d",
 }
 _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "06971b9aa8ab96d95b9a257e1e78c63b2f805f2f38e753cb87ed6f529efd3b6c",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "432d5950ad34255b78b88ac104c8c1fbbbe5ba788e3ce099d2d72af54e4af027",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -1697,6 +1741,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "665365881ae5eb7ff415577c833477c5fb760da5870dccbca36effc0e06f6ac8",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "5442ceb624e9c80ecefeef2d27b17183c40aadc25fc27e148c03851aa516ae76",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -2023,6 +2078,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "272092fc7608d49d8820a576aa00f8498f7736ba54decdd7db1fe1765c89e7bd",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "71ab065262a47558c21ef2faa6be2d90875aa861f6517fea76cee35a5f4e88e0",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "41094d2ef72fbdcfcffb10092190f69f6865a7750680b31352c2ccc9838eb4c9",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -2356,6 +2422,17 @@ _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 
 _LEGACY_ORDERED_SOURCE_SECURITY_HEADS = frozenset({"p0s000000011"})
 _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "42f512f4e4d5429f38d9e9b463f5b1e39d5f5a0f65884d81e40b23c56d3d70c1",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "fd6f1ec7801896abeb2f4d3c21255e6f5dbe0792ba01889269482b653469000d",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -2654,6 +2731,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Independent PG16/18 source replay: verified existing-identity credential cutover.
+    (
+        16,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "db8fe87417e3c227b24449c1dcd293c040a9028a36b8476ef542b0c83376de94",
+    (
+        18,
+        "mm1a2b3c4d5e",
+        "cd3b00000001",
+    ): "df9d97060937b8e2d70277c3e1fb888328153fa618d70b1cde7694e7eb3702f9",
     # Fresh PG16/18 source replay: per-user credential authority and immutable receipts.
     (
         16,
@@ -4294,6 +4382,7 @@ def _runtime_saas_head(requested: object) -> str:
         "lm2t00000001": ("lm2t00000001",),
         "cd2a00000001": ("cd2a00000001",),
         "cd3a00000001": ("cd3a00000001",),
+        "cd3b00000001": ("cd3b00000001",),
     }.get(_expected_head("saas"), ())
     if not isinstance(requested, str) or requested not in supported:
         raise PostgreSqlMigrationError("runtime_schema_not_supported", "runtime_verification")
@@ -5130,6 +5219,37 @@ def _verify_preview_owner_lease_definers(
     return frozenset(f"routine:{row[1]}" for row in function_rows)
 
 
+_CREDENTIAL_GUARD_SOURCE_SHA256 = {
+    "cd3a00000001": "4728f24d9fda1932c24c6dca42df7e6f54a9753ce9de825ba82314ed5c0126df",
+    "cd3b00000001": "d3e17528221e1d23a702927e984db67177910fa21e2994edb29240703f843750",
+}
+
+
+def _verify_credential_migration_guard(
+    connection: Connection, *, saas_head: str, saas_owner: str
+) -> None:
+    expected = _CREDENTIAL_GUARD_SOURCE_SHA256.get(saas_head)
+    if expected is None:
+        return
+    row = connection.execute(
+        sa.text(
+            "SELECT routine.prosrc, owner.rolname, language.lanname, routine.prosecdef, "
+            "routine.proconfig, routine.prokind, routine.provolatile, "
+            "pg_get_function_result(routine.oid) FROM pg_proc routine "
+            "JOIN pg_roles owner ON owner.oid=routine.proowner "
+            "JOIN pg_language language ON language.oid=routine.prolang "
+            "WHERE routine.oid=to_regprocedure('public.saas_guard_credential_migration_receipt()')"
+        )
+    ).one_or_none()
+    if (
+        row is None
+        or hashlib.sha256(str(row[0]).encode()).hexdigest() != expected
+        or tuple(row[1:])
+        != (saas_owner, "plpgsql", False, ["search_path=pg_catalog"], "f", "v", "trigger")
+    ):
+        raise PostgreSqlMigrationError("credential_receipt_guard_drifted", "verification")
+
+
 def _verify_object_ownership(
     official_connection: Connection,
     saas_connection: Connection,
@@ -5138,6 +5258,9 @@ def _verify_object_ownership(
     saas_owner: str,
     saas_head: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
+    _verify_credential_migration_guard(
+        saas_connection, saas_head=saas_head or _expected_head("saas"), saas_owner=saas_owner
+    )
     official_names = _official_table_names()
     official_rows = official_connection.execute(
         sa.text(
@@ -6453,6 +6576,18 @@ def verify_model_projection_postgresql_state(
         config=config,
         expected_service_roles=EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
         configured_urls={"model_projection": database_url},
+    )
+
+
+def verify_credential_worker_postgresql_state(
+    *, engine: Engine, database_url: str, config: Any
+) -> None:
+    """Verify the release receipt and full catalog through the authenticator alone."""
+    _verify_service_postgresql_state(
+        engines={"authenticator": engine},
+        config=config,
+        expected_service_roles={"authenticator": "saas_authenticator"},
+        configured_urls={"authenticator": database_url},
     )
 
 

@@ -3,11 +3,20 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 _SQL = (
     Path(__file__).resolve().parents[2] / "saas/control_plane/postgresql_runner_agent_cluster.sql"
 ).read_text()
 _MODEL_HEADS = ("lm2r00000001", "lm2s00000001", "lm2t00000001")
-_CASDOOR_HEADS = ("cd1a00000001", "cd1b00000001", "cd1c00000001", "cd2a00000001", "cd3a00000001")
+_CASDOOR_HEADS = (
+    "cd1a00000001",
+    "cd1b00000001",
+    "cd1c00000001",
+    "cd2a00000001",
+    "cd3a00000001",
+    "cd3b00000001",
+)
 
 
 def _heads(pattern: str) -> tuple[str, ...]:
@@ -41,11 +50,19 @@ def test_t_support_does_not_relax_cluster_or_owner_admission():
     assert "'Runner cluster admission rejected: Runner API owner drifted'" in _SQL
 
 
-def test_casdoor_executor_keeps_the_reviewed_interactive_recovery_api():
+@pytest.mark.parametrize("head", ["cd3a00000001", "cd3b00000001"])
+def test_casdoor_executor_keeps_the_reviewed_interactive_recovery_api(head, monkeypatch):
+    from saas.production import postgresql_migration
     from saas.production.runner_executor import _runner_agent_schema_contract
 
-    selected, functions, hashes = _runner_agent_schema_contract("cd3a00000001")
-    assert selected == "cd3a00000001"
+    original = postgresql_migration._expected_head
+    monkeypatch.setattr(
+        postgresql_migration,
+        "_expected_head",
+        lambda kind: head if kind == "saas" else original(kind),
+    )
+    selected, functions, hashes = _runner_agent_schema_contract(head)
+    assert selected == head
     assert (
         "saas_interactive_recovery_owner_v1",
         "uuid, bigint, uuid, bigint, jsonb",

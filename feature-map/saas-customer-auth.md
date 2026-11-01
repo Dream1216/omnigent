@@ -17,9 +17,11 @@ explicit consent and fresh authentication. Product permissions remain local.
 - `workspace-selection`: choose a server-provided workspace for browser and
   WebSocket requests; removed membership requires another authorized choice.
 - `credential-migration`: staged import, explicit per-user authority cutover,
-  stable account/resources, and old-password rejection after cutover.
+  stable account/resources, existing-account read-only fallback, and old-password
+  rejection after cutover.
 - `credential-recovery`: offline authorization for a fresh password, with session
-  and provider connection revocation and an immutable migration receipt.
+  and provider connection revocation and an immutable migration receipt. A
+  separately signed return can restore only the original recovery-revoked identity.
 
 ## How to get to it (user POV)
 
@@ -70,6 +72,17 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   fences: `tests/saas/test_credential_migration.py`,
   `tests/saas/test_casdoor_credential_import.py`, and
   `tests/saas/test_credential_migration_postgresql.py`.
+- Existing provider UUIDs, unsupported hashes, immutable mode expansion, lease
+  expiry and revoke/cutover lock ordering:
+  `tests/saas/test_existing_identity_cutover.py`,
+  `tests/saas/test_linked_credential_authority_migration.py`, and
+  `tests/saas/test_credential_fences_postgresql.py`.
+- Signed return, provider readback, replay after later revocation, authorization
+  expiry after lock waits, and two-worker serialization:
+  `tests/saas/test_credential_reconnection.py` and
+  `tests/saas/test_credential_reconnection_postgresql.py`.
+- Narrow worker secret mounts, source and login bindings:
+  `tests/saas/test_credential_worker_config.py`.
 - Private bounded batches and fresh-password authorization:
   `tests/saas/test_credential_migration_cli.py` and
   `tests/saas/test_credential_recovery.py`. Use the synthetic procedure in
@@ -110,5 +123,9 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
 - An import receipt grants no login before its identity connection is committed.
   Restoring retained hashes does not restore password authority. Recovery must
   install a different password and does not change the deployment's login mode.
+- In central-only mode, retained passwords and unavailable identity providers
+  cannot count as fallback sign-in methods when removing a connection. Test
+  that the last usable method cannot be removed and local password creation
+  is refused by HTTP.
 - Capture screenshots outside Git. Record the entry point and pair each UI
   result with authoritative, read-only API or database counts.

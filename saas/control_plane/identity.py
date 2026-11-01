@@ -234,8 +234,16 @@ def _reject_unbound_migration_identity(db: Session, assertion: VerifiedIdentityA
 class IdentityManagementService:
     """Provision, link, list, and revoke immutable provider subjects."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        password_login_enabled: bool = True,
+        available_identity_providers: frozenset[str] | None = None,
+    ) -> None:
         self._session_factory = session_factory
+        self._password_login_enabled = password_login_enabled
+        self._available_identity_providers = available_identity_providers
 
     def provision_identity(self, assertion: VerifiedIdentityAssertion) -> UUID:
         """Resolve an existing subject or create a new Global User without email merging."""
@@ -863,6 +871,11 @@ class IdentityManagementService:
                         "idempotency_conflict", "idempotency key belongs to another request"
                     )
                 return
+            user = db.scalar(
+                sa.select(GlobalUser).where(GlobalUser.id == user_id).with_for_update()
+            )
+            if user is None or user.status != "active":
+                raise LifecycleError("user_inactive", "active user is required")
             connections = list(
                 db.execute(
                     sa.select(IdentityConnection)
@@ -876,9 +889,22 @@ class IdentityManagementService:
                 raise LifecycleError("identity_not_found", "identity connection does not exist")
             if connection.status == "revoked":
                 return
-            active_count = sum(item.status == "active" for item in connections)
-            has_password = db.get(PasswordCredential, user_id) is not None
-            if active_count <= 1 and not has_password:
+            remaining = any(
+                item.status == "active"
+                and item.id != connection_id
+                and item.provider != "password"
+                and (
+                    self._available_identity_providers is None
+                    or item.provider in self._available_identity_providers
+                )
+                for item in connections
+            )
+            has_password = (
+                self._password_login_enabled
+                and user.credential_owner == "legacy"
+                and db.get(PasswordCredential, user_id) is not None
+            )
+            if not remaining and not has_password:
                 raise LifecycleError(
                     "last_login_method", "the last login method cannot be revoked"
                 )

@@ -34,6 +34,7 @@ MIGRATION_IMMUTABLE_COLUMNS = (
     "idempotency_key",
     "request_hash",
     "created_at",
+    "mode",
 )
 
 
@@ -59,6 +60,7 @@ class CredentialMigrationRecord(SaasBase):
     idempotency_key: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     request_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
+    mode: Mapped[str] = mapped_column(sa.String(32), nullable=False, server_default="hash_import")
     provider_snapshot_sha256: Mapped[str | None] = mapped_column(sa.String(64))
     identity_connection_id: Mapped[UUID | None] = mapped_column(
         sa.ForeignKey("saas_identity_connections.id", ondelete="RESTRICT")
@@ -82,6 +84,14 @@ class CredentialMigrationRecord(SaasBase):
     recovered_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
     __table_args__ = (
+        sa.CheckConstraint(
+            "mode IN ('hash_import', 'existing_link')", name="ck_credential_migration_mode"
+        ),
+        sa.CheckConstraint(
+            "mode <> 'existing_link' OR (identity_connection_id IS NOT NULL "
+            "AND provider_snapshot_sha256 IS NOT NULL)",
+            name="ck_credential_migration_link_proof",
+        ),
         sa.UniqueConstraint("batch_id", "user_id", name="uq_credential_migration_batch_user"),
         sa.CheckConstraint(
             "status IN ('pending', 'imported', 'completed', 'conflict', 'failed', 'recovered')",
@@ -138,4 +148,5 @@ class CredentialMigrationRecord(SaasBase):
             postgresql_where=sa.text("status IN ('pending', 'imported')"),
             sqlite_where=sa.text("status IN ('pending', 'imported')"),
         ),
+        sa.Index("ix_credential_migration_subject", "issuer", "provider_subject"),
     )

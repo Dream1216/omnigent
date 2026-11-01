@@ -215,6 +215,88 @@ def test_claim_mismatch_rejected_without_network(config, claim):
     assert requests == []
 
 
+@pytest.mark.parametrize("configured", [False, True])
+def test_linked_identity_lookup_uses_only_pinned_owner_and_stable_subject(
+    config, claim, configured
+):
+    requests = []
+
+    def read(request):
+        requests.append(request)
+        assert request.method == "GET" and request.url.path == "/api/get-user"
+        assert dict(request.url.params) == {"owner": "customers", "userId": claim.subject}
+        assert not request.content
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "data": {
+                    "id": claim.subject,
+                    "owner": "customers",
+                    "name": "previously-connected-account",
+                    "type": "normal-user",
+                    "email": "linked@example.test",
+                    "emailVerified": True,
+                    "isAdmin": False,
+                    "isForbidden": False,
+                    "isDeleted": False,
+                    "password": "***" if configured else "",
+                    "passwordType": "argon2id" if configured else "",
+                },
+            },
+        )
+
+    snapshot = CasdoorCredentialImportProvider(
+        config, transport=httpx.MockTransport(read)
+    ).read_linked_identity(claim.subject)
+    assert snapshot.password_configured is configured
+    assert snapshot.identity.subject == claim.subject
+    assert snapshot.identity.username == "previously-connected-account"
+    assert snapshot.identity.email_verified and snapshot.identity.active
+    assert not snapshot.identity.marker_verified
+    assert len(snapshot.snapshot_sha256()) == 64 and len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"owner": "built-in"},
+        {"id": "foreign-subject"},
+        {"password": "unmasked-private-material"},
+        {"password": {}},
+        {"passwordType": True},
+        {"isForbidden": "false"},
+    ],
+)
+def test_linked_identity_lookup_refuses_foreign_or_unmasked_response(config, claim, mutation):
+    def read(_request):
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "data": {
+                    "id": claim.subject,
+                    "owner": "customers",
+                    "name": "connected-account",
+                    "type": "normal-user",
+                    "email": "linked@example.test",
+                    "emailVerified": True,
+                    "isAdmin": False,
+                    "isForbidden": False,
+                    "isDeleted": False,
+                    "password": "***",
+                    "passwordType": "salt",
+                    **mutation,
+                },
+            },
+        )
+
+    provider = CasdoorCredentialImportProvider(config, transport=httpx.MockTransport(read))
+    with pytest.raises(CredentialMigrationError) as rejected:
+        provider.read_linked_identity(claim.subject)
+    assert "private-material" not in str(rejected.value)
+
+
 def test_production_loader_pins_identity_and_requires_private_secret_files(tmp_path, config):
     provider = OidcProviderConfig(
         provider="casdoor",
@@ -283,3 +365,46 @@ def test_production_loader_pins_identity_and_requires_private_secret_files(tmp_p
 def test_unsafe_provider_configuration_is_rejected(config, mutation):
     with pytest.raises(ValueError):
         replace(config, **mutation)
+
+
+def test_committed_hash_import_marker_and_snapshot_remain_compatible():
+    from uuid import UUID
+
+    from saas.control_plane.credential_migration import VerifiedMigrationIdentity
+
+    # Fixed synthetic vector from committed 9e3c9239b; existing remote markers
+    # must still verify when existing-link support is deployed.
+    user_id = UUID(int=2)
+    claim = CredentialImportClaim(
+        receipt_id=UUID(int=1),
+        user_id=user_id,
+        issuer="https://auth.example.test",
+        organization="customers",
+        subject=str(user_id),
+        username="omnigent-" + user_id.hex,
+        policy_sha256="a" * 64,
+        source_password_sha256="b" * 64,
+        source_email_sha256="c" * 64,
+        claim_token=UUID(int=3),
+        password_hash="synthetic-unused",
+        email="legacy@example.test",
+    )
+    marker = "v1.first.70f49b3efa057a18fe5650d17e56372a143aa92cbc38f12ba134211b0d112a78"
+    keys = CredentialImportKeyring("first", {"first": b"k" * 32})
+    assert keys.sign(claim) == marker
+    keys.verify(marker, claim)
+    identity = VerifiedMigrationIdentity(
+        claim.issuer,
+        claim.organization,
+        claim.subject,
+        claim.username,
+        claim.email,
+        True,
+        True,
+        False,
+        False,
+        True,
+    )
+    assert identity.snapshot_sha256() == (
+        "43f8874bb53de6bf2209a6350232b9973cd9b82ceb236b00018317c02d22c449"
+    )

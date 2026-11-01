@@ -1383,6 +1383,10 @@ def create_saas_auth_router(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict[str, object]:
         principal = _require_principal(auth_provider, request)
+        if mode == "casdoor":
+            raise _http_error(
+                LifecycleError("identity_provider_required", "use central password recovery"), 409
+            )
         try:
             changed = passwords.set_password(
                 user_id=principal.session.user_id,

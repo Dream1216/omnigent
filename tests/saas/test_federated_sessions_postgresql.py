@@ -498,7 +498,7 @@ def test_non_bypass_schema_owner_cannot_drop_retained_federated_state(
             with engine.connect() as connection:
                 assert connection.scalar(
                     sa.text("SELECT version_num FROM saas_alembic_version")
-                ) == ("cd3a00000001")
+                ) == ("cd3b00000001")
                 table = (
                     "saas_oidc_login_transactions"
                     if retained == "oidc"

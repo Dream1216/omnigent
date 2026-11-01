@@ -218,6 +218,13 @@ class CredentialRecoveryService:
                 connection.id == record.identity_connection_id for connection in connections
             ):
                 raise CredentialMigrationError("credential_recovery_state_conflict")
+            recovered_at = _time(now)
+            self._keys.verify(signed_grant, now=recovered_at)
+            reconnectable = [
+                str(connection.id)
+                for connection in connections
+                if connection.id == record.identity_connection_id and connection.status == "active"
+            ]
             for connection in connections:
                 connection.status = "revoked"
             credential.password_hash = secret.new_password_hash
@@ -248,6 +255,7 @@ class CredentialRecoveryService:
                     "new_password_hash_sha256": _hash(secret.new_password_hash),
                     "security_version": security_version,
                     "revoked_session_count": revoked,
+                    "reconnectable_connection_ids": reconnectable,
                     "source_receipt_sha256": _digest(
                         {"receipt_id": str(record.id), "source": record.source_password_sha256}
                     ),

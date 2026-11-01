@@ -1,6 +1,6 @@
 # Existing-account credential migration
 
-The current expansion is `cd3a00000001`. It retains GlobalUser IDs, local
+The current expansion is `cd3b00000001`. It retains GlobalUser IDs, local
 credential hashes, and business resources. Importing a provider account does not
 by itself move credential authority. The explicit cutover binds the server-read
 provider identity, changes authority to Casdoor, and invalidates local sessions.
@@ -11,8 +11,8 @@ password. Native Casdoor accounts have no local password authority.
 
 Use the release image and the ordinary PostgreSQL migration/receipt process.
 The private CLI verifies installed source lineage, the sealed production
-configuration, every configured service login, and the source catalog before
-opening an authenticator Session. It does not migrate schemas, use a database
+configuration, the exact authenticator login, the complete release role graph,
+and the source catalog before opening an authenticator Session. It does not migrate schemas, use a database
 owner, or execute SET ROLE. An unqualified schema or stale release receipt fails
 before any batch operation. Match the product database, provider database and
 the identity/key recovery set when restoring; never drop the expansion after
@@ -21,8 +21,8 @@ be downgraded. A populated expansion requires an application rollback that
 understands the retained authority fields.
 
 Before enabling central signup or running cutover, verify that every serving
-API replica and authentication worker runs a revision with the credential-owner
-gate. Drain older replicas and remove their traffic routes first, including
+API replica and authentication worker runs the exact reviewed release revision
+with the credential-owner gate and the current sign-in policy checks. Drain older replicas and remove their traffic routes first, including
 WebSocket and fallback paths. Advancing the database head does not stop an
 already running older process from accepting a retained local password. Record
 the observed serving revisions in the rollout evidence; do not start the batch
@@ -38,7 +38,18 @@ The importer uses HTTP Basic authentication, verified HTTPS, fixed get-user and
 add-user paths, no redirects, and no ambient proxy settings. It never updates
 existing provider accounts or merges by email.
 
-Mount these files alongside the existing verified production server settings:
+Use a dedicated worker configuration. Mount the release source/upstream/image
+values, schema revisions, service-role binding profiles, sealed migration receipt,
+`OMNIGENT_SAAS_AUTHENTICATOR_DATABASE_URL_FILE`, and the same public
+`OMNIGENT_SAAS_CASDOOR_CONFIG_FILE` used by the web release. The database URL
+must use the release-bound login and verified TLS with the pinned CA. The
+worker checks the installed revision before opening that login, then verifies
+its exact role and the complete live catalog. It opens no other service login.
+Do not mount other database URLs, S3 credentials, OIDC client secrets or
+transaction keys, or web-server signing keys; the worker rejects these inputs.
+The public customer configuration provides pins without those secrets.
+
+For provider operations, mount:
 
 - `OMNIGENT_SAAS_CREDENTIAL_IMPORT_CONFIG_FILE`: JSON with exactly `issuer`,
   `organization`, `customer_application`, `migration_client_id`,
@@ -50,9 +61,12 @@ Mount these files alongside the existing verified production server settings:
 - `OMNIGENT_SAAS_CREDENTIAL_IMPORT_MARKER_KEYRING_FILE`: owner-only JSON,
   `{"schema_version":1,"active_key_id":"KEY_ID","keys":{"KEY_ID":"BASE64_KEY"}}`.
   Each key contains at least 32 random bytes. Retain previous keys while any
-  pending/imported receipt may be retried. Rotate by deploying overlapping
+  pending/imported hash-import receipt may be retried. Rotate by deploying overlapping
   keyrings first, then switching the active key. The policy digest does not
-  change when only the active marker key changes.
+  change when only the active marker key changes. Only hash preparation or a
+  process batch containing hash_import requires this keyring; existing-link and
+  reconnection operations work without it. show and recover need no provider
+  service secret.
 
 Secret and batch files must be absolute, regular, non-symlink files owned by the
 process user with mode 0600. Non-secret configuration may be read-only to other
@@ -97,6 +111,25 @@ pending identity reviews require the existing explicit identity-link/review
 workflow. Missing retained marker keys fail closed and can be restored for a
 retry. Errors are bounded, content-free codes; provider error text is not stored.
 
+## Existing provider account or unsupported source hash
+
+The user first reauthenticates through the old login and explicitly connects the
+existing Casdoor identity through the normal recent-authentication OIDC flow.
+The configured provider must verify its email and have a password set. Never
+supply a claimed subject or search for the user by email in a batch.
+
+Use `prepare-linked --batch-file /run/private/linked.json`. Its prepare manifest
+has the same fields as prepare plus the existing `connection_id`. This must be
+an active, verified Casdoor connection belonging to that GlobalUser. A different
+provider UUID is supported through the persisted connection. The service reads
+the exact stable ID from the pinned customer organization, checks normal active
+status and configured password, and fixes that server-read snapshot in a
+mode=existing_link receipt. Its worker claim contains no PHC or source email,
+and the provider adapter only calls GET get-user. It cannot import a password
+without the import marker keyring. Use the same process staging and explicit
+--cutover commands. Source changes, revoked mappings, contact drift or a missing
+provider password require a new reviewed attempt rather than overwriting IdP data.
+
 ## Controlled fresh-password recovery
 
 Recovery is a separate, offline-authorized operation. The worker holds only
@@ -140,6 +173,48 @@ in a central-only deployment: any change to the deployment auth mode belongs to
 the separately reviewed rollback release. Revoked provider connections cannot
 silently provision a replacement user. Repeated identical grants return the
 same recovery receipt; changed or stale grants fail.
+
+## Return to unified identity after recovery
+
+The ordinary connection endpoint still rejects revoked identities. A separate
+private return procedure can reactivate only the original connection that this
+recovery itself revoked while it was active. Recovery evidence records that
+eligibility; older receipts without that evidence and identities revoked before
+recovery require another approved identity-resolution procedure. Pending or
+blocked identity reviews, privacy tombstones and inactive users remain rejected.
+
+Mount independent Ed25519 public keys in
+`OMNIGENT_SAAS_CREDENTIAL_RECONNECTION_PUBLIC_KEYS_FILE` using the same public-key
+file shape as recovery. Keep the return signing key offline. Request current
+server-read facts with:
+
+```sh
+python -m saas.production.credential_migration_cli reconnect-request \
+  --user-id GLOBAL_USER_UUID --receipt-id RECOVERED_RECEIPT_UUID \
+  --review-reference APPROVED_REVIEW_REFERENCE \
+  --output-file /run/private/new-return-request.json
+```
+
+Review the exact original connection, current password/security versions,
+recovery-grant digest and fresh provider snapshot. Sign that request offline:
+
+```sh
+python -m saas.production.credential_reconnection_grant \
+  --request-file /private/reviewed-return-request.json \
+  --signing-key-file /private/offline-return-ed25519.pem \
+  --key-id RETURN_KEY_ID --output-directory /private/new-return-authorization
+```
+
+Apply it with `credential_migration_cli reconnect --grant-file
+/run/private/return/grant.txt`. The five-minute grant uses a distinct signature
+domain, binds the exact source and provider facts, and is rechecked after lock
+waits. This reactivates only that original identity, invalidates sessions and
+keeps fresh local password authority on legacy. It does not alter the original
+recovered receipt or overwrite a provider password. An identical replay does
+not reactivate a connection revoked again later. Finish with a new
+prepare-linked manifest using the current password version, stage and explicit
+cutover. After that, both the original and recovery local passwords are denied;
+Casdoor remains the credential authority.
 
 ## Acceptance
 

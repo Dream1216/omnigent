@@ -55,6 +55,25 @@ def test_process_manifest_contains_only_explicit_receipt_ids(tmp_path):
         load_batch(str(path), prepare=True)
 
 
+def test_linked_manifest_accepts_a_stored_connection_id_and_no_claimed_provider_mapping(tmp_path):
+    path = tmp_path / "linked.json"
+    item = {
+        "user_id": str(uuid4()),
+        "connection_id": str(uuid4()),
+        "batch_id": "reviewed-existing-link",
+        "expected_password_version": 1,
+        "idempotency_key": "reviewed-existing-link",
+    }
+    path.write_text(json.dumps({"schema_version": 1, "items": [item]}))
+    path.chmod(0o600)
+    assert load_batch(str(path), prepare=True, existing_link=True) == [item]
+    with pytest.raises(CredentialMigrationError):
+        load_batch(str(path), prepare=True)
+    path.write_text(json.dumps({"schema_version": 1, "items": [{**item, "subject": "claimed"}]}))
+    with pytest.raises(CredentialMigrationError):
+        load_batch(str(path), prepare=True, existing_link=True)
+
+
 def test_private_cli_checks_installed_lineage_before_any_database_authority(
     monkeypatch, tmp_path, capsys
 ):
@@ -65,10 +84,10 @@ def test_private_cli_checks_installed_lineage_before_any_database_authority(
     path.chmod(0o600)
     monkeypatch.setattr("sys.argv", ["credential-migration", "process", "--batch-file", str(path)])
     config = object()
-    monkeypatch.setattr(cli, "load_production_server_config", lambda: config)
+    monkeypatch.setattr(cli, "load_credential_worker_config", lambda: config)
     database_calls = []
     monkeypatch.setattr(
-        cli, "create_role_session_factories", lambda *a, **k: database_calls.append(a)
+        cli, "create_credential_worker_sessions", lambda *a, **k: database_calls.append(a)
     )
 
     def refuse(value):
@@ -96,20 +115,16 @@ def test_private_batch_cli_stages_by_default_requires_explicit_cutover_and_repor
     config = SimpleNamespace(identity=object())
     closed = []
     verified = []
-    monkeypatch.setattr(cli, "load_production_server_config", lambda: config)
+    monkeypatch.setattr(cli, "load_credential_worker_config", lambda: config)
     monkeypatch.setattr(
         cli, "verify_installed_build_lineage", lambda value: verified.append(value)
     )
-    monkeypatch.setattr(
-        cli, "verify_production_postgresql_state", lambda **values: verified.append(values)
-    )
 
-    def factories(value, *, verify_state):
+    def factories(value):
         assert value is config
-        verify_state({"authenticator": "test-composition-only"}, value)
         return SimpleNamespace(authenticator=source.sessions, close=lambda: closed.append(True))
 
-    monkeypatch.setattr(cli, "create_role_session_factories", factories)
+    monkeypatch.setattr(cli, "create_credential_worker_sessions", factories)
     monkeypatch.setattr(
         cli,
         "load_casdoor_credential_import_config",
@@ -129,7 +144,7 @@ def test_private_batch_cli_stages_by_default_requires_explicit_cutover_and_repor
     output = capsys.readouterr().out
     assert json.loads(output)["status"] == "completed"
     assert OLD_PASSWORD not in output and "migrate@example.test" not in output
-    assert len(closed) == 2 and len(verified) == 4
+    assert len(closed) == 2 and len(verified) == 2
     batch.write_text(json.dumps({"schema_version": 1, "items": [{"receipt_id": str(uuid4())}]}))
     with pytest.raises(SystemExit) as stopped:
         main()

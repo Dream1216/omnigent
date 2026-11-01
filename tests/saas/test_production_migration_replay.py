@@ -325,7 +325,13 @@ def test_real_clean_replay_upgrade_and_catalog_rejections(
         assert final.catalog_sha256 == first.catalog_sha256
     finally:
         owner.dispose()
-    if final.saas_head in {"lm2t00000001", "cd2a00000001", "cd3a00000001"} and profile in {
+    _verify_credential_worker_startup(plan, final, tmp_path)
+    if final.saas_head in {
+        "lm2t00000001",
+        "cd2a00000001",
+        "cd3a00000001",
+        "cd3b00000001",
+    } and profile in {
         "admin",
         "projection",
     }:
@@ -344,13 +350,18 @@ def _startup_config(
     tmp_path: Path,
 ) -> tuple[SimpleNamespace, dict[str, sa.Engine]]:
     path = tmp_path / f"runtime-migration-receipt-{receipt.catalog_sha256}.json"
-    path.write_text(json.dumps(receipt.to_dict()))
+    content = json.dumps(receipt.to_dict())
+    if path.exists():
+        assert path.read_text() == content
+    else:
+        path.write_text(content)
     path.chmod(0o400)
     urls = {
         service: sa.make_url(plan.saas_owner.url)
         .set(username=plan.service_role_graph.login_for(service))
         .render_as_string(hide_password=False)
         for service in (*migration._SERVER_SERVICE_ROLES, "billing")
+        if service in plan.service_role_graph.by_service
     }
     config = SimpleNamespace(
         product_revision=plan.product_revision,
@@ -358,7 +369,7 @@ def _startup_config(
         control_plane_schema_revision=receipt.saas_head,
         service_role_bindings=plan.service_role_bindings,
         service_role_graph=plan.service_role_graph,
-        capabilities=frozenset({"billing"}),
+        capabilities=frozenset({"billing"}) if "billing" in urls else frozenset(),
         secrets=SimpleNamespace(database_urls=SimpleNamespace(as_mapping=lambda: urls)),
         migration_receipt=ProductionMigrationReceipt(
             path=path,
@@ -373,6 +384,45 @@ def _startup_config(
         ),
     )
     return config, {service: sa.create_engine(url) for service, url in urls.items()}
+
+
+def _verify_credential_worker_startup(plan, receipt, tmp_path):
+    config, engines = _startup_config(plan, receipt, tmp_path)
+    try:
+        # The worker receives public release facts and its single service login;
+        # it has neither the web-server secrets object nor another DB engine.
+        narrow = SimpleNamespace(
+            **{
+                name: getattr(config, name)
+                for name in (
+                    "product_revision",
+                    "official_schema_revision",
+                    "control_plane_schema_revision",
+                    "service_role_bindings",
+                    "service_role_graph",
+                    "migration_receipt",
+                )
+            }
+        )
+        url = config.secrets.database_urls.as_mapping()["authenticator"]
+        migration.verify_credential_worker_postgresql_state(
+            engine=engines["authenticator"],
+            database_url=url,
+            config=narrow,
+        )
+        with pytest.raises(
+            migration.PostgreSqlMigrationError, match="service_url_binding_mismatch"
+        ):
+            migration.verify_credential_worker_postgresql_state(
+                engine=engines["authenticator"],
+                database_url=sa.make_url(url)
+                .set(username="wrong_release_login")
+                .render_as_string(hide_password=False),
+                config=narrow,
+            )
+    finally:
+        for engine in engines.values():
+            engine.dispose()
 
 
 def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[int, str, str], str]:

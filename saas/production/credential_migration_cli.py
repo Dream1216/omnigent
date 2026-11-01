@@ -7,6 +7,7 @@ import json
 import os
 import re
 from dataclasses import asdict
+from pathlib import Path
 from typing import cast
 from uuid import UUID
 
@@ -14,6 +15,11 @@ from saas.control_plane.credential_migration import (
     CredentialMigrationError,
     CredentialMigrationService,
     CredentialMigrationView,
+)
+from saas.control_plane.credential_migration_models import CredentialMigrationRecord
+from saas.control_plane.credential_reconnection import (
+    CredentialReconnectionKeyring,
+    CredentialReconnectionService,
 )
 from saas.control_plane.credential_recovery import (
     CredentialRecoverySecret,
@@ -24,16 +30,20 @@ from saas.production.credential_migration import (
     load_casdoor_credential_import_config,
     load_credential_recovery_keys,
 )
-from saas.production.postgresql_migration import verify_production_postgresql_state
-from saas.production.server import create_role_session_factories, verify_installed_build_lineage
-from saas.production.server_config import (
-    _absolute_regular_file,
-    load_production_server_config,
+from saas.production.credential_worker_config import (
+    create_credential_worker_sessions,
+    load_credential_worker_config,
 )
+from saas.production.server import verify_installed_build_lineage
+from saas.production.server_config import _absolute_regular_file
 
 
-def load_batch(path: str, *, prepare: bool) -> list[dict[str, object]]:
+def load_batch(
+    path: str, *, prepare: bool, existing_link: bool = False
+) -> list[dict[str, object]]:
     try:
+        if existing_link and not prepare:
+            raise ValueError
         document = json.loads(
             _absolute_regular_file(path, name="credential batch", owner_only=True).read_bytes()
         )
@@ -53,6 +63,8 @@ def load_batch(path: str, *, prepare: bool) -> list[dict[str, object]]:
                 if prepare
                 else {"receipt_id"}
             )
+            if existing_link:
+                fields.add("connection_id")
             if not isinstance(item, dict) or set(item) != fields:
                 raise ValueError
             name = "user_id" if prepare else "receipt_id"
@@ -61,6 +73,11 @@ def load_batch(path: str, *, prepare: bool) -> list[dict[str, object]]:
             if item[name] in seen:
                 raise ValueError
             seen.add(item[name])
+            if existing_link and (
+                not isinstance(item["connection_id"], str)
+                or str(UUID(item["connection_id"])) != item["connection_id"]
+            ):
+                raise ValueError
             if prepare and (
                 type(item["expected_password_version"]) is not int
                 or item["expected_password_version"] <= 0
@@ -81,7 +98,7 @@ def _emit(view: CredentialMigrationView) -> None:
 def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="action", required=True)
-    for action in ("prepare", "process", "show"):
+    for action in ("prepare", "prepare-linked", "process", "show"):
         command = subcommands.add_parser(action)
         command.add_argument("--batch-file", required=True)
         if action == "process":
@@ -89,18 +106,25 @@ def _main() -> None:
     command = subcommands.add_parser("recover")
     command.add_argument("--grant-file", required=True)
     command.add_argument("--secret-file", required=True)
+    command = subcommands.add_parser("reconnect-request")
+    command.add_argument("--user-id", required=True, type=UUID)
+    command.add_argument("--receipt-id", required=True, type=UUID)
+    command.add_argument("--review-reference", required=True)
+    command.add_argument("--output-file", required=True)
+    command = subcommands.add_parser("reconnect")
+    command.add_argument("--grant-file", required=True)
     args = parser.parse_args()
     # Parse private inputs before opening any database authority.
     batch = None
-    if args.action != "recover":
-        batch = load_batch(args.batch_file, prepare=args.action == "prepare")
-    config = load_production_server_config()
+    if args.action in {"prepare", "prepare-linked", "process", "show"}:
+        batch = load_batch(
+            args.batch_file,
+            prepare=args.action in {"prepare", "prepare-linked"},
+            existing_link=args.action == "prepare-linked",
+        )
+    config = load_credential_worker_config()
     verify_installed_build_lineage(config)
-
-    def verify(engines, server_config):
-        verify_production_postgresql_state(engines=engines, config=server_config)
-
-    sessions = create_role_session_factories(config, verify_state=verify)
+    sessions = create_credential_worker_sessions(config)
     try:
         if args.action == "recover":
             grant = (
@@ -126,19 +150,82 @@ def _main() -> None:
             )
             _emit(recovery.recover(signed_grant=grant, secret=CredentialRecoverySecret(**secret)))
             return
+        requires_import = args.action == "prepare"
+        if args.action == "process":
+            assert batch is not None
+            with sessions.authenticator() as db:
+                requires_import = any(
+                    record is not None and record.mode == "hash_import"
+                    for item in batch
+                    for record in [
+                        db.get(CredentialMigrationRecord, UUID(str(item["receipt_id"])))
+                    ]
+                )
+        if args.action == "show":
+            assert batch is not None
+            with sessions.authenticator() as db:
+                for item in batch:
+                    record = db.get(CredentialMigrationRecord, UUID(str(item["receipt_id"])))
+                    if record is None:
+                        raise CredentialMigrationError("migration_receipt_unavailable")
+                    _emit(CredentialMigrationService._view(record))
+            return
         provider_config = load_casdoor_credential_import_config(
-            os.environ, identity=config.identity
+            os.environ, identity=config.identity, require_import_keys=requires_import
         )
+        provider = CasdoorCredentialImportProvider(provider_config)
+        if args.action in {"reconnect-request", "reconnect"}:
+            keys = load_credential_recovery_keys(
+                os.environ, key_name="OMNIGENT_SAAS_CREDENTIAL_RECONNECTION_PUBLIC_KEYS_FILE"
+            )
+            reconnection = CredentialReconnectionService(
+                sessions.authenticator,
+                policy=provider_config.policy(),
+                provider=provider,
+                verification_keys=CredentialReconnectionKeyring(keys.public_keys),
+            )
+            if args.action == "reconnect-request":
+                request = reconnection.prepare_request(
+                    user_id=args.user_id,
+                    receipt_id=args.receipt_id,
+                    review_reference=args.review_reference,
+                )
+                output = Path(args.output_file)
+                if not output.is_absolute() or ".." in output.parts:
+                    raise CredentialMigrationError("credential_reconnection_request_invalid")
+                descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "w") as handle:
+                    handle.write(json.dumps(request, sort_keys=True, indent=2) + "\n")
+                print(json.dumps({"request_file": str(output)}))
+            else:
+                token = (
+                    _absolute_regular_file(
+                        args.grant_file, name="credential reconnection grant", owner_only=True
+                    )
+                    .read_text()
+                    .strip()
+                )
+                identifier = reconnection.reconnect(signed_grant=token)
+                print(json.dumps({"connection_id": str(identifier)}))
+            return
         service = CredentialMigrationService(
             sessions.authenticator,
             policy=provider_config.policy(),
-            provider=CasdoorCredentialImportProvider(provider_config),
+            provider=provider,
         )
         assert batch is not None
         failed = False
         for item in batch:
             try:
-                if args.action == "prepare":
+                if args.action == "prepare-linked":
+                    view = service.prepare_existing_link(
+                        user_id=UUID(str(item["user_id"])),
+                        connection_id=UUID(str(item["connection_id"])),
+                        batch_id=str(item["batch_id"]),
+                        expected_password_version=cast(int, item["expected_password_version"]),
+                        idempotency_key=str(item["idempotency_key"]),
+                    )
+                elif args.action == "prepare":
                     view = service.prepare(
                         user_id=UUID(str(item["user_id"])),
                         batch_id=str(item["batch_id"]),

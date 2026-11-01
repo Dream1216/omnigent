@@ -404,3 +404,64 @@ def test_native_casdoor_account_cannot_silently_add_a_local_password(source: Sou
             idempotency_key="forbidden-local",
         )
     assert denied.value.code == "identity_provider_required"
+
+
+def test_retained_password_identity_does_not_allow_removing_last_effective_signin(source):
+    with source.sessions.begin() as db:
+        db.scalar(sa.select(IdentityConnection)).provider = "password"
+    receipt = source.prepare()
+    assert source.service.run_once(receipt.id, cutover=True, now=NOW).status == "completed"
+    with source.sessions() as db:
+        central = db.scalar(
+            sa.select(IdentityConnection.id).where(IdentityConnection.provider == "casdoor")
+        )
+    with pytest.raises(LifecycleError) as denied:
+        source.identities.revoke_identity(
+            user_id=source.user_id,
+            connection_id=central,
+            idempotency_key="remove-last-real-signin",
+            now=NOW,
+        )
+    assert denied.value.code == "last_login_method"
+
+
+def test_unlink_counts_only_enabled_identity_providers_and_password_entry(source):
+    central = source.identities.link_identity(
+        user_id=source.user_id,
+        assertion=VerifiedIdentityAssertion(
+            "casdoor",
+            "https://auth.example.test",
+            "explicit-customer",
+            "migrate@example.test",
+            True,
+        ),
+        idempotency_key="explicit-link-for-entry-policy",
+    )
+    restricted = IdentityManagementService(
+        source.sessions,
+        password_login_enabled=False,
+        available_identity_providers=frozenset({"casdoor"}),
+    )
+    with pytest.raises(LifecycleError) as denied:
+        restricted.revoke_identity(
+            user_id=source.user_id,
+            connection_id=central,
+            idempotency_key="disabled-password-cannot-save-last-method",
+            now=NOW,
+        )
+    assert denied.value.code == "last_login_method"
+    enabled_password = IdentityManagementService(
+        source.sessions,
+        password_login_enabled=True,
+        available_identity_providers=frozenset({"casdoor"}),
+    )
+    enabled_password.revoke_identity(
+        user_id=source.user_id,
+        connection_id=central,
+        idempotency_key="legacy-password-remains-available",
+        now=NOW,
+    )
+    assert (
+        source.passwords.authenticate("migrate@example.test", OLD_PASSWORD, now=NOW)
+        == source.user_id
+    )

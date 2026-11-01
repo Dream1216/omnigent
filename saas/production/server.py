@@ -557,7 +557,12 @@ class BuiltProductionServer:
             self.sessions.close()
 
 
-def verify_installed_build_lineage(config: ProductionServerConfig) -> None:
+class BuildLineageConfig(Protocol):
+    @property
+    def product_revision(self) -> str: ...
+
+
+def verify_installed_build_lineage(config: BuildLineageConfig) -> None:
     """Bind the runtime process to the wheel/image commit before any DB connect."""
 
     try:
@@ -1281,7 +1286,15 @@ def build_production_saas_services(
         checks.update(extra_readiness_checks)
 
     lifecycle = MembershipLifecycleService(sessions.authenticator)
-    identities = IdentityManagementService(sessions.authenticator)
+    identities = IdentityManagementService(
+        sessions.authenticator,
+        password_login_enabled=config.identity.mode != "casdoor",
+        available_identity_providers=(
+            frozenset({config.identity.provider.provider})
+            if config.identity.provider is not None and config.identity.mode != "legacy"
+            else frozenset()
+        ),
+    )
     passwords = PasswordCredentialService(sessions.authenticator)
     oidc = None
     if config.identity.provider is not None:
