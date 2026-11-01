@@ -7,10 +7,8 @@ a session opens, and a paste that survives the clipboard changing mid-paste.
 
 from __future__ import annotations
 
-import re
-
 import pytest
-from playwright.sync_api import Page, Route, expect
+from playwright.sync_api import Page, expect
 
 from tests.browser_ui.chat.session_contract import ChatSessionContract
 
@@ -56,32 +54,34 @@ def test_paste_keeps_its_text_when_the_clipboard_changes_mid_paste(
 def test_composer_takes_focus_once_it_enables(
     page: Page, chat_session_contract: ChatSessionContract
 ) -> None:
-    """A composer that mounts disabled focuses itself when it enables.
+    """A composer mounted before its session agent binding arrives focuses when enabled.
 
-    The composer stays disabled until the agent list loads; its mount-time
-    focus is a no-op then, so without the follow-up the first words typed or
-    dictated after a session opens go nowhere.
+    Session hydration now precedes the composer's mount. Start with an unbound
+    session, then deliver the ordinary binding event while keeping the same
+    mounted composer; no agent-list request or transient timing is assumed.
     """
     chat = chat_session_contract
-    held: list[Route] = []
-    holding = True
-
-    def hold_agents(route: Route) -> None:
-        if holding:
-            held.append(route)
-        else:
-            route.fallback()
-
-    chat.contract.route(
-        re.compile(rf"^{re.escape(chat.base_url)}/v1/agents(?:\?.*)?$"), hold_agents
-    )
+    chat.update_session(agent_id=None, agent_name=None)
     page.goto(chat.url)
     composer = page.get_by_role("textbox", name="Message the agent")
     expect(composer).to_be_disabled(timeout=30_000)
+    mounted_composer = composer.element_handle()
+    assert mounted_composer is not None
+    chat.wait_for_stream()
 
-    holding = False
-    for route in held:
-        route.fallback()
+    chat.update_session(agent_id=chat.agent_id, agent_name=chat.agent_id)
+    chat.emit(
+        {
+            "event": "session.agent_changed",
+            "data": {
+                "type": "session.agent_changed",
+                "conversation_id": chat.session_id,
+                "agent_id": chat.agent_id,
+                "agent_name": chat.agent_id,
+            },
+        }
+    )
 
     expect(composer).to_be_enabled()
+    assert composer.evaluate("(current, original) => current === original", mounted_composer)
     expect(composer).to_be_focused()
