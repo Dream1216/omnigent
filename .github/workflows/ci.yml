@@ -134,11 +134,11 @@ jobs:
         # apparmor sysctl: Ubuntu 24.04 blocks unprivileged user namespaces
         # that bwrap needs; scope is the ephemeral runner.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep bubblewrap tmux
+          packages=(ripgrep bubblewrap tmux)
           if [ "${{ matrix.group }}" = "inner-rest" ]; then
-            sudo apt-get install -y --no-install-recommends dbus-daemon gnome-keyring
+            packages+=(dbus-daemon gnome-keyring)
           fi
+          bash saas/scripts/ci_install_ubuntu_packages.sh "${packages[@]}"
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Cache virtualenv
