@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import json
+import runpy
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 import tomllib
 import yaml
-from setuptools._distutils.filelist import FileList
+from setuptools.dist import Distribution
 
 from saas.scripts.check_wheel_contents import REQUIRED_WHEEL_PATHS, find_missing_paths
+
+
+def _build_command():
+    root = Path(__file__).resolve().parents[2]
+    with patch("setuptools.setup"):
+        build = runpy.run_path(str(root / "setup.py"))["_GenerateBuildInfo"]
+    command = build(Distribution({"packages": ["saas.production"]}))
+    command.ensure_finalized()
+    command.manifest_files = {}
+    return command
 
 
 def test_complete_wheel_member_list_passes() -> None:
@@ -34,17 +47,29 @@ def test_casdoor_source_lock_and_referenced_patch_kit_are_packaged() -> None:
         "casdoor/CUSTOMER_AUTH_RESTORE.md",
         *["casdoor/" + patch["path"] for patch in lock["patches"]],
     ]
-    manifest = FileList()
-    manifest.set_allfiles(["saas/production/" + resource for resource in resources])
-    for line in (root / "MANIFEST.in").read_text().splitlines():
-        manifest.process_template_line(line)
+    command = _build_command()
+    packaged = command.find_data_files("saas.production", str(root / "saas/production"))
     for resource in resources:
-        assert "saas/production/" + resource in manifest.files, resource
+        assert str(root / "saas/production" / resource) in packaged, resource
         assert "saas/production/" + resource in REQUIRED_WHEEL_PATHS
         assert (root / "saas/production" / resource).is_file()
 
 
-def test_server_image_stages_the_source_manifest_for_package_data() -> None:
+def test_missing_locked_patch_fails_the_package_build(tmp_path) -> None:
+    kit = tmp_path / "casdoor"
+    kit.mkdir()
+    (kit / "source-lock.json").write_text('{"patches":[{"path":"patches/missing.patch"}]}')
+    for name in ("config.example.json", "Dockerfile"):
+        (kit / name).write_text("owned packaging fixture")
+    with pytest.raises(FileNotFoundError, match="required identity source-kit"):
+        _build_command().find_data_files("saas.production", str(tmp_path))
+
+
+def test_unrelated_package_does_not_require_the_identity_source_kit(tmp_path) -> None:
+    assert _build_command().find_data_files("saas.control_plane", str(tmp_path)) == []
+
+
+def test_server_image_stages_the_existing_package_data_hook() -> None:
     root = Path(__file__).resolve().parents[2]
     recipe = (root / "deploy/docker/Dockerfile").read_text()
     copied = {
@@ -53,7 +78,7 @@ def test_server_image_stages_the_source_manifest_for_package_data() -> None:
         if line.startswith("COPY ") and line.endswith(" ./")
         for source in line.split()[1:-1]
     }
-    assert {"pyproject.toml", "setup.py", "uv.lock", "MANIFEST.in"} <= copied
+    assert {"pyproject.toml", "setup.py", "uv.lock"} <= copied
 
 
 def test_candidate_builds_and_checks_real_backend_wheel_before_oci_builds() -> None:

@@ -95,9 +95,10 @@ read that installed source lock; a source checkout or fixture-composed service
 can hide a missing wheel resource. A passing member check still requires the
 real image's closed configuration, entrypoints and installed metadata tests.
 
-`MANIFEST.in` includes the source kit in source distributions and wheels through
-the existing `include-package-data` setting. The Server builder stages that
-manifest alongside its packaging inputs. This preserves the exact trusted
-`pyproject.toml` bytes required by the N-1 workflow policy. Candidate preflight
-also checks all 21 trusted N-1 inputs before starting the complete regressions;
-do not replace those policy digests to accommodate unrelated packaging changes.
+The existing `setup.py` build command enumerates the locked source kit through
+`find_data_files`, so source distributions and wheels both include its resources.
+The Server builder already stages that command. This preserves the exact trusted
+`pyproject.toml` bytes, the original lock-file COPY contract and the direct
+upstream-file budget without another top-level packaging file. Candidate
+preflight also checks all 21 trusted N-1 inputs before starting the complete
+regressions; do not replace those policy digests for packaging changes.

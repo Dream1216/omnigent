@@ -5,9 +5,9 @@ CLI's update-check (``omnigent/update_check.py``) can tell the user
 when their installed build is stale without having to consult
 ``git`` or hit a remote endpoint at startup.
 
-All other build configuration lives in ``pyproject.toml``; this
-file exists solely to register the cmdclass override that runs the
-generator before ``build_py`` copies sources into the wheel.
+The cmdclass override also enumerates required non-Python source-kit
+resources for source distributions and wheels. Other package configuration
+lives in ``pyproject.toml``.
 
 The generated file is gitignored — it is recreated on every build
 and only meaningful at install time, where it travels inside the
@@ -16,6 +16,7 @@ wheel alongside the rest of the package.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -29,14 +30,7 @@ _MINIMUM_NODE_VERSION_TEXT = ".".join(str(part) for part in _MINIMUM_NODE_VERSIO
 
 
 class _GenerateBuildInfo(build_py):
-    """Subclass of ``build_py`` that writes ``_build_info.py``.
-
-    The override is the smallest possible intervention: run the
-    generator, then defer to the stock ``build_py`` to copy sources
-    (including the freshly-written ``_build_info.py``) into the
-    wheel's build directory. No other behavior of the build is
-    changed.
-    """
+    """Build revision metadata and required package resources."""
 
     def run(self) -> None:
         """Build the web UI, generate ``_build_info.py``, then run build_py."""
@@ -45,6 +39,29 @@ class _GenerateBuildInfo(build_py):
         super().run()
         self._bundle_examples()
         self._bundle_scripts()
+
+    def find_data_files(self, package: str, src_dir: str) -> list[str]:
+        """Include the identity source kit without changing trusted project inputs."""
+        files = super().find_data_files(package, src_dir)
+        if package != "saas.production":
+            return files
+        root = Path(src_dir) / "casdoor"
+        lock = json.loads((root / "source-lock.json").read_text())
+        resources = [
+            root / "source-lock.json",
+            root / "config.example.json",
+            root / "Dockerfile",
+            *root.glob("*.md"),
+            *(root / patch["path"] for patch in lock["patches"]),
+        ]
+        for path in resources:
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or not path.resolve().is_relative_to(root.resolve())
+            ):
+                raise FileNotFoundError("required identity source-kit resource is unavailable")
+        return sorted(set(files) | {str(path) for path in resources})
 
     def _bundle_scripts(self) -> None:
         """Copy top-level maintenance scripts into package resources."""

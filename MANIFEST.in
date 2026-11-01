@@ -1,5 +1,0 @@
-include saas/production/casdoor/source-lock.json
-include saas/production/casdoor/config.example.json
-include saas/production/casdoor/Dockerfile
-include saas/production/casdoor/*.md
-recursive-include saas/production/casdoor/patches *.patch
