@@ -109,6 +109,18 @@ runs:
       shell: bash
       run: uv sync --locked --extra all --group test
 
+    - name: Install Claude Code CLI for full UI suite
+      if: inputs.full_suite == 'true'
+      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@fc90cb58c7b907a0e9fa5390c9a213a983788de1
+      with:
+        harness: claude
+
+    - name: Install Codex CLI for full UI suite
+      if: inputs.full_suite == 'true'
+      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@fc90cb58c7b907a0e9fa5390c9a213a983788de1
+      with:
+        harness: codex
+
     - name: Install bubblewrap and tmux
       shell: bash
       run: |

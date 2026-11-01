@@ -148,7 +148,7 @@ def test_claude_sdk_credential_proxy_survives_transport_and_renews(
         extra_config={
             "os_env": {
                 "type": "caller_process",
-                "cwd": str(workspace),
+                "cwd": ".",
                 "sandbox": {
                     "type": "linux_bwrap",
                     "read_paths": _runner_read_paths(),
@@ -171,7 +171,10 @@ def test_claude_sdk_credential_proxy_survives_transport_and_renews(
         },
     )
     session_id = create_runner_bound_session(
-        http_client, agent_name=agent_name, runner_id=live_runner_id
+        http_client,
+        agent_name=agent_name,
+        runner_id=live_runner_id,
+        workspace=str(workspace),
     )
     placeholder_file = workspace / "placeholder.txt"
     result_files = [workspace / f"result-{index}.txt" for index in range(2)]

@@ -47,9 +47,7 @@ def _seed_session_usage(session_id: str, usage: dict) -> None:
     :raises RuntimeError: When running against ``--ui-base-url`` (no
         local database to seed).
     """
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
+    from tests._helpers.server_stores import set_server_usage
     from tests.e2e_ui.conftest import _server_state
 
     database_uri = _server_state.get("database_uri")
@@ -58,7 +56,7 @@ def _seed_session_usage(session_id: str, usage: dict) -> None:
             "seeding needs the spawned server's database; it is "
             "unavailable when running against --ui-base-url."
         )
-    SqlAlchemyConversationStore(str(database_uri)).set_session_usage(session_id, usage)
+    set_server_usage(str(database_uri), session_id, usage)
 
 
 @pytest.mark.timeout(120)

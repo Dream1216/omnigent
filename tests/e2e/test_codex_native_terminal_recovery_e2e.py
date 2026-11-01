@@ -113,7 +113,7 @@ def test_codex_terminal_recovery_preserves_inflight_turn(
         "base_url": f"{mock_llm_server_url}/v1",
     }
     spec["spawn"] = False
-    spec["os_env"]["cwd"] = str(tmp_path)
+    spec["os_env"]["cwd"] = "."
     payload = bundle_files({"codex-native-ui.yaml": yaml.safe_dump(spec).encode()})
 
     create = post_session_bundle(

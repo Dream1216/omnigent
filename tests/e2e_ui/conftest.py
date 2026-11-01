@@ -635,7 +635,9 @@ def reset_mock_llm(mock_url: str) -> None:
     resp.raise_for_status()
 
 
-def seed_committed_items(session_id: str, items: list[Any]) -> None:
+def seed_committed_items(
+    session_id: str, items: list[Any], *, at_epoch: int | None = None
+) -> None:
     """Append committed ``NewConversationItem``s straight into the store.
 
     For tests that need a settled transcript to act on but not the model's
@@ -662,34 +664,10 @@ def seed_committed_items(session_id: str, items: list[Any]) -> None:
             "seeding needs the spawned server's database; it is "
             "unavailable with --ui-base-url or a workflow-owned reproduction environment."
         )
-    if compat_server_python() is not None:
-        # Seed through the same schema and entity models as the pinned server.
-        subprocess.run(
-            [
-                server_executable(),
-                "-c",
-                "import json, sys; "
-                "from omnigent.entities import NewConversationItem; "
-                "from omnigent.stores.conversation_store.sqlalchemy_store "
-                "import SqlAlchemyConversationStore; "
-                "payload = json.load(sys.stdin); "
-                "SqlAlchemyConversationStore(payload['database_uri']).append("
-                "payload['session_id'], "
-                "[NewConversationItem.model_validate(item) for item in payload['items']])",
-            ],
-            input=json.dumps(
-                {
-                    "database_uri": str(database_uri),
-                    "session_id": session_id,
-                    "items": [item.model_dump(mode="json") for item in items],
-                }
-            ),
-            text=True,
-            check=True,
-            timeout=30,
-            env=apply_server_env(dict(os.environ), _REPO_ROOT),
-            cwd=compat_server_cwd(),
-        )
+    if compat_server_python() is not None or at_epoch is not None:
+        from tests._helpers.server_stores import append_server_items
+
+        append_server_items(str(database_uri), session_id, items, at_epoch=at_epoch)
         return
     SqlAlchemyConversationStore(str(database_uri)).append(session_id, items)
 
@@ -759,6 +737,11 @@ def set_session_task_summary(session_id: str, task_summary: str) -> None:
             "set_session_task_summary needs the spawned server's database; it "
             "is unavailable with --ui-base-url or a workflow-owned reproduction environment."
         )
+    if compat_server_python() is not None:
+        from tests._helpers.server_stores import set_server_task_summary
+
+        set_server_task_summary(str(database_uri), session_id, task_summary)
+        return
     SqlAlchemyConversationStore(str(database_uri)).set_task_summary(session_id, task_summary)
 
 
@@ -2575,7 +2558,9 @@ def _bind_session_runner(base_url: str, session_id: str, runner_id: str) -> None
     bind_session_runner(httpx.patch, base_url, session_id, runner_id, timeout=10.0)
 
 
-def _create_bundled_session(base_url: str, runner_id: str, yaml_text: str) -> str:
+def _create_bundled_session(
+    base_url: str, runner_id: str, yaml_text: str, *, workspace: str | None = None
+) -> str:
     """Register a session-scoped agent from *yaml_text* and bind its session.
 
     The multipart ``POST /v1/sessions`` both registers the agent and creates
@@ -2591,7 +2576,13 @@ def _create_bundled_session(base_url: str, runner_id: str, yaml_text: str) -> st
     data = yaml_text.encode()
     bundle_bytes = bundle_files({"config.yaml": data})
 
-    create = post_session_bundle(httpx.post, f"{base_url}/v1/sessions", bundle_bytes, timeout=30.0)
+    create = post_session_bundle(
+        httpx.post,
+        f"{base_url}/v1/sessions",
+        bundle_bytes,
+        metadata={"workspace": workspace} if workspace is not None else None,
+        timeout=30.0,
+    )
     create.raise_for_status()
     session_id = str(create.json()["session_id"])
     _bind_session_runner(base_url, session_id, runner_id)

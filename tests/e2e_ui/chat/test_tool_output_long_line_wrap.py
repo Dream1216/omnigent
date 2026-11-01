@@ -149,8 +149,8 @@ def long_output_session(
     )
     set_fallback_mock_llm(mock_llm_server_url, model, _REPLY)
 
-    yaml_text = _AGENT_YAML.format(name=name, model=model, cwd=str(ws))
-    session_id = _create_bundled_session(live_server, runner_id, yaml_text)
+    yaml_text = _AGENT_YAML.format(name=name, model=model, cwd=".")
+    session_id = _create_bundled_session(live_server, runner_id, yaml_text, workspace=str(ws))
 
     try:
         yield (live_server, session_id)

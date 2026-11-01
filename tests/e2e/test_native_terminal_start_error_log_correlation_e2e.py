@@ -354,10 +354,10 @@ def test_missing_agent_lifecycle_row_correlates_to_failed_child(
 
         # PRECONDITION (the reported lifecycle state): the child's agent is no
         # longer present in the store — deleted through the real store API.
-        from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+        from tests._helpers.server_stores import delete_server_agent
 
         database_uri = f"sqlite:///{stack.tmp_path / 'chat.db'}"
-        assert SqlAlchemyAgentStore(database_uri).delete(child_agent_id) is True
+        assert delete_server_agent(database_uri, child_agent_id) is True
         contents = _http.get(
             f"{stack.base_url}/v1/sessions/{child_id}/agent/contents",
             timeout=10.0,

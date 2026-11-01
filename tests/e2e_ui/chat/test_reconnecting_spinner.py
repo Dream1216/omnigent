@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from playwright.sync_api import Page, Route, expect
 
-from tests.e2e_ui.conftest import _server_state
+from tests.e2e_ui.conftest import _server_state, seed_committed_items
 
 
 def _seed_error_item(session_id: str, *, code: str, message: str) -> None:
@@ -32,9 +32,6 @@ def _seed_error_item(session_id: str, *, code: str, message: str) -> None:
     :raises RuntimeError: If the server under test isn't one we spawned.
     """
     from omnigent.entities import ErrorData, NewConversationItem
-    from omnigent.stores.conversation_store.sqlalchemy_store import (
-        SqlAlchemyConversationStore,
-    )
 
     database_uri = _server_state.get("database_uri")
     if not database_uri:
@@ -42,7 +39,7 @@ def _seed_error_item(session_id: str, *, code: str, message: str) -> None:
             "seeding an error item needs the spawned server's database; it is "
             "unavailable when running against --ui-base-url."
         )
-    SqlAlchemyConversationStore(str(database_uri)).append(
+    seed_committed_items(
         session_id,
         [
             NewConversationItem(

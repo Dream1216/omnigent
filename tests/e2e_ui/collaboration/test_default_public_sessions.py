@@ -71,14 +71,50 @@ def _create_session(base_url: str) -> str:
     return resp.json()["session_id"]
 
 
-def _share_dialog_public_switch(page: Page, url: str) -> Locator:
+def _expect_share_dialog_public_access(page: Page, url: str, *, public: bool) -> None:
     page.goto(url)
     share = page.get_by_role("button", name="Share session")
     expect(share).to_be_enabled(timeout=60_000)
     share.click()
     dialog = page.get_by_role("dialog")
     expect(dialog.get_by_text("Share this session")).to_be_visible()
-    return dialog.get_by_role("switch")
+    legacy = dialog.locator(
+        '[data-component-id="diagnostics.permissions.public_toggle"][role="switch"]'
+    )
+    general_access = dialog.get_by_role("combobox", name="General access", exact=True)
+    control = legacy.or_(general_access)
+    expect(control).to_be_visible()
+    expect(control).to_have_count(1)
+    if legacy.count() == 1:
+        if public:
+            expect(control).to_be_checked()
+        else:
+            expect(control).not_to_be_checked()
+    else:
+        expect(control).to_have_text("Read" if public else "No access")
+
+
+def _choose_all_new_sessions(page: Page) -> tuple[Locator, Locator | None]:
+    """Drive exactly one of the two supported default-sharing controls."""
+    legacy_group = page.get_by_role("group", name=_GROUP, exact=True)
+    default_toggle = page.get_by_role("switch", name="Share new sessions by default", exact=True)
+    controls = legacy_group.or_(default_toggle)
+    expect(controls).to_be_visible(timeout=60_000)
+    expect(controls).to_have_count(1)
+    if legacy_group.count() == 1:
+        expect(legacy_group.locator('input[value="off"]')).to_be_checked()
+        legacy_group.get_by_text("All sessions public", exact=True).click()
+        all_sessions = legacy_group.locator('input[value="all"]')
+        default_toggle = None
+    else:
+        expect(default_toggle).not_to_be_checked()
+        default_toggle.click()
+        expect(default_toggle).to_be_checked()
+        automatic = page.get_by_role("group", name="Automatically share", exact=True)
+        all_sessions = automatic.locator('input[value="all"]')
+        all_sessions.check()
+    expect(all_sessions).to_be_checked()
+    return all_sessions, default_toggle
 
 
 def test_admin_default_public_all_makes_new_sessions_public(
@@ -91,27 +127,21 @@ def test_admin_default_public_all_makes_new_sessions_public(
 
     # ── Admin picks "All sessions public" on Settings > Sharing ──────
     page.goto(f"{server.public_url}/settings/sharing")
-    group = page.get_by_role("group", name=_GROUP)
-    expect(group).to_be_visible(timeout=60_000)
-    expect(group.locator('input[value="off"]')).to_be_checked()
-    group.get_by_text("All sessions public").click()
-    expect(group.locator('input[value="all"]')).to_be_checked()
+    all_sessions, default_toggle = _choose_all_new_sessions(page)
 
     # Persisted server-side: survives a reload.
     page.reload()
-    expect(page.get_by_role("group", name=_GROUP).locator('input[value="all"]')).to_be_checked(
-        timeout=30_000
-    )
+    if default_toggle is not None:
+        expect(default_toggle).to_be_checked()
+    expect(all_sessions).to_be_checked(timeout=30_000)
 
     # ── A session created now starts public; the older one does not ──
     new_session = _create_session(server.base_url)
     assert _permissions(server.base_url, new_session).get("__public__") == 1
     assert "__public__" not in _permissions(server.base_url, server.session_id)
 
-    expect(
-        _share_dialog_public_switch(page, f"{server.public_url}/c/{new_session}")
-    ).to_be_checked()
-    expect(
-        _share_dialog_public_switch(page, f"{server.public_url}/c/{server.session_id}")
-    ).not_to_be_checked()
+    _expect_share_dialog_public_access(page, f"{server.public_url}/c/{new_session}", public=True)
+    _expect_share_dialog_public_access(
+        page, f"{server.public_url}/c/{server.session_id}", public=False
+    )
     context.close()
