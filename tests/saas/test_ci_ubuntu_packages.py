@@ -14,17 +14,34 @@ SCRIPT = Path(__file__).resolve().parents[2] / "saas/scripts/ci_install_ubuntu_p
 
 
 @pytest.mark.parametrize(
-    "update_status,configure_only,reuse",
+    "update_status,configure_only,reuse,update_errors,install_errors,updates,installs,status",
     [
-        (0, False, False),
-        (0, False, True),
-        (17, False, False),
-        (100, False, False),
-        (0, True, False),
+        (0, False, False, (), (), 1, 1, 0),
+        (0, False, True, (), (), 1, 1, 0),
+        (17, False, False, (), (), 1, 0, 17),
+        (100, False, False, (), (), 1, 0, 100),
+        (0, True, False, (), (), 0, 0, 0),
+        (0, False, False, ("502 Bad Gateway",), (), 2, 1, 0),
+        (0, False, False, ("503 Service Unavailable",) * 2, (), 3, 1, 0),
+        (0, False, False, ("503 Service Unavailable",) * 3, (), 3, 0, 100),
+        (0, False, False, ("502 Bad Gateway\nHash Sum mismatch",), (), 1, 0, 100),
+        (0, False, False, ("503 Service Unavailable\nNO_PUBKEY",), (), 1, 0, 100),
+        (0, False, False, ("404 Not Found",), (), 1, 0, 100),
+        (0, False, False, (), ("502 Bad Gateway",), 1, 2, 0),
+        (0, False, False, (), ("503 Service Unavailable",) * 3, 1, 3, 100),
+        (0, False, False, ("503 Service Unavailable",), ("502 Bad Gateway",), 2, 2, 0),
     ],
 )
 def test_signed_package_setup_stops_on_failed_update(
-    tmp_path, update_status, configure_only, reuse
+    tmp_path,
+    update_status,
+    configure_only,
+    reuse,
+    update_errors,
+    install_errors,
+    updates,
+    installs,
+    status,
 ):
     snapshot_path = tmp_path / "omnigent-ubuntu-snapshot"
     cached = (datetime.now(UTC) - timedelta(hours=3)).strftime("%Y%m%dT%H0000Z")
@@ -52,11 +69,25 @@ def test_signed_package_setup_stops_on_failed_update(
         " sys.exit(0)\n"
         "source=next(x.split('=',1)[1] for x in args if x.startswith('Dir::Etc::sourcelist='))\n"
         "row={'args':args,'sources':Path(source).read_text()}\n"
+        "op='update' if args[-1]=='update' else 'install'\n"
+        "prior=[json.loads(line) for line in "
+        "Path(os.environ['TEST_APT_LOG']).read_text().splitlines()]\n"
+        "calls=sum(x['args'][0]=='apt-get' and "
+        "(x['args'][-1]=='update')==(op=='update') for x in prior)\n"
         "with open(os.environ['TEST_APT_LOG'],'a') as f: f.write(json.dumps(row)+'\\n')\n"
+        "errors=json.loads(os.environ['TEST_APT_'+op.upper()+'_ERRORS'])\n"
+        "if calls<len(errors):\n print(errors[calls],file=sys.stderr)\n sys.exit(100)\n"
         "sys.exit(int(os.environ['TEST_APT_UPDATE_STATUS']) if args[-1]=='update' else 0)\n"
+    )
+    sleep = commands / "sleep"
+    sleep.write_text(
+        "#!/usr/bin/env python3\nimport json,os,sys\n"
+        "with open(os.environ['TEST_APT_LOG'],'a') as f: "
+        "f.write(json.dumps({'args':['sleep',*sys.argv[1:]]})+'\\n')\n"
     )
     timeout.chmod(0o755)
     sudo.chmod(0o755)
+    sleep.chmod(0o755)
     result = subprocess.run(
         [
             "bash",
@@ -73,12 +104,14 @@ def test_signed_package_setup_stops_on_failed_update(
             "RUNNER_TEMP": str(tmp_path),
             "TEST_APT_LOG": str(log),
             "TEST_APT_UPDATE_STATUS": str(update_status),
+            "TEST_APT_UPDATE_ERRORS": json.dumps(update_errors),
+            "TEST_APT_INSTALL_ERRORS": json.dumps(install_errors),
         },
         capture_output=True,
         text=True,
         check=False,
     )
-    assert result.returncode == update_status, result.stderr
+    assert result.returncode == status, result.stdout + result.stderr
     snapshot = snapshot_path.read_text()
     selected = datetime.strptime(snapshot, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     if reuse:
@@ -113,7 +146,17 @@ def test_signed_package_setup_stops_on_failed_update(
         for row in configs
     )
     rows = [row for row in commands if row["args"][0] == "apt-get"]
-    assert len(rows) == (0 if configure_only else 1 if update_status else 2)
+    assert len(rows) == updates + installs
+    assert sum(row["args"][-1] == "update" for row in rows) == updates
+    assert sum("install" in row["args"] for row in rows) == installs
+    assert all(row["args"][1] in {"5", "10"} for row in commands if row["args"][0] == "sleep")
+    attempt_logs = list(tmp_path.glob("omnigent-ubuntu-apt-attempt-*"))
+    assert len(attempt_logs) == updates + installs
+    retained_output = "\n".join(path.read_text() for path in attempt_logs)
+    if update_errors:
+        assert update_errors[0] in retained_output
+    if install_errors:
+        assert install_errors[0] in retained_output
     for row in rows:
         assert row["args"][0] == "apt-get"
         assert "Acquire::https::Timeout=20" in row["args"]
@@ -129,8 +172,10 @@ def test_signed_package_setup_stops_on_failed_update(
         assert "security.ubuntu.com" not in row["sources"]
     assert "Check-Valid-Until" not in ubuntu
     assert "AllowInsecure" not in "\n".join(str(row) for row in commands)
-    if not update_status and not configure_only:
-        assert rows[1]["args"][-6:] == [
+    for row in rows:
+        if "install" not in row["args"]:
+            continue
+        assert row["args"][-6:] == [
             "install",
             "-y",
             "--no-install-recommends",
@@ -219,9 +264,69 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
             for step in group.get("steps", []):
                 command = step.get("run", "")
                 assert "sudo apt-get" not in command, (name, step.get("name"))
-                if "playwright install --with-deps" in command:
+                if "playwright install chromium" in command:
                     browser_installs += 1
                     assert command.index(
-                        "ci_install_ubuntu_packages.sh --configure-only"
-                    ) < command.index("playwright install --with-deps")
+                        "ci_install_ubuntu_packages.sh --playwright-chromium"
+                    ) < command.index("playwright install chromium")
+                    assert "--with-deps" not in command
     assert browser_installs == 5
+
+
+@pytest.mark.parametrize(
+    "errors,apt_failure,calls,status",
+    [
+        (["502 Bad Gateway"], True, 2, 0),
+        (["500 Internal Server Error"] * 3, True, 3, 1),
+        (["503 Service Unavailable\nHash Sum mismatch"], True, 1, 1),
+        (["503 Service Unavailable\nNO_PUBKEY"], True, 1, 1),
+        (["502 Bad Gateway"], False, 1, 1),
+    ],
+)
+def test_locked_playwright_dependency_transport_is_bounded(
+    tmp_path, errors, apt_failure, calls, status
+):
+    environment = tmp_path / "environment.sh"
+    environment.write_text(
+        "function .() { ID=ubuntu; VERSION_ID=24.04; VERSION_CODENAME=noble; }\n"
+        'function sudo() { [[ "$1" == tee ]] || return 81; cat >/dev/null; }\n'
+        'function timeout() { [[ "$1 $2" == "--kill-after=10s 360s" ]] || return 81; '
+        'shift 2; "$@"; }\n'
+        'function sleep() { [[ "$1" == 5 || "$1" == 10 ]]; }\n'
+    )
+    uv = tmp_path / "uv"
+    uv.write_text(
+        "#!/usr/bin/env python3\nimport json,os,sys\nfrom pathlib import Path\n"
+        "assert sys.argv[1:]==['run','--no-sync','playwright','install-deps','chromium']\n"
+        "counter=Path(os.environ['RUNNER_TEMP'])/'calls'\n"
+        "count=int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(count+1))\n"
+        "errors=json.loads(os.environ['TEST_ERRORS'])\n"
+        "if count<len(errors):\n print(errors[count])\n"
+        " if os.environ['TEST_APT_FAILURE']=='true':\n"
+        "  print('Error: Installation process exited with code: 100')\n"
+        " sys.exit(1)\n"
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--playwright-chromium"],
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "BASH_ENV": str(environment),
+            "GITHUB_ACTIONS": "true",
+            "RUNNER_OS": "Linux",
+            "RUNNER_ARCH": "X64",
+            "RUNNER_TEMP": str(tmp_path),
+            "TEST_ERRORS": json.dumps(errors),
+            "TEST_APT_FAILURE": str(apt_failure).lower(),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    assert int((tmp_path / "calls").read_text()) == calls
+    logs = list(tmp_path.glob("omnigent-ubuntu-apt-attempt-*"))
+    assert len(logs) == calls
+    assert errors[0] in "\n".join(path.read_text() for path in logs)

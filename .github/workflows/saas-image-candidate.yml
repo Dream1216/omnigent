@@ -261,8 +261,8 @@ jobs:
           uv run python -m saas.scripts.check_image_supply_chain
       - name: Install Chromium
         run: |
-          bash saas/scripts/ci_install_ubuntu_packages.sh --configure-only
-          uv run playwright install --with-deps chromium
+          bash saas/scripts/ci_install_ubuntu_packages.sh --playwright-chromium
+          uv run --no-sync playwright install chromium
       - name: Set up login UI build runtime
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

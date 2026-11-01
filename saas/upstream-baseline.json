@@ -114,7 +114,7 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 185,
+    "max_direct_upstream_files": 187,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -756,7 +756,7 @@
       "test_patch_sha256": "b7702ef1eba7c8b653e8edf88dace2355c0a3295fff4bd1ed3f620607d54ac58",
       "reason": "Single existing upstream test: use existing data-attributed process reaper and retain only its runtime logs. Original model parameters, all three behavior assertions and startup/run timeouts retained. Local two-node mock run did not reproduce the original CI daemon timeout; root cause remains UNKNOWN. No product/workflow/policy/trusted-input change. Preserve4576 LOC,nine patches,.85 isolation and all release gates; every final head needs its own mandatory CI and candidate images.",
       "approved_at": "2026-10-26",
-      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: 批准仅将 0.19 上限增至 175；其他限制不变"
+      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: \u6279\u51c6\u4ec5\u5c06 0.19 \u4e0a\u9650\u589e\u81f3 175\uff1b\u5176\u4ed6\u9650\u5236\u4e0d\u53d8"
     },
     "native_cold_input_durability_followup": {
       "approval_status": "APPROVED_LIMITED_SCOPE",
@@ -778,7 +778,7 @@
       "reason": "Native external-Host cold input needs original generic durable worker registration and admission. SaaS-only monkey patches, fabricated ACK, warmup, timeout increases and credentials/policy widening are excluded. The user explicitly approved only the 175-to-178 file limit for these three new official paths; all other limits and gates remain unchanged. Keep4576 LOC,9patch,.85 and all new-head CI/OCI/P4/P5 requirements.",
       "max_direct_upstream_files": 178,
       "approved_at": "2026-10-28",
-      "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: 批准仅将 0.19 上限增至 178；其他限制不变",
+      "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: \u6279\u51c6\u4ec5\u5c06 0.19 \u4e0a\u9650\u589e\u81f3 178\uff1b\u5176\u4ed6\u9650\u5236\u4e0d\u53d8",
       "review_packet_sha256": "9af45de3b002a4eac541e1337e3bfeaabc153a9291ed7df4afb8ca468cacd015"
     },
     "native_cold_input_regression_correction_proposal": {
@@ -790,6 +790,21 @@
       ],
       "reason": "Restore original Host and fast-init admission, bounded caller wait over the unchanged shielded initializer, preserve authenticated actor separately from display attribution, terminate known native failures once and retain transient/submitted-unknown distinctions. The original 302 CI failures and local counterexamples remain. No source may be adopted under this pending proposal without Root review and the explicit file-budget approval. Keep4576LOC/9patch/.85 and fresh ownCI/OCI/all applicableP4/P5.",
       "original_178_approval_retained": true
+    },
+    "ci_transport_and_fixture_bind_failure_followup": {
+      "approval_status": "AUTHORIZED_UNDER_DIRECT_HUMAN_BLANKET_SCOPE",
+      "recorded_at": "2026-11-02",
+      "human_authorization": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002",
+      "human_authorization_thread": "01a17455-6f33-74c2-8216-f90ead19427c",
+      "previous_max_direct_upstream_files": 185,
+      "max_direct_upstream_files": 187,
+      "measured_upstream_net_added_loc": 4006,
+      "new_direct_upstream_paths": [
+        "tests/_helpers/server_runner.py",
+        "tests/test_server_runner_startup.py"
+      ],
+      "implementation_patch_sha256": "88382d9ac93e4d43b808a4d3be0fdda9bc5d95e33a7e295bc82f21d1fa50297d",
+      "reason": "Repair original9cb CI failures: bounded retry of only reported transient HTTP package transport failures against the same signed fixed Ubuntu snapshot, including locked Playwright system dependencies; reselect a fixture port only after the initial default server exits1 with exact CLI EADDRINUSE before any runner or request uses that endpoint. Preserve failed logs, one operation deadline, trust and hash failures, stable restart endpoint, product behavior, 4576LOC, nine patches, .85 isolation and every release gate. New source requires its own native CI, image qualification and independent review."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

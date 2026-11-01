@@ -113,13 +113,14 @@ class ServerRunner:
                 continue
         return "\n".join(tails)
 
-    def _wait_ready(self, *, runner: bool = False) -> None:
+    def _wait_ready(self, *, runner: bool = False, deadline: float | None = None) -> None:
         url = (
             f"{self.base_url}/v1/runners/{self.runner_id}/status"
             if runner
             else f"{self.base_url}/health"
         )
-        deadline = time.monotonic() + self._health_timeout
+        if deadline is None:
+            deadline = time.monotonic() + self._health_timeout
         last = "not polled"
         while time.monotonic() < deadline:
             for proc in (self.server, self.runner, self.host):
@@ -144,27 +145,59 @@ class ServerRunner:
     def start_server(self, *, wait_ready: bool = True) -> None:
         """Start the server, preserving its database and endpoint on restart."""
         assert self.server is None or self.server.poll() is not None
-        args = ["-c", self._server_bootstrap] if self._server_bootstrap else ["-m", "omnigent.cli"]
-        self.server = self._spawn(
-            "server",
-            [
-                *args,
-                "server",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(self.port),
-                "--database-uri",
-                self.database_uri,
-                "--artifact-location",
-                str(self.artifact_location),
-            ],
-            self.server_home,
-            {"OMNIGENT_RUNNER_TUNNEL_TOKEN": self._token, **self._server_env},
-            cwd=self._server_cwd,
+        retry_bind = (
+            wait_ready
+            and self.server is None
+            and self.runner is None
+            and self.host is None
+            and self._server_bootstrap is None
         )
-        if wait_ready:
-            self._wait_ready()
+        deadline = time.monotonic() + self._health_timeout
+        args = ["-c", self._server_bootstrap] if self._server_bootstrap else ["-m", "omnigent.cli"]
+        for attempt in range(3 if retry_bind else 1):
+            path = self.log_path("server")
+            log_offset = path.stat().st_size if path.exists() else 0
+            self.server = self._spawn(
+                "server",
+                [
+                    *args,
+                    "server",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.port),
+                    "--database-uri",
+                    self.database_uri,
+                    "--artifact-location",
+                    str(self.artifact_location),
+                ],
+                self.server_home,
+                {"OMNIGENT_RUNNER_TUNNEL_TOKEN": self._token, **self._server_env},
+                cwd=self._server_cwd,
+            )
+            if not wait_ready:
+                return
+            try:
+                self._wait_ready(deadline=deadline)
+                return
+            except AssertionError:
+                output = path.read_bytes()[log_offset:].decode(errors="replace")
+                conflict = (
+                    f"Cannot start server on 127.0.0.1:{self.port}: "
+                    "port is unavailable (Address already in use)."
+                )
+                if (
+                    not retry_bind
+                    or attempt == 2
+                    or self.server.poll() != 1
+                    or conflict not in output
+                    or time.monotonic() >= deadline
+                ):
+                    raise
+                # No request or runner used this endpoint; retain the failed log.
+                terminate_process(self.server)
+                self.port = find_free_port()
+                self.base_url = f"http://127.0.0.1:{self.port}"
 
     def restart_server(self, *, env: Mapping[str, str | None] | None = None) -> None:
         """Clear in-memory server state and await the existing runner's reconnect."""

@@ -126,8 +126,8 @@ runs:
     - name: Install Playwright Chromium
       shell: bash
       run: |
-        bash saas/scripts/ci_install_ubuntu_packages.sh --configure-only
-        uv run playwright install --with-deps chromium
+        bash saas/scripts/ci_install_ubuntu_packages.sh --playwright-chromium
+        uv run --no-sync playwright install chromium
 
     - name: Build HEAD SPA
       # Tests run with --ui-skip-build, so the built_spa fixture never builds
