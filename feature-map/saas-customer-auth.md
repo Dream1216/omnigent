@@ -67,6 +67,12 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   and confirm the account ID stays stable. Reauthenticate in a second tab and
   start a connection from the first. Sign out through the product; check the
   provider directly notified the product and matching sessions are revoked.
+- For the new-user runtime journey, register through the provider's email code,
+  create a workspace on setup, and check its default project exists in the
+  official runtime. Configure the owned Host with its allocated workspace route,
+  execute a task through the main composer, and read back the completed assistant
+  item. Sign out, verify a protected endpoint returns 401 and CSRF storage is
+  cleared, then sign back in and verify the same account, project and task.
 
 ## Gotchas
 
@@ -77,6 +83,9 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   current membership and allocation. Explicit scope requests retain their own choice.
 - Runtime adapter fixtures prove Saga integration and control-plane Run admission;
   they do not prove a real runner executed a user's first task.
+- An official native runtime session and a canonical control-plane Run are
+  separate records. A completed native assistant item does not by itself mark
+  the onboarding Saga complete or prove managed-Run scheduling and metering.
 - PostgreSQL role/race tests and isolated SQLite previews do not qualify a
   production schema, TLS setup, HA deployment, tenant setup or release rollback.
 - Pending email conflicts never prove ownership. Public conflict approval is
