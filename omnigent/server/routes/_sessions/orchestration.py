@@ -3884,8 +3884,9 @@ async def _wait_for_host_bound_runner_client(
                 )
             if client is None:
                 raise OmnigentError(
-                    "The existing runner is still reconnecting. Your message was not accepted; "
-                    "retry when it reconnects.",
+                    f"Runner {runner_id} is alive on the host but "
+                    f"{'never connected' if last_seen is None else 'has not reconnected'} "
+                    "to the server. Your message was not accepted; retry when it connects.",
                     code=ErrorCode.RUNNER_UNAVAILABLE,
                 )
         return client

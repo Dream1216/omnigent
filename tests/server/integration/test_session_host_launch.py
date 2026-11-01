@@ -2174,6 +2174,9 @@ async def test_alive_runner_is_preserved_after_its_initial_connect_grace(
         if connect_late:
             assert f"/v1/sessions/{sid}/events" in forwarded
         elif preserved:
+            message = response.json()["error"]["message"]
+            phase = "never connected" if runner_phase == "starting" else "has not reconnected"
+            assert f"Runner {runner_id} is alive on the host but {phase} to the server" in message
             items = (await client.get(f"/v1/sessions/{sid}/items")).json()["data"]
             assert not [item for item in items if item["type"] in {"message", "error"}]
     finally:
