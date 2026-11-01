@@ -185,6 +185,12 @@ cohort. Dead-letter review/replay and matched restore remain release requirement
 
 ## Release and restore requirements
 
+The [identity evidence gate](../identity-evidence/README.md) is a mandatory
+foundation and enterprise identity dependency. It requires exact signed
+acceptance plus bound live observations; component tests and fixture metadata
+cannot qualify it. Stage resources stay disabled until deployment activation
+admission and the actual release evidence pass.
+
 - Use a separately authenticated controlled HTTPS ingress, a rotating private
   Header keyring and bounded requests. Forwarded protocol headers and browser
   cookies alone do not authenticate this channel.

@@ -46,7 +46,7 @@ def test_current_candidate_generates_hash_bound_fail_closed_bundle() -> None:
     assert bundle["violations"] == []
     assert bundle["metrics"] == {
         "ready_evidence_kind_count": 0,
-        "required_evidence_kind_count": 8,
+        "required_evidence_kind_count": 9,
         "derived_ready_gate_count": 0,
         "aggregate_gate_count": 10,
         "ledger_passed_gate_count": 0,

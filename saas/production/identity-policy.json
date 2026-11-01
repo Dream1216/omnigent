@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "policy_id": "omnigent-casdoor-identity-readiness-v1",
+  "evidence_kind": "production_casdoor_identity_acceptance",
+  "reviewed_at": "2026-11-01",
+  "revision_contract": {
+    "upstream_revision": "825f8500d7cc8e997e5562fa55694cd146165f3c",
+    "adapter_contract_version": "0.2.0",
+    "control_plane_schema_revision": "cd4a00000001"
+  },
+  "evidence_directory": "saas/production/identity-evidence",
+  "max_evidence_age_days": 7,
+  "required_integrations": {
+    "email_primary": [
+      "actual_four_field_signup",
+      "verified_email_direct_api_errors",
+      "real_signed_oidc_pkce",
+      "csrf_multitab_first_run"
+    ],
+    "credential_migration": [
+      "hash_import_and_existing_link",
+      "stable_product_resources",
+      "old_password_cutover_denied",
+      "offline_recovery_signed_reconnection"
+    ],
+    "private_state_reader": [
+      "dedicated_application_credential_binding",
+      "verified_provider_and_reader_tls",
+      "worker_has_no_provider_authority",
+      "native_write_and_cross_org_denied"
+    ],
+    "identity_state_sync": [
+      "direct_https_durable_inbox",
+      "periodic_lost_event_recovery",
+      "signed_oidc_local_session_revocation",
+      "no_product_authority_or_identity_resurrection"
+    ],
+    "federated_logout": [
+      "local_revoke_before_provider_logout",
+      "signed_backchannel_logout",
+      "sid_sub_and_replay_fences",
+      "new_login_outage_is_retryable"
+    ],
+    "paired_recovery": [
+      "matched_product_idp_and_keys",
+      "restored_old_session_invalidated",
+      "old_callback_and_claim_fenced",
+      "rollback_keeps_central_credential_authority"
+    ]
+  },
+  "required_checks": [
+    "actual_release_and_installed_source_match",
+    "four_field_registration_and_direct_api_negative_paths",
+    "strict_pkce_jwt_standard_and_oidc_negative_inputs",
+    "local_cookie_csrf_refresh_multitab_and_logout",
+    "post_signup_setup_saga_first_run_and_idempotency",
+    "brand_and_chinese_english_entrypoint_coverage",
+    "migration_global_user_and_business_resource_retention",
+    "credential_cutover_rejects_old_password_and_revoked_sessions",
+    "explicit_link_recent_reauth_no_email_merge",
+    "dedicated_machine_application_scope_and_configuration_drift",
+    "private_secret_mounts_service_accounts_and_network_denials",
+    "database_operation_budgets_and_full_catalog_startup",
+    "durable_webhook_commit_retry_dedup_and_claim_fences",
+    "periodic_missed_event_baseline_and_admitted_load",
+    "disable_delete_contact_password_revoke_signed_oidc_sessions",
+    "provider_outage_preserves_valid_sessions_and_runtime_health",
+    "lag_deadletter_readback_and_unavailable_alerts_exercised",
+    "audited_deadletter_review_and_replay",
+    "worker_crash_lease_takeover_termination_and_failure_domain_failover",
+    "paired_product_idp_keys_restore_and_application_rollback",
+    "restored_revoked_sessions_and_inflight_callbacks_rejected_before_traffic",
+    "enabled_channel_inventory_matches_actual_provider_configuration",
+    "unqualified_channels_remain_disabled",
+    "customer_claims_never_grant_staff_or_tenant_owner",
+    "cohort_progression_success_rates_and_business_acceptance"
+  ],
+  "required_scenarios": [
+    "wrong_issuer_audience_nonce_pkce_and_replay",
+    "same_email_cross_user_link_attempt",
+    "concurrent_migration_password_and_callback",
+    "forbidden_deleted_or_locally_revoked_identity",
+    "webhook_duplicate_altered_and_out_of_order",
+    "webhook_503_retry_and_ack_before_crash",
+    "missing_event_periodic_compensation",
+    "provider_secret_policy_or_certificate_drift",
+    "database_lock_pool_statement_and_idle_timeout",
+    "worker_crash_expired_lease_and_replica_takeover",
+    "idp_outage_while_existing_product_session_runs",
+    "unknown_mapping_deadletter_review_and_replay",
+    "restore_old_cookie_callback_or_revoked_connection",
+    "unqualified_social_or_enterprise_channel_attempt",
+    "customer_admin_claim_cannot_reach_staff_or_other_tenant"
+  ],
+  "required_zero_metrics": [
+    "identity_misbinding_count",
+    "unexpected_global_user_id_change_count",
+    "unexpected_business_resource_change_count",
+    "cross_tenant_privilege_grant_count",
+    "staff_privilege_escalation_count",
+    "old_password_bypass_count",
+    "restored_revoked_session_acceptance_count",
+    "old_callback_acceptance_count",
+    "identity_resurrection_count",
+    "unresolved_deadletter_count"
+  ],
+  "required_positive_metrics": [
+    "admitted_identity_population",
+    "baseline_verified_identity_count",
+    "worker_replica_count",
+    "load_seconds",
+    "convergence_sample_count",
+    "cohort_user_count",
+    "migration_user_count",
+    "first_run_count",
+    "signup_success_count",
+    "maximum_password_reset_milliseconds",
+    "maximum_provider_disable_milliseconds",
+    "maximum_provider_delete_milliseconds",
+    "maximum_verified_contact_change_milliseconds",
+    "maximum_missed_password_reset_milliseconds",
+    "maximum_missed_provider_disable_milliseconds",
+    "maximum_missed_provider_delete_milliseconds",
+    "maximum_worker_restart_milliseconds"
+  ],
+  "minimum_customer_acceptances": 1,
+  "required_attestation_roles": [
+    "identity-owner",
+    "security",
+    "sre",
+    "customer-admin"
+  ],
+  "artifact_uri_schemes": [
+    "s3",
+    "gs",
+    "az",
+    "oci"
+  ],
+  "verified_workflow_identities": [
+    "spiffe://omnigent/casdoor-identity-readiness-evidence"
+  ],
+  "identity_contract": {
+    "provider_source_lock_sha256": "756eff14f258f4d0472d038bc0d56ca07bac929a8f791c41e788d2cd4d2d5ad4",
+    "maximum_convergence_milliseconds": 300000,
+    "minimum_worker_replicas": 2,
+    "minimum_subjects_per_case": 2,
+    "minimum_load_seconds": 900,
+    "enabled_channels": [
+      "email_password"
+    ]
+  }
+}

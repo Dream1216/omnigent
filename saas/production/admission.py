@@ -37,6 +37,7 @@ _REQUIRED_KINDS = {
     "deletion",
     "commercial",
     "enterprise",
+    "identity",
 }
 _POLICY_FIELDS = {
     "schema_version",

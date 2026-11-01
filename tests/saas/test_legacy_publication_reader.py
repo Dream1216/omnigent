@@ -322,7 +322,7 @@ def test_real_final_production_entry_rejects_unregistered_v2_with_all_original_g
         assert result["bundle"]["production_readiness"] == "blocked"
         assert result["bundle"]["release_decision"] == "NO-GO"
         assert "complete legacy stack is not registered" in json.dumps(result["readiness"])
-        assert result["admission"]["metrics"]["required_kind_count"] == 8
+        assert result["admission"]["metrics"]["required_kind_count"] == 9
         assert result["admission"]["metrics"]["ready_kind_count"] == 0
         assert result["readiness"]["metrics"]["aggregate_gate_count"] == 10
         assert result["readiness"]["metrics"]["derived_ready_gate_count"] == 0

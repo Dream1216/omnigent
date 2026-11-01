@@ -55,6 +55,12 @@
       "path": null,
       "directory": "saas/production/enterprise-evidence",
       "pattern": "*.json"
+    },
+    {
+      "kind": "identity",
+      "path": null,
+      "directory": "saas/production/identity-evidence",
+      "pattern": "*.json"
     }
   ]
 }

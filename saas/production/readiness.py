@@ -18,6 +18,10 @@ from saas.production.deployment import (
     load_deployment_evidence,
     validate_deployment_readiness,
 )
+from saas.production.identity_readiness import (
+    load_identity_evidence,
+    validate_identity_readiness,
+)
 from saas.production.recovery import load_recovery_evidence, validate_recovery_readiness
 from saas.production.slo_capacity import (
     load_slo_capacity_evidence,
@@ -49,6 +53,7 @@ _EVIDENCE_ONLY_PREFIXES = (
     "saas/production/deletion-evidence/",
     "saas/production/deployment-evidence/",
     "saas/production/enterprise-evidence/",
+    "saas/production/identity-evidence/",
     "saas/production/evidence-admission-receipts/",
     "saas/production/recovery-evidence/",
     "saas/production/slo-capacity-evidence/",
@@ -369,6 +374,8 @@ def derive_gate_results(reports: Mapping[str, Mapping[str, Any]]) -> dict[str, d
             "slo_capacity_admission",
             "deletion",
             "deletion_admission",
+            "identity",
+            "identity_admission",
         ),
         _AGGREGATE_GATES[7]: (
             "candidate_revision",
@@ -381,6 +388,8 @@ def derive_gate_results(reports: Mapping[str, Mapping[str, Any]]) -> dict[str, d
             "enterprise_admission",
             "deletion",
             "deletion_admission",
+            "identity",
+            "identity_admission",
         ),
         _AGGREGATE_GATES[9]: (
             "candidate_revision",
@@ -450,6 +459,7 @@ def validate_production_readiness(
     deletion_policy = _load_json(repo / "saas/production/deletion-policy.json")
     commercial_policy = _load_json(repo / "saas/production/commercial-policy.json")
     enterprise_policy = _load_json(repo / "saas/production/enterprise-policy.json")
+    identity_policy = _load_json(repo / "saas/production/identity-policy.json")
     admission_policy = _load_json(repo / "saas/production/evidence-admission-policy.json")
 
     image_evidence = load_release_evidence(
@@ -519,6 +529,14 @@ def validate_production_readiness(
             expected_product_revision=expected_product_revision,
             baseline=baseline,
         ),
+        "identity": validate_identity_readiness(
+            repo,
+            identity_policy,
+            load_identity_evidence(repo, identity_policy),
+            now=current,
+            expected_product_revision=expected_product_revision,
+            baseline=baseline,
+        ),
         "upstream_sync": validate_consecutive_upstream_syncs(repo),
     }
     for kind in (
@@ -530,6 +548,7 @@ def validate_production_readiness(
         "deletion",
         "commercial",
         "enterprise",
+        "identity",
     ):
         reports[f"{kind}_admission"] = _admission_kind_report(admission_report, kind)
     gate_results = derive_gate_results(reports)

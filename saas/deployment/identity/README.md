@@ -4,9 +4,10 @@
 renderer. It preserves all four parent manifests and their evidence bytes and
 adds `kubernetes.identity.yaml` and `identity-release-render-evidence.json`.
 It accepts only the bundled parent sources, a staged release and the reviewed
-`cd4a00000001` schema. Both identity Deployments have **zero replicas**. Final
-rendering remains blocked until identity-specific admission is implemented and
-the required deployment and end-to-end evidence passes.
+`cd4a00000001` schema. Both identity Deployments have **zero replicas**. The
+[identity release gate](../../production/identity-evidence/README.md) requires
+current signed acceptance and measured live convergence. Final rendering remains
+blocked pending deployment activation admission and the required live evidence.
 
 The identity manifest contains separate database-free reader and authenticator
 worker ServiceAccounts, Deployments, ClusterIP TLS Services, disruption budgets,

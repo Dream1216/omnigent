@@ -59,6 +59,7 @@ def _admission_reports(ready: bool = True) -> dict[str, dict[str, object]]:
             "deletion",
             "commercial",
             "enterprise",
+            "identity",
         )
     }
 
@@ -100,6 +101,7 @@ def test_gate_derivation_requires_every_named_verifier() -> None:
         "deletion": _report(True),
         "commercial": _report(False, "real provider invoice missing"),
         "enterprise": _report(True),
+        "identity": _report(True),
         "upstream_sync": _report(True),
         **_admission_reports(),
     }
@@ -128,6 +130,7 @@ def test_manual_pass_cannot_override_a_blocked_derived_gate() -> None:
         "deletion": _report(False),
         "commercial": _report(False),
         "enterprise": _report(False),
+        "identity": _report(False),
         "upstream_sync": _report(True),
         **_admission_reports(False),
     }
@@ -153,6 +156,35 @@ def test_manual_pass_cannot_override_a_blocked_derived_gate() -> None:
     ) in violations
 
 
+def test_missing_identity_domain_or_signature_blocks_foundation_and_enterprise():
+    reports = {
+        name: _report(True)
+        for name in (
+            "candidate_revision",
+            "baseline",
+            "image",
+            "deployment",
+            "recovery",
+            "slo_capacity",
+            "deletion",
+            "commercial",
+            "enterprise",
+            "upstream_sync",
+            "identity",
+        )
+    }
+    reports.update(_admission_reports())
+    for name in ("identity", "identity_admission"):
+        changed = copy.deepcopy(reports)
+        changed[name] = _report(False, "identity live acceptance pending")
+        gates = derive_gate_results(changed)
+        assert gates["p5-production-foundation-gate"]["ready"] is False
+        assert gates["p6-enterprise-identity-audit-api-platform-console-privacy"]["ready"] is False
+        assert gates["p6-billing-ledger-entitlement-quota-subscription"]["ready"] is True
+        del changed[name]
+        assert derive_gate_results(changed)["p5-production-foundation-gate"]["ready"] is False
+
+
 def test_current_overall_readiness_is_structurally_valid_and_no_go() -> None:
     require_current_approval_history(_repo())
     now = datetime(2026, 10, 21, 13, tzinfo=UTC)
@@ -171,6 +203,8 @@ def test_current_overall_readiness_is_structurally_valid_and_no_go() -> None:
     assert report["verifiers"]["upstream_sync"]["production_readiness"] == "ready"
     assert report["verifiers"]["candidate_revision"]["production_readiness"] == "blocked"
     assert report["verifiers"]["deployment"]["production_readiness"] == "blocked"
+    assert report["verifiers"]["identity"]["production_readiness"] == "blocked"
+    assert report["verifiers"]["identity_admission"]["production_readiness"] == "blocked"
     assert report["verifiers"]["baseline_admission"]["production_readiness"] == "blocked"
     assert report["verifiers"]["baseline_admission"]["blockers"] == [
         "no valid signed admission receipt for saas/production/baseline.json"

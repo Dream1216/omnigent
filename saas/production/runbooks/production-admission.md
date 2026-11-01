@@ -62,7 +62,7 @@ permissions. Use it in two separate, auditable runs:
 
 1. Commit the canonical evidence JSON to protected `main`. Dispatch the workflow with
    the exact Product Revision, current `main` SHA as Evidence Revision, and a canonical
-   `receipt_request_json` object using `action=prepare`. It names one of the eight
+   `receipt_request_json` object using `action=prepare`. It names one of the nine
    evidence kinds, its declared path, active signer key ID, globally unique receipt ID,
    UTC issuance/expiry timestamps, and a null signature. The expiry must not exceed
    either the policy maximum age or signer-key expiry.
@@ -140,9 +140,19 @@ the protected default `main` ref. GitHub Environment
 `production-evidence` supplies the reviewer boundary. The workflow accepts only full
 Git SHAs, requires the evidence input to equal the protected dispatch ref's exact SHA,
 checks out that SHA without persisted credentials, and retains full Git history. It
-runs all eight domain verifiers, cryptographic admission, candidate-lineage checks,
+runs all nine domain verifiers, cryptographic admission, candidate-lineage checks,
 and the ten-gate verifier. Compatibility CI tests the implementation but cannot claim
 production admission.
+
+The `identity` evidence kind adds the Casdoor integration acceptance to both
+foundation and enterprise identity gates. Its exact wrapper and referenced
+observation bytes must pass the
+[identity evidence contract](../identity-evidence/README.md), including live
+authenticated HTTPS delivery, signed-OIDC local sessions, omitted-event periodic
+recovery, at least two workers and the measured 300-second convergence bound.
+The production directory has no qualifying record until those observations and
+independent approvals exist. A stage rendering or component test cannot clear
+this gate.
 
 GitHub accepts `workflow_dispatch` only when the workflow file exists on the default
 branch. Merging this contract to a staging or integration branch does not activate a
@@ -165,7 +175,7 @@ uv run python -m saas.scripts.check_production_readiness \
 
 The workflow uses `saas.scripts.run_production_admission` to execute both checks,
 archive their exact bytes, bind their SHA-256 values into one final bundle, and fail
-unless all 8 evidence kinds, all 10 aggregate gates, the ledger, phases, and release
+unless all 9 evidence kinds, all 10 aggregate gates, the ledger, phases, and release
 decision are simultaneously ready. A failed run still uploads diagnostics and never
 changes the acceptance ledger.
 

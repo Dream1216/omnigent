@@ -31,6 +31,7 @@ _KINDS = (
     "deletion",
     "commercial",
     "enterprise",
+    "identity",
 )
 _REVISION = "a" * 40
 _NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
@@ -166,12 +167,12 @@ def test_valid_ed25519_receipts_admit_exact_evidence_bytes(tmp_path: Path) -> No
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
     assert report["metrics"] == {
-        "required_kind_count": 8,
-        "ready_kind_count": 8,
-        "evidence_document_count": 8,
-        "admitted_document_count": 8,
+        "required_kind_count": 9,
+        "ready_kind_count": 9,
+        "evidence_document_count": 9,
+        "admitted_document_count": 9,
         "active_trusted_key_count": 1,
-        "receipt_count": 8,
+        "receipt_count": 9,
     }
 
 
@@ -212,7 +213,7 @@ def test_two_phase_external_signing_round_trip_admits_exact_bytes(tmp_path: Path
 
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
-    assert report["metrics"]["admitted_document_count"] == 8
+    assert report["metrics"]["admitted_document_count"] == 9
 
 
 def test_finalization_rejects_tampered_preparation_and_signature(tmp_path: Path) -> None:
