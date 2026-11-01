@@ -12,7 +12,9 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[2] / "saas/scripts/ci_install_ubuntu_packages.sh"
 
 
-@pytest.mark.parametrize("update_status,configure_only", [(0, False), (17, False), (0, True)])
+@pytest.mark.parametrize(
+    "update_status,configure_only", [(0, False), (17, False), (100, False), (0, True)]
+)
 def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, configure_only):
     commands = tmp_path / "commands"
     commands.mkdir()
@@ -70,6 +72,25 @@ def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, co
         and 'Acquire::https::Timeout "20";' in row["content"]
         for row in configs
     )
+    ubuntu = next(
+        row["content"]
+        for row in configs
+        if row["args"][1] == "/etc/apt/sources.list.d/ubuntu.sources"
+    )
+    assert ubuntu.count("By-Hash: force") == 2
+    assert ubuntu.count("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg") == 2
+    assert "Suites: noble noble-updates\n" in ubuntu
+    assert "Suites: noble-security\n" in ubuntu
+    assert "trusted=yes" not in ubuntu and "http:" not in ubuntu
+    assert all(
+        row["args"][1]
+        in {
+            "/etc/apt/apt-mirrors.txt",
+            "/etc/apt/apt.conf.d/99-omnigent-ci-network",
+            "/etc/apt/sources.list.d/ubuntu.sources",
+        }
+        for row in configs
+    )
     rows = [row for row in commands if row["args"][0] == "apt-get"]
     assert len(rows) == (0 if configure_only else 1 if update_status else 2)
     for row in rows:
@@ -80,6 +101,7 @@ def test_signed_package_setup_stops_on_failed_update(tmp_path, update_status, co
         assert (
             row["sources"].count("signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg") == 3
         )
+        assert row["sources"].count("by-hash=force") == 3
         assert "http:" not in row["sources"] and "azure" not in row["sources"]
     if not update_status and not configure_only:
         assert rows[1]["args"][-6:] == [

@@ -201,7 +201,10 @@ async def test_model_probe_interrupt_terminates_wrapper_children(
         while not Path(sys.argv[2]).exists():
             time.sleep(0.01)
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-        Path(sys.argv[1]).write_text(f"{child.pid} {os.getpid()}")
+        pid_path = Path(sys.argv[1])
+        staged = pid_path.with_suffix(".ready")
+        staged.write_text(f"{child.pid} {os.getpid()}")
+        staged.replace(pid_path)
         if sys.argv[3] == "wait":
             child.wait()
         """)
