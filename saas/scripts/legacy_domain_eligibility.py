@@ -707,3 +707,236 @@ def collect_domain_eligibility(
         + "\n"
     )
     return result
+
+
+BOOTSTRAP_KIND = "legacy_bootstrap_positive_origin/v1"
+_BOOTSTRAP_STORES = (
+    "legacy-security-build-profiles.json",
+    "legacy-security-ci-profiles.json",
+    "legacy-security-original-inputs.json",
+    "legacy-security-pg-profiles.json",
+    "legacy-security-transfer-profiles.json",
+    "legacy-source-qualification-profiles.json",
+)
+# Exact original six-table rows, before adding this explicit opt-in. This is
+# source-CI origin registration, never a future publication run or signature.
+_BOOTSTRAP_ORIGINS = {
+    "Core": (
+        "62b5598cdba624987921cd7c865152564b3e59f4",
+        "84bae20062a79a874c3755e6cf75728029c1f6fc",
+        189,
+        "codex/legacy-validation-core-dc1e9a97",
+        "e1a858001df190c2d993f53d1b8020615bdf48380b400b6318d53e785de78c4d",
+    ),
+    "Gateway": (
+        "b6363d1b99fa9f190589471a21c89f89057e6b88",
+        "e4db6f65c725d5cb7131e4774da3c39082553043",
+        190,
+        "codex/legacy-validation-gateway-3319b59a",
+        "23c54f6b758d79c84128cc03e511d21a6b6a0fa70e99c7dac61d0721dec6762a",
+    ),
+    "Model": (
+        "538eacfab39402307d0b477ba5efc0eddc8007b1",
+        "931eded80ed4a253f6e43311479567109568430a",
+        191,
+        "codex/legacy-validation-model-7cea0940",
+        "01adb054dbe635022b433d32f1ce6160def1c74c18f8a0ca5863753c75663c70",
+    ),
+}
+
+
+def bootstrap_registration(control, profile, policy, *, entries=None):
+    """Only the three reviewed frozen source-CI bundles can opt in."""
+    registration = policy.get("bootstrap_positive_origin")
+    require(
+        isinstance(registration, dict) and set(registration) == {"kind", "source_bundle_sha256"},
+        "bootstrap origin registration fields differ",
+    )
+    component = profile["component"]
+    expected = _BOOTSTRAP_ORIGINS.get(component)
+    require(
+        expected is not None
+        and registration == {"kind": BOOTSTRAP_KIND, "source_bundle_sha256": expected[4]},
+        "bootstrap origin is not an exact reviewed source bundle",
+    )
+    expected = cast(tuple[str, str, int, str, str], expected)
+    if entries is None:
+        entries = {}
+        for name in _BOOTSTRAP_STORES:
+            path = control / "saas/supply_chain" / name
+            require(path.is_file() and not path.is_symlink(), "bootstrap store is unavailable")
+            store = json.loads(path.read_text())
+            key = "inputs" if name == "legacy-security-original-inputs.json" else "profiles"
+            require(
+                set(store) == {"schema_version", key}
+                and type(store["schema_version"]) is int
+                and store["schema_version"] == 1
+                and isinstance(store[key], dict),
+                "bootstrap store shape differs",
+            )
+            entries[name] = store[key].get(component)
+    require(
+        set(entries) == set(_BOOTSTRAP_STORES)
+        and all(isinstance(row, dict) for row in entries.values()),
+        "bootstrap bundle is incomplete",
+    )
+    original = {name: dict(row) for name, row in entries.items()}
+    selected = original["legacy-source-qualification-profiles.json"]
+    require(selected == policy, "bootstrap qualification policy differs from trusted bundle")
+    selected.pop("bootstrap_positive_origin", None)
+    identity = original["legacy-security-ci-profiles.json"]
+    require(
+        entries["legacy-security-build-profiles.json"] == profile
+        and (
+            profile["product_revision"],
+            profile["product_tree"],
+            identity["validation_pr"],
+            identity["validation_base_ref"],
+        )
+        == expected[:4]
+        and native_digest(original) == expected[4],
+        "bootstrap six-table source origin changed",
+    )
+    require(
+        len(identity["workflows"]) == 16
+        and sum(
+            plan["kind"] == "pytest"
+            for jobs in selected["job_evidence"].values()
+            for plan in jobs.values()
+        )
+        == 20,
+        "bootstrap producer or artifact set differs",
+    )
+    return dict(registration)
+
+
+def require_publication_source_origin(control, profile, result, *, entries=None):
+    """Keep strict discovery by default; accept only explicit trusted bootstrap scope."""
+    if result.get("complete_domain_discovery") is True:
+        require(
+            result.get("domain_qualification_kind") != BOOTSTRAP_KIND,
+            "bootstrap positive origin cannot claim complete domain discovery",
+        )
+        return
+    if entries is None:
+        from saas.scripts.legacy_publication_reader import trusted_entries
+
+        entries = trusted_entries(control, profile["component"])
+    policy = entries["legacy-source-qualification-profiles.json"]
+    registration = bootstrap_registration(control, profile, policy, entries=entries)
+    require(
+        result.get("domain_qualification_kind") == BOOTSTRAP_KIND
+        and result.get("complete_domain_discovery") is False
+        and result.get("positive_origin_complete") is True
+        and result.get("global_history") == "NOT_ASSERTED_NOT_NA"
+        and result.get("domain_discovery_sha256") is None
+        and result.get("bootstrap_positive_origin") == registration
+        and result.get("qualification_policy_sha256") == native_digest(policy)
+        and result.get("component") == profile["component"]
+        and all(result.get(k) == profile[k] for k in ("product_revision", "product_tree")),
+        "publication lacks exact trusted bootstrap positive origin",
+    )
+
+
+@dataclass(frozen=True)
+class BootstrapPositiveOrigin:
+    """Native positive proof only; deliberately no global negative discovery."""
+
+    product_revision: str
+    product_tree: str
+    validation_pr: int
+    validation_base_ref: str
+    refusals: tuple[dict[str, Any], ...]
+    observations: tuple[Any, ...]
+    source_bundle_sha256: str
+    discovery_sha256: None = None
+
+
+def collect_bootstrap_positive_origin(profile, identity, policy, destination):
+    # The caller has authenticated the six-table bundle before any native IO.
+    validate_domain_rules(policy, identity)
+    rules = policy["domain_not_applicable"].get(MAIN_WORKFLOW, [])
+    require(bool(rules), "bootstrap origin requires its registered original refusals")
+    destination.mkdir(mode=0o700)
+    results = []
+    for rule in rules:
+        endpoint = f"repos/{REPOSITORY}/actions/runs/{rule['run_id']}/attempts/{rule['attempt']}"
+        run = api(endpoint)
+        jobs = _job_pages(rule["run_id"], rule["attempt"])
+        require(
+            len(jobs) == 1 and jobs[0].get("id") == rule["job_id"], "domain job matrix differs"
+        )
+        check_endpoint = f"repos/{REPOSITORY}/check-runs/{rule['check_id']}"
+        check = api(check_endpoint)
+        log_path = destination / f"job-{rule['job_id']}.log"
+        download_job_log(rule["job_id"], log_path)
+        require(
+            hashlib.sha256(_native_file(MAIN_WORKFLOW, run["head_sha"])).hexdigest()
+            == MAIN_WORKFLOW_SHA256
+            and hashlib.sha256(_native_file(_GATE, rule["trusted_checkout_revision"])).hexdigest()
+            == rule["trusted_gate_sha256"],
+            "executed original domain bytes changed",
+        )
+        results.append(
+            verify_main_domain_refusal(
+                profile, identity, rule, run, jobs[0], check, log_path.read_bytes().decode("utf-8")
+            )
+        )
+        require(
+            api(endpoint) == run
+            and _job_pages(rule["run_id"], rule["attempt"]) == jobs
+            and api(check_endpoint) == check,
+            "native positive refusal changed",
+        )
+    observations = []
+    for field in (
+        "domain_non_execution",
+        "domain_infrastructure_cancellation",
+        "domain_refusal_cancellation",
+    ):
+        for index, rule in enumerate(policy.get(field, {}).get(MAIN_WORKFLOW, [])):
+            endpoint = (
+                f"repos/{REPOSITORY}/actions/runs/{rule['run_id']}/attempts/{rule['attempt']}"
+            )
+            run = api(endpoint)
+            jobs = _job_pages(rule["run_id"], rule["attempt"])
+            path = destination / f"{field}-{index}"
+            path.mkdir(mode=0o700)
+            proof = nonexecution.collect_observation(profile, identity, rule, run, jobs, path)
+            require(
+                nonexecution.typed_observation(proof)
+                and any(
+                    nonexecution.matching_refusal(proof.receipt, refusal) for refusal in results
+                ),
+                "specified native audit lacks exact independent original refusal",
+            )
+            require(
+                api(endpoint) == run and _job_pages(rule["run_id"], rule["attempt"]) == jobs,
+                "specified native audit changed",
+            )
+            observations.append(proof)
+    result = BootstrapPositiveOrigin(
+        profile["product_revision"],
+        profile["product_tree"],
+        identity["validation_pr"],
+        identity["validation_base_ref"],
+        tuple(results),
+        tuple(observations),
+        policy["bootstrap_positive_origin"]["source_bundle_sha256"],
+    )
+    (destination / "positive-origin.json").write_text(
+        json.dumps(
+            {
+                "kind": BOOTSTRAP_KIND,
+                "complete_domain_discovery": False,
+                "global_history": "NOT_ASSERTED_NOT_NA",
+                "source_bundle_sha256": result.source_bundle_sha256,
+                "refusals": results,
+                "observations": [p.receipt for p in observations],
+                "production_admission": False,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return result
