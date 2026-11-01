@@ -163,3 +163,9 @@ Use [the reviewed dead-letter recovery runbook](../../production/casdoor/IDENTIT
 for the separate offline-authorized operations command. It is not mounted into
 either online identity Deployment. The current stage manifests remain at zero
 replicas pending admission; this monitoring guidance does not activate them.
+
+Use [the customer authentication restore procedure](../../production/casdoor/CUSTOMER_AUTH_RESTORE.md)
+after verifying a matched product/IdP/key backup. It requires an isolated target
+with every writer drained and an exact bounded review before invalidating
+restored sessions, OIDC transactions and worker leases. Replaying post-backup
+security facts and qualifying the full production recovery remain required.

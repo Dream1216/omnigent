@@ -118,6 +118,17 @@ do not use the main app runner from [Verify Omnigent](skills/verify-omnigent/SKI
   replay route or online signing key. Alert evaluation uses the pinned Promtool
   preflight and `saas/deployment/identity/alerts.test.yaml`; production routing
   and receiver qualification remain separate release evidence.
+- Restored customer cookies, in-flight OIDC transactions and stale worker leases
+  are invalidated through the isolated maintenance procedure in
+  `saas/production/casdoor/CUSTOMER_AUTH_RESTORE.md`:
+  `tests/saas/test_customer_auth_restore.py`,
+  `tests/saas/test_customer_auth_restore_migration.py`,
+  `tests/saas/test_customer_auth_restore_operations.py`, and
+  `tests/saas/test_customer_auth_restore_postgresql.py`.
+  Confirm a fresh provider login retains the same customer and business IDs
+  while the migrated user's retained old local password stays denied. All
+  writers must be drained; this operation does not reconstruct post-backup
+  security facts or qualify the full backup/IdP/key restore by itself.
 - Private bounded batches and fresh-password authorization:
   `tests/saas/test_credential_migration_cli.py` and
   `tests/saas/test_credential_recovery.py`. Use the synthetic procedure in

@@ -20,7 +20,7 @@ from saas.control_plane.identity_replay import (
 from saas.production.credential_worker_config import (
     CredentialWorkerDatabaseLimits,
     create_credential_worker_sessions,
-    load_credential_worker_config,
+    load_credential_maintenance_config,
 )
 from saas.production.server import verify_installed_build_lineage
 from saas.production.server_config import (
@@ -30,33 +30,10 @@ from saas.production.server_config import (
 )
 
 _KEYS = "OMNIGENT_SAAS_IDENTITY_REPLAY_KEYS_FILE"
-_ALLOWED = frozenset(
-    {
-        _KEYS,
-        "OMNIGENT_SAAS_PRODUCT_REVISION",
-        "OMNIGENT_SAAS_SOURCE_SHA",
-        "OMNIGENT_SAAS_UPSTREAM_REVISION",
-        "OMNIGENT_SAAS_IMAGE_DIGEST",
-        "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION",
-        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION",
-        "OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE",
-        "OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE",
-        "OMNIGENT_SAAS_AUTHENTICATOR_DATABASE_URL_FILE",
-        "OMNIGENT_SAAS_CASDOOR_CONFIG_FILE",
-        "OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE",
-        "OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE",
-        "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE",
-    }
-)
 
 
 def load_identity_replay_config(source: Mapping[str, str]):
-    if any(
-        name.startswith("OMNIGENT_SAAS_") and value.strip() and name not in _ALLOWED
-        for name, value in source.items()
-    ):
-        raise ProductionServerConfigError("identity replay received unrelated authority")
-    release = load_credential_worker_config(source)
+    release = load_credential_maintenance_config(source, extra_inputs=frozenset({_KEYS}))
     try:
         path = _absolute_regular_file(_required(source, _KEYS), name=_KEYS, owner_only=True)
         if path.stat().st_size > 8192:

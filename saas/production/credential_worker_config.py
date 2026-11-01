@@ -65,6 +65,38 @@ _FORBIDDEN_SECRETS = frozenset(
     }
 )
 
+CREDENTIAL_MAINTENANCE_RELEASE_INPUTS = frozenset(
+    {
+        "OMNIGENT_SAAS_PRODUCT_REVISION",
+        "OMNIGENT_SAAS_SOURCE_SHA",
+        "OMNIGENT_SAAS_UPSTREAM_REVISION",
+        "OMNIGENT_SAAS_IMAGE_DIGEST",
+        "OMNIGENT_SAAS_OFFICIAL_SCHEMA_REVISION",
+        "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION",
+        "OMNIGENT_SAAS_SERVICE_ROLE_BINDINGS_FILE",
+        "OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE",
+        "OMNIGENT_SAAS_AUTHENTICATOR_DATABASE_URL_FILE",
+        "OMNIGENT_SAAS_CASDOOR_CONFIG_FILE",
+        "OMNIGENT_SAAS_PLATFORM_MODEL_SERVICE_ROLE_BINDINGS_FILE",
+        "OMNIGENT_SAAS_PLATFORM_ADMIN_SERVICE_ROLE_BINDINGS_FILE",
+        "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE",
+    }
+)
+
+
+def load_credential_maintenance_config(
+    source: Mapping[str, str],
+    *,
+    extra_inputs: frozenset[str] = frozenset(),
+) -> CredentialWorkerConfig:
+    allowed = CREDENTIAL_MAINTENANCE_RELEASE_INPUTS | extra_inputs
+    if any(
+        name.startswith("OMNIGENT_SAAS_") and value.strip() and name not in allowed
+        for name, value in source.items()
+    ):
+        raise ProductionServerConfigError("credential maintenance received unrelated authority")
+    return load_credential_worker_config(source)
+
 
 def load_credential_worker_config(
     environ: Mapping[str, str] | None = None,
