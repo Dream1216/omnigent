@@ -2,7 +2,7 @@
   "saas/scripts/legacy_source_ci.py": {
     "parent_sha256": "cd88ea8b1bfb17d013d435ba705eb9ba4a4af4fb7495eb0d29cd64411dd34eaa",
     "combined_sha256": "592b8f27058b41bb11d644b579d52e85180ffe4232123496080b6f87510a37ab",
-    "approved_change": "Reviewed C142 exact single-BOM native timestamp support and OWNER fixed-main typed policy joins; six other functions byte identical; current BOM AST equals C142 with only Ruff line wrapping; inverse restores the exact parent file",
+    "approved_change": "Reviewed C142 exact single-BOM native timestamp support and OWNER fixed-main typed policy joins; six other functions byte identical; current BOM AST equals C142 with only Ruff line wrapping; inverse restores the exact parent file; exact approved bootstrap budget reservation import/call inverse restores the pre-bootstrap corrected file before all original parent/function checks",
     "preserved_functions": {
       "_instant": "8319a0a5d38bd0c083c634d91a9783b50bf42147d1437867a1770107521a3a0f",
       "checkout_commit": "aa1e98690271ad239bbe690b067e355de05fcd6c616d09609f1fcc397859e7ce",
@@ -17,8 +17,16 @@
       "collect_source_ci_bindings": "5bd9fe4b266d85666bd82f2e1499e7186040c9421a7f5ea7b0906f2bb5dbb27e"
     },
     "type_and_context_correction": {
-      "corrected_sha256": "fc9294ef29aab041fefdee3bbce660f47bb190de9f07152f014e2dd12a04218e",
+      "corrected_sha256": "002c89fff3680483a0ea5459de5a1d431eab2c702ccb026552585454ab01e00d",
       "inverse_fragments": [
+        {
+          "before": "from saas.scripts.legacy_native_evidence import api\n",
+          "after": "from saas.scripts.legacy_native_evidence import api, reserve_native_download\n"
+        },
+        {
+          "before": "",
+          "after": "    reserve_native_download(f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\")\n"
+        },
         {
           "before": "import re\n",
           "after": "import re\nimport select\n"

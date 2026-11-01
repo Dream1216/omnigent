@@ -59,9 +59,9 @@
     "legacy-source-qualification-profiles.json": {
       "key": "profiles",
       "record_sha256": {
-        "Core": "d61742e9b30fb073ced4357139ed0f14bccaa9d503f387fad861204f9c35e61b",
-        "Gateway": "752a2b5a033c5b3fa20e86ebed4d7279b4f59db3be96681036ccc842b5659eda",
-        "Model": "d3d6394743fc087276afe66fd5ad7af9cfbe5016ede3f2a97e45e20e1e5236e9"
+        "Core": "b8b7c54d2e791178d44b5326200f098cb38c0dd41c088665c5aa9c05bb4a5145",
+        "Gateway": "5bcdc91883130bd5614d68ce1c83eb29d39edce42bae84b48abea24ecd5a8966",
+        "Model": "d007a4b6f2d0f3de4878c4cb2e7fc14d008929f7c3a581c437da384ce912e05d"
       }
     }
   }
