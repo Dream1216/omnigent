@@ -205,7 +205,7 @@ def successful_steps(
         and job.get("status") == "completed"
         and job.get("conclusion") == "success"
         and job.get("runner_group_name") == "GitHub Actions"
-        and "ubuntu-latest" in job.get("labels", [])
+        and "ubuntu-24.04" in job.get("labels", [])
         and "self-hosted" not in job.get("labels", []),
         "publication input job is not the exact successful hosted control job",
     )

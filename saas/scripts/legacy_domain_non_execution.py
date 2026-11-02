@@ -220,7 +220,9 @@ def validate_rules(rows, profile, identity):
         seen.add(key)
 
 
-def _verify_native_zero_execution(identity, rule, run, job, check, annotations, logs):
+def _verify_native_zero_execution(
+    identity, rule, run, job, check, annotations, logs, *, expected_runner_label="ubuntu-latest"
+):
     """The unchanged intrinsic native checks shared by both distinct audit contracts."""
     require(
         run.get("id") == rule["run_id"]
@@ -243,7 +245,8 @@ def _verify_native_zero_execution(identity, rule, run, job, check, annotations, 
         and job.get("run_attempt") == rule["attempt"]
         and job.get("head_sha") == check.get("head_sha") == run["head_sha"]
         and job.get("name") == check.get("name") == "evaluate"
-        and job.get("labels") == ["ubuntu-latest"]
+        and expected_runner_label in {"ubuntu-latest", "ubuntu-24.04"}
+        and job.get("labels") == [expected_runner_label]
         and job.get("check_run_url") == f"{native._REPO_URL}/check-runs/{rule['check_id']}"
         and check.get("id") == rule["check_id"]
         and check.get("app", {}).get("id") == 15368
@@ -739,10 +742,32 @@ def validate_unattributed_policy(policy, profile, identity):
 
 
 def verify_unattributed_zero_execution(
-    profile, identity, policy, run, job, check, annotations, logs
+    profile,
+    identity,
+    policy,
+    run,
+    job,
+    check,
+    annotations,
+    logs,
+    *,
+    attachment_workflow_sha256=native.MAIN_WORKFLOW_SHA256,
 ):
     """Verify complete native absence without manufacturing a reviewed registration."""
     validate_unattributed_policy(policy, profile, identity)
+    fixed_runner_absence = (
+        attachment_workflow_sha256 == native.FIXED_RUNNER_WORKFLOW_SHA256
+        and profile.get("component") == COMPATIBILITY_COMPONENT
+    )
+    if fixed_runner_absence:
+        validate_profile(profile, COMPATIBILITY_COMPONENT)
+    require(
+        attachment_workflow_sha256 == native.MAIN_WORKFLOW_SHA256 or fixed_runner_absence,
+        "unattributed attachment workflow is not reviewed",
+    )
+    expected_runner_label = "ubuntu-latest"
+    if fixed_runner_absence and job.get("labels") == ["ubuntu-24.04"]:
+        expected_runner_label = "ubuntu-24.04"
     require(
         native._pr_numbers(run.get("pull_requests")) == []
         and run.get("event") in native._EVENTS
@@ -763,12 +788,26 @@ def verify_unattributed_zero_execution(
         "event": run["event"],
         "attachment_revision": run["head_sha"],
     }
-    _verify_native_zero_execution(identity, coordinates, run, job, check, annotations, logs)
+    _verify_native_zero_execution(
+        identity,
+        coordinates,
+        run,
+        job,
+        check,
+        annotations,
+        logs,
+        expected_runner_label=expected_runner_label,
+    )
     return UnattributedZeroExecutionObservation(
         {
             "kind": UNATTRIBUTED_KIND,
             "workflow": native.MAIN_WORKFLOW,
             "workflow_sha256": policy["workflow_sha256"],
+            **(
+                {"attachment_workflow_sha256": attachment_workflow_sha256}
+                if fixed_runner_absence
+                else {}
+            ),
             **{
                 key: policy[key]
                 for key in (
@@ -814,13 +853,27 @@ def collect_unattributed_zero_execution(profile, identity, policy, run, jobs, de
     annotations = annotations_for(check_id)
     path = destination / f"unattributed-run-{run['id']}-attempt-{run['run_attempt']}.zip"
     download_run_logs(run["id"], run["run_attempt"], path)
+    attachment_workflow_sha256 = hashlib.sha256(
+        native._native_file(native.MAIN_WORKFLOW, run["head_sha"])
+    ).hexdigest()
     require(
-        hashlib.sha256(native._native_file(native.MAIN_WORKFLOW, run["head_sha"])).hexdigest()
-        == native.MAIN_WORKFLOW_SHA256,
+        attachment_workflow_sha256 == native.MAIN_WORKFLOW_SHA256
+        or (
+            attachment_workflow_sha256 == native.FIXED_RUNNER_WORKFLOW_SHA256
+            and profile.get("component") == COMPATIBILITY_COMPONENT
+        ),
         "unattributed zero-execution workflow bytes differ from the reviewed original",
     )
     return verify_unattributed_zero_execution(
-        profile, identity, policy, run, job, check, annotations, path.read_bytes()
+        profile,
+        identity,
+        policy,
+        run,
+        job,
+        check,
+        annotations,
+        path.read_bytes(),
+        attachment_workflow_sha256=attachment_workflow_sha256,
     )
 
 
@@ -1244,11 +1297,25 @@ def _verify_compatibility_unobserved_job(
 def collect_unattributed_audit(
     profile, identity, zero_policy, bootstrap_policy, run, jobs, destination
 ):
+    attachment_workflow_sha256 = hashlib.sha256(
+        native._native_file(native.MAIN_WORKFLOW, run["head_sha"])
+    ).hexdigest()
+    fixed_runner_absence = (
+        attachment_workflow_sha256 == native.FIXED_RUNNER_WORKFLOW_SHA256
+        and profile.get("component") == COMPATIBILITY_COMPONENT
+    )
     require(
-        hashlib.sha256(native._native_file(native.MAIN_WORKFLOW, run["head_sha"])).hexdigest()
-        == native.MAIN_WORKFLOW_SHA256,
+        attachment_workflow_sha256 == native.MAIN_WORKFLOW_SHA256 or fixed_runner_absence,
         "unattributed native audit workflow bytes differ",
     )
+    if fixed_runner_absence:
+        require(
+            zero_policy is not None and len(jobs) == 1 and jobs[0].get("steps") == [],
+            "fixed-runner attachment requires one native zero-execution job",
+        )
+        return collect_unattributed_zero_execution(
+            profile, identity, zero_policy, run, jobs, destination
+        )
     if not jobs:
         require(zero_policy is not None, "no-job native audit policy is disabled")
         prefix = f"{native._ROOT}/actions/runs/{run['id']}/attempts/{run['run_attempt']}"

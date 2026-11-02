@@ -221,7 +221,7 @@ class NativeRenewal:
                 "pull_number": 9000 + number,
             }
 
-    def job(self, run, name, names, checkouts=None, stamp=None):
+    def job(self, run, name, names, checkouts=None, stamp=None, *, runner_label="ubuntu-latest"):
         stamp = stamp or self.now - timedelta(hours=1)
         job_id = self.identifier()
         steps, lines = [], []
@@ -253,7 +253,7 @@ class NativeRenewal:
             "status": "completed",
             "conclusion": "success",
             "runner_group_name": "GitHub Actions",
-            "labels": ["ubuntu-latest"],
+            "labels": [runner_label],
             "check_run_url": f"https://api.github.com/repos/{publisher.REPOSITORY}/check-runs/{job_id}",
             "steps": steps,
         }
@@ -539,6 +539,7 @@ class NativeRenewal:
                             "Checkout exact PG product": data["profile"]["product_revision"],
                         },
                         stamp,
+                        runner_label="ubuntu-24.04",
                     )
                     step = next(
                         s
@@ -607,6 +608,7 @@ class NativeRenewal:
                         publisher.FRESH_STEPS[2]: data["profile"]["product_revision"],
                     },
                     stamp,
+                    runner_label="ubuntu-24.04",
                 )
                 facts = controller.wheel_source_facts(
                     data["path"], data["wheel"], data["profile"], self.control_sha
@@ -950,6 +952,7 @@ class NativeRenewal:
                             publisher.PRODUCT_CHECKOUT: data["profile"]["product_revision"],
                         },
                         item["stamp"],
+                        runner_label="ubuntu-24.04",
                     )
                     path = self.root / f"export-{context['run_id']}-{role}.zip"
                     archive(export, path)
@@ -1012,6 +1015,7 @@ class NativeRenewal:
                         publisher.PRODUCT_CHECKOUT: data["profile"]["product_revision"],
                     },
                     item["stamp"],
+                    runner_label="ubuntu-24.04",
                 )
                 path = self.root / f"export-{context['run_id']}-signatures.zip"
                 archive(export, path)

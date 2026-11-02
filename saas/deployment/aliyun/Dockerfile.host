@@ -169,6 +169,8 @@ RUN printf '%s\n' 'export PATH="/opt/venv/bin:/opt/omnigent-host-cli/.github/ci-
  && node -e 'const v=process.versions.node.split(".").map(Number);if(v[0]<22||(v[0]===22&&v[1]<13))process.exit(1)' \
  && mkdir -p /tmp/omnigent-host-readiness \
  && HOME=/tmp/omnigent-host-readiness \
+      TMPDIR=/tmp/omnigent-host-readiness \
+      NODE_DISABLE_COMPILE_CACHE=1 \
       CODEX_HOME=/tmp/omnigent-host-readiness/codex \
       PI_CODING_AGENT_DIR=/tmp/omnigent-host-readiness/pi \
       /opt/venv/bin/python -B -I -c 'from omnigent.onboarding.harness_install import harness_cli_installed; assert all(harness_cli_installed(x) for x in ("pi","openai"))' \

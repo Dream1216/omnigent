@@ -208,7 +208,7 @@ def _write_log_diagnostic(destination: Path, diagnostic: dict[str, Any]) -> None
         pass
 
 
-def download_job_log(job_id: int, destination: Path) -> None:
+def _download_job_log_direct(job_id: int, destination: Path) -> None:
     """Fetch a bounded native log directly; never follow an artifact-provided URL."""
     require(type(job_id) is int and job_id > 0, "invalid native job ID")
     reserve_native_download(f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs")
@@ -324,6 +324,25 @@ def download_job_log(job_id: int, destination: Path) -> None:
                 ],
             },
         )
+
+
+def download_job_log(job_id: int, destination: Path) -> None:
+    try:
+        _download_job_log_direct(job_id, destination)
+    except ValueError as error:
+        if str(error) != "native job log download failed or timed out":
+            raise
+        try:
+            diagnostic = json.loads(
+                destination.with_name(destination.name + ".native-download.json").read_text()
+            )
+        except (OSError, ValueError):
+            raise error from None
+        if diagnostic["deadline_expired"] or diagnostic["returncode"] in {None, 0}:
+            raise
+        from saas.scripts.legacy_job_log_archive import recover_job_log
+
+        recover_job_log(job_id, destination)
 
 
 def _job_pages(run_id: int, attempt: int) -> list[dict[str, Any]]:

@@ -396,9 +396,18 @@ def _inspect_run(
             "association_basis": "native-PR-number",
             "technical_gate_waiver": False,
         }
+    attachment_workflow_sha256 = hashlib.sha256(
+        domain._native_file(domain.MAIN_WORKFLOW, run["head_sha"])
+    ).hexdigest()
+    fixed_runner_absence = (
+        attachment_workflow_sha256 == domain.FIXED_RUNNER_WORKFLOW_SHA256
+        and profile.get("component") == nonexecution.COMPATIBILITY_COMPONENT
+        and not numbers
+        and run.get("status") == "completed"
+        and run.get("conclusion") in {"cancelled", "skipped"}
+    )
     require(
-        hashlib.sha256(domain._native_file(domain.MAIN_WORKFLOW, run["head_sha"])).hexdigest()
-        == domain.MAIN_WORKFLOW_SHA256,
+        attachment_workflow_sha256 == domain.MAIN_WORKFLOW_SHA256 or fixed_runner_absence,
         "domain workflow bytes are not the reviewed original",
     )
     latest = api(f"{_ROOT}/actions/runs/{run['id']}")
@@ -424,6 +433,11 @@ def _inspect_run(
         matches = [
             row for row in audit_rules if (row["run_id"], row["attempt"]) == (run["id"], attempt)
         ]
+        require(
+            not fixed_runner_absence
+            or (not matches and observed.get("conclusion") in {"cancelled", "skipped"}),
+            "fixed-runner attachment can only receive an unattributed absence audit",
+        )
         if observed.get("conclusion") == "cancelled" and not numbers and not matches:
             cancellation_jobs = _job_pages(run["id"], attempt)
             if len(cancellation_jobs) == 1 and _cancelled_other_pr_context(cancellation_jobs[0]):

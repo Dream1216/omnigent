@@ -17,6 +17,7 @@ from saas.scripts.protected_legacy_initial_build import REPOSITORY
 
 MAIN_WORKFLOW = ".github/workflows/saas-n1-merge-gate.yml"
 MAIN_WORKFLOW_SHA256 = "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3"
+FIXED_RUNNER_WORKFLOW_SHA256 = "5609a459236346591c40df6305992eb8cd82b3cbf2b0a81081c830c50ebf8624"
 _GATE = ".github/actions/compat-smoke-saas-n1-gate/evaluate.sh"
 _ERROR = "##[error]resolved PR is not an open main-targeting PR"
 

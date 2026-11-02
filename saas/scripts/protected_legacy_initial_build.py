@@ -497,7 +497,7 @@ def verify_build_artifact(
         and job.get("status") == "completed"
         and job.get("conclusion") == "success"
         and job.get("runner_group_name") == "GitHub Actions"
-        and "ubuntu-latest" in job.get("labels", []),
+        and "ubuntu-24.04" in job.get("labels", []),
         "original unprivileged hosted build job is not successful",
     )
     # The existing generic promotion helper cannot represent component and attempt.

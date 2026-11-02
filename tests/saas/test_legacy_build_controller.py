@@ -721,6 +721,8 @@ def test_default_worker_registrations_are_empty_deny(tmp_path):
         "expired_after_download",
         "failed_after_download",
         "wrong_actor",
+        "old_runner",
+        "self_hosted",
     ],
 )
 def test_native_fresh_wheel_download_binds_control_run_and_rechecks_after_transfer(
@@ -748,7 +750,7 @@ def test_native_fresh_wheel_download_binds_control_run_and_rechecks_after_transf
         "status": "completed",
         "conclusion": "success",
         "runner_group_name": "GitHub Actions",
-        "labels": ["ubuntu-latest"],
+        "labels": ["ubuntu-24.04"],
     }
     data = b"native ZIP"
     digest = hashlib.sha256(data).hexdigest()
@@ -762,6 +764,10 @@ def test_native_fresh_wheel_download_binds_control_run_and_rechecks_after_transf
     }
     if fault == "wrong_actor":
         run["actor"]["login"] = "other"
+    elif fault == "old_runner":
+        job["labels"] = ["ubuntu-latest"]
+    elif fault == "self_hosted":
+        job.update(runner_group_name="Self-hosted", labels=["self-hosted", "ubuntu-24.04"])
     current_reads = 0
     artifact_reads = 0
 
@@ -1016,6 +1022,7 @@ def test_source_and_pg_jobs_preserve_control_identity_and_read_only_boundaries()
     workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
     for job_name in ("build-initial", "qualify-source", "verify-product-pg", "collect-product-pg"):
         job = workflow["jobs"][job_name]
+        assert job["runs-on"] == "ubuntu-24.04"
         assert job["env"]["CONTROL_REVISION"] == "${{ github.sha }}"
         assert "refs/heads/main" in job["if"]
         assert "environment" not in job
