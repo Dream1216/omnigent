@@ -82,6 +82,7 @@ def old_material(request, monkeypatch):
 def native_original(data, destination, monkeypatch, *, expired=False):
     """Use the complete original collector; mock authenticated network/process boundaries."""
     profile, original = data["profile"], data["admission"]["original_pr_oci"]
+    component = profile["component"]
     transfer = data["admission"]["transfer_profile"]
     workflow = b"fixture exact candidate workflow bytes\n"
     transfer["workflow_sha256"] = hashlib.sha256(workflow).hexdigest()
@@ -111,7 +112,7 @@ def native_original(data, destination, monkeypatch, *, expired=False):
     for name, (key, value) in records.items():
         path = control / "saas/supply_chain" / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"schema_version": 1, key: {"Core": value}}))
+        path.write_text(json.dumps({"schema_version": 1, key: {component: value}}))
     repository = {"full_name": publisher.REPOSITORY}
     api_url = "https://api.github.com/repos/" + publisher.REPOSITORY
     head = {"sha": profile["product_revision"], "ref": "fixture-source", "repo": repository}
@@ -152,7 +153,14 @@ def native_original(data, destination, monkeypatch, *, expired=False):
     }
     collector = publisher.download_original_oci.__globals__["collect_native_pr_oci"]
     verifier = collector.__globals__["verify_pr_oci_artifact"]
-    step_names = verifier.__globals__["_REQUIRED_STEPS"]
+    step_names = (
+        *verifier.__globals__["_REQUIRED_STEPS"][:-1],
+        (
+            "Upload unsigned OCI bytes for isolated PR validation"
+            if component == "Compatibility018"
+            else "Retain sealed OCI for frozen legacy validation"
+        ),
+    )
     steps = []
     for number, name in enumerate(step_names, 1):
         start = data["old"] + timedelta(minutes=number)
@@ -182,7 +190,9 @@ def native_original(data, destination, monkeypatch, *, expired=False):
         "id": original["artifact_id"],
         "expired": expired,
         "name": (
-            f"legacy-validation-oci-Core-{profile['product_revision']}-"
+            f"saas-oci-validation-{profile['product_revision']}"
+            if component == "Compatibility018"
+            else f"legacy-validation-oci-{component}-{profile['product_revision']}-"
             f"{run['id']}-{run['run_attempt']}"
         ),
         "size_in_bytes": original["zip_size"],
@@ -238,6 +248,74 @@ def native_original(data, destination, monkeypatch, *, expired=False):
 
     monkeypatch.setattr(subprocess, "Popen", spawn)
     return control, calls
+
+
+@pytest.mark.parametrize("fault", [None, "legacy_name", "legacy_step", "actor", "revision"])
+def test_compatibility_OCI_transfer_preserves_native_producer_boundaries(
+    old_material, tmp_path, monkeypatch, fault
+):
+    data = old_material
+    profile = data["profile"]
+    profile["component"] = "Compatibility018"
+    transfer = data["admission"]["transfer_profile"]
+    transfer.update(component="Compatibility018", base_ref="codex/p18-a7-validation-base-20261102")
+    original = data["admission"]["original_pr_oci"]
+    original.update(component="Compatibility018", base_ref=transfer["base_ref"])
+    collector = publisher.download_original_oci.__globals__["collect_native_pr_oci"]
+    verifier = collector.__globals__["verify_pr_oci_artifact"]
+    registered_digest = hashlib.sha256(
+        json.dumps(profile, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+    for validate in (
+        collector.__globals__["load_profile"],
+        verifier.__globals__["validate_profile"],
+    ):
+        monkeypatch.setitem(
+            validate.__globals__, "_COMPATIBILITY_PROFILE_SHA256", registered_digest
+        )
+    control, _ = native_original(data, tmp_path / "native", monkeypatch)
+    registered_transfer = hashlib.sha256(
+        json.dumps(transfer, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+    monkeypatch.setitem(
+        verifier.__globals__, "_COMPATIBILITY_TRANSFER_SHA256", registered_transfer
+    )
+    native_api = publisher.api.__globals__["_native_api"]
+
+    def changed_api(endpoint):
+        value = native_api(endpoint)
+        if fault == "legacy_name" and "/artifacts/" in endpoint:
+            value["name"] = "legacy-validation-oci-Compatibility018-other-source"
+        elif fault == "legacy_step":
+            jobs = value.get("jobs", []) if isinstance(value, dict) else []
+            if "/actions/jobs/" in endpoint:
+                jobs = [value]
+            for job in jobs:
+                job["steps"][-1]["name"] = "Retain sealed OCI for frozen legacy validation"
+        elif "/actions/runs/" in endpoint and "/jobs?" not in endpoint:
+            if fault == "actor":
+                value["actor"]["login"] = "another-actor"
+            elif fault == "revision":
+                value["head_sha"] = "e" * 40
+        return value
+
+    monkeypatch.setitem(publisher.api.__globals__, "_native_api", changed_api)
+    arguments = {
+        key: original[key]
+        for key in ("run_id", "attempt", "artifact_id", "zip_size", "zip_sha256", "seal_sha256")
+    }
+    if fault:
+        with pytest.raises(ValueError):
+            collector(control, "Compatibility018", **arguments, destination=tmp_path / "collected")
+    else:
+        result = collector(
+            control, "Compatibility018", **arguments, destination=tmp_path / "collected"
+        )
+        assert result["original_oci"]["component"] == "Compatibility018"
+        assert result["original_oci"]["product_revision"] == profile["product_revision"]
+        assert result["native_artifact"]["name"] == (
+            "saas-oci-validation-" + profile["product_revision"]
+        )
 
 
 @pytest.mark.parametrize("fault", [None, "expired", "stale_new_DB", "high", "different_OCI"])

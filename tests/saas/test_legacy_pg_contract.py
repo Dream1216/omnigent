@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -137,3 +139,71 @@ def test_default_PG_registry_remains_empty(scenario, monkeypatch):
     monkeypatch.setenv("GITHUB_SHA", revision)
     with pytest.raises(ValueError, match="no complete exact-component PG input profile"):
         pg.verify_pg_source(control, scenario["product"], "Core", revision)
+
+
+@pytest.mark.parametrize("scenario", [{"pg_inputs": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "missing", "hash", "multiple_hashes"])
+def test_compatibility_PG_profile_reuses_exact_source_and21_path_contract(
+    scenario, monkeypatch, fault
+):
+    control, product = scenario["control"], scenario["product"]
+    generic = control / ".github/actions/compat-smoke-saas-n1-gate/evaluate.sh"
+    before = generic.read_bytes()
+    build_path = control / "saas/supply_chain/legacy-security-build-profiles.json"
+    builds = json.loads(build_path.read_text())
+    profile = copy.deepcopy(builds["profiles"]["Core"])
+    profile["component"] = "Compatibility018"
+    builds["profiles"]["Compatibility018"] = profile
+    build_path.write_text(json.dumps(builds))
+    digest = hashlib.sha256(
+        json.dumps(profile, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+    for function in (pg.load_profile, pg.verify_source_delta):
+        monkeypatch.setitem(function.__globals__, "_COMPATIBILITY_PROFILE_SHA256", digest)
+    path = control / "saas/supply_chain/legacy-security-pg-profiles.json"
+    store = json.loads(path.read_text())
+    selected = copy.deepcopy(store["profiles"]["Core"])
+    selected["component"] = "Compatibility018"
+    inputs = selected["trusted_inputs"]
+    first = next(iter(inputs))
+    if fault == "missing":
+        inputs.pop(first)
+    elif fault == "hash":
+        inputs[first] = "0" * 64
+    elif fault == "multiple_hashes":
+        inputs[first] += "," + "f" * 64
+    store["profiles"]["Compatibility018"] = selected
+    path.write_text(json.dumps(store))
+    subprocess.run(["git", "add", "."], cwd=control, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "fixture owns reviewed compatibility PG registration"],
+        cwd=control,
+        check=True,
+    )
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=control, text=True
+    ).strip()
+    monkeypatch.setenv("GITHUB_SHA", revision)
+    if fault:
+        with pytest.raises(ValueError):
+            pg.verify_pg_source(control, product, "Compatibility018", revision)
+    else:
+        result = pg.verify_pg_source(control, product, "Compatibility018", revision)
+        assert result["trusted_input_count"] == 21
+        assert result["product_revision"] == profile["product_revision"]
+    assert generic.read_bytes() == before
+
+
+def test_registered_compatibility_PG_inputs_preserve_the_generic_path_inventory():
+    store = json.loads((ROOT / "saas/supply_chain/legacy-security-pg-profiles.json").read_text())
+    profile = store["profiles"]["Compatibility018"]
+    assert profile["product_revision"] == "ba024657ad464ddf022c8ad8bb41610aef949b46"
+    assert profile["product_tree"] == "6963eae5b673c3b6f6c9d3be45a0192a51586060"
+    assert set(profile["trusted_inputs"]) == set(pg.trusted_pg_paths(ROOT))
+    assert len(profile["trusted_inputs"]) == 21
+    assert (
+        hashlib.sha256(
+            json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        == "4536a99df6b93146a0d803a47fc7674732308f631d31427b7ff15f9b7bbfdcc4"
+    )

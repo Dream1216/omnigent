@@ -44,8 +44,10 @@ from saas.scripts.legacy_source_ci import (
 from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import (
     BASELINES,
+    COMPATIBILITY_COMPONENT,
     REPOSITORY,
     load_profile,
+    validate_profile,
     verify_pr_tree,
     verify_source_delta,
 )
@@ -67,6 +69,28 @@ _MANDATORY_TECHNICAL = {
     ".github/workflows/docker-build.yml",
     ".github/workflows/saas-image-candidate.yml",
     ".github/workflows/saas-n1-compat-image.yml",
+}
+_COMPATIBILITY_PATH_FILTERS = {
+    ".github/workflows/setup-harness-cli-test.yml": (
+        "d0a58addba9cf515415f73253497ee1dc3818fee6bddb9ea77f9b8d2be4d8379",
+        (
+            ".github/actions/setup-harness-cli/**",
+            ".github/ci-deps/package.json",
+            ".github/workflows/setup-harness-cli-test.yml",
+        ),
+    ),
+    ".github/workflows/web-tests.yml": (
+        "5d9ba9571ecebf279e79eb24a1d578d56d1dde49df5b0788d77a5132c5218f6e",
+        (
+            "web/**",
+            "package.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            ".npmrc",
+            ".github/actions/setup-pnpm/**",
+            ".github/workflows/web-tests.yml",
+        ),
+    ),
 }
 
 
@@ -148,10 +172,44 @@ def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[st
     return policy
 
 
+def _required_technical_workflows(policy, identity, actual_catalog, profile):
+    if policy.get("component") != COMPATIBILITY_COMPONENT:
+        return _MANDATORY_TECHNICAL
+    require(isinstance(profile, dict), "compatibility path scope needs the exact source profile")
+    validate_profile(profile, COMPATIBILITY_COMPONENT)
+    require(
+        all(
+            policy[key] == identity[key] == profile[key]
+            for key in ("component", "product_revision", "product_tree")
+        )
+        and identity["validation_pr"] == 214
+        and identity["validation_base_ref"] == "codex/p18-a7-validation-base-20261102",
+        "compatibility path scope differs from the exact source and PR",
+    )
+    for path, (source_hash, patterns) in _COMPATIBILITY_PATH_FILTERS.items():
+        require(
+            actual_catalog.get(path) == source_hash
+            and policy["workflow_catalog"][path]["disposition"] == "original-not-triggered",
+            "compatibility path-filtered workflow bytes or disposition differ",
+        )
+        require(
+            not any(
+                delta["path"] == pattern
+                or (pattern.endswith("/**") and delta["path"].startswith(pattern[:-2]))
+                for delta in profile["source_delta"]
+                for pattern in patterns
+            ),
+            "compatibility source changes match an original workflow path filter",
+        )
+    return _MANDATORY_TECHNICAL - _COMPATIBILITY_PATH_FILTERS.keys()
+
+
 def validate_qualification_policy(
     policy: dict[str, Any],
     identity: dict[str, Any],
     actual_catalog: dict[str, str],
+    *,
+    profile: dict[str, Any] | None = None,
 ) -> None:
     require(
         policy["identity_contract_sha256"] == _digest(identity),
@@ -188,7 +246,7 @@ def validate_qualification_policy(
         )
     validate_domain_rules(policy, identity)
     require(
-        required >= _MANDATORY_TECHNICAL
+        required >= _required_technical_workflows(policy, identity, actual_catalog, profile)
         and required == {row["path"] for row in identity["workflows"]},
         "complete mandatory technical workflow set differs",
     )
@@ -410,6 +468,15 @@ def assess_all_app_policy(
         ...,
     ] = (),
 ) -> dict[str, Any]:
+    if policy.get("component") == COMPATIBILITY_COMPONENT:
+        require(
+            not any(
+                run.get("path") in _COMPATIBILITY_PATH_FILTERS
+                for snapshot in snapshots.values()
+                for run in snapshot["runs"]
+            ),
+            "native compatibility workflow run contradicts original path-filtered scope",
+        )
     require(
         isinstance(domain_observations, tuple)
         and all(nonexecution.typed_observation(row) for row in domain_observations)
@@ -781,7 +848,7 @@ def _qualify_source_ci(
     identity = _load_contract(control, profile)
     policy = load_qualification_policy(control, profile)
     catalog = workflow_catalog(product, profile["product_revision"])
-    validate_qualification_policy(policy, identity, catalog)
+    validate_qualification_policy(policy, identity, catalog, profile=profile)
     bootstrap = "bootstrap_positive_origin" in policy
     registration = bootstrap_registration(control, profile, policy) if bootstrap else None
     if bootstrap:

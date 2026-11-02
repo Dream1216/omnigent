@@ -38,6 +38,19 @@
       },
       "product_revision": "538eacfab39402307d0b477ba5efc0eddc8007b1",
       "product_tree": "931eded80ed4a253f6e43311479567109568430a"
+    },
+    "Compatibility018": {
+      "component": "Compatibility018",
+      "product_revision": "ba024657ad464ddf022c8ad8bb41610aef949b46",
+      "product_tree": "6963eae5b673c3b6f6c9d3be45a0192a51586060",
+      "original_pr_oci": {
+        "run_id": 41401723637,
+        "attempt": 1,
+        "artifact_id": 13130391401,
+        "zip_size": 5101757043,
+        "zip_sha256": "603250858435617d80a73a80da4046f5fb3d4933aa5c79ec74f52f7224960421",
+        "seal_sha256": "c5a1d32a46ed62a20234031567fdffb422ddb34c1d9e982a2f253f9affa18ce8"
+      }
     }
   },
   "schema_version": 1

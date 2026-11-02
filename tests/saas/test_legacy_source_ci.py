@@ -366,3 +366,27 @@ def test_collector_binds_control_profiles_native_pages_sources_and_final_PR(
         )
         assert value["coverage_all_app_PG_image_production_admission"] is False
         assert snapshots == 2
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {"total_count": False, "jobs": []},
+        {"total_count": 1, "jobs": []},
+        {"total_count": 0, "jobs": [{"id": 1}]},
+    ],
+)
+def test_zero_native_job_inventory_is_observable_but_never_required_job_success(
+    native, monkeypatch, payload
+):
+    value = {"total_count": 0, "jobs": []} if payload is None else payload
+    monkeypatch.setattr(reader, "api", lambda _endpoint: value)
+    if payload is not None:
+        with pytest.raises(ValueError):
+            reader._job_pages(42, 1)
+        return
+    assert reader._job_pages(42, 1) == []
+    run = {**native["original_run"], "status": "completed", "conclusion": "success"}
+    with pytest.raises(ValueError, match="native job matrix differs"):
+        reader.verify_job_set(run, [], expected(native), run["head_sha"])

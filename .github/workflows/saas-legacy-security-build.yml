@@ -7,7 +7,7 @@ on:
         description: Exact legacy component registered in the reviewed main profiles
         type: choice
         required: true
-        options: [Core, Gateway, Model]
+        options: [Core, Gateway, Model, Compatibility018]
 
 permissions:
   contents: read

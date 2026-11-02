@@ -79,6 +79,21 @@
       "normal_EOF_full_statistics": true,
       "stop_and_join_before_diagnostic": true,
       "partial_statistics_stderr_complete": false
+    },
+    "compatibility_scope_correction": {
+      "corrected_sha256": "d14adc81514286b8ecfe7869cb80c164e6936f530cd476a20999f0cfc965ee43",
+      "restored_sha256": "002c89fff3680483a0ea5459de5a1d431eab2c702ccb026552585454ab01e00d",
+      "context": "Exact proposed Compatibility018 delta; inverse restores frozen H source before all existing parent/function checks. Review only; no source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "            f\"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}\"\n        )\n        require(\n            type(value.get(\"total_count\")) is int and 0 < value[\"total_count\"] <= 512,\n            \"native job count is invalid\",\n        )\n        require(\n",
+          "after": "            f\"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}\"\n        )\n        require(\n            type(value.get(\"total_count\")) is int and 0 <= value[\"total_count\"] <= 512,\n            \"native job count is invalid\",\n        )\n        require(\n"
+        },
+        {
+          "before": "        )\n        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(isinstance(rows, list) and bool(rows), \"native job page is missing\")\n        jobs.extend(cast(list[dict[str, Any]], rows))\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n",
+          "after": "        )\n        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(\n            isinstance(rows, list) and (bool(rows) or (total == 0 and page == 1)),\n            \"native job page is missing\",\n        )\n        jobs.extend(cast(list[dict[str, Any]], rows))\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
@@ -134,6 +149,21 @@
         {
           "before": "        stream = bundle.extractfile(member)\n        require(stream is not None, \"missing Syft executable\")\n        with (root / \"syft\").open(\"xb\") as output:\n            shutil.copyfileobj(stream, output)\n    (root / \"syft\").chmod(0o700)\n    return root / \"syft\"\n\n",
           "after": "        stream = bundle.extractfile(member)\n        require(stream is not None, \"missing Syft executable\")\n        with (root / \"syft\").open(\"xb\") as output:\n            shutil.copyfileobj(cast(BinaryIO, stream), output)\n    (root / \"syft\").chmod(0o700)\n    return root / \"syft\"\n\n"
+        }
+      ]
+    },
+    "compatibility_scope_correction": {
+      "corrected_sha256": "837fee182ee8894a68c93af5dcdc14d0263baeb0d9d3f1a4ed38de2fcd9a4b6a",
+      "restored_sha256": "f8f1cda86c8e22fcfe173cfb1d35f95849e130332122afb4d5c3ba34fd28bc3b",
+      "context": "Exact proposed Compatibility018 delta; inverse restores frozen H source before all existing parent/function checks. Review only; no source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "from saas.scripts.legacy_control_results import collect_pg_receipts, verify_control_run\nfrom saas.scripts.legacy_native_evidence import api, preserve_native_evidence\nfrom saas.scripts.legacy_pr_candidate import (\n    UPLOAD_STEP,\n    load_transfer_profile,\n    transfer_provenance,\n)\nfrom saas.scripts.legacy_pytest_results import verify_job_artifact_identity\nfrom saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log\n",
+          "after": "from saas.scripts.legacy_control_results import collect_pg_receipts, verify_control_run\nfrom saas.scripts.legacy_native_evidence import api, preserve_native_evidence\nfrom saas.scripts.legacy_pr_candidate import (\n    UPLOAD_STEP as UPLOAD_STEP,\n)\nfrom saas.scripts.legacy_pr_candidate import (\n    load_transfer_profile,\n    transfer_provenance,\n    upload_step_name,\n)\nfrom saas.scripts.legacy_pytest_results import verify_job_artifact_identity\nfrom saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log\n"
+        },
+        {
+          "before": "        jobs = [job for job in result[\"native_jobs\"] if job.get(\"id\") == original[\"job_id\"]]\n        require(len(jobs) == 1, \"original OCI upload has no unique native producer job\")\n        job = jobs[0]\n        uploads = [step for step in job.get(\"steps\", []) if step.get(\"name\") == UPLOAD_STEP]\n        require(len(uploads) == 1, \"original OCI producer upload step is ambiguous\")\n        metadata = result[\"native_artifact\"]\n        verify_job_artifact_identity(\n",
+          "after": "        jobs = [job for job in result[\"native_jobs\"] if job.get(\"id\") == original[\"job_id\"]]\n        require(len(jobs) == 1, \"original OCI upload has no unique native producer job\")\n        job = jobs[0]\n        uploads = [\n            step\n            for step in job.get(\"steps\", [])\n            if step.get(\"name\") == upload_step_name(profile[\"component\"])\n        ]\n        require(len(uploads) == 1, \"original OCI producer upload step is ambiguous\")\n        metadata = result[\"native_artifact\"]\n        verify_job_artifact_identity(\n"
         }
       ]
     }
@@ -239,6 +269,17 @@
         {
           "before": "  independent-readback:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: attest-exact-inputs\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
           "after": "  independent-readback:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: attest-exact-inputs\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        }
+      ]
+    },
+    "compatibility_scope_correction": {
+      "corrected_sha256": "d93fd878ed55b627c8b0da10d7e9487c436174455cdb662a664c7eb1252a56b0",
+      "restored_sha256": "6fddf0695eb69c8a25d353f7e381fa89df3774139b07d8e14083080ca2320d3b",
+      "context": "Exact proposed Compatibility018 delta; inverse restores frozen H source before all existing parent/function checks. Review only; no source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "        description: Exact legacy component registered in the reviewed main profiles\n        type: choice\n        required: true\n        options: [Core, Gateway, Model]\n\npermissions:\n  contents: read\n",
+          "after": "        description: Exact legacy component registered in the reviewed main profiles\n        type: choice\n        required: true\n        options: [Core, Gateway, Model, Compatibility018]\n\npermissions:\n  contents: read\n"
         }
       ]
     }

@@ -433,3 +433,141 @@ def test_full_consumer_rejects_missing_capability_and_changed_late_native_data(
         monkeypatch.setattr(qualifier, "collect_source_ci_bindings", collect)
     with pytest.raises(ValueError):
         invoke(owner, tmp_path)
+
+
+_COMPATIBILITY_OWNER_ROW = {
+    "kind": "legacy_original_OWNER_security_policy_decision/v1",
+    "component": "Compatibility018",
+    "product_revision": "ba024657ad464ddf022c8ad8bb41610aef949b46",
+    "product_tree": "6963eae5b673c3b6f6c9d3be45a0192a51586060",
+    "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
+    "validation_pr": 214,
+    "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    "workflow_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
+    "trusted_checkout_revision": "71f809faa3a392ae7792ca63cbec8673a95fa8a3",
+    "should_scan_sha256": "d3a62e9e1300a9263b1677806c942e0733155e433881c4864b5f12639b032b00",
+    "load_maintainers_sha256": "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78",
+    "run_id": 41401723578,
+    "attempt": 1,
+    "job_id": 125134785207,
+    "check_id": 125134785207,
+    "check_suite_id": 112196605207,
+    "run_sha256": "bfd26985008d6e432767f820190121ad01c4517c74a390a03874b04a8a705270",
+    "job_sha256": "72579ddea8098fa50de46b5267398626f0c1a7aa92e63f5bb0d7d79ecf116e65",
+    "check_sha256": "a966772ade34c6102cffd15cf22f378baf3b3fc9c34a258aab9a83b2974664d1",
+    "job_log_sha256": "87b6d60d928f379ad82c655e2f0f650407284ed41ce2b8e82796678d6345ca12",
+}
+
+
+@pytest.mark.parametrize("field", [None, *sorted(policy._FIELDS)])
+def test_compatibility_owner_registration_is_one_exact_native_tuple(field):
+    row = copy.deepcopy(_COMPATIBILITY_OWNER_ROW)
+    profile = json.loads(
+        (ROOT / "saas/supply_chain/legacy-security-build-profiles.json").read_text()
+    )["profiles"]["Compatibility018"]
+    identity = {
+        key: row[key]
+        for key in ("product_revision", "product_tree", "validation_pr", "validation_base_ref")
+    }
+    specification = {
+        "path": policy.WORKFLOW,
+        "name": "Security Scan",
+        "source_sha256": row["workflow_sha256"],
+        "run_id": row["run_id"],
+        "attempt": row["attempt"],
+        "jobs": {
+            "Security Scan": {
+                "labels": ["ubuntu-latest"],
+                "conclusion": "success",
+                "checkouts": [
+                    {
+                        "number": 2,
+                        "name": "Check out scanner from main",
+                        "revision": row["trusted_checkout_revision"],
+                    }
+                ],
+            }
+        },
+        "trusted_security_policy": row,
+    }
+    if field is None:
+        assert policy.validate_registration(profile, identity, specification) == row
+        assert policy.digest(row) == policy._COMPATIBILITY_OWNER_POLICY_SHA256
+        return
+    row[field] = row[field] + 1 if type(row[field]) is int else "changed:" + row[field]
+    with pytest.raises(ValueError, match="exact reviewed native tuple"):
+        policy.validate_registration(profile, identity, specification)
+
+
+@pytest.fixture
+def compatibility_owner(owner, monkeypatch):
+    from saas.scripts import protected_legacy_initial_build as core
+
+    data = owner
+    component = "Compatibility018"
+    row = data["spec"]["trusted_security_policy"]
+    checkout = _COMPATIBILITY_OWNER_ROW["trusted_checkout_revision"]
+    base_ref = "codex/p18-a7-validation-base-20261102"
+    monkeypatch.setitem(
+        data["reader"].verify_pr_tree.__globals__["BASELINES"],
+        component,
+        data["profile"]["baseline_revision"],
+    )
+    data["profile"]["component"] = data["identity"]["component"] = component
+    data["identity"]["validation_base_ref"] = data["pull"]["base"]["ref"] = base_ref
+    row.update(
+        component=component, validation_base_ref=base_ref, trusted_checkout_revision=checkout
+    )
+    data["spec"]["jobs"]["Security Scan"]["checkouts"][0]["revision"] = checkout
+    job_id = data["job"]["id"]
+    data["logs"][job_id] = data["logs"][job_id].replace(
+        data["trusted_checkout"].encode(), checkout.encode()
+    )
+    row["job_log_sha256"] = hashlib.sha256(data["logs"][job_id]).hexdigest()
+    # Fixture native objects exercise the same parser without claiming real qualification.
+    monkeypatch.setattr(core, "_COMPATIBILITY_PROFILE_SHA256", policy.digest(data["profile"]))
+    monkeypatch.setattr(policy, "_COMPATIBILITY_OWNER_POLICY_SHA256", policy.digest(row))
+    return data
+
+
+@pytest.mark.parametrize("scenario", [{"owner_security_policy": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "provider", "checkout", "output", "registered_hash"])
+def test_compatibility_original_owner_reader_preserves_native_checks(compatibility_owner, fault):
+    data = compatibility_owner
+    job_id = data["job"]["id"]
+    if fault == "provider":
+        data["check"]["app"]["id"] = 42
+    elif fault == "checkout":
+        data["logs"][job_id] = data["logs"][job_id].replace(
+            _COMPATIBILITY_OWNER_ROW["trusted_checkout_revision"].encode(), b"a" * 40
+        )
+    elif fault == "output":
+        data["logs"][job_id] = data["logs"][job_id].replace(
+            b"scan=false (trusted author", b"scan=true (trusted author"
+        )
+    elif fault == "registered_hash":
+        data["spec"]["trusted_security_policy"]["job_log_sha256"] = "a" * 64
+    if fault is not None:
+        expected = {
+            "provider": "native run/job/check/provider/source differs",
+            "checkout": "scanner checkout differs",
+            "output": "not actual successful post-group output",
+            "registered_hash": "exact reviewed native tuple",
+        }
+        with pytest.raises(ValueError, match=expected[fault]):
+            _verify(data)
+    else:
+        receipt = _verify(data).receipt
+        assert receipt["scan_performed"] is receipt["product_input_fetched"] is False
+        assert receipt["policy_result"] == "trusted-author-OWNER-not-scanned"
+
+
+@pytest.mark.parametrize("scenario", [{"owner_security_policy": True}], indirect=True)
+def test_compatibility_main_checkout_does_not_extend_physical_components(owner):
+    row = owner["spec"]["trusted_security_policy"]
+    row["trusted_checkout_revision"] = _COMPATIBILITY_OWNER_ROW["trusted_checkout_revision"]
+    owner["spec"]["jobs"]["Security Scan"]["checkouts"][0]["revision"] = row[
+        "trusted_checkout_revision"
+    ]
+    with pytest.raises(ValueError, match="fixed-main OWNER"):
+        policy.validate_registration(owner["profile"], owner["identity"], owner["spec"])

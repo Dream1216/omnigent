@@ -14,6 +14,9 @@ from saas.scripts.oci_promotion import require
 WORKFLOW = ".github/workflows/security-scan.yml"
 MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
 _REVIEWED_MAIN_CHECKOUTS = {MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe"}
+_COMPATIBILITY_OWNER_POLICY_SHA256 = (
+    "da0114e7742eb15a4263011b22c2722a1bd4ed21b529535c5d3134a10f0d48ce"
+)
 KIND = "legacy_original_OWNER_security_policy_decision/v1"
 SOURCES = {
     WORKFLOW: "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
@@ -95,6 +98,12 @@ def validate_registration(profile, identity, specification):
         isinstance(row, dict) and set(row) == _FIELDS,
         "original OWNER security-policy registration fields differ",
     )
+    compatibility = profile["component"] == "Compatibility018"
+    if compatibility:
+        require(
+            digest(row) == _COMPATIBILITY_OWNER_POLICY_SHA256,
+            "compatibility OWNER decision differs from the exact reviewed native tuple",
+        )
     require(
         row["kind"] == KIND
         and row["component"] == profile["component"]
@@ -115,7 +124,7 @@ def validate_registration(profile, identity, specification):
         specification["path"] == WORKFLOW
         and specification["name"] == "Security Scan"
         and specification["source_sha256"] == row["workflow_sha256"] == SOURCES[WORKFLOW]
-        and row["trusted_checkout_revision"] in _REVIEWED_MAIN_CHECKOUTS
+        and (compatibility or row["trusted_checkout_revision"] in _REVIEWED_MAIN_CHECKOUTS)
         and row["should_scan_sha256"] == SOURCES[".github/scripts/security-scan/should-scan.sh"]
         and row["load_maintainers_sha256"]
         == SOURCES[".github/scripts/merge-ready/load-maintainers.sh"]

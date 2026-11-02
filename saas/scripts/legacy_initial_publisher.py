@@ -37,9 +37,12 @@ from saas.scripts.legacy_check_history import _pages
 from saas.scripts.legacy_control_results import collect_pg_receipts, verify_control_run
 from saas.scripts.legacy_native_evidence import api, preserve_native_evidence
 from saas.scripts.legacy_pr_candidate import (
-    UPLOAD_STEP,
+    UPLOAD_STEP as UPLOAD_STEP,
+)
+from saas.scripts.legacy_pr_candidate import (
     load_transfer_profile,
     transfer_provenance,
+    upload_step_name,
 )
 from saas.scripts.legacy_pytest_results import verify_job_artifact_identity
 from saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log
@@ -478,7 +481,11 @@ def collect_original_input(
         jobs = [job for job in result["native_jobs"] if job.get("id") == original["job_id"]]
         require(len(jobs) == 1, "original OCI upload has no unique native producer job")
         job = jobs[0]
-        uploads = [step for step in job.get("steps", []) if step.get("name") == UPLOAD_STEP]
+        uploads = [
+            step
+            for step in job.get("steps", [])
+            if step.get("name") == upload_step_name(profile["component"])
+        ]
         require(len(uploads) == 1, "original OCI producer upload step is ambiguous")
         metadata = result["native_artifact"]
         verify_job_artifact_identity(

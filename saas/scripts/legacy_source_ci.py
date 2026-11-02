@@ -334,7 +334,7 @@ def _job_pages(run_id: int, attempt: int) -> list[dict[str, Any]]:
             f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}"
         )
         require(
-            type(value.get("total_count")) is int and 0 < value["total_count"] <= 512,
+            type(value.get("total_count")) is int and 0 <= value["total_count"] <= 512,
             "native job count is invalid",
         )
         require(
@@ -343,7 +343,10 @@ def _job_pages(run_id: int, attempt: int) -> list[dict[str, Any]]:
         )
         total = value["total_count"]
         rows = value.get("jobs")
-        require(isinstance(rows, list) and bool(rows), "native job page is missing")
+        require(
+            isinstance(rows, list) and (bool(rows) or (total == 0 and page == 1)),
+            "native job page is missing",
+        )
         jobs.extend(cast(list[dict[str, Any]], rows))
         require(len(jobs) <= total, "native job pages contain excess entries")
         if len(jobs) == total:

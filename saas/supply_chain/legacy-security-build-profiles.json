@@ -1,5 +1,989 @@
 {
   "profiles": {
+    "Compatibility018": {
+      "application_version": "0.18.0.dev20261006",
+      "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
+      "budget_file_cap": 224,
+      "component": "Compatibility018",
+      "product_revision": "ba024657ad464ddf022c8ad8bb41610aef949b46",
+      "product_tree": "6963eae5b673c3b6f6c9d3be45a0192a51586060",
+      "repository": "Dream1216/omnigent",
+      "schema_version": 1,
+      "source_date_epoch": 1793601655,
+      "source_delta": [
+        {
+          "after": {
+            "mode": "100755",
+            "sha256": "d3f14221627602314eda75334b13ac61330270abc909da4a9496e36632fe2453"
+          },
+          "before": {
+            "mode": "100755",
+            "sha256": "85d686e305d26bbe362917913807cb43e6e791edc67dcad11c5c4de84c67693b"
+          },
+          "path": ".github/actions/compat-smoke-saas-n1-gate/evaluate.sh"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "1be166ffdc4d7325241c881c717676477aafc438a92d3f1f68be4c41e8f61821"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "3cb218a4045fad8f0f3cc8f6bfb872f6c691407f51b529f87fb0edce0a99825c"
+          },
+          "path": ".github/workflows/saas-image-candidate.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "09c926531635b053140b6da199814d8d08bfef4f62c256a66ebcd6d1171e681d"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "1b442b3e92c18dcf0926725040b556866757eaf8f85c8378110404d860a97bb3"
+          },
+          "path": ".github/workflows/saas-upstream-compat.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "d1fd898f575f7b8171469412513dd37c7075a7700790f799a2ef7f1606a43ace"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "33eb36b456d4306de28570fad6089b9f3254efd6a8bed1ea1b61f9b68150aced"
+          },
+          "path": "omnigent/db/cockroachdb.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "497d87efc94cd85b50c50483054b141e933aa72d31081c0059f19a6a146c76bd"
+          },
+          "before": null,
+          "path": "omnigent/db/migrations/versions/9e82957bd115_add_scheduled_task_completed_state.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "1f6f4ce94b8bf3c2032a14125b94aa0798ddb79886a86ee46753a2f61afa57f6"
+          },
+          "before": null,
+          "path": "omnigent/db/migrations/versions/b2e4f6a8c013_merge_completed_state_and_pull_requests.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b6f98682918aa2a75d62f88ddf7403f3d866a1933421ac4740e09f49ebcfe6dd"
+          },
+          "before": null,
+          "path": "omnigent/db/migrations/versions/c8e4f2a6b901_add_scheduled_task_dispatch_fields.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "99c4855712416887b1b08f3d2cb5a5f8ba7e60ca7bcb2a2ea150447c31215cd0"
+          },
+          "before": null,
+          "path": "omnigent/db/migrations/versions/d0a1f879a01d_add_scheduled_task_session_mode.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "3e5c3120fb1e8a773365145dd6a7c033bc4d4ffacad6a70c22c9f466a6233413"
+          },
+          "before": null,
+          "path": "omnigent/db/migrations/versions/d3f7a1c9e2b4_add_pull_requests_to_conversation_metadata.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "7126b13500030bb25a0a20d80a73339ac085329bc19be3e7a1e8a2bbe8dee80e"
+          },
+          "before": null,
+          "path": "omnigent/db/migrations/versions/nf12ab34cd56_index_conversations_by_host.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "98d48cf11b2ee1c514ce64f7ff38f18c4c860738bbc12d42a9c1590cd472b78f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "43252790173e6325f89b769b78e26573bf69eaa9f485eb098a0586616390c3dc"
+          },
+          "path": "saas/control_plane/api_credentials.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "febe521262e4ce308b9e1fe9f6d80ab27f8f7f839e468a890ee75f8e789d4068"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f3d8c29c005d0d1ada649d5086949817db3e677d6e185d7e335e11032e0e1619"
+          },
+          "path": "saas/control_plane/billing.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "c4a882d8286e330d6abd50542db80ae3f0bafb3626e7975a8ba157ffa81ca1c3"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "5df8d8761ac08cf48952cee8c988670042a1cf2e6c9b815b7d6a821ae140059f"
+          },
+          "path": "saas/control_plane/context_snapshot.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "0dea46d53c6d0d5e876cc96ec28e5abef0058eb39486927d15bd070694b66a91"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "5d9e79952be6fcf7fcfad27351d7b6f86535d72946ef83b27296a615f547f1ec"
+          },
+          "path": "saas/control_plane/http_auth.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "c60ab18a0f6fe60c02cbded614672551c8527df00f282c8cbce74b634bf0fd03"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "84fa7ac098c0c4802d984296fd6f33c00533d142e1c7e49fb4e8f5fde871fe62"
+          },
+          "path": "saas/control_plane/migrations/env.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "5f8bbf5bae2f3d61758b4a9a43cfd27c87b9589e6fad6d7485d9b4fdb06256ba"
+          },
+          "before": null,
+          "path": "saas/control_plane/migrations/typed_business_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "cd848ba5d38a401fc26dff397ec044e02d8ccd2edcc74b2a87f32002f66472bb"
+          },
+          "before": null,
+          "path": "saas/control_plane/migrations/versions/p0s000000016_public_api_bound_logins.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "896349ab6f1176a999c5daa1d8a40bf3d875f67f6e378ffc1f0e462320e57b6b"
+          },
+          "before": null,
+          "path": "saas/control_plane/migrations/versions/p0s000000017_typed_business_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "8fe901ef2897ee0737bfa03858594fd6fec5066dbe5658b6f15dc0276a4f4119"
+          },
+          "before": null,
+          "path": "saas/control_plane/migrations/versions/p0s000000018_runtime_maintenance_owner.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "ccb1d6f913871b81cbc2b1d958f1384574c975b627679e9a23857a9f0d244eff"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "261718213bd1740d0b9f678d33b0f035ef75c529cea23214662f9eb4fc8d0e95"
+          },
+          "path": "saas/control_plane/outbox.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "86da36bf9daa383865b5c0633421e98058a091f0f0524985471052bea1b95be9"
+          },
+          "before": null,
+          "path": "saas/control_plane/outbox_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "852d59c1a30d24565c2efd60b76efb8abf06ba806398ce149d09ea87841c156e"
+          },
+          "before": null,
+          "path": "saas/control_plane/outbox_delivery_models.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "5f41a21fc8e9fb95104f9ff30cd153cc28259b7a60bda88f365a2fe737d32ed1"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "72d8e0a8d56a92fccb8c37ee590efefdec444fe2fee5c4b99ddf3206779a2312"
+          },
+          "path": "saas/control_plane/postgresql_database.sql"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "0cb7b6e0a7d7a53ba8c69f8749e279d51f121f56a637dddab781c077cf40fa7c"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "b231e2177878f0f00d5252370cf66f4436f47b31e1949847db5195c291848c0a"
+          },
+          "path": "saas/control_plane/postgresql_principals.sql"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "97fb940ef673f594f170a7d2f47737650db0a22dfb59ad359877fc11d25d381d"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "583e46f78c21d9a6cd77e6f1805b23b898004a8ccfff746222352921a482773a"
+          },
+          "path": "saas/control_plane/postgresql_roles.sql"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "476e0f7c57fff84378d960a89638d257b7fa1cdc85babbe12a11267682519ba5"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "ae274571df083f5d58c4a1a17859d22959ec8d2e7596b04b3b568bfdeb0f8028"
+          },
+          "path": "saas/control_plane/postgresql_runner_agent_cluster.sql"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "7183bc0e62c8400a6e085b32061478d1d943670dd4e1b2661913b3093c175102"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "402283e17c9fe9f956aea4576b12cd71e084c022d2ff0823a4ffd8548e00efda"
+          },
+          "path": "saas/control_plane/public_api.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "130828d179399c6919bb16f71e050994de644ebf8a6e99983c24ee29026ecd7e"
+          },
+          "before": null,
+          "path": "saas/control_plane/revocation.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "02ee9fd61e065323a2201823b3d4fb9f25372cfac5d44c55836eeb7a2fd018c0"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "e08689f2d95f4d885ee5afbaddaf5df0c11d623e654a963e06bc128f1e0e15c6"
+          },
+          "path": "saas/deployment/server/kubernetes.production.yaml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "ac15a7a7759cc7596efa79399b968208bd38854db3a27b9c7329cdf0cc8bfa32"
+          },
+          "before": null,
+          "path": "saas/observability.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "fbe35c404764675e31da1806270901b4cad688792cdd86aa19b6e2cdb7bb581f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "36c3ec2e7126f9da0aec9187a1d47872dc808026f18a4b3b4b0e0b49bf0286ef"
+          },
+          "path": "saas/production/baseline.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "2fa9adfe3c2282675281e3bd29989ab5aa3fe95c5df367ddb222959b06774264"
+          },
+          "before": null,
+          "path": "saas/production/business_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "356a128b98fa92dfe0692fff87623fe77cc85a449628e777e637f4324464b607"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "837b5e3760ad762b3df36d20eb18291445144655a405ae0dcdc1f469393741bf"
+          },
+          "path": "saas/production/commercial-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "c68a0f02de72a8b38211862c8fd9ceca1863bef23f85842968acbc9af8bc9d01"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "757eb0913add92fe2cf5d1be236ca9161f9d02f97a65fd2d02553be2fc48d392"
+          },
+          "path": "saas/production/deletion-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "f216ba2bd49b8befe5e0125b971c963f5746699608e06f8ab5911d567b64af9c"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "ee54986e0a7345f0d5b4d7b4617745c453b570e8ad84e1289ec97be9ef5c37ad"
+          },
+          "path": "saas/production/deployment-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "8afa0d0651bc1e0e05d9fe9e80d83c263d6839375613d16bd9c79405f9c1bcce"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "e659f5bc73493f1aa450351272a7abb7b11bade4162e783518d1a2f98314887a"
+          },
+          "path": "saas/production/enterprise-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "8c46e6f2ac93bbda65c6966cd24e74e7db671132d77e46a4d9077d01b283e9f8"
+          },
+          "before": null,
+          "path": "saas/production/observability.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "59b7970ce84283a50d0d49c007e2e709725d0d1483f41993c543d9f5697acabe"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "e9c5e9210da07c1825d62cc8f198e5471e0e41001a87a7b318206ac28ce91127"
+          },
+          "path": "saas/production/postgresql_migration.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "961c74fe353e26e27a432a0f352daa0098faae2025cbb243408b34f393641fdc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "557c780c59ff08562a34dc251ed318e642b42aa0bc17d0ddf2fb154c6c9cfae4"
+          },
+          "path": "saas/production/postgresql_restore.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "859a5b8347992cf59103576791764a99caf670b4b29c1f265c7e3f271299105f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "685ca99559f1b9eab945618996fa8be478473e56ca9bf5ab907ca71068ff05ef"
+          },
+          "path": "saas/production/recovery-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "0e750012b2fc0a2509705a9526b9519f43309cd8fddc031de5a56bb57e5c5668"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "0f4294023165cccc5a80eb5f2ac15a276fa5ee497a9df8c1d9b67ad102435586"
+          },
+          "path": "saas/production/runner_executor.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "61ffb4443a575c8e8a36668fd2649a21f84ccc6561ec59371c971861981d3a8f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "45603bd8a0d0fd521035372cfc0d5268aff82710af21ea4663c0da55b7b36ce1"
+          },
+          "path": "saas/production/server.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "80c6b1700c5389f1924a3e841d61dd76f7b46fd128794e46829be5f25231c348"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "e1e9c2e0062d04823ae17c9e211a35b86b2e885893cdf5d91d655253aa08a26a"
+          },
+          "path": "saas/production/server_config.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "588e2c8d2f62d2d57ac3edafe50ebf12c019b81a688c0c8a0dea8ea818066dd1"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "599133760fac3d7d1dc624163151453707a68534011effb08e7c22d45998f121"
+          },
+          "path": "saas/production/service_bindings.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "16cbd1528af5f66b748c73e19bb30ccab3c1df131902b0ad837a704cc7cfaf7b"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "c5ea287ba7e9b7ebb1b7e401d735bcfada94d74732d3690ad2139bffba1aa254"
+          },
+          "path": "saas/production/slo-capacity-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b175b01a0d2a5f7e759cba37dc81e854c9cfdbae7f65cdb8e758d2d0dcf15a27"
+          },
+          "before": null,
+          "path": "saas/production/slo_witness.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "f917c22ed8b2134e0dc64104055df3db618ae90e0a37685588c7fd4684e2a25a"
+          },
+          "before": null,
+          "path": "saas/scripts/check_control_plane_migration_cli.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "fc43e578b7b9a58b71a4fd30cbaaaf6a6617341cbfddaa07aa4ae530c7395a18"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "55139c2b2184c85eb95ccccfd32259d041f5cf88ee8b49771b911964516945e2"
+          },
+          "path": "saas/scripts/render_kubernetes_release.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "6fd75a10e8bf6d4d432d869c37eef01f2e264dcaae9a168712839eae357ce622"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "4b6175d58547a1779a1ed99a120b5baf7580037324d02b7cc209bbbcc4c6b135"
+          },
+          "path": "saas/scripts/run_postgresql_migration.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "0a98d1394625b3a6b6e6cf93de11b1ac7d570625417faedc27e40cb94cfe49b1"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "1792e5d4e13c712020b61b7cca2c374a16dae9bcc9cb386ef890f4cd130167a0"
+          },
+          "path": "saas/upstream-baseline.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "4daa19059cb211806a34db1c1fc08077fb7b2f230a3c6732b80393eb5a3226dc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "d7fbd3c72792563e554f961e8b2a13e3f503973868124beb66824f1df7de8332"
+          },
+          "path": "saas/upstream-patches/0003-managed-runtime-adapter-seams.patch"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "3eb0f06b7f3e0e8143c79daa174e6dd7551a9741ad0da01fb9ff8c9632b074dd"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "bac69eb166446f9295252af743d6b610ddc9aaa117dc4217413945202b6a31d0"
+          },
+          "path": "saas/upstream-patches/README.md"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "d3c359b56cc243344ddc38dfcfac559e89e8da28c96039b3b38142e05d2d13b8"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "5b9ac04f5c8e0eac28257686eb2e234f0541d9cec29a8c47d617d18c22799ca4"
+          },
+          "path": "tests/db/test_cockroachdb.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "6080dabb9792fb53b197aa1b575e2c7faecec8b696fddbec83454431092a8c00"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "17761d72d6f97385375e78ec6a7b1f557a25670f0e9d95a20cd6400ee7377c06"
+          },
+          "path": "tests/db/test_migration_agents_owner_index.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "51f46722f1add6fde5c97213899cac76a0948229eb222cc0a9a2a7ec13691f86"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "6c8d7cdf1efe784ac3db1e7b53645574068d668e00dc09718d9541dcc024b5b4"
+          },
+          "path": "tests/db/test_migration_scheduled_tasks.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "5787ae83a74eeaa6ef238998a0e9aa6766878d7e5f9e803fde3af51ec68351d7"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "0ea14827d6f5c6ce6181674853e33c501aaf4af531a7d11f3e8144adc37b5fc0"
+          },
+          "path": "tests/e2e_ui/chat/test_citation_link_reveals_cited_line.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "cc6ea39a10d7493e723409b83edbe661f5b4c20f2c404ed9cca6fa53af5a1745"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f6dbc96998367b981b3d2d1b4eb62e14d21481832c6d7a54c4760d39a30f21ad"
+          },
+          "path": "tests/e2e_ui/chat/test_created_file_links.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "2b03c74bdee33970fb082c3c0d49b17da9a2c1e1c6317946ac97874da89fbab1"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "df66e3cb9b216ec80e974056b75a41746f5077c24663b78b7163a2b29210446c"
+          },
+          "path": "tests/e2e_ui/conftest.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "4a18cb8ae145bef077e5afabd4a6fe94669d065fdf494d79b80f9d6d29920dcc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "b80937a617dfc1e77c6adf8f083e5be908c26f8ac6be0e00b266d887cb8b1e7f"
+          },
+          "path": "tests/saas/test_billing_metering_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "60d4a0c34ba2866f0937e28a90acb676f82a077aef232ee8ce3a3c2d63d8650c"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "deedcbfcf9cabb1ac4e71cfeb0f0803eb5b62a659bac00720ee99f9befd4d0ef"
+          },
+          "path": "tests/saas/test_control_plane_migration.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "db98ac0ae4e3ac584d6599e29eead8d2b08d4cabe74ce63b524378b924180067"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "c0418215550fe040104e3111155338c657a21d25417e957627bfc949d11b4b18"
+          },
+          "path": "tests/saas/test_deployment_readiness.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b3ab8c79780bf979b2c433233642a69fad27018844e9df53758d28195932239f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f2c17d286f303970afcb594dfb05ccc829ae6362a2dde5f4be617d4aa44ea9bc"
+          },
+          "path": "tests/saas/test_enterprise_identity_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "33c4ecd0be0cc10acba0319151a37c7c28692f18b697fb62eccc6a4b4b262783"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "9155bded480b38fbc1072be3382fb16a914f75c2e1d6f0079f2af31765385ad3"
+          },
+          "path": "tests/saas/test_isolation_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b8f098fcb782997174ec101f5768264afff464ad8600556d9f015c1df47bb263"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "a87020fdf7bbc2825212df41b8bd5916272db9752ab842039cd698b2195e09e8"
+          },
+          "path": "tests/saas/test_model_budget_owner_settlement_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "2570537024bd3ba5d1501ad58d0e76d65a0b49c66ad471869f7c5cb757440b30"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "d5db6f7cc3feb7a8a9de64da88bab036ba7b6e57be4043e36c29736d462811c1"
+          },
+          "path": "tests/saas/test_n1_outbox_admission.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "1011896693a4fcee73715abcc0f50ccb1ebdd6c6068d36557f8c00306db73403"
+          },
+          "before": null,
+          "path": "tests/saas/test_outbox_business_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "6605970144d0506ab135f19d95e79b1a8fde7da05013b963a8c28ade5c4c35dc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "edb035cc3a05930f4beb72a4c259f6a5eabfef11e15dbe14eb8a238ff2ae3303"
+          },
+          "path": "tests/saas/test_platform_governed_access_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b5d2f783e89c24107817f13c761909ef52bbff35d5904f91ac968d67813213db"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "e426dcbc6bd0148ce5d78f2a8eae2b45e36136f3bfe5d34483dc8a2fdbd17e18"
+          },
+          "path": "tests/saas/test_platform_lifecycle_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "1b2d923df5a27300245f51543902f9cbf017bd2733d9caab1a2766e29da01fc2"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "329295ab7420563e72163e5aa3e24f8569f0ddbb475c83e652c48c5757e8ddc0"
+          },
+          "path": "tests/saas/test_postgresql_restore_contract.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "502dd1dc4f0e2530198b6e185e72e643dc37b67647989f411dbaebe5a81f5c53"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "9969967f6cc403ecaa2ddf78df88c71cc8c1b055bd2c484771e9073df7b08942"
+          },
+          "path": "tests/saas/test_postgresql_rls.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "57bab78d3f41adbe257dfb3134b7fd37feeb952a5b95cb5128504f12b7e6042f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "9c9606705656a8d4a3a699b1faa6133f08563d6c8c96815e57a15b839597f14b"
+          },
+          "path": "tests/saas/test_privacy_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "4afb5b891287481148496a1c3c3a447c35015e6b94a849bd5cbde73951ff0509"
+          },
+          "before": null,
+          "path": "tests/saas/test_production_business_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "7f1076fcfa54e99e554317e69074001f383cb679bfda1ffe2835ab69d942957c"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "52dc9bc28f3791146a06cfb835915de5a0ee924519ef15f0f3b5b27655ba1cd7"
+          },
+          "path": "tests/saas/test_production_deployment.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "fb01d3cdfead4ffb3e3c3b2d2533d1d52d2de2aafd58fdd5e116a347cf7eedd7"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "6b609e757a81143530bda91b0e16e7aecc5b9bbc3d84e87c7255b9de10a65cbf"
+          },
+          "path": "tests/saas/test_production_migration_replay.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "5d90a0e55d4e6c337d0b892f08f1d0efd91398e5e6bf60d3a079a4d20eb83592"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "2cf3eb4e5b5da78f711d63f922bef4b0689eab4fd811577064862ed845ebb8f3"
+          },
+          "path": "tests/saas/test_production_postgresql_migration.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b976585733b55d4202304414c8a767b40407a791b678942c669d5272ad6c6daf"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "3212366d4d615971b1a386831abb47280d2d94332c1876b7552a371dbfc34ee2"
+          },
+          "path": "tests/saas/test_production_runner_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "848a4efef6c300ddcc29943ea7c432bdb599dad9dec401783ef21f6d60e7521c"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f7a75c73a237d8f3e8fed25eff1149b794b7e761548aaf49da926bcb2c1e4208"
+          },
+          "path": "tests/saas/test_production_server.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "389633a72eebf9d0d299dda9e4fa6474b122c5ef7c26a3ed0c0c959c43ad8e47"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "199f5550a04ae855c53f6ef0e08b0b40ee840e55ee578a85a1c8eeb1a258ebdf"
+          },
+          "path": "tests/saas/test_production_server_config.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "999fee963d6f9510af2aee6b9e04433e390303da37ba155e18a617ab7d8ab99f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "7aeee04ef84a47059e5a95145c1abe2668dc8c10d17b80b52bdd2bf1a0c9511c"
+          },
+          "path": "tests/saas/test_production_service_bindings.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "052adde20c835da268583fa138833996f5e959444b2821771c47f28642eab864"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "928d57444f5bdc6df1fb0b6d98e76b24c1fe6d80eef89c966e5e83d1dfa19652"
+          },
+          "path": "tests/saas/test_production_topology.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "cfae9be464d311cf82dcd955f4411280379485e177f3fed8bf69533748905e51"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "7fd12a886b0596a392078076e50083d79d82e5749d7df0dc87968e4fdee3635e"
+          },
+          "path": "tests/saas/test_public_api_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "614594c88408d6e8e75a7c8adbb49007820aa65a7d9c1594ea1cda017b4e21e2"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "e313c8220cb7f047b991ca82e498a289197e1e68842cc090f4fc232690335669"
+          },
+          "path": "tests/saas/test_registration_rate_limit_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "87be1a3733ccde260bd3ec985a0dbcb587f9d18b5d0cb7ae181a4e8b2c6b0adf"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "bd395a1225e1cfac47042f954efcdc624a640c21de15a440a4c9921bbe28c66f"
+          },
+          "path": "tests/saas/test_release_renderer_compatibility.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "6104a31944049e1bd69e0642506fad4a0f67b3a03f41be7f609dba277459b5cb"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "0403576cd8ca355f408216aab9a32c400283d825a2d00855032a7a980a533f28"
+          },
+          "path": "tests/saas/test_release_restore_digest.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "12629f4f2036023484ec623eb30c7314a7aa2c0f9dda0514158377d1c64376b0"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "abb57fc55e1b0601f125850347f609d0bb405a907e674b60cb1e8bd810a30111"
+          },
+          "path": "tests/saas/test_release_role_profiles.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "6a9e26b53c0600c9fb99a5a3948cec1d3c74dec3b07e35cbbca6e598b2632f6f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "68314deef6754db789c5c561fdef8d3a6f28166058fca99762aec744f2341201"
+          },
+          "path": "tests/saas/test_release_runner_cluster_compatibility.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "e28241da6b368cd4e29f97c22ef1afb175ce4bd5082c0511ef7f9b0cedcb3c6f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "dbd7e78829735bccc61968dd9544798f22f1944d12961cd86333c28fd91e58c6"
+          },
+          "path": "tests/saas/test_release_runner_compatibility.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "3d915530a240da3a46b377e567361508279aca3b502ae41674bf672592b35ebc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "49f6393181f94b9265a012c444f5ef00f097e7d72e416efd0fc49f26342af742"
+          },
+          "path": "tests/saas/test_render_kubernetes_release.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "4b04331f2801341c39b94d8813e076e834674d2b353d985c4e7c0dc6d402fd20"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "8e22de03fb8630ef556c0171456fdbd63dd25fa5585335f3df494705a0913e71"
+          },
+          "path": "tests/saas/test_retained_model_audit_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "c6e8c8c6d5feb16df10c01f61c9cfb0e9eb66d2a9100e75f68ed8e290e57ccda"
+          },
+          "before": null,
+          "path": "tests/saas/test_revocation_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "0187b6a56f9de20b0f7bbb299cf777eef3b903531f3a1ddd62d9758381ff9a16"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "9859e178e778e54f2396e585d57a13a73cead7913b687e9f6920d94d7643f0f4"
+          },
+          "path": "tests/saas/test_runtime_postgresql_rls.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "a70c04b863f528c03d25030da7fe4b804525a781f79cc39fc523a5d8b7cc4e38"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "0e728db767c9876c8428690747b9c8db25681579061f2bdb28cd542710427169"
+          },
+          "path": "tests/saas/test_runtime_provider_journal.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "8c4ca88068ec956edec5dbcaddb84fba01c6fb4c28bc7679d356720a6a4f48c3"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f09f003dc714d4f1ce94995b8d727d8cc4f978d2c514f27e2eeadd9c26000ec1"
+          },
+          "path": "tests/saas/test_standalone_schema_metadata.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "36ede4b8cffffbdadd75c236b6ed24e33e9037f7c169ec983fea6703b262085a"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "7eaca975d581092e8d35217ab8ad2ab15c7c9fac018145a5e0f507af867642e6"
+          },
+          "path": "tests/saas/test_upstream_delta.py"
+        }
+      ]
+    },
     "Core": {
       "application_version": "0.18.0.dev20261006",
       "baseline_revision": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
