@@ -1174,7 +1174,7 @@ async def test_recovered_host_runner_spawn_uses_remaining_reconnect_budget(
     monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.2)
     monkeypatch.setattr(sessions_module, "_HOST_RECONNECT_GRACE_S", 0.3)
     waits: list[float] = []
-    responders: list[asyncio.Task[Any]] = []
+    responders: list[tuple[ApplicationCommunicator, asyncio.Task[Any]]] = []
     launches: list[HostLaunchRunnerFrame] = []
     elapsed = [0.0]
     monkeypatch.setattr(
@@ -1193,7 +1193,7 @@ async def test_recovered_host_runner_spawn_uses_remaining_reconnect_budget(
         async def serve_launch() -> None:
             launches.append(await _serve_one_launch(comm, launch_status="launched"))
 
-        responders.append(asyncio.create_task(serve_launch()))
+        responders.append((comm, asyncio.create_task(serve_launch())))
         return app.state.host_registry.get(_HOST_ID)
 
     monkeypatch.setattr(sessions_module, "_wait_for_runner_client", runner_wait)
@@ -1210,9 +1210,9 @@ async def test_recovered_host_runner_spawn_uses_remaining_reconnect_budget(
             },
         )
     finally:
-        for responder in responders:
+        for _, responder in responders:
             responder.cancel()
-        await asyncio.gather(*responders, return_exceptions=True)
+        await asyncio.gather(*(task for _, task in responders), return_exceptions=True)
     assert response.status_code == 503, response.text
     if remaining_budget:
         assert len(waits) >= 2 and all(0 <= wait <= 0.15 for wait in waits[1:]), waits
