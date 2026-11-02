@@ -22,16 +22,23 @@ on:
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Build a new candidate or publish the reviewed complete Gen2 OCI for private cloud validation
+        type: choice
+        options: [build, promote-reviewed-gen2]
+        default: build
 
 permissions:
   contents: read
 
 concurrency:
-  group: saas-aliyun-host-${{ github.ref }}
+  group: saas-aliyun-host-${{ github.ref }}-${{ inputs.mode || 'build' }}
   cancel-in-progress: false
 
 jobs:
   verify:
+    if: inputs.mode != 'promote-reviewed-gen2'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -198,3 +205,146 @@ jobs:
           name: aliyun-host-evidence-${{ github.sha }}-${{ github.run_attempt }}
           path: artifacts/
           retention-days: 14
+
+  promote-reviewed-gen2:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'promote-reviewed-gen2' &&
+      github.repository == 'Dream1216/omnigent' &&
+      github.ref == 'refs/heads/codex/aliyun-sandbox-p1-p5-20261031'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      ORIGINAL_REVISION: 623f0c8f92ed923a5bba442b566a4f1ae228d175
+      ORIGINAL_RUN: '41311645786'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Verify promotion policy and byte-binding regressions
+        run: |
+          uv sync --frozen --extra all --extra saas --extra e2b --group dev
+          uv run pytest tests/saas/test_scan_oci_candidates.py tests/saas/test_aliyun_host_promotion.py -q
+      - name: Verify original source run and successful complete runtime jobs
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/original
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN" > artifacts/original/run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/jobs?per_page=100" > artifacts/original/jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/artifacts?per_page=100" > artifacts/original/artifacts.json
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path('artifacts/original')
+          run = json.loads((root / 'run.json').read_text())
+          assert run['head_sha'] == os.environ['ORIGINAL_REVISION']
+          assert run['repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
+          assert run['path'] == '.github/workflows/saas-aliyun-host-candidate.yml'
+          assert run['status'] == 'completed'
+          jobs = json.loads((root / 'jobs.json').read_text())['jobs']
+          for name in ('verify', 'build (1)', 'build (2)'):
+              selected = [job for job in jobs if job['name'] == name]
+              assert len(selected) == 1 and selected[0]['conclusion'] == 'success', name
+          artifacts = json.loads((root / 'artifacts.json').read_text())['artifacts']
+          expected = {
+              13085796213: ('1', 'sha256:5c9d337db599e4c030540a67c8c4ddc94b5023e27a21814cb6ec35c96958d082'),
+              13084864710: ('2', 'sha256:bb325f6185814725178368ca75f6397416f50fc2e8e30f9da07e18aa5e24a7ab'),
+          }
+          for artifact_id, (attempt, digest) in expected.items():
+              selected = [item for item in artifacts if item['id'] == artifact_id]
+              assert len(selected) == 1
+              item = selected[0]
+              assert not item['expired'] and item['digest'] == digest
+              assert item['name'] == f"aliyun-host-{os.environ['ORIGINAL_REVISION']}-1-{attempt}"
+          PY
+      - name: Transfer the two exact original OCI archives without rebuilding
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/13085796213/zip" > "$RUNNER_TEMP/first.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/13084864710/zip" > "$RUNNER_TEMP/second.zip"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from saas.scripts.oci_promotion import extract_artifact
+          root = Path(os.environ['RUNNER_TEMP'])
+          for name, digest in (
+              ('first', '5c9d337db599e4c030540a67c8c4ddc94b5023e27a21814cb6ec35c96958d082'),
+              ('second', 'bb325f6185814725178368ca75f6397416f50fc2e8e30f9da07e18aa5e24a7ab'),
+          ):
+              extract_artifact(root / f'{name}.zip', root / name, zip_sha256=digest)
+              (root / f'{name}.zip').unlink()
+          PY
+          python -m saas.scripts.compare_oci_rebuilds --label-profile aliyun-host-minimal \
+            --image "host=$RUNNER_TEMP/first/host.oci.tar,$RUNNER_TEMP/second/host.oci.tar" \
+            --output artifacts/rebuild-comparison.json
+      - name: Fresh advisory scan and source-bound promotion receipt
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.scan_oci_candidates --scope aliyun-host \
+            --image "host=$RUNNER_TEMP/first/host.oci.tar" --output artifacts/scan
+          python -m saas.scripts.aliyun_host_promotion prepare \
+            --archive "$RUNNER_TEMP/first/host.oci.tar" --revision "$ORIGINAL_REVISION" \
+            --scans artifacts/scan --layout "$RUNNER_TEMP/promotion-layout" \
+            --receipt artifacts/promotion.json
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish unchanged private validation candidate and verify registry bytes
+        id: image
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/omnigent-aliyun-host"
+          digest=$(jq -er .index_digest artifacts/promotion.json)
+          tag="$image:source-$ORIGINAL_REVISION"
+          crane push "$RUNNER_TEMP/promotion-layout" "$tag"
+          [[ "$(crane digest "$tag")" == "$digest" ]]
+          crane pull --format=oci --platform=all "$image@$digest" "$RUNNER_TEMP/readback-layout"
+          tar -cf "$RUNNER_TEMP/readback.tar" -C "$RUNNER_TEMP/readback-layout" oci-layout index.json blobs
+          python -m saas.scripts.aliyun_host_promotion readback \
+            --archive "$RUNNER_TEMP/readback.tar" --receipt artifacts/promotion.json
+          printf 'name=%s\ndigest=%s\n' "$image" "$digest" >> "$GITHUB_OUTPUT"
+          printf '%s@%s\n' "$image" "$digest" > artifacts/image-reference.txt
+      - name: Sign original image and advisory promotion receipt with publisher identity
+        id: attest
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          predicate-type: https://omnigent.ai/attestations/aliyun-host-promotion/v1
+          predicate-path: artifacts/promotion.json
+          push-to-registry: true
+      - name: Verify exact signature identity and retain original build identity
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}@${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/saas-aliyun-host-candidate.yml" \
+            --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" \
+            --predicate-type https://omnigent.ai/attestations/aliyun-host-promotion/v1 \
+            --deny-self-hosted-runners > artifacts/signature-verification.txt
+          cp '${{ steps.attest.outputs.bundle-path }}' artifacts/promotion.sigstore.json
+      - name: Retain candidate and original-source evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aliyun-gen2-private-promotion-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 30

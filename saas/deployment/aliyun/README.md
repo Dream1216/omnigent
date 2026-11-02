@@ -145,8 +145,17 @@ SLSA v1 plus SPDX, compares executable manifests/configs, and scans the exact
 archive with a fresh vulnerability database. The Aliyun profile is separate
 from the existing dual-architecture Server/Host profiles. The minimal profile
 requires exactly three first-party labels and Linux amd64; it does not accept
-the vendor base's inherited labels. The workflow has no
-registry write or production deployment permissions.
+the vendor base's inherited labels. Normal builds have read-only permissions.
+The explicit `promote-reviewed-gen2` dispatch transfers the two pinned original
+623f0c8f9 OCI artifacts, checks successful original runtime jobs and ZIP digests,
+repeats the exact rebuild comparison, scans with a fresh database, and binds raw
+scan/image identities before publishing to the private `omnigent-aliyun-host`
+GHCR package. It verifies full registry readback and signs a promotion receipt
+with the publisher workflow identity; the receipt retains the original build
+revision and SLSA/SPDX. No image is rebuilt or relabeled. This dispatch has only
+the registry and attestation writes it needs, and no production deploy step.
+A signature from this candidate branch proves its publisher identity; it does
+not substitute for protected production source acceptance or real cloud tests.
 
 Historical zero-finding rejection decisions below reflect the policy at the time.
 The 13-High complete Gen2 candidate can now advance to a fresh advisory scan and
