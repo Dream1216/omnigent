@@ -1303,10 +1303,180 @@ def test_compatibility_assigned_runner_with_no_records_keeps_execution_unknown(
             is proof.receipt["production_admission"]
             is False
         )
+
         forged = audit.InfrastructureCancellationObservation(
             {**proof.receipt, "source_proof": True}
         )
         assert not audit.typed_observation(forged)
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("label", ["ubuntu-latest", "ubuntu-24.04"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "unknown_workflow",
+        "old_workflow_new_label",
+        "policy",
+        "runner",
+        "steps",
+        "logs",
+        "provider",
+    ],
+)
+def test_fixed_runner_attachment_only_audits_native_absence_with_unknown_source(
+    compatibility_infrastructure, label, fault
+):
+    profile, identity, _rule, observed, _contract = compatibility_infrastructure
+    run, job, check = observed["run"], observed["job"], observed["check"]
+    run.update(event="workflow_run", pull_requests=[], conclusion="skipped")
+    job.update(conclusion="skipped", steps=[], labels=[label])
+    check["conclusion"] = "skipped"
+    for key in ("runner_id", "runner_name", "runner_group_id", "runner_group_name"):
+        job[key] = None
+    check["output"]["annotations_count"] = 0
+    policy = {
+        "kind": audit.UNATTRIBUTED_POLICY_KIND,
+        "workflow_sha256": domain.MAIN_WORKFLOW_SHA256,
+        **{
+            key: identity[key]
+            for key in ("validation_pr", "validation_base_ref", "product_revision", "product_tree")
+        },
+    }
+    attached = audit.native.FIXED_RUNNER_WORKFLOW_SHA256
+    logs = audit._EMPTY_ZIP
+    if fault == "unknown_workflow":
+        attached = "0" * 64
+    elif fault == "old_workflow_new_label":
+        attached = domain.MAIN_WORKFLOW_SHA256
+        job["labels"] = ["ubuntu-24.04"]
+    elif fault == "policy":
+        policy["workflow_sha256"] = attached
+    elif fault == "runner":
+        job["runner_id"] = 1
+    elif fault == "steps":
+        job["steps"] = [{"name": "Resolve current PR head", "conclusion": "success"}]
+    elif fault == "logs":
+        logs += b"executed command"
+    elif fault == "provider":
+        check["app"]["id"] = 42
+    args = (profile, identity, policy, run, job, check, [], logs)
+    if fault is not None:
+        with pytest.raises(ValueError):
+            audit.verify_unattributed_zero_execution(*args, attachment_workflow_sha256=attached)
+    else:
+        before = copy.deepcopy((run, job, check))
+        proof = audit.verify_unattributed_zero_execution(
+            *args, attachment_workflow_sha256=attached
+        )
+        assert (run, job, check) == before
+        assert isinstance(proof, audit.UnattributedZeroExecutionObservation)
+        assert proof.receipt["attachment_workflow_sha256"] == attached
+        assert proof.receipt["workflow_sha256"] == domain.MAIN_WORKFLOW_SHA256
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert proof.receipt["source_proof"] is proof.receipt["guard_refusal"] is False
+        assert (
+            proof.receipt["technical_gate_waiver"]
+            is proof.receipt["production_admission"]
+            is False
+        )
+
+
+def test_fixed_runner_workflow_pin_changes_only_the_reviewed_runner_label():
+    original = (Path(__file__).parent / "resources/main-domain-merge-gate.yml").read_bytes()
+    assert hashlib.sha256(original).hexdigest() == domain.MAIN_WORKFLOW_SHA256
+    assert original.count(b"runs-on: ubuntu-latest") == 1
+    fixed = original.replace(b"runs-on: ubuntu-latest", b"runs-on: ubuntu-24.04")
+    assert hashlib.sha256(fixed).hexdigest() == audit.native.FIXED_RUNNER_WORKFLOW_SHA256
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize(
+    "fault", [None, "executed", "registered", "success", "component", "workflow"]
+)
+def test_fixed_runner_discovery_only_joins_unattributed_empty_native_job(
+    compatibility_infrastructure, discovery_case, tmp_path, monkeypatch, fault
+):
+    profile, identity, _rule, observed, _contract = compatibility_infrastructure
+    data = discovery_case
+    native_run, job, check = observed["run"], observed["job"], observed["check"]
+    head = "c" * 40
+    native_run.update(event="workflow_run", pull_requests=[], conclusion="skipped", head_sha=head)
+    job.update(conclusion="skipped", steps=[], labels=["ubuntu-24.04"], head_sha=head)
+    check.update(conclusion="skipped", head_sha=head)
+    check["output"]["annotations_count"] = 0
+    for key in ("runner_id", "runner_name", "runner_group_id", "runner_group_name"):
+        job[key] = None
+    data["jobs"][native_run["id"]] = [job]
+    data["checks"][check["id"]] = check
+    policy = {
+        "kind": audit.UNATTRIBUTED_POLICY_KIND,
+        "workflow_sha256": domain.MAIN_WORKFLOW_SHA256,
+        **{
+            key: identity[key]
+            for key in ("validation_pr", "validation_base_ref", "product_revision", "product_tree")
+        },
+    }
+    original = (Path(__file__).parent / "resources/main-domain-merge-gate.yml").read_bytes()
+    fixed = original.replace(b"runs-on: ubuntu-latest", b"runs-on: ubuntu-24.04")
+    if fault == "executed":
+        job["steps"] = [{"name": "Resolve current PR head", "conclusion": "success"}]
+    elif fault == "success":
+        native_run["conclusion"] = "success"
+    elif fault == "component":
+        profile["component"] = "Core"
+    elif fault == "workflow":
+        fixed += b"\n"
+    native_file = discovery.domain._native_file
+    monkeypatch.setattr(
+        discovery.domain,
+        "_native_file",
+        lambda path, revision: (
+            fixed
+            if path == domain.MAIN_WORKFLOW and revision == head
+            else native_file(path, revision)
+        ),
+    )
+
+    def api(endpoint):
+        if "/annotations?" in endpoint:
+            return []
+        if endpoint.endswith("/check-runs/" + str(check["id"])):
+            return copy.deepcopy(check)
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr(audit, "api", api)
+    monkeypatch.setattr(
+        audit, "download_run_logs", lambda _run, _attempt, path: path.write_bytes(audit._EMPTY_ZIP)
+    )
+    proofs, expected = [], set()
+    rules = [{"run_id": native_run["id"], "attempt": 1}] if fault == "registered" else []
+    run = data["latest"](native_run)
+    args = (run, profile, identity["validation_pr"], tmp_path, {"attempts": []})
+    kwargs = {
+        "identity": identity,
+        "non_execution_rules": rules,
+        "unattributed_policy": policy,
+        "unattributed_observations": proofs,
+        "unattributed_expected": expected,
+    }
+    if fault is not None:
+        with pytest.raises(ValueError):
+            discovery._inspect_run(*args, **kwargs)
+    else:
+        result = discovery._inspect_run(*args, **kwargs)
+        assert len(proofs) == 1 and result["attempts"] == []
+        assert proofs[0].receipt["source_classification"] == "UNKNOWN"
+        assert all(
+            proofs[0].receipt[key] is False
+            for key in (
+                "source_proof",
+                "guard_refusal",
+                "technical_gate_waiver",
+                "production_admission",
+            )
+        )
 
 
 @pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)

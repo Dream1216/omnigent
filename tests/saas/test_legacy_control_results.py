@@ -64,7 +64,7 @@ def pg_native(scenario, tmp_path, monkeypatch):
             "status": "completed",
             "conclusion": "success",
             "runner_group_name": "GitHub Actions",
-            "labels": ["ubuntu-latest"],
+            "labels": ["ubuntu-24.04"],
             "steps": [],
         }
         lines = []
@@ -235,6 +235,8 @@ def test_exact_PG16_and_PG18_jobs_bind_active_control_and_different_product(pg_n
         "failed_run",
         "missing_matrix",
         "failed_job",
+        "wrong_runner_label",
+        "wrong_runner_group",
         "skipped_step",
         "checkout",
         "artifact_attempt",
@@ -266,6 +268,10 @@ def test_native_PG_denies_source_attempt_job_artifact_and_result_faults(
         jobs.pop()
     elif fault == "failed_job":
         jobs[0]["conclusion"] = "failure"
+    elif fault == "wrong_runner_label":
+        jobs[0]["labels"] = ["ubuntu-latest"]
+    elif fault == "wrong_runner_group":
+        jobs[0]["runner_group_name"] = "self-hosted"
     elif fault == "skipped_step":
         jobs[0]["steps"][-2]["conclusion"] = "skipped"
     elif fault == "checkout":
@@ -324,6 +330,7 @@ def test_PG_receipt_job_depends_on_both_original_matrix_results_and_has_no_publi
 
     workflow = yaml.load((ROOT / consumer.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
     original = workflow["jobs"]["verify-product-pg"]
+    assert original["runs-on"] == "ubuntu-24.04"
     assert tuple(step["name"] for step in original["steps"]) == consumer._PG_STEPS
     job = workflow["jobs"]["collect-product-pg"]
     assert job["needs"] == "verify-product-pg"

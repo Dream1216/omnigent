@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import io
 import json
 import subprocess
 import sys
 import threading
 import time
+import zipfile
+from collections import OrderedDict
 
 import psutil
 import pytest
 
+from saas.scripts import legacy_job_log_archive as archive_reader
 from tests.saas.test_legacy_source_ci import reader
 
 
@@ -20,6 +25,12 @@ def child(monkeypatch):
     original = subprocess.Popen
     processes = []
     commands = []
+
+    def direct_failure(_job, _path):
+        raise ValueError("native job log download failed or timed out")
+
+    # These fixtures isolate the original child transport from native metadata reads.
+    monkeypatch.setattr(archive_reader, "recover_job_log", direct_failure)
 
     def run(script):
         def popen(argv, **kwargs):
@@ -217,3 +228,145 @@ def test_inherited_stderr_is_stopped_closed_and_frozen_before_return(child, tmp_
             owned = psutil.Process(descendant_pid)
             owned.kill()
             owned.wait(timeout=5)
+
+
+@pytest.fixture
+def archive_recovery(monkeypatch):
+    state = {
+        "job": {
+            "id": 123,
+            "run_id": 456,
+            "run_attempt": 2,
+            "head_sha": "a" * 40,
+            "run_url": f"https://api.github.com/repos/{reader.REPOSITORY}/actions/runs/456",
+            "status": "completed",
+            "name": "gate / Security Gate",
+        },
+        "members": [("0_gate _ Security Gate.txt", b"original native full-job log\n")],
+        "api_calls": [],
+        "downloads": [],
+        "changed_job": False,
+    }
+
+    def api(endpoint):
+        assert endpoint == f"repos/{reader.REPOSITORY}/actions/jobs/123"
+        state["api_calls"].append(endpoint)
+        job = copy.deepcopy(state["job"])
+        if state["changed_job"] and len(state["api_calls"]) == 2:
+            job["head_sha"] = "b" * 40
+        return job
+
+    def download(run, attempt, path, bound):
+        state["downloads"].append((run, attempt, bound))
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as bundle:
+            for name, content in state["members"]:
+                bundle.writestr(name, content)
+        path.write_bytes(stream.getvalue())
+        path.chmod(0o600)
+
+    from saas.scripts import legacy_domain_non_execution as nonexecution
+
+    monkeypatch.setattr(archive_reader, "_CACHE", OrderedDict())
+    monkeypatch.setattr(archive_reader, "api", api)
+    monkeypatch.setattr(nonexecution, "_download_run_logs", download)
+    return state
+
+
+def test_exact_run_attempt_archive_recovery_keeps_failure_and_reuses_native_bytes(
+    archive_recovery, tmp_path
+):
+    for name in ("first", "second"):
+        path = tmp_path / name
+        path.write_bytes(b"partial failed direct response")
+        path.chmod(0o600)
+        archive_reader.recover_job_log(123, path)
+        assert path.read_bytes() == b"original native full-job log\n"
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert (
+            path.with_name(name + ".direct-failed").read_bytes()
+            == b"partial failed direct response"
+        )
+        receipt = json.loads(path.with_name(name + ".native-log-recovery.json").read_text())
+        assert receipt["job_id"] == 123 and receipt["run_id"] == 456 and receipt["attempt"] == 2
+        assert receipt["head_sha"] == "a" * 40
+        assert receipt["archive_endpoint"].endswith("/actions/runs/456/attempts/2/logs")
+        assert receipt["member"] == "0_gate _ Security Gate.txt"
+        assert receipt["log_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert archive_recovery["downloads"] == [(456, 2, 32 * 1024 * 1024)]
+    assert len(archive_recovery["api_calls"]) == 4
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "repository",
+        "job",
+        "run",
+        "attempt",
+        "head",
+        "active",
+        "name",
+        "missing",
+        "ambiguous",
+        "changed",
+        "encoding",
+    ],
+)
+def test_native_archive_recovery_rejects_identity_member_and_refresh_faults(
+    archive_recovery, tmp_path, fault
+):
+    state = archive_recovery
+    if fault == "repository":
+        state["job"]["run_url"] = "https://untrusted.invalid/actions/runs/456"
+    elif fault in {"job", "run", "attempt"}:
+        state["job"][{"job": "id", "run": "run_id", "attempt": "run_attempt"}[fault]] = 0
+    elif fault == "head":
+        state["job"]["head_sha"] = "unsealed"
+    elif fault == "active":
+        state["job"]["status"] = "in_progress"
+    elif fault == "name":
+        state["job"]["name"] = "other job"
+    elif fault == "missing":
+        state["members"] = [("gate _ Security Gate/1_step.txt", b"step only")]
+    elif fault == "ambiguous":
+        state["members"].append(("1_gate _ Security Gate.txt", b"other full job"))
+    elif fault == "changed":
+        state["changed_job"] = True
+    elif fault == "encoding":
+        state["members"] = [("0_gate _ Security Gate.txt", b"\xff")]
+    path = tmp_path / "job.log"
+    path.write_bytes(b"retained direct failure")
+    with pytest.raises((ValueError, UnicodeError)):
+        archive_reader.recover_job_log(123, path)
+    assert path.read_bytes() == b"retained direct failure"
+    assert not path.with_name(path.name + ".native-log-recovery.json").exists()
+
+
+def test_native_archive_recovery_rejects_changed_cached_original(archive_recovery, tmp_path):
+    first = tmp_path / "first"
+    first.write_bytes(b"")
+    archive_reader.recover_job_log(123, first)
+    first.with_name(first.name + ".native-run.zip").write_bytes(b"changed archive")
+    second = tmp_path / "second"
+    second.write_bytes(b"second direct failure")
+    with pytest.raises(ValueError, match="custody differs"):
+        archive_reader.recover_job_log(123, second)
+    assert second.read_bytes() == b"second direct failure"
+
+
+def test_failed_direct_reader_uses_exact_native_archive_adapter(
+    archive_recovery, tmp_path, monkeypatch
+):
+    def failed(_job, path):
+        path.write_bytes(b"failed direct response")
+        sidecar = path.with_name(path.name + ".native-download.json")
+        sidecar.write_text(json.dumps({"returncode": 1, "deadline_expired": False}))
+        raise ValueError("native job log download failed or timed out")
+
+    monkeypatch.setattr(reader, "_download_job_log_direct", failed)
+    path = tmp_path / "job.log"
+    assert reader.download_job_log(123, path) is None
+    assert path.read_bytes() == b"original native full-job log\n"
+    assert path.with_name(path.name + ".direct-failed").read_bytes() == b"failed direct response"
+    assert archive_recovery["downloads"] == [(456, 2, 32 * 1024 * 1024)]

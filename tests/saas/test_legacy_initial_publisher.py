@@ -264,7 +264,7 @@ def native_export(publication_data, tmp_path, monkeypatch):
         "status": "completed",
         "conclusion": "success",
         "runner_group_name": "GitHub Actions",
-        "labels": ["ubuntu-latest"],
+        "labels": ["ubuntu-24.04"],
         "steps": [],
     }
     stamp = datetime(2026, 10, 25, 1, tzinfo=UTC)
@@ -336,6 +336,7 @@ def native_export(publication_data, tmp_path, monkeypatch):
         "head",
         "attempt",
         "runner",
+        "runner_label",
         "step",
         "order",
         "checkout",
@@ -356,6 +357,8 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
         job["run_attempt"] = 2
     if fault == "runner":
         job["labels"].append("self-hosted")
+    if fault == "runner_label":
+        job["labels"] = ["ubuntu-latest"]
     if fault == "step":
         job["steps"][3]["conclusion"] = "skipped"
     if fault == "order":
@@ -978,6 +981,7 @@ def test_complete_workflow_keeps_product_execution_out_of_protected_jobs():
     assert jobs["attest-exact-inputs"]["needs"] == "verify-published-runtime"
     assert jobs["independent-readback"]["needs"] == "attest-exact-inputs"
     for name, job in jobs.items():
+        assert job["runs-on"] == "ubuntu-24.04"
         assert "refs/heads/main" in job["if"]
         if name not in protected:
             assert set(job["permissions"].values()) == {"read"}

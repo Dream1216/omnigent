@@ -94,6 +94,21 @@
           "after": "        )\n        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(\n            isinstance(rows, list) and (bool(rows) or (total == 0 and page == 1)),\n            \"native job page is missing\",\n        )\n        jobs.extend(cast(list[dict[str, Any]], rows))\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n"
         }
       ]
+    },
+    "native_job_archive_correction": {
+      "corrected_sha256": "5b043485214c3aa3385942a5dc4141a011c43205c7c4e305e6d649d997887802",
+      "restored_sha256": "d14adc81514286b8ecfe7869cb80c164e6936f530cd476a20999f0cfc965ee43",
+      "reason": "Exact native archive recovery wrapper plus private rename of the unchanged direct reader; inverse restores committed25cd before every original complete-file and preserved-function guard. Native source/test/refusal predicates remain original.",
+      "inverse_fragments": [
+        {
+          "before": "",
+          "after": "def download_job_log(job_id: int, destination: Path) -> None:\n    try:\n        _download_job_log_direct(job_id, destination)\n    except ValueError as error:\n        if str(error) != \"native job log download failed or timed out\":\n            raise\n        try:\n            diagnostic = json.loads(\n                destination.with_name(destination.name + \".native-download.json\").read_text()\n            )\n        except (OSError, ValueError):\n            raise error from None\n        if diagnostic[\"deadline_expired\"] or diagnostic[\"returncode\"] in {None, 0}:\n            raise\n        from saas.scripts.legacy_job_log_archive import recover_job_log\n\n        recover_job_log(job_id, destination)\n\n\n"
+        },
+        {
+          "before": "def download_job_log(job_id: int, destination: Path) -> None:",
+          "after": "def _download_job_log_direct(job_id: int, destination: Path) -> None:"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
@@ -164,6 +179,17 @@
         {
           "before": "        jobs = [job for job in result[\"native_jobs\"] if job.get(\"id\") == original[\"job_id\"]]\n        require(len(jobs) == 1, \"original OCI upload has no unique native producer job\")\n        job = jobs[0]\n        uploads = [step for step in job.get(\"steps\", []) if step.get(\"name\") == UPLOAD_STEP]\n        require(len(uploads) == 1, \"original OCI producer upload step is ambiguous\")\n        metadata = result[\"native_artifact\"]\n        verify_job_artifact_identity(\n",
           "after": "        jobs = [job for job in result[\"native_jobs\"] if job.get(\"id\") == original[\"job_id\"]]\n        require(len(jobs) == 1, \"original OCI upload has no unique native producer job\")\n        job = jobs[0]\n        uploads = [\n            step\n            for step in job.get(\"steps\", [])\n            if step.get(\"name\") == upload_step_name(profile[\"component\"])\n        ]\n        require(len(uploads) == 1, \"original OCI producer upload step is ambiguous\")\n        metadata = result[\"native_artifact\"]\n        verify_job_artifact_identity(\n"
+        }
+      ]
+    },
+    "native_runner_metadata_correction": {
+      "corrected_sha256": "2787f576e23bf2230d53633067c780ad02bfda317c58cd0f792ccf84fb490ebe",
+      "restored_sha256": "837fee182ee8894a68c93af5dcdc14d0263baeb0d9d3f1a4ed38de2fcd9a4b6a",
+      "reason": "Exact current-controller hosted runner label matches the unchanged fixed production workflow; one inverse line restores committed25cd before all original full-file/function closure guards. All source,artifact,signature and runtime checks remain unchanged.",
+      "inverse_fragments": [
+        {
+          "before": "        and \"ubuntu-latest\" in job.get(\"labels\", [])\n",
+          "after": "        and \"ubuntu-24.04\" in job.get(\"labels\", [])\n"
         }
       ]
     }
@@ -382,5 +408,6 @@
     }
   },
   "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
-  "saas/scripts/compare_oci_rebuilds.py": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b"
+  "saas/scripts/compare_oci_rebuilds.py": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
+  "saas/scripts/legacy_job_log_archive.py": "3149a2d41450610bccd548bfd40ed673fbe9b68248463c7381983f4d4904a322"
 }
