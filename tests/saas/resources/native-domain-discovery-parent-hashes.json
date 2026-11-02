@@ -409,5 +409,5 @@
   },
   "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
   "saas/scripts/compare_oci_rebuilds.py": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
-  "saas/scripts/legacy_job_log_archive.py": "3149a2d41450610bccd548bfd40ed673fbe9b68248463c7381983f4d4904a322"
+  "saas/scripts/legacy_job_log_archive.py": "c2ac6ab1fa4efac61697ced899bf229ffc7805850f8b1ff58ddb9a5003133d33"
 }

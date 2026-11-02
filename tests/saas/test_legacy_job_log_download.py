@@ -245,6 +245,8 @@ def archive_recovery(monkeypatch):
         "members": [("0_gate _ Security Gate.txt", b"original native full-job log\n")],
         "api_calls": [],
         "downloads": [],
+        "catalogue_calls": [],
+        "jobs": None,
         "changed_job": False,
     }
 
@@ -265,10 +267,15 @@ def archive_recovery(monkeypatch):
         path.write_bytes(stream.getvalue())
         path.chmod(0o600)
 
+    def job_pages(run, attempt):
+        state["catalogue_calls"].append((run, attempt))
+        return copy.deepcopy(state["jobs"] if state["jobs"] is not None else [state["job"]])
+
     from saas.scripts import legacy_domain_non_execution as nonexecution
 
     monkeypatch.setattr(archive_reader, "_CACHE", OrderedDict())
     monkeypatch.setattr(archive_reader, "api", api)
+    monkeypatch.setattr(archive_reader, "_job_pages", job_pages)
     monkeypatch.setattr(nonexecution, "_download_run_logs", download)
     return state
 
@@ -295,6 +302,62 @@ def test_exact_run_attempt_archive_recovery_keeps_failure_and_reuses_native_byte
         assert receipt["log_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert archive_recovery["downloads"] == [(456, 2, 32 * 1024 * 1024)]
     assert len(archive_recovery["api_calls"]) == 4
+    assert archive_recovery["catalogue_calls"] == [(456, 2)]
+
+
+@pytest.mark.parametrize(
+    ("job_name", "member"),
+    [
+        (
+            "verify-production-migration-replay "
+            "(postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...",
+            "3_verify-production-migration-replay "
+            "(postgres16.14-bookworm@sha25664154d0babcb1741988719e703419a....txt",
+        ),
+        (
+            "verify-production-migration-replay "
+            "(postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...",
+            "5_verify-production-migration-replay "
+            "(postgres18.6-trixie@sha2564ef4dbc939d61acea57712655ddb4b4ab....txt",
+        ),
+    ],
+)
+def test_native_archive_recovers_observed_postgres_matrix_names(
+    archive_recovery, tmp_path, job_name, member
+):
+    archive_recovery["job"]["name"] = job_name
+    archive_recovery["members"] = [(member, b"original PostgreSQL matrix log\n")]
+    path = tmp_path / "postgres.log"
+    path.write_bytes(b"failed direct response")
+    archive_reader.recover_job_log(123, path)
+    assert path.read_bytes() == b"original PostgreSQL matrix log\n"
+
+
+@pytest.mark.parametrize("other_name", ["gate :_ Security Gate", "gate _ Security Gate"])
+def test_native_archive_rejects_lossy_name_collisions_even_with_one_member(
+    archive_recovery, tmp_path, other_name
+):
+    other = copy.deepcopy(archive_recovery["job"])
+    other.update(id=124, name=other_name)
+    archive_recovery["jobs"] = [archive_recovery["job"], other]
+    path = tmp_path / "ambiguous.log"
+    path.write_bytes(b"retained direct failure")
+    with pytest.raises(ValueError, match="catalogue"):
+        archive_reader.recover_job_log(123, path)
+    assert path.read_bytes() == b"retained direct failure"
+    assert not path.with_name(path.name + ".native-log-recovery.json").exists()
+
+
+@pytest.mark.parametrize("field", ["id", "run_id", "run_attempt", "head_sha", "run_url", "status"])
+def test_native_archive_rejects_catalogue_identity_substitution(archive_recovery, tmp_path, field):
+    other = copy.deepcopy(archive_recovery["job"])
+    other[field] = "different" if isinstance(other[field], str) else other[field] + 1
+    archive_recovery["jobs"] = [other]
+    path = tmp_path / "substituted.log"
+    path.write_bytes(b"retained direct failure")
+    with pytest.raises(ValueError, match="catalogue"):
+        archive_reader.recover_job_log(123, path)
+    assert path.read_bytes() == b"retained direct failure"
 
 
 @pytest.mark.parametrize(
@@ -348,6 +411,18 @@ def test_native_archive_recovery_rejects_changed_cached_original(archive_recover
     first.write_bytes(b"")
     archive_reader.recover_job_log(123, first)
     first.with_name(first.name + ".native-run.zip").write_bytes(b"changed archive")
+    second = tmp_path / "second"
+    second.write_bytes(b"second direct failure")
+    with pytest.raises(ValueError, match="custody differs"):
+        archive_reader.recover_job_log(123, second)
+    assert second.read_bytes() == b"second direct failure"
+
+
+def test_native_archive_recovery_rejects_changed_cached_job_catalogue(archive_recovery, tmp_path):
+    first = tmp_path / "first"
+    first.write_bytes(b"")
+    archive_reader.recover_job_log(123, first)
+    first.with_name(first.name + ".native-run.zip.jobs.json").write_bytes(b"[]")
     second = tmp_path / "second"
     second.write_bytes(b"second direct failure")
     with pytest.raises(ValueError, match="custody differs"):

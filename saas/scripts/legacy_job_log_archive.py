@@ -14,15 +14,16 @@ from pathlib import Path
 from typing import cast
 
 from saas.scripts.legacy_native_evidence import api
+from saas.scripts.legacy_source_ci import _job_pages
 from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import REPOSITORY
 
-_CACHE: OrderedDict[tuple[int, int], tuple[bytes, Path]] = OrderedDict()
+_CACHE: OrderedDict[tuple[int, int], tuple[bytes, Path, bytes]] = OrderedDict()
 _LOCK = threading.Lock()
 _PREFIX = f"repos/{REPOSITORY}"
 
 
-def _archive(run_id: int, attempt: int, destination: Path) -> tuple[bytes, Path]:
+def _archive(run_id: int, attempt: int, destination: Path) -> tuple[bytes, Path, bytes]:
     from saas.scripts.legacy_domain_non_execution import _download_run_logs
 
     key = run_id, attempt
@@ -42,16 +43,30 @@ def _archive(run_id: int, attempt: int, destination: Path) -> tuple[bytes, Path]
                     "native run log ZIP inventory exceeds bound or is ambiguous",
                 )
                 require(bundle.testzip() is None, "native run log ZIP CRC differs")
-            _CACHE[key] = data, path
+            catalogue = json.dumps(_job_pages(run_id, attempt), sort_keys=True).encode()
+            catalogue_path = path.with_name(path.name + ".jobs.json")
+            with os.fdopen(
+                os.open(catalogue_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+            ) as output:
+                output.write(catalogue)
+            _CACHE[key] = data, path, catalogue
             if len(_CACHE) > 4:
                 _CACHE.popitem(last=False)
         _CACHE.move_to_end(key)
-        data, path = _CACHE[key]
+        data, path, catalogue = _CACHE[key]
+        catalogue_path = path.with_name(path.name + ".jobs.json")
         require(
-            path.is_file() and path.read_bytes() == data,
+            path.is_file()
+            and path.read_bytes() == data
+            and catalogue_path.is_file()
+            and catalogue_path.read_bytes() == catalogue,
             "cached native log archive custody differs",
         )
         return _CACHE[key]
+
+
+def _archive_name(name: str) -> str:
+    return name.replace("/", "_").replace(":", "")
 
 
 def recover_job_log(job_id: int, destination: Path) -> None:
@@ -74,8 +89,23 @@ def recover_job_log(job_id: int, destination: Path) -> None:
         and bool(job["name"]),
         "native job cannot identify one completed repository run attempt",
     )
-    data, archive = _archive(cast(int, run_id), cast(int, attempt), destination)
-    expected = re.compile(r"[0-9]+_" + re.escape(job["name"].replace("/", "_")) + r"\.txt")
+    data, archive, catalogue = _archive(cast(int, run_id), cast(int, attempt), destination)
+    jobs = json.loads(catalogue)
+    require(
+        all(isinstance(row.get("name"), str) and bool(row["name"]) for row in jobs),
+        "native run job catalogue contains an invalid name",
+    )
+    normalized = _archive_name(job["name"])
+    matches = [row for row in jobs if _archive_name(row["name"]) == normalized]
+    require(
+        len(matches) == 1
+        and all(
+            matches[0].get(field) == job[field]
+            for field in ("id", "run_id", "run_attempt", "head_sha", "name", "run_url", "status")
+        ),
+        "native run job catalogue has no unique matching job identity",
+    )
+    expected = re.compile(r"[0-9]+_" + re.escape(normalized) + r"\.txt")
     with zipfile.ZipFile(io.BytesIO(data)) as bundle:
         selected = [entry for entry in bundle.infolist() if expected.fullmatch(entry.filename)]
         require(len(selected) == 1, "native run archive has no unique full-job log")
@@ -103,6 +133,9 @@ def recover_job_log(job_id: int, destination: Path) -> None:
         "archive_path": str(archive),
         "archive_sha256": hashlib.sha256(data).hexdigest(),
         "archive_bytes": len(data),
+        "job_catalogue_endpoint": f"{_PREFIX}/actions/runs/{run_id}/attempts/{attempt}/jobs",
+        "job_catalogue_path": str(archive.with_name(archive.name + ".jobs.json")),
+        "job_catalogue_sha256": hashlib.sha256(catalogue).hexdigest(),
         "member": member.filename,
         "log_bytes": len(log),
         "log_sha256": hashlib.sha256(log).hexdigest(),
