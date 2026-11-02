@@ -159,7 +159,9 @@ def test_private_promotion_transfers_original_bytes_and_signs_after_readback():
     assert "extract_artifact" in commands and "compare_oci_rebuilds" in commands
     assert "--scope aliyun-host" in commands
     assert "--source-digest" in commands and "--deny-self-hosted-runners" in commands
-    assert "promote.*production" not in commands
+    publish = next(step["run"] for step in steps if "crane push" in step.get("run", ""))
+    assert publish.index("--jq .visibility)") < publish.index("crane push")
+    assert publish.count('--jq .visibility)" == private ]]') == 2
     readback = next(
         i
         for i, step in enumerate(steps)

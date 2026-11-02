@@ -156,6 +156,12 @@ revision and SLSA/SPDX. No image is rebuilt or relabeled. This dispatch has only
 the registry and attestation writes it needs, and no production deploy step.
 A signature from this candidate branch proves its publisher identity; it does
 not substitute for protected production source acceptance or real cloud tests.
+The target package must already exist and its live visibility must be `private`
+before transfer and after registry readback. The publisher never assumes registry
+defaults or creates a package with unchecked visibility. The first publication
+exposed this missing check; the owner-scoped package was corrected to private
+and independently verified with the dedicated read-only credential before any
+Aliyun template submission.
 
 Historical zero-finding rejection decisions below reflect the policy at the time.
 The 13-High complete Gen2 candidate can now advance to a fresh advisory scan and

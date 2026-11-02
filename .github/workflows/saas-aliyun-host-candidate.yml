@@ -311,6 +311,8 @@ jobs:
         run: |
           set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/omnigent-aliyun-host"
+          # Package visibility is an external setting: never infer it from defaults.
+          [[ "$(gh api "users/$GITHUB_REPOSITORY_OWNER/packages/container/omnigent-aliyun-host" --jq .visibility)" == private ]]
           digest=$(jq -er .index_digest artifacts/promotion.json)
           tag="$image:source-$ORIGINAL_REVISION"
           crane push "$RUNNER_TEMP/promotion-layout" "$tag"
@@ -319,6 +321,7 @@ jobs:
           tar -cf "$RUNNER_TEMP/readback.tar" -C "$RUNNER_TEMP/readback-layout" oci-layout index.json blobs
           python -m saas.scripts.aliyun_host_promotion readback \
             --archive "$RUNNER_TEMP/readback.tar" --receipt artifacts/promotion.json
+          [[ "$(gh api "users/$GITHUB_REPOSITORY_OWNER/packages/container/omnigent-aliyun-host" --jq .visibility)" == private ]]
           printf 'name=%s\ndigest=%s\n' "$image" "$digest" >> "$GITHUB_OUTPUT"
           printf '%s@%s\n' "$image" "$digest" > artifacts/image-reference.txt
       - name: Sign original image and advisory promotion receipt with publisher identity
