@@ -6,6 +6,8 @@
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
+!patches/
+!patches/**
 !.github/
 !.github/ci-deps/
 !.github/ci-deps/package.json

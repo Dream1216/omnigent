@@ -119,6 +119,7 @@ ARG PNPM_VERSION=12.10.1
 ARG SOURCE_DATE_EPOCH
 WORKDIR /opt/omnigent-host-cli
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY patches/ ./patches/
 COPY .github/ci-deps/package.json .github/ci-deps/package.json
 RUN export HOME=/tmp/omnigent-cli-state/home \
       TMPDIR=/tmp/omnigent-cli-state/tmp \
