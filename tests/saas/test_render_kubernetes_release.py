@@ -13,7 +13,10 @@ import yaml
 
 import saas.scripts.render_kubernetes_release as release_renderer_module
 from saas.production.postgresql_migration import _expected_head
-from saas.production.service_bindings import EXPECTED_PRODUCTION_SERVICE_ROLES
+from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
+    EXPECTED_PRODUCTION_SERVICE_ROLES,
+)
 from saas.scripts.render_kubernetes_namespace import MANIFEST_NAMES, TARGET_NAMESPACE
 from saas.scripts.render_kubernetes_release import (
     EVIDENCE_FILE_NAME,
@@ -45,7 +48,9 @@ def _copy_sources(tmp_path: Path) -> Path:
     return source
 
 
-def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
+def _spec_document(*, mode: str = "stage", schema_head: str | None = None) -> dict[str, Any]:
+    if schema_head is None:
+        schema_head = _expected_head("saas")
     store_uri = "s3://omnigent-release/runtime"
     runners = {
         "a": {
@@ -148,7 +153,7 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
             "region": "cn-east-1",
             "store_uri": store_uri,
         },
-        "control_plane_schema_revision": _expected_head("saas"),
+        "control_plane_schema_revision": schema_head,
         "image_digest": "sha256:" + ("3" * 64),
         "ingress": {"namespace": "kube-system", "workload": "traefik"},
         "mode": mode,
@@ -171,7 +176,17 @@ def _spec_document(*, mode: str = "stage") -> dict[str, Any]:
         "schema_version": 1,
         "service_logins": {
             service: f"login_{index:02d}"
-            for index, service in enumerate(EXPECTED_PRODUCTION_SERVICE_ROLES, start=1)
+            for index, service in enumerate(
+                {
+                    **EXPECTED_PRODUCTION_SERVICE_ROLES,
+                    **(
+                        EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
+                        if schema_head in {"p0s000000017", "p0s000000018"}
+                        else {}
+                    ),
+                },
+                start=1,
+            )
         },
         "source_revision": "1" * 40,
         "upstream_revision": "2" * 40,

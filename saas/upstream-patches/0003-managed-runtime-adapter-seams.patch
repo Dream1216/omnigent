@@ -414,3 +414,15 @@ new file mode 100644
 +
 +def downgrade() -> None:
 +    op.drop_index(_INDEX, table_name=_TABLE)
+diff --git a/omnigent/db/cockroachdb.py b/omnigent/db/cockroachdb.py
+index 1b8a66206..1e9165b83 100644
+--- a/omnigent/db/cockroachdb.py
++++ b/omnigent/db/cockroachdb.py
+@@ -32,0 +33,2 @@ CRDB_BASELINE_REVISION = "gf1b2c3d4e5f"
++# The frozen fallback ORM predates D0; later schema changes use the original migrations.
++_CRDB_MODEL_METADATA_REVISION = "mm1a2b3c4d5e"
+@@ -312 +314 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
+-                command.stamp(config, "head")
++                command.stamp(config, _CRDB_MODEL_METADATA_REVISION)
+@@ -313,0 +316 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
++            _run_migrations(engine, db_uri)

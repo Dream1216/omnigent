@@ -29,11 +29,11 @@ def _postgres_url() -> str:
     return value
 
 
-def _migrate(connection: sa.Connection, root: Path) -> None:
+def _migrate(connection: sa.Connection, root: Path, revision: str = "head") -> None:
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)
 
 
 def _registration_erasure_replacements(
@@ -1083,7 +1083,7 @@ def test_real_postgresql_registration_erasure_evidence_blocks_downgrade(
     )
 
     with engine.begin() as connection:
-        _migrate(connection, root)
+        _migrate(connection, root, "p0s000000015")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )

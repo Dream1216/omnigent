@@ -339,6 +339,7 @@ def _seccomp_observation(placement: dict, image: str) -> dict:
 
 def _v2_record() -> dict:
     record = _record()
+    record["revision_contract"]["control_plane_schema_revision"] = "lm2t00000001"
     record["schema_version"] = 2
     runner = record["components"]["runner"]
     runner["seccomp_profile"] = "RuntimeDefault"
@@ -353,6 +354,15 @@ def test_v2_record_bytes_and_runtime_default_semantics_are_preserved() -> None:
     policy["schema_version"] = 2
     del policy["runner_seccomp"]
     record = _v2_record()
+    policy["revision_contract"] = copy.deepcopy(record["revision_contract"])
+    baseline = json.loads((_repo() / "saas/production/baseline.json").read_text())
+    baseline["revision_contract"]["control_plane_schema_revision"] = "lm2t00000001"
+    current = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    assert current["status"] == "fail"
+    assert (
+        "deployment policy revision_contract must match production baseline"
+        in current["violations"]
+    )
     assert (
         record["record_sha256"]
         == "7cf620beb26c17533433a2c4a4ca7b54b1caaea0c2d30195359d4bce4ad7f832"
@@ -363,12 +373,12 @@ def test_v2_record_bytes_and_runtime_default_semantics_are_preserved() -> None:
         ).hexdigest()
         == "8407f0cfcba5a327247a369be098aee661c9ddec188e46de477c273f86a65586"
     )
-    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW, baseline=baseline)
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
     record["components"]["runner"]["seccomp_profile"] = "Localhost"
     _resign(record)
-    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW, baseline=baseline)
     assert report["production_readiness"] == "blocked"
     assert any("does not use RuntimeDefault" in item for item in report["blockers"])
 
