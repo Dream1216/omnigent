@@ -19,6 +19,7 @@ from saas.production.postgresql_migration import (
 )
 from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
+    load_business_delivery_service_role_bindings,
     load_model_projection_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
@@ -163,6 +164,11 @@ def main() -> int:
             if "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE" in os.environ
             else None
         )
+        business_delivery_service_role_bindings = (
+            load_business_delivery_service_role_bindings(os.environ)
+            if "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE" in os.environ
+            else None
+        )
     except ProductionServiceRoleBindingsError as error:
         parser.error(str(error))
     try:
@@ -177,6 +183,7 @@ def main() -> int:
             platform_model_service_role_bindings=platform_model_service_role_bindings,
             platform_admin_service_role_bindings=platform_admin_service_role_bindings,
             model_projection_service_role_bindings=model_projection_service_role_bindings,
+            business_delivery_service_role_bindings=business_delivery_service_role_bindings,
             verification_saas_head=args.verification_saas_head,
         )
         receipt = run_production_postgresql_migration(plan, verify_only=args.verify_only)

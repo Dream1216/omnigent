@@ -8,7 +8,7 @@ import json
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import MappingProxyType
 from typing import Any, Never
@@ -22,6 +22,11 @@ from saas.control_plane.permissions import POLICY_VERSION
 
 _MAX_SNAPSHOT_TTL = timedelta(seconds=60)
 _HEADER_TYPE = "saas-context-snapshot+jwe"
+
+
+def context_snapshot_epoch_grace_seconds() -> float:
+    """An earlier issuer may be five seconds ahead; bound its last valid snapshot."""
+    return _MAX_SNAPSHOT_TTL.total_seconds() + 5.0
 
 
 class ContextSnapshotError(PermissionError):
@@ -65,7 +70,7 @@ class ContextSnapshotPolicy:
     issuer: str
     audience: str
     ttl: timedelta = _MAX_SNAPSHOT_TTL
-    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def __post_init__(self) -> None:
         if not self.active_key_id or self.active_key_id not in self.keys:
@@ -105,8 +110,13 @@ class VerifiedContextSnapshot:
 class ContextSnapshotService:
     """Issue encrypted, signed, token-bound snapshots with no database dependency."""
 
-    def __init__(self, policy: ContextSnapshotPolicy) -> None:
+    def __init__(self, policy: ContextSnapshotPolicy, *, invalidations=None) -> None:
         self._policy = policy
+        self._invalidations = invalidations
+
+    def require_invalidation_ready(self) -> None:
+        if self._invalidations is not None and not self._invalidations.ready:
+            self._deny("snapshot_invalidation_unavailable", "snapshot invalidation is not current")
 
     def issue(
         self,
@@ -240,6 +250,14 @@ class ContextSnapshotService:
             runtime.space_id
         ):
             self._deny("snapshot_resource_invalid", "snapshot resource binding is invalid")
+        if (
+            self._invalidations is not None
+            and session.security_version < self._invalidations.minimum("user", session.user_id)
+        ):
+            self._deny(
+                "snapshot_security_version_stale",
+                "snapshot was invalidated by a committed security change",
+            )
         return VerifiedContextSnapshot(
             session=session,
             runtime_context=runtime,
@@ -306,7 +324,7 @@ class ContextSnapshotService:
         now = self._policy.clock()
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("context snapshot clock must return a timezone-aware value")
-        return now.astimezone(timezone.utc)
+        return now.astimezone(UTC)
 
     @staticmethod
     def _session_payload(session: ValidatedAuthSession) -> dict[str, object]:
@@ -384,7 +402,7 @@ class ContextSnapshotService:
         if not isinstance(value, int):
             raise ContextSnapshotError(code, "snapshot timestamp is invalid")
         try:
-            return datetime.fromtimestamp(value, timezone.utc)
+            return datetime.fromtimestamp(value, UTC)
         except (OverflowError, OSError, ValueError) as error:
             raise ContextSnapshotError(code, "snapshot timestamp is invalid") from error
 

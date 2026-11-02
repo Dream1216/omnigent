@@ -2109,9 +2109,22 @@ def _normalize(value: Any) -> Any:
     return str(value)
 
 
+_TYPED_DELIVERY_HASH_TABLES = (
+    "saas_platform_audit_events",
+    "saas_platform_audit_chain_heads",
+    "saas_usage_reconciliation_ingress",
+    "saas_platform_audit_journal_deliveries",
+    "saas_revocation_replica_applied",
+)
+
+
 def _digest_tables_for_schema(head: str) -> tuple[str, ...]:
     if head == "p0s000000015":
         return _SELECTED_HASH_TABLES
+    if head == "p0s000000016":
+        return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
+    if head in {"p0s000000017", "p0s000000018"}:
+        return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES, *_TYPED_DELIVERY_HASH_TABLES)
     if head in {"lm2r00000001", "lm2s00000001", "lm2t00000001"}:
         return (*_SELECTED_HASH_TABLES, *_R_MODEL_HASH_TABLES)
     raise PostgreSqlRestoreContractError("unsupported restore hash schema")
