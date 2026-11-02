@@ -1,4 +1,4 @@
-"""Scan both platforms of exact OCI candidate archives with a fresh Grype DB."""
+"""Scan exact OCI archives; Aliyun Host findings are advisory, other scopes block."""
 
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ def main() -> int:
         )
         database_built_at = parse_database_status(status, now=datetime.now(UTC))
         summaries = []
-        blocked = False
+        findings_present = False
         for name, archive in sorted(images.items()):
             archive_digest = file_sha256(archive)
             for platform in scan_platforms(args.scope):
@@ -179,20 +179,24 @@ def main() -> int:
                     raise RuntimeError(f"Grype failed to scan {name} {platform}")
                 parsed = scan_report(json.loads(output.read_text()))
                 counts = parsed["counts"]
-                blocked |= result.returncode == 2 or any(counts.values())
+                findings_present |= result.returncode == 2 or any(counts.values())
                 summaries.append(
                     {
                         "image": name,
                         "platform": platform,
                         "archive_sha256": archive_digest,
                         "report_sha256": file_sha256(output),
+                        "scanner_returncode": result.returncode,
                         "critical": counts["Critical"],
                         "high": counts["High"],
                         "findings": parsed["findings"],
                     }
                 )
+    advisory = args.scope == "aliyun-host"
     receipt = {
         "scope": args.scope,
+        "vulnerability_policy": "advisory" if advisory else "blocking",
+        "vulnerability_findings_present": findings_present,
         "scanner": f"grype {GRYPE_VERSION}",
         "database_built_at": database_built_at,
         "exceptions": [],
@@ -204,7 +208,12 @@ def main() -> int:
         "aliyun-host": "aliyun-host-scan-summary.json",
     }[args.scope]
     (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-    return 2 if blocked else 0
+    if advisory and findings_present:
+        print(
+            "::warning::Aliyun Host vulnerability findings are advisory; "
+            "original reports, counts and scanner exit codes are retained."
+        )
+    return 2 if findings_present and not advisory else 0
 
 
 if __name__ == "__main__":

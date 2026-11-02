@@ -184,7 +184,7 @@ jobs:
           second="$RUNNER_TEMP/archives/aliyun-host-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT-2/host.oci.tar"
           python -m saas.scripts.compare_oci_rebuilds --label-profile aliyun-host-minimal \
             --image "host=$first,$second" --output artifacts/rebuild-comparison.json
-      - name: Scan the exact admitted candidate bytes
+      - name: Scan exact candidate bytes and report vulnerability warnings
         shell: bash
         run: |
           set -euo pipefail

@@ -1,11 +1,15 @@
 """Safety checks for exact OCI candidate scan receipts."""
 
+import hashlib
+import json
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 import yaml
 
+from saas.scripts import scan_oci_candidates
 from saas.scripts.scan_oci_candidates import (
     parse_database_status,
     scan_platforms,
@@ -109,3 +113,101 @@ def test_signed_release_checks_raw_findings_before_signing() -> None:
     assert ".ignoredMatches // []) == []" in command
     assert "--vex" not in command
     assert "admitted.grype.json" not in command
+
+
+@pytest.fixture
+def run_scan_cli(monkeypatch, tmp_path):
+    """Exercise the CLI boundary with Grype's original JSON and exit protocol."""
+
+    def run(scope, *, returncode=2, ignored=False, missing_report=False, stale=False):
+        output = tmp_path / scope
+        images = ["host"] if scope == "aliyun-host" else ["server"]
+        if scope == "complete":
+            images.append("host")
+        argv = ["scan", "--scope", scope, "--output", str(output)]
+        for name in images:
+            archive = tmp_path / f"{name}.tar"
+            archive.write_bytes(f"exact-{name}-archive".encode())
+            argv += ["--image", f"{name}={archive}"]
+        monkeypatch.setattr("sys.argv", argv)
+        monkeypatch.setattr(scan_oci_candidates, "install_grype", lambda root: root / "grype")
+        built = datetime.now(UTC) - timedelta(hours=25 if stale else 1)
+        monkeypatch.setattr(
+            scan_oci_candidates.subprocess,
+            "check_output",
+            lambda *a, **kw: json.dumps(
+                {"valid": True, "schemaVersion": "v6.1.10", "built": built.isoformat()}
+            ),
+        )
+
+        def grype(command, **kwargs):
+            if command[-2:] == ["db", "update"]:
+                return subprocess.CompletedProcess(command, 0)
+            assert command[command.index("--fail-on") + 1] == "high"
+            if not missing_report:
+                matches = [
+                    {
+                        "vulnerability": {"id": f"CVE-test-{severity}", "severity": severity},
+                        "artifact": {"name": "system-package", "version": "1.0"},
+                    }
+                    for severity in ("Critical", "High")
+                ]
+                Path(command[-1]).write_text(
+                    json.dumps({"matches": matches, "ignoredMatches": matches if ignored else []})
+                )
+            return subprocess.CompletedProcess(command, returncode)
+
+        monkeypatch.setattr(scan_oci_candidates.subprocess, "run", grype)
+        return scan_oci_candidates.main(), output
+
+    return run
+
+
+@pytest.mark.parametrize(
+    ("scope", "exit_code", "policy", "reports"),
+    [
+        ("aliyun-host", 0, "advisory", 1),
+        ("server-preflight", 2, "blocking", 2),
+        ("complete", 2, "blocking", 4),
+    ],
+)
+def test_cli_findings_policy_keeps_raw_reports(
+    run_scan_cli, capsys, scope, exit_code, policy, reports
+):
+    actual, output = run_scan_cli(scope)
+    assert actual == exit_code
+    summary = json.loads(next(output.glob("*summary.json")).read_text())
+    assert summary["vulnerability_policy"] == policy
+    assert summary["vulnerability_findings_present"] is True
+    assert summary["exceptions"] == []
+    assert len(summary["images"]) == reports
+    for image in summary["images"]:
+        report = output / f"{image['image']}-{image['platform'].split('/')[-1]}-grype.json"
+        assert image["report_sha256"] == hashlib.sha256(report.read_bytes()).hexdigest()
+        assert image["critical"] == image["high"] == 1
+        assert image["scanner_returncode"] == 2
+        assert len(image["findings"]) == 2
+    assert ("::warning::" in capsys.readouterr().out) == (policy == "advisory")
+
+
+@pytest.mark.parametrize("failure", ["scanner", "missing", "ignored", "stale"])
+def test_advisory_policy_still_rejects_invalid_scan_evidence(run_scan_cli, failure):
+    options = {
+        "scanner": {"returncode": 1},
+        "missing": {"missing_report": True},
+        "ignored": {"ignored": True},
+        "stale": {"stale": True},
+    }
+    with pytest.raises((RuntimeError, ValueError)):
+        run_scan_cli("aliyun-host", **options[failure])
+
+
+def test_aliyun_workflow_does_not_hide_scanner_errors():
+    path = Path(__file__).resolve().parents[2] / ".github/workflows/saas-aliyun-host-candidate.yml"
+    workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["compare-and-scan"]["steps"]
+    scan = next(step for step in steps if "scan_oci_candidates" in step.get("run", ""))
+    assert "--scope aliyun-host" in scan["run"]
+    assert "continue-on-error" not in scan
+    assert "|| true" not in scan["run"]
+    assert "set -euo pipefail" in scan["run"]

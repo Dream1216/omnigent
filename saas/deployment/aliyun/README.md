@@ -3,6 +3,15 @@
 This directory starts the P2 Host image work for the Aliyun sandbox integration.
 It is a candidate build input, not a production admission or an activated provider.
 
+On 2026-11-02 the project owner authorized advisory vulnerability counts for this
+Aliyun integration. `--scope aliyun-host` retains the complete original Grype
+report, Critical/High counts, scanner exit code, archive/report hashes and a fresh
+database; findings produce a visible warning rather than a failed qualification.
+Scanner errors, missing/malformed reports, ignored findings and a stale database
+still fail. This does not qualify a template, change authentication, source or
+signature checks, or replace real cloud/business and rollback acceptance.
+The existing `complete` and `server-preflight` release scopes retain their policy.
+
 The candidate uses a digest-pinned Debian sid rootfs with a hash-checked, signed
 snapshot index dated 2026-10-30. It installs the required systemd, sshd, sudo,
 chronyd, FUSE and iptables components, plus Git, tmux and bubblewrap. Python
@@ -62,7 +71,7 @@ Remaining qualification:
   `runtime-base` diagnostic reports 10 High, zero Critical and zero ignored
   matches; it excludes the application, Node and harness layers and does not
   qualify the complete Host. The remaining Debian Perl, Expat and Kerberos
-  findings have no fixed version in that scan. The raw zero-High/zero-Critical
+  findings have no fixed version in that scan. The then-required zero-High/zero-Critical
   and no-ignored gates remain unchanged.
 - CI runs 41143681301 (`0d9b444bc`), 41148992698 (`1f19ebd3a`) and
   41151484102 (`73b992158`)
@@ -138,6 +147,12 @@ from the existing dual-architecture Server/Host profiles. The minimal profile
 requires exactly three first-party labels and Linux amd64; it does not accept
 the vendor base's inherited labels. The workflow has no
 registry write or production deployment permissions.
+
+Historical zero-finding rejection decisions below reflect the policy at the time.
+The 13-High complete Gen2 candidate can now advance to a fresh advisory scan and
+publication/template validation with its original source identity; those findings
+have not been fixed or removed. The stable-base experiment with more findings is
+not selected for this accelerated path.
 
 Package installation generates SSH host keys and a machine identity. The
 Dockerfile removes those keys and resets the identity in the installation layer;
