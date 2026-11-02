@@ -196,6 +196,8 @@ def _response(state: PreviewExecutionState, response: Response) -> dict[str, obj
     }
     if state.exchange_url is not None:
         payload["url"] = state.exchange_url
+    if state.failure_code is not None:
+        payload["failure_code"] = state.failure_code
     return payload
 
 

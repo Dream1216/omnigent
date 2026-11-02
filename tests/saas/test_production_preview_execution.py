@@ -199,6 +199,45 @@ async def test_static_web_runtime_serves_health_files_and_no_directory_listing(
 
 
 @pytest.mark.asyncio
+async def test_static_preview_requires_readable_nonempty_entry_for_readiness(
+    tmp_path: Path,
+) -> None:
+    app = create_static_web_preview_app(root=tmp_path, health_path="/__health")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://preview.invalid"
+    ) as client:
+        assert (await client.get("/__health")).status_code == 503
+        entry = tmp_path / "index.html"
+        entry.write_text("  ")
+        assert (await client.get("/__health")).status_code == 503
+        entry.write_text("<html>ready</html>")
+        assert (await client.get("/__health")).status_code == 200
+        entry.unlink()
+        entry.symlink_to(tmp_path / "missing")
+        assert (await client.get("/__health")).status_code == 503
+    app.close()
+
+
+@pytest.mark.asyncio
+async def test_static_preview_spa_fallback_only_for_html_navigation(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("<html>SPA entry</html>")
+    app = create_static_web_preview_app(root=tmp_path, health_path="/__health")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://preview.invalid"
+    ) as client:
+        for path in ("/dashboard", "/dashboard/", "/orders/123"):
+            response = await client.get(path, headers={"Accept": "text/html"})
+            assert response.status_code == 200
+            assert response.text == "<html>SPA entry</html>"
+        head = await client.head("/dashboard", headers={"Accept": "text/html"})
+        assert head.status_code == 200 and head.content == b""
+        assert (await client.get("/dashboard")).status_code == 404
+        for path in ("/missing.js", "/.env", "/.git/config", "/assets/missing.css"):
+            assert (await client.get(path, headers={"Accept": "text/html"})).status_code == 404
+    app.close()
+
+
+@pytest.mark.asyncio
 async def test_static_web_runtime_rejects_symlinks_dotfiles_and_oversized_files(
     tmp_path: Path,
 ) -> None:

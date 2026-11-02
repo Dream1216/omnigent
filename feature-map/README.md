@@ -171,6 +171,9 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
 - [Azure DevOps pull requests](./azure-devops.md) covers the shared panel,
   composer, associations, partial results, and Canvas links.
 
+- [Static session previews](../saas/docs/static-preview.md) covers snapshot readiness, SPA
+  navigation, refresh, asset errors, and the SaaS authentication evidence boundary.
+
 ## Seed scope
 
 The original five recipes form the seed set. Completing this set means checking

@@ -116,6 +116,16 @@ class _StaticWebPreviewApp:
             await _plain(send, status=405, body=b"method not allowed\n")
             return
         if path == self._health_path:
+            try:
+                async with self._capacity:
+                    entry = await asyncio.to_thread(
+                        _read_static_file, self._root_fd, ("index.html",)
+                    )
+                if not entry.content.strip():
+                    raise StaticWebPreviewRuntimeError("Preview entry is empty")
+            except (OSError, StaticWebPreviewRuntimeError, UnicodeError):
+                await _plain(send, status=503, body=b"entry unavailable\n", head=method == "HEAD")
+                return
             await _plain(send, status=200, body=b"ok\n", head=method == "HEAD")
             return
         if any(name.lower() == b"range" for name, _value in scope.get("headers", ())):
@@ -123,8 +133,25 @@ class _StaticWebPreviewApp:
             return
         try:
             components = _path_components(path)
+        except (StaticWebPreviewRuntimeError, UnicodeError):
+            await _plain(send, status=404, body=b"not found\n", head=method == "HEAD")
+            return
+        try:
             async with self._capacity:
-                opened = await asyncio.to_thread(_read_static_file, self._root_fd, components)
+                try:
+                    opened = await asyncio.to_thread(_read_static_file, self._root_fd, components)
+                except FileNotFoundError:
+                    # Only HTML navigation can use the SPA entry; missing assets remain 404.
+                    accepts_html = any(
+                        name.lower() == b"accept" and b"text/html" in value.lower()
+                        for name, value in scope.get("headers", ())
+                    )
+                    navigation = components[:-1] if path.endswith("/") else components
+                    if not accepts_html or any("." in part for part in navigation):
+                        raise
+                    opened = await asyncio.to_thread(
+                        _read_static_file, self._root_fd, ("index.html",)
+                    )
         except (OSError, StaticWebPreviewRuntimeError, UnicodeError):
             await _plain(send, status=404, body=b"not found\n", head=method == "HEAD")
             return
