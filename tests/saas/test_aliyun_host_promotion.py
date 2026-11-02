@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 import tarfile
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 import yaml
+from packaging.specifiers import SpecifierSet
 
 from saas.scripts.aliyun_host_promotion import prepare, verify_readback
 from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
@@ -16,6 +19,17 @@ from saas.scripts.scan_oci_candidates import GRYPE_VERSION, file_sha256, scan_re
 from tests.saas.test_image_supply_chain import _write_oci
 
 REVISION = "a" * 40
+
+
+def test_gen2_builder_meets_the_repository_uv_requirement():
+    repo = Path(__file__).resolve().parents[2]
+    dockerfile = (repo / "saas/deployment/aliyun/Dockerfile.host").read_text()
+    pinned = re.search(r"^ARG UV_VERSION=(\S+)$", dockerfile, re.MULTILINE)
+    assert pinned is not None
+    required = tomllib.loads((repo / "uv.toml").read_text())["required-version"]
+    assert SpecifierSet(required).contains(pinned.group(1)), (
+        "Gen2 builder uv must satisfy the repository security and lockfile requirement"
+    )
 
 
 @pytest.fixture
