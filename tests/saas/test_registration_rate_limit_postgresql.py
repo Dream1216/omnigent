@@ -507,12 +507,28 @@ def test_concurrent_same_subject_saturates_one_shared_quota(
     subject = f"concurrent-{uuid4()}@example.test"
     barrier = Barrier(12)
 
+    def synchronize_consume(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "public.saas_consume_registration_rate_limit" in statement:
+            # Prepare each database session before competing for the bounded
+            # subject lock; connection startup is outside the quota operation.
+            barrier.wait()
+
     def consume() -> str:
-        barrier.wait()
         return _consume_result(limiter, subject)
 
-    with ThreadPoolExecutor(max_workers=12) as workers:
-        results = list(workers.map(lambda _index: consume(), range(12)))
+    sa.event.listen(rate_limit_postgresql_engine, "before_cursor_execute", synchronize_consume)
+    try:
+        with ThreadPoolExecutor(max_workers=12) as workers:
+            results = list(workers.map(lambda _index: consume(), range(12)))
+    finally:
+        sa.event.remove(rate_limit_postgresql_engine, "before_cursor_execute", synchronize_consume)
 
     assert results.count("allowed") == 5
     assert results.count("registration_rate_limited") == 7
