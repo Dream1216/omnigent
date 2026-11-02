@@ -707,6 +707,7 @@ class SaasAuthContextMiddleware:
             return
         snapshot_token = connection.headers.get("x-saas-context-snapshot", "")
         try:
+            self._context_snapshots.require_invalidation_ready()
             verified = self._context_snapshots.verify(token=snapshot_token, auth_token=token)
             self._validate_selector_headers(connection, verified.runtime_context)
         except (ContextSnapshotError, ValueError):

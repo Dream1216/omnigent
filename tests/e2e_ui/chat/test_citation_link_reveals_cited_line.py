@@ -41,7 +41,7 @@ import httpx
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests._helpers.session import post_session_bundle
+from tests._helpers.operator_agents import post_operator_session
 
 _AGENT_NAME = "cited_line_target_demo"
 _FILE_REL = "src/module.py"
@@ -82,7 +82,7 @@ def _agent_bundle(cwd: str) -> bytes:
     the bundle through the omnigent compat adapter, matching the conftest
     helpers.
 
-    :param cwd: Relative directory within the session workspace.
+    :param cwd: Absolute workspace directory the runner should use as root.
     :returns: ``.tar.gz`` bytes for multipart upload.
     """
     yaml_text = f"""\
@@ -132,12 +132,8 @@ def cited_line_session(
     (ws / "src").mkdir()
     (ws / _FILE_REL).write_text(_module_source())
 
-    create_resp = post_session_bundle(
-        httpx.post,
-        f"{live_server}/v1/sessions",
-        _agent_bundle("."),
-        metadata={"workspace": str(ws)},
-        timeout=30.0,
+    create_resp = post_operator_session(
+        httpx.post, f"{live_server}/v1/sessions", _agent_bundle(str(ws)), timeout=30.0
     )
     create_resp.raise_for_status()
     session_id = create_resp.json()["session_id"]

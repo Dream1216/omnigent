@@ -236,7 +236,7 @@ nine-patch ceiling and existing source-delta ceilings remain unchanged.
 | Patch | Owner | Upstream path | Verification | Upstream status | Replay baseline | Removal condition |
 |---|---|---|---|---|---|---|
 | `0002-managed-session-initializer.patch` | SaaS Platform | `omnigent/cli_config.py`; `omnigent/db/utils.py`; `omnigent/llms/_usage_observer.py` | Store adapter, configuration and usage-accounting contracts | Generic extension proposal pending | `825f8500` | Remove when upstream exposes equivalent per-transaction and fail-closed accounting seams |
-| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py` | External Host registration, expiry and revocation matrix | External Host lifecycle proposal pending | `825f8500` | Remove when upstream exposes equivalent external Host lifecycle semantics |
+| `0003-managed-runtime-adapter-seams.patch` | SaaS Platform | `omnigent/stores/host_store.py`; `omnigent/db/cockroachdb.py`; six D0 migration definitions | External Host registration, expiry and revocation matrix; frozen metadata bootstrap plus native D0 upgrade | External Host lifecycle and P18 compatibility proposals pending | `825f8500` | Remove when upstream exposes equivalent external Host lifecycle semantics and the same metadata-to-D0 bootstrap |
 | `0004-agent-cache-legacy-recovery.patch` | Runtime Compatibility | `omnigent/onboarding/harness_install.py` | Harness install and managed-image version contracts | Harness fleet proposal pending | `825f8500` | Remove when upstream ships the managed fleet versions and install behavior |
 | `0005-external-host-runtime-bridge.patch` | SaaS Runtime | `omnigent/cli.py`; `omnigent/host/connect.py`; `omnigent/host/identity.py`; `omnigent/host/identity_env.py`; `omnigent/inner/bwrap_sandbox.py`; `omnigent/runner/_entry.py`; `omnigent/runner/identity.py`; `omnigent/server/routes/host_tunnel.py` | owner-only rotatable token file; workspace propagation; revocation heartbeat; Kubernetes proc binding | External Host bridge proposal pending | `825f8500` | Remove when upstream supports the complete managed Host credential and workspace route |
 | `0006-pi-gateway-model-catalog.patch` | SaaS Platform | `omnigent/harnesses/pi_native/bridge.py`; `omnigent/onboarding/provider_config.py` | Platform gateway catalog and delegated workspace callback routing | Gateway catalog proposal pending | `825f8500` | Remove when upstream publishes configured gateway models and managed callback routing |
@@ -244,3 +244,15 @@ nine-patch ceiling and existing source-delta ceilings remain unchanged.
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | `825f8500` | Remove when upstream supports the same credential-free platform routing |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | `825f8500` | Remove when upstream exposes the equivalent dual managed runtime provider |
 | `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/onboarding/harness_readiness.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | `825f8500` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
+
+The P18 old-runtime compatibility proposal extends patch 0003 with the six
+original D0 migration definitions from source 7686ecb2. Runtime schema
+verification uses the matching native P18 catalogs and exact role contracts;
+old application handlers and Host behavior remain unchanged. This metadata
+extension does not run migrations or qualify a mixed runtime. Remove it only
+when the supported upstream baseline contains the same D0 definitions.
+
+The frozen fallback ORM still represents revision `mm1a2b3c4d5e`. Patch 0003
+therefore stamps only that actual bootstrap schema and executes the original
+D0 migrations before verifying the current head and removing its bootstrap
+marker. It does not infer a revision for an unknown unversioned database.

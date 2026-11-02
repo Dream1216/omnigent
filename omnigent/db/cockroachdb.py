@@ -30,6 +30,8 @@ _logger = logging.getLogger(__name__)
 # this head (e.g. gb1b2c3d4e5f's ADD COLUMN) are already baked into every
 # bootstrapped schema and must never be replayed on CockroachDB.
 CRDB_BASELINE_REVISION = "gf1b2c3d4e5f"
+# The frozen fallback ORM predates D0; later schema changes use the original migrations.
+_CRDB_MODEL_METADATA_REVISION = "mm1a2b3c4d5e"
 CRDB_MINIMUM_VERSION = Version("23.2.28")
 CRDB_TESTED_VERSIONS = frozenset(
     {Version("23.2.28"), Version("24.3.20"), Version("25.2.10"), Version("25.4.5")}
@@ -309,8 +311,9 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
             with engine.connect() as connection:
                 _prepare_crdb_schema_transaction(connection, version)
                 config.attributes["connection"] = connection
-                command.stamp(config, "head")
+                command.stamp(config, _CRDB_MODEL_METADATA_REVISION)
                 connection.commit()
+            _run_migrations(engine, db_uri)
             if _get_current_db_revision(engine) != head:
                 raise RuntimeError(
                     "CockroachDB schema bootstrap did not stamp the expected Alembic head "

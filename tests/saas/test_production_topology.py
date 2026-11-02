@@ -88,9 +88,15 @@ def test_shared_release_has_no_ambient_provider_configuration() -> None:
     assert not any(name.startswith(("AWS_", "BOTO")) for name in release)
 
     server = _deployment(items, "omnigent-saas-server")
+    server_rows = server["spec"]["template"]["spec"]["containers"][0]["env"]
+    pod_uid = {
+        "name": "OMNIGENT_SAAS_POD_UID",
+        "valueFrom": {"fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"}},
+    }
+    assert [row for row in server_rows if row["name"] == pod_uid["name"]] == [pod_uid]
+    assert all(row == pod_uid or set(row) == {"name", "value"} for row in server_rows)
     server_env = {
-        row["name"]: row["value"]
-        for row in server["spec"]["template"]["spec"]["containers"][0]["env"]
+        row["name"]: row["value"] for row in server_rows if row["name"] != pod_uid["name"]
     }
     assert server_env["AWS_EC2_METADATA_DISABLED"] == "true"
 

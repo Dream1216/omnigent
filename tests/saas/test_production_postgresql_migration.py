@@ -4,6 +4,7 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -82,7 +83,25 @@ def _url(login: str, *, database: str = "omnigent", tls: bool = True) -> str:
     return f"postgresql+psycopg://{login}:top-secret@db.example:5432/{database}{query}"
 
 
+def _business_bindings() -> ProductionServiceRoleBindings:
+    from saas.production.service_bindings import EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES
+
+    return ProductionServiceRoleBindings(
+        path=Path("/business-delivery-bindings.json"),
+        sha256="e" * 64,
+        bindings=tuple(
+            ProductionServiceRoleBinding(service, f"{service}_login", base_role)
+            for service, base_role in sorted(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items())
+        ),
+    )
+
+
 def _plan(*, tls: bool = True) -> migration.ProductionPostgreSqlPlan:
+    profiles = (
+        {"business_delivery_service_role_bindings": _business_bindings()}
+        if migration._expected_head("saas") in {"p0s000000017", "p0s000000018"}
+        else {}
+    )
     return migration.ProductionPostgreSqlPlan.from_urls(
         product_revision=_REVISION,
         principal_operator_url=_url("principal_operator", tls=tls),
@@ -91,6 +110,7 @@ def _plan(*, tls: bool = True) -> migration.ProductionPostgreSqlPlan:
         saas_owner_url=_url("saas_owner", tls=tls),
         service_role_bindings=_bindings(),
         require_tls=tls,
+        **profiles,
     )
 
 
@@ -149,32 +169,24 @@ def test_plan_requires_distinct_logins_and_one_target(monkeypatch: pytest.Monkey
     plan = _plan()
     migration._validate_plan(plan)
 
-    duplicate = migration.ProductionPostgreSqlPlan(
-        product_revision=plan.product_revision,
-        principal_operator=plan.principal_operator,
-        database_owner=plan.database_owner,
-        official_owner=plan.official_owner,
+    duplicate = replace(
+        plan,
         saas_owner=migration.PostgreSqlAuthority(
             kind="saas_owner",
             url=plan.official_owner.url,
             login=plan.official_owner.login,
         ),
-        service_role_bindings=plan.service_role_bindings,
     )
     with pytest.raises(migration.PostgreSqlMigrationError) as duplicate_error:
         migration._validate_plan(duplicate)
     assert duplicate_error.value.code == "authority_logins_not_distinct"
 
-    other_target = migration.ProductionPostgreSqlPlan(
-        product_revision=plan.product_revision,
-        principal_operator=plan.principal_operator,
-        database_owner=plan.database_owner,
-        official_owner=plan.official_owner,
+    other_target = replace(
+        plan,
         saas_owner=migration.parse_production_postgresql_url(
             _url("saas_owner", database="another"),
             kind="saas_owner",
         ),
-        service_role_bindings=plan.service_role_bindings,
     )
     with pytest.raises(migration.PostgreSqlMigrationError) as target_error:
         migration._validate_plan(other_target)
@@ -186,20 +198,18 @@ def test_plan_composes_exact_platform_extension_role_graph(
 ) -> None:
     monkeypatch.setattr(migration, "_installed_product_revision", lambda: _REVISION)
     base = _plan()
-    plan = migration.ProductionPostgreSqlPlan(
-        product_revision=base.product_revision,
-        principal_operator=base.principal_operator,
-        database_owner=base.database_owner,
-        official_owner=base.official_owner,
-        saas_owner=base.saas_owner,
-        service_role_bindings=base.service_role_bindings,
+    plan = replace(
+        base,
         platform_model_service_role_bindings=_platform_bindings(),
         platform_admin_service_role_bindings=_platform_admin_bindings(),
     )
 
     migration._validate_plan(plan)
 
-    assert len(plan.service_role_graph.bindings) == 18
+    expected_count = (
+        21 if migration._expected_head("saas") in {"p0s000000017", "p0s000000018"} else 18
+    )
+    assert len(plan.service_role_graph.bindings) == expected_count
     assert plan.service_role_graph.login_for("app") == "app_login"
     assert plan.service_role_graph.login_for("billing") == "platform_model_billing_login"
     assert (
@@ -573,6 +583,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
     current_inventory = {
         (
             16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "60eb65c90e638b2287c580ed382a56b5cc66b3d631baf7079fe50b446540add3",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "b7d392d2f9735d5ad330c9fac68fd2fd1865f6a1f5071bec5cb02ce85a45dcc1",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
+        (
+            16,
             "mm1a2b3c4d5e",
             "p0s000000015",
         ): "1a591cada825f34b46245b0239c851e3bda5153f4f0c0f716faf8cc5a8aeb488",
@@ -593,6 +623,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
         ): "7697dac74222f3740b7a4f0297216433b3eda011adb622a9d5882cde6cdabb5b",
     }
     current_security = {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "a2eabd3ddc1c42c7ffb405948bd83e0ce1eae4bf09d7b44a0db3555ecd066ca7",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "04a54a1b32a40e6e2477640dab6911e183f82937222931c8644d68000288d986",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "8e535eb8515687213b7f62e3cb06a6757c59ca028af42efe7893978c66310f49",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "d4b69a4e5b16c963196b79bacc4b784af48d347dd6b5aa26d006f900f6039491",
         (
             16,
             "mm1a2b3c4d5e",
@@ -617,6 +667,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
     assert migration._PUBLIC_SCHEMA_INVENTORY_SHA256.items() >= current_inventory.items()
     assert migration._SOURCE_SECURITY_CATALOG_SHA256.items() >= current_security.items()
     platform_model_security = {
+        (
+            16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "43fb356c2dff8a18b3989ac1233b1ef6ac81dd14834f07b2d142a5abdc811e67",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "6f266ed84bcf28ac4f7f4fdb0438ea73e79e12ddb90767102635a920ffa7af46",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "38bacb4070264eaa1b764c433a23550dc8d98cbcc729f1452514597d79636df1",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "94e868710ff88c16507dfb95f648ac134219c3c4bee1cbd06ff9e7eaebf86106",
         (
             16,
             "mm1a2b3c4d5e",
@@ -675,6 +745,26 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
     platform_admin_security = {
         (
             16,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "0aceff134402bd462e04e2a30320b6c956eb4c6a246e1e78c2db0204be3af81b",
+        (
+            18,
+            "nf12ab34cd56",
+            "p0s000000016",
+        ): "ada0ecc253539b93fa6918dd7345601b0aae2f4ca460389cf3c47f1c22de4b90",
+        (
+            16,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "c7040d4e24bb8f02c175a49534ffcde09260dc707048835cf5774d9440e5822a",
+        (
+            18,
+            "mm1a2b3c4d5e",
+            "p0s000000016",
+        ): "b0f24327c0d603112e7bd88159819ddae025fe1f10389b3968f5ce57c2b5cbf1",
+        (
+            16,
             "mm1a2b3c4d5e",
             "p0s000000015",
         ): "fb328b45607f5117d72c3fcafabb9997ee9e33c18e3fe4334254546ffe875de4",
@@ -722,22 +812,11 @@ def test_source_pinned_catalog_digests_cover_canonical_service_role_profiles() -
 
 @pytest.mark.parametrize("server_major", [16, 18])
 def test_current_migration_heads_have_source_catalog_baselines(server_major: int) -> None:
-    migration._require_source_catalog_baselines(server_major)
-    migration._require_source_catalog_baselines(
-        server_major,
-        bindings=migration.compose_production_service_role_graph(
-            _bindings(),
-            _platform_bindings(),
-        ),
-    )
-    migration._require_source_catalog_baselines(
-        server_major,
-        bindings=migration.compose_production_service_role_graph(
-            _bindings(),
-            _platform_bindings(),
-            _platform_admin_bindings(),
-        ),
-    )
+    core = _plan()
+    model = replace(core, platform_model_service_role_bindings=_platform_bindings())
+    admin = replace(model, platform_admin_service_role_bindings=_platform_admin_bindings())
+    for plan in (core, model, admin):
+        migration._require_source_catalog_baselines(server_major, bindings=plan.service_role_graph)
 
 
 def test_platform_model_profile_requires_its_own_source_catalog_baseline(
@@ -809,6 +888,63 @@ def test_existing_extension_accepts_only_source_pinned_migration_ancestors(
     assert not migration._source_pinned_pg_trgm_predecessor("gb1b2c3d4e5f", server_major)
     assert not migration._source_pinned_pg_trgm_predecessor("unknown", server_major)
     assert not migration._source_pinned_pg_trgm_predecessor("ga1b2c3d4e5f", 17)
+
+
+@pytest.mark.parametrize(
+    ("revision", "server_major", "content_index_present"),
+    [
+        (revision, major, has_content)
+        for revision, has_content in [
+            ("ga1b2c3d4e5f", True),
+            ("ge1b2c3d4e5f", True),
+            ("hh1b2c3d4e5f", False),
+            ("mm1a2b3c4d5e", False),
+            ("nf12ab34cd56", False),
+        ]
+        for major in (16, 18)
+    ]
+    + [
+        ("unknown", 18, None),
+        ("gb1b2c3d4e5f", 18, None),
+        ("gf1b2c3d4e5f", 18, None),
+        ("mm1a2b3c4d5e", 17, None),
+    ],
+)
+def test_existing_extension_uses_only_anchored_source_ancestry_index_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    server_major: int,
+    revision: str,
+    content_index_present: bool | None,
+) -> None:
+    catalog_results = iter((True, "alembic_version", [revision], server_major * 10000))
+
+    def execute(_statement: object) -> SimpleNamespace:
+        value = next(catalog_results)
+        return SimpleNamespace(scalar_one=lambda: value, scalars=lambda: value)
+
+    observed = []
+    monkeypatch.setattr(
+        migration,
+        "_pg_trgm_security_catalog",
+        lambda _connection, **kwargs: observed.append(kwargs),
+    )
+    connection = SimpleNamespace(execute=execute)
+    if content_index_present is None:
+        with pytest.raises(migration.PostgreSqlMigrationError) as error:
+            migration._preflight_pg_trgm_extension(connection, official_owner="original_owner")
+        assert error.value.code == "pg_trgm_preexisting_before_head"
+        assert observed == []
+        return
+    migration._preflight_pg_trgm_extension(connection, official_owner="original_owner")
+    assert len(observed) == 1
+    assert observed[0]["official_owner"] == "original_owner"
+    expected = {"ix_conversations_title_trgm": ("conversations", "lower((title)::text)")}
+    if content_index_present:
+        expected["ix_conversation_items_search_text_trgm"] = (
+            "conversation_items",
+            "lower(search_text)",
+        )
+    assert observed[0]["expected_indexes"] == expected
 
 
 def test_source_security_catalog_sorts_rows_after_role_aliasing(
@@ -974,7 +1110,12 @@ def test_current_heads_pin_distinct_clean_replay_preview_catalogs(major: int) ->
     security = migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256[key]
     assert len(inventory) == len(security) == 64
     assert inventory != migration._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
-    assert security != migration._PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256[key]
+    admin = replace(
+        _plan(),
+        platform_model_service_role_bindings=_platform_bindings(),
+        platform_admin_service_role_bindings=_platform_admin_bindings(),
+    )
+    assert security != migration._source_security_catalog_baselines(admin.service_role_graph)[key]
 
 
 def test_preview_authority_public_inventory_accepts_only_the_pinned_projection(
@@ -1409,7 +1550,18 @@ def test_database_create_authority_is_exactly_the_official_owner() -> None:
     assert "_owned_object_acl_grantees" in source
 
 
-@pytest.mark.parametrize("schema_head", ["p0s000000015", "lm2r00000001"])
+@pytest.mark.parametrize(
+    "schema_head",
+    [
+        "p0s000000015",
+        "p0s000000016",
+        "p0s000000017",
+        "p0s000000018",
+        "lm2r00000001",
+        "lm2s00000001",
+        "lm2t00000001",
+    ],
+)
 def test_initial_schema_usage_covers_every_nologin_capability_principal(
     monkeypatch: pytest.MonkeyPatch,
     schema_head: str,
@@ -1451,6 +1603,12 @@ def test_initial_schema_usage_covers_every_nologin_capability_principal(
     expected_roles = set(migration._CAPABILITY_ROLES)
     if schema_head == "p0s000000015":
         expected_roles.remove("saas_model_projection")
+    if schema_head not in {"p0s000000017", "p0s000000018"}:
+        expected_roles -= {
+            "saas_usage_consumer",
+            "saas_audit_delivery",
+            "saas_revocation_consumer",
+        }
     assert observed["schema_usage_roles"] == {
         "official_owner",
         "saas_owner",
@@ -1600,3 +1758,219 @@ def test_runtime_verify_only_binds_receipt_and_enabled_service_logins(
         )
         for service, base_role in expected_service_roles.items()
     ]
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "old",
+        "exact",
+        "column",
+        "role",
+        "grantor",
+        "grantable",
+        "integer_false",
+        "missing_field",
+        "duplicate",
+        "extra_acl",
+        "other_catalog",
+        "missing_base",
+        "unknown_head",
+    ],
+)
+def test_project_lock_acl_preserves_complete_original_catalog_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str,
+) -> None:
+    key = (18, "nf12ab34cd56", "p0s000000018")
+    original = {"control_plane_security": {"column_acls": [], "roles": [["original"]]}}
+    anchor = migration.hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_SOURCE_SECURITY_CATALOG_SHA256", {key: anchor})
+    catalog = json.loads(json.dumps(original))
+    row = ["saas_projects", "id", "saas_app", "authority:saas_owner", "UPDATE", False]
+    rows = catalog["control_plane_security"]["column_acls"]
+    if variant != "old":
+        rows.append(row)
+    if variant == "column":
+        row[1] = "status"
+    if variant == "role":
+        row[2] = "saas_executor"
+    if variant == "grantor":
+        row[3] = "authority:bootstrap"
+    if variant == "grantable":
+        row[5] = True
+    if variant == "integer_false":
+        row[5] = 0
+    if variant == "missing_field":
+        row.pop()
+    if variant == "duplicate":
+        rows.append(list(row))
+    if variant == "extra_acl":
+        rows.append(["saas_projects", "name", *row[2:]])
+    if variant == "other_catalog":
+        catalog["unexpected"] = []
+    if variant == "missing_base":
+        del catalog["control_plane_security"]["roles"]
+    if variant == "unknown_head":
+        key = (18, "nf12ab34cd56", "unknown")
+    before = json.dumps(catalog, sort_keys=True)
+    if variant == "old":
+        actual = migration._verify_source_security_catalog_digest(
+            catalog,
+            key=key,
+            role_aliases={},
+        )
+        expected = migration.hashlib.sha256(
+            json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        assert actual == expected
+        assert (actual == anchor) is (variant == "old")
+    else:
+        with pytest.raises(migration.PostgreSqlMigrationError) as error:
+            migration._verify_source_security_catalog_digest(catalog, key=key, role_aliases={})
+        assert error.value.code == "source_security_catalog_drifted"
+    assert json.dumps(catalog, sort_keys=True) == before
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "exact",
+        "body",
+        "definer",
+        "search_path",
+        "trigger_disabled",
+        "integer_bool",
+        "trigger_binding",
+        "routine_acl",
+        "owner",
+        "missing",
+        "extra",
+    ],
+)
+def test_project_identity_guard_exact_catalog_variant(monkeypatch, variant):
+    key = (18, "nf12ab34cd56", "p0s000000018")
+    original = {
+        "ownership": [],
+        "control_plane_security": {"column_acls": [], "routines": [], "triggers": []},
+    }
+    anchor = migration.hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_SOURCE_SECURITY_CATALOG_SHA256", {key: anchor})
+    catalog = json.loads(json.dumps(original))
+    security = catalog["control_plane_security"]
+    security["column_acls"] = [
+        ["saas_projects", "id", "saas_app", "authority:saas_owner", "UPDATE", False]
+    ]
+    security["project_identity_guard"] = [
+        [
+            "saas_guard_project_identity_immutable",
+            "",
+            "trigger",
+            "plpgsql",
+            False,
+            False,
+            False,
+            "v",
+            ["search_path=pg_catalog"],
+            migration._PROJECT_IDENTITY_GUARD_BODY,
+        ]
+    ]
+    security["routines"] = [
+        [
+            "saas_guard_project_identity_immutable",
+            "",
+            "authority:saas_owner",
+            "authority:saas_owner",
+            "authority:saas_owner",
+            "EXECUTE",
+            False,
+            False,
+        ]
+    ]
+    security["triggers"] = [
+        [
+            "saas_projects",
+            "trg_saas_projects_identity_immutable",
+            "O",
+            (
+                "CREATE TRIGGER trg_saas_projects_identity_immutable BEFORE UPDATE OF id ON "
+                "saas_projects FOR EACH ROW EXECUTE FUNCTION "
+                "saas_guard_project_identity_immutable()"
+            ),
+        ]
+    ]
+    catalog["ownership"] = [
+        ["routine:saas_guard_project_identity_immutable()", "authority:saas_owner"]
+    ]
+    if variant == "body":
+        security["project_identity_guard"][0][-1] = "BEGIN RETURN NEW; END"
+    if variant == "definer":
+        security["project_identity_guard"][0][4] = True
+    if variant == "search_path":
+        security["project_identity_guard"][0][8] = ["search_path=public"]
+    if variant == "integer_bool":
+        security["project_identity_guard"][0][4] = 0
+    if variant == "trigger_disabled":
+        security["triggers"][0][2] = "D"
+    if variant == "trigger_binding":
+        security["triggers"][0][3] += " invalid"
+    if variant == "routine_acl":
+        security["routines"][0][3] = "saas_app"
+    if variant == "owner":
+        catalog["ownership"][0][1] = "authority:bootstrap"
+    if variant == "missing":
+        del security["project_identity_guard"]
+    if variant == "extra":
+        security["routines"].append(list(security["routines"][0]))
+    before = json.dumps(catalog, sort_keys=True)
+    if variant == "exact":
+        digest = migration._verify_source_security_catalog_digest(
+            catalog, key=key, role_aliases={}
+        )
+        assert (
+            digest
+            == migration.hashlib.sha256(
+                json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        )
+        assert digest != anchor
+    else:
+        with pytest.raises(migration.PostgreSqlMigrationError) as failure:
+            migration._verify_source_security_catalog_digest(catalog, key=key, role_aliases={})
+        assert failure.value.code == "source_security_catalog_drifted"
+    assert json.dumps(catalog, sort_keys=True) == before
+
+
+@pytest.mark.parametrize("variant", ["exact", "missing", "owner", "extra"])
+def test_project_identity_guard_exact_inventory_variant(monkeypatch, variant):
+    key = (18, "nf12ab34cd56", "p0s000000018")
+    original = [["namespace", "public", "database_owner"]]
+    anchor = migration.hashlib.sha256(
+        json.dumps(original, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    monkeypatch.setattr(migration, "_PUBLIC_SCHEMA_INVENTORY_SHA256", {key: anchor})
+    inventory = [
+        *original,
+        ["routine", "f:saas_guard_project_identity_immutable()", "saas_owner"],
+        [
+            "trigger",
+            "saas_projects:trg_saas_projects_identity_immutable:saas_guard_project_identity_immutable():saas_owner",
+            "saas_owner",
+        ],
+    ]
+    if variant == "missing":
+        inventory.pop()
+    if variant == "owner":
+        inventory[-1][-1] = "official_owner"
+    if variant == "extra":
+        inventory.append(["routine", "f:unexpected()", "saas_owner"])
+    if variant == "exact":
+        assert migration._verify_public_schema_inventory_digest(inventory, key=key) != anchor
+    else:
+        with pytest.raises(migration.PostgreSqlMigrationError) as failure:
+            migration._verify_public_schema_inventory_digest(inventory, key=key)
+        assert failure.value.code == "public_schema_inventory_drifted"

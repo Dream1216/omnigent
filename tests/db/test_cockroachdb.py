@@ -9,6 +9,7 @@ from sqlalchemy import Engine, inspect, text
 from omnigent.db.cockroachdb import (
     _CRDB_BOOTSTRAP_MARKER_TABLE,
     _CRDB_BOOTSTRAP_MARKER_TOKEN,
+    _CRDB_MODEL_METADATA_REVISION,
     CRDB_BASELINE_REVISION,
     _crdb_server_version,
     _prepare_crdb_schema_transaction,
@@ -33,6 +34,16 @@ def _crdb_engine(db_uri: str) -> Engine:
 def test_cockroachdb_bootstrap_is_at_head(db_uri: str) -> None:
     engine = _crdb_engine(db_uri)
     assert _get_current_db_revision(engine) == _get_head_db_revision(db_uri)
+    schema = inspect(engine)
+    assert {"next_run_at", "project_id", "delegation_ref", "session_id", "session_mode"} <= {
+        column["name"] for column in schema.get_columns("scheduled_tasks")
+    }
+    assert {"trigger_key", "host_id", "lease_expires_at"} <= {
+        column["name"] for column in schema.get_columns("scheduled_task_runs")
+    }
+    assert "ix_scheduled_task_runs_conversation_status" in {
+        index["name"] for index in schema.get_indexes("scheduled_task_runs")
+    }
 
 
 def test_cockroachdb_uses_read_committed(db_uri: str) -> None:
@@ -81,7 +92,12 @@ def test_cockroachdb_resumes_empty_revision_and_repairs_indexes(db_uri: str) -> 
     version = _crdb_server_version(engine)
     head = _get_head_db_revision(db_uri)
     index_name = "ix_agents_created_at"
+    config = _build_alembic_config(db_uri)
     with engine.connect() as connection:
+        _prepare_crdb_schema_transaction(connection, version)
+        config.attributes["connection"] = connection
+        command.downgrade(config, _CRDB_MODEL_METADATA_REVISION)
+        connection.commit()
         _prepare_crdb_schema_transaction(connection, version)
         connection.execute(
             text(

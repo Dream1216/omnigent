@@ -34,7 +34,7 @@ def test_non_bypass_budget_owner_settlement_is_exact_and_bounded(standalone_repl
 
 def verify_non_bypass_budget_owner_settlement(plan):
     receipt = migration.run_production_postgresql_migration(plan)
-    assert receipt.saas_head == "lm2t00000001"
+    assert receipt.saas_head == migration._expected_head("saas")
     admin_url = sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"])
     admin = sa.create_engine(
         admin_url.set(database=plan.saas_owner.url.database, query=plan.saas_owner.url.query)

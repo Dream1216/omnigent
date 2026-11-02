@@ -193,6 +193,8 @@ items:
                 - configMapRef:
                     name: omnigent-saas-release-replace-release12
               env:
+                - name: OMNIGENT_SAAS_POD_UID
+                  valueFrom: {fieldRef: {apiVersion: v1, fieldPath: metadata.uid}}
                 - {name: OMNIGENT_SAAS_MIGRATION_RECEIPT_FILE, value: /runtime/postgresql-migration-receipt}
                 - {name: OMNIGENT_SAAS_ARTIFACT_ADMISSION_RECEIPT_FILE, value: /runtime/artifact-admission-receipt}
                 - {name: OMNIGENT_SAAS_RUNTIME_DATABASE_URL_FILE, value: /runtime/runtime-database-url}
