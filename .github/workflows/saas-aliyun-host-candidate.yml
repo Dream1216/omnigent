@@ -26,7 +26,7 @@ on:
       mode:
         description: Build a new candidate or publish the reviewed complete Gen2 OCI for private cloud validation
         type: choice
-        options: [build, promote-reviewed-gen2]
+        options: [build, promote-reviewed-gen2, qualify-poc-alias]
         default: build
 
 permissions:
@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   verify:
-    if: inputs.mode != 'promote-reviewed-gen2'
+    if: inputs.mode != 'promote-reviewed-gen2' && inputs.mode != 'qualify-poc-alias'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -349,5 +349,78 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aliyun-gen2-private-promotion-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 30
+
+  qualify-poc-alias:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'qualify-poc-alias' &&
+      github.repository == 'Dream1216/omnigent' &&
+      github.ref == 'refs/heads/codex/aliyun-sandbox-p1-p5-20261031'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IMAGE: ghcr.io/dream1216/omnigent-aliyun-host
+      DIGEST: sha256:8b5a34db682970c091b2273e6d6f70f61ee0aaa8faed47d33facd5372d157f32
+      SOURCE_TAG: source-623f0c8f92ed923a5bba442b566a4f1ae228d175
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
+        with:
+          version: v0.21.6
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify the exact previously qualified private image identity
+        run: |
+          set -euo pipefail
+          [[ "$(gh api "users/$GITHUB_REPOSITORY_OWNER/packages/container/omnigent-aliyun-host" --jq .visibility)" == private ]]
+          [[ "$(crane digest "$IMAGE:$SOURCE_TAG")" == "$DIGEST" ]]
+          mkdir -p artifacts
+          gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/saas-aliyun-host-candidate.yml" \
+            --source-ref refs/heads/codex/aliyun-sandbox-p1-p5-20261031 \
+            --source-digest 36f279578fc76039ecf6e83585cd4f77b510c63a \
+            --predicate-type https://omnigent.ai/attestations/aliyun-host-promotion/v1 \
+            --deny-self-hosted-runners > artifacts/original-signature-verification.txt
+      - name: Set bounded POC compatibility alias without replacing another candidate
+        run: |
+          set -euo pipefail
+          crane ls "$IMAGE" > artifacts/existing-tags.txt
+          if grep -Fxq latest artifacts/existing-tags.txt; then
+            [[ "$(crane digest "$IMAGE:latest")" == "$DIGEST" ]]
+          fi
+          crane tag "$IMAGE@$DIGEST" latest
+          [[ "$(crane digest "$IMAGE:latest")" == "$DIGEST" ]]
+          [[ "$(crane digest "$IMAGE:$SOURCE_TAG")" == "$DIGEST" ]]
+          [[ "$(gh api "users/$GITHUB_REPOSITORY_OWNER/packages/container/omnigent-aliyun-host" --jq .visibility)" == private ]]
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          receipt = {
+              'image': os.environ['IMAGE'], 'index_digest': os.environ['DIGEST'],
+              'fixed_source_tag': os.environ['SOURCE_TAG'], 'alias': 'latest',
+              'purpose': 'Hangzhou Gen2 template image-reference compatibility probe',
+              'publisher_revision': os.environ['GITHUB_SHA'], 'production_ready': False,
+          }
+          Path('artifacts/compatibility-alias.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+      - name: Retain compatibility qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aliyun-poc-alias-${{ github.sha }}-${{ github.run_id }}
           path: artifacts/
           retention-days: 30

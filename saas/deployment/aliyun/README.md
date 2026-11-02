@@ -163,6 +163,15 @@ exposed this missing check; the owner-scoped package was corrected to private
 and independently verified with the dedicated read-only credential before any
 Aliyun template submission.
 
+The opt-in `qualify-poc-alias` dispatch works around the observed Hangzhou Gen2
+builder requesting `/manifests/latest` despite a fixed source tag in the stored
+template. It verifies the existing promotion signature for the exact 8b5a34db
+index and the private package, then creates `latest` only if it is absent or
+already resolves to that same index. A different existing alias is rejected.
+Both the fixed source tag and alias are checked after the operation. This is a
+bounded template compatibility probe, with a retained receipt and no rebuild,
+new image identity, vulnerability suppression or production deployment.
+
 Historical zero-finding rejection decisions below reflect the policy at the time.
 The 13-High complete Gen2 candidate can now advance to a fresh advisory scan and
 publication/template validation with its original source identity; those findings
