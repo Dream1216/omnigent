@@ -5,7 +5,7 @@ import os
 import stat
 import subprocess
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -559,7 +559,7 @@ class _Containment:
 
 
 def _launch_grant(*, egress_rules: tuple[str, ...]) -> TrustedRunnerLaunchGrant:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return TrustedRunnerLaunchGrant(
         grant_id=uuid4(),
         tenant_id=uuid4(),

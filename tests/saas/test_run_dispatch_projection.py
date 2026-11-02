@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -79,7 +79,7 @@ def test_dispatch_requirements_hash_is_timezone_stable() -> None:
         "required_capabilities": ["shell"],
         "cost_units": 1,
     }
-    utc_start = datetime(2026, 8, 4, 10, 30, tzinfo=timezone.utc)
+    utc_start = datetime(2026, 8, 4, 10, 30, tzinfo=UTC)
     shanghai_start = utc_start.astimezone(ZoneInfo("Asia/Shanghai"))
 
     assert dispatch_requirements_hash(
@@ -378,7 +378,7 @@ def _delivery(
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _project(fixture: RuntimeDispatchFixture, run_id: UUID):

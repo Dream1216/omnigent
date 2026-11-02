@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from threading import Barrier, Event
@@ -217,7 +217,7 @@ def test_real_postgresql_outbox_claim_route_projects_only_exact_run_queued_event
     )
     run_event_id, queued_outbox_id = uuid4(), uuid4()
     unrelated_ids = tuple(uuid4() for _ in range(3))
-    created_at = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    created_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
     queued_payload: dict[str, object] = {
         "status": "queued",
         "queue_class": "interactive",
@@ -843,7 +843,7 @@ def test_real_postgresql_scheduling_rls_and_concurrent_fair_claims(
             max_concurrent=1,
             burst_limit=1,
         )
-    now = datetime(2026, 8, 4, 10, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 4, 10, 30, tzinfo=UTC)
     with pytest.raises(SchedulingError) as cross_scope:
         scheduler_a.prepare_dispatch(
             run_id=scopes[0]["run"],

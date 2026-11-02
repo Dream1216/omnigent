@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -38,7 +38,7 @@ from saas.control_plane.outbox import (
     _quarantine_event_hash,
 )
 
-NOW = datetime(2026, 8, 4, 4, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 4, 4, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -530,7 +530,7 @@ def test_onboarding_publisher_classifies_malformed_scope_and_provider_failure() 
         challenge_id=uuid4(),
         email="redacted@example.test",
         verification_token="one-time",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
     class Registrations:

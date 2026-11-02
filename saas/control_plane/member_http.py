@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Literal
 from uuid import UUID
@@ -281,7 +281,7 @@ def create_member_admin_router(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict[str, object]:
         principal = _principal(auth_provider, request)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             created = lifecycle.create_invitation(
                 actor_id=principal.session.user_id,
@@ -345,7 +345,7 @@ def create_member_admin_router(
         idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict[str, object]:
         principal = _principal(auth_provider, request)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             changed = members.reissue_invitation(
                 actor_id=principal.session.user_id,

@@ -7,12 +7,13 @@ import hashlib
 import json
 import re
 import subprocess
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-import tomllib
+from saas.production.review_exception import apply_review_exception, review_verification_scope
 
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -34,14 +35,14 @@ _WOLFI_RUNTIME_LOCK = "saas/supply_chain/wolfi-runtime-lock.json"
 _GITHUB_CLI_SOURCE_LOCK = "saas/supply_chain/github-cli-source-lock.json"
 _BUILD_PUSH_ACTION = "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
 _ATTEST_ACTION = "actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4"
-_APPROVED_UV_VERSION = "0.12.1"
+_APPROVED_UV_VERSION = "0.13.4"
 _APPROVED_PNPM_VERSION = "12.10.1"
 _APPROVED_PSYCOPG_VERSION = "3.3.4"
 _APPROVED_HOST_CLI_VERSIONS = {
-    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.266"),
-    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "0.84.2"),
+    "@anthropic-ai/claude-code": ("CLAUDE_CODE_VERSION", "2.1.295"),
+    "@earendil-works/pi-coding-agent": ("PI_CODING_AGENT_VERSION", "1.3.0"),
     "@moonshot-ai/kimi-code": ("KIMI_CODE_VERSION", "0.43.1"),
-    "@openai/codex": ("CODEX_CLI_VERSION", "0.139.0"),
+    "@openai/codex": ("CODEX_CLI_VERSION", "0.142.0"),
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
     "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
 }
@@ -1090,7 +1091,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     if f"ARG UV_VERSION={_APPROVED_UV_VERSION}" not in dockerfile or not re.search(
         r'pip install[^\n]*"uv==\$\{UV_VERSION\}"', dockerfile
     ):
-        violations.append("production Dockerfile must pin and install uv 0.12.1")
+        violations.append(f"production Dockerfile must pin and install uv {_APPROVED_UV_VERSION}")
     if 'case "$(uv --version)" in "uv ${UV_VERSION}"|"uv ${UV_VERSION} "*' not in dockerfile:
         violations.append("production Dockerfile must verify the installed uv version")
     if "COPY pyproject.toml setup.py uv.lock ./" not in dockerfile:
@@ -2215,10 +2216,25 @@ def _validate_release_attestations(
     product_revision: object,
     operations_completed_at: datetime | None,
     evidence_completed_at: datetime | None,
+    repo: Path | None = None,
+    now: datetime | None = None,
 ) -> list[str]:
     if not isinstance(value, list):
         return ["release attestations must be a list"]
     violations: list[str] = []
+    required_roles = set(policy["promotion"]["required_approval_roles"])
+    review = apply_review_exception(
+        repo,
+        value,
+        domain="image",
+        required_roles=required_roles,
+        product_revision=product_revision,
+        now=now or datetime.now(UTC),
+    )
+    violations.extend(review.violations)
+    required_roles, value = review.required_roles, review.attestations
+    if not isinstance(value, list):
+        return [*violations, "release attestations must remain a list"]
     roles: set[str] = set()
     actors: set[str] = set()
     for raw in value:
@@ -2248,7 +2264,7 @@ def _validate_release_attestations(
             violations.append("release attestation time is outside the approval window")
         if raw.get("product_revision") != product_revision:
             violations.append("release attestation revision does not match evidence")
-    if roles != set(policy["promotion"]["required_approval_roles"]):
+    if roles != required_roles:
         violations.append("release attestations do not cover every approval role")
     return violations
 
@@ -2393,6 +2409,8 @@ def _validate_evidence(
             product_revision=product_revision,
             operations_completed_at=operations_completed_at,
             evidence_completed_at=completed_at,
+            repo=repo,
+            now=now,
         )
     )
     if not _hex_sha256(evidence.get("evidence_sha256")) or evidence.get(
@@ -2402,6 +2420,7 @@ def _validate_evidence(
     return violations
 
 
+@review_verification_scope
 def validate_release(
     repo: Path,
     policy: dict[str, Any],

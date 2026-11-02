@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,7 +15,7 @@ from saas.control_plane.platform_models import (
     ModelProviderTenantDailyUsageRecord,
 )
 
-NOW = datetime(2026, 9, 14, 4, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
 
 
 def _service(tmp_path: Path) -> tuple[ModelProviderBudgetAdmissionService, sessionmaker[Session]]:

@@ -7,7 +7,7 @@ import binascii
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import MappingProxyType
 from typing import NoReturn, cast
@@ -131,7 +131,7 @@ def _utc(value: datetime) -> datetime:
             "platform_privacy_attestation_invalid",
             "privacy attestation time must include a timezone",
         )
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _parse_time(value: object, field: str) -> datetime:

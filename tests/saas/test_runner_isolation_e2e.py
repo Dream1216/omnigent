@@ -6,7 +6,7 @@ import shutil
 import stat
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -134,7 +134,7 @@ def test_runner_adapter_boots_official_hard_sandbox_without_exposing_broker_secr
         required_runner_capabilities=(f"sandbox.{_ACTIVE_BACKEND}",),
         config_hash="c" * 64,
     )
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    expires_at = datetime.now(UTC) + timedelta(minutes=5)
     grant = TrustedRunnerLaunchGrant(
         grant_id=uuid4(),
         tenant_id=uuid4(),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -29,11 +29,11 @@ def _postgres_url() -> str:
     return value
 
 
-def _migrate(connection: sa.Connection, root: Path) -> None:
+def _migrate(connection: sa.Connection, root: Path, revision: str = "head") -> None:
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)
 
 
 def _registration_erasure_replacements(
@@ -205,7 +205,7 @@ def test_real_postgresql_privacy_executor_is_exact_content_blind_and_redacts_onc
         f"registration-idempotency:{suffix}".encode()
     ).hexdigest()
     registration_request_hash = sha256(f"registration-request:{suffix}".encode()).hexdigest()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     issuer = "https://privacy-idp.example.test"
     subject = f"subject-{suffix}"
     external_id = f"external-{suffix}"
@@ -1083,7 +1083,7 @@ def test_real_postgresql_registration_erasure_evidence_blocks_downgrade(
     )
 
     with engine.begin() as connection:
-        _migrate(connection, root)
+        _migrate(connection, root, "p0s000000015")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -35,7 +35,7 @@ PROJECT_ID = UUID("40000000-0000-4000-8000-000000000004")
 RUN_ID = UUID("60000000-0000-4000-8000-000000000006")
 CHILD_RUN_ID = UUID("70000000-0000-4000-8000-000000000007")
 PREVIEW_ID = UUID("90000000-0000-4000-8000-000000000009")
-NOW = datetime.now(timezone.utc).replace(microsecond=0)
+NOW = datetime.now(UTC).replace(microsecond=0)
 IDEMPOTENCY = "preview-api-idempotency-0001"
 
 

@@ -15,7 +15,7 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from typing import Annotated, Literal, cast
 from uuid import UUID
@@ -346,8 +346,8 @@ class FilterBoundCursorCodec:
             raise CursorError
         current = self._time(now)
         try:
-            issued_at = datetime.fromtimestamp(issued_timestamp, timezone.utc)
-            expires_at = datetime.fromtimestamp(expiry_timestamp, timezone.utc)
+            issued_at = datetime.fromtimestamp(issued_timestamp, UTC)
+            expires_at = datetime.fromtimestamp(expiry_timestamp, UTC)
         except (OverflowError, OSError, ValueError) as error:
             raise CursorError from error
         if expires_at <= current or issued_at > current + timedelta(minutes=5):
@@ -363,10 +363,10 @@ class FilterBoundCursorCodec:
 
     @staticmethod
     def _time(value: datetime | None) -> datetime:
-        resolved = value or datetime.now(timezone.utc)
+        resolved = value or datetime.now(UTC)
         if resolved.tzinfo is None:
             raise ValueError("cursor time must include a timezone")
-        return resolved.astimezone(timezone.utc).replace(microsecond=0)
+        return resolved.astimezone(UTC).replace(microsecond=0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,7 +391,7 @@ class ApiVersionPolicy:
         headers.update(
             {
                 "Deprecation": "true",
-                "Sunset": format_datetime(self.sunset_at.astimezone(timezone.utc), usegmt=True),
+                "Sunset": format_datetime(self.sunset_at.astimezone(UTC), usegmt=True),
                 "Link": f'<{self.deprecation_document}>; rel="deprecation"; type="text/html"',
             }
         )

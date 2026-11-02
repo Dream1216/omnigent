@@ -4,7 +4,7 @@ import asyncio
 import ipaddress
 import ssl
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -43,7 +43,7 @@ from saas.production.runner_readiness import (
     build_remote_tls_runner_control_readiness,
 )
 
-NOW = datetime.now(timezone.utc).replace(microsecond=0)
+NOW = datetime.now(UTC).replace(microsecond=0)
 RUNNER_ID = UUID("10000000-0000-4000-8000-000000000001")
 RUN_ID = UUID("20000000-0000-4000-8000-000000000002")
 LEASE_TOKEN = UUID("30000000-0000-4000-8000-000000000003")
@@ -312,7 +312,7 @@ def _certificates(
     runner_id: UUID,
     extra_runner_uri: bool = False,
 ) -> dict[str, _CertificateFiles]:
-    issued_at = datetime.now(timezone.utc).replace(microsecond=0)
+    issued_at = datetime.now(UTC).replace(microsecond=0)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Runner Control Test CA")])
     ca = (
@@ -412,13 +412,13 @@ def test_certificate_fixture_uses_issue_time_not_module_collection_time(
 ) -> None:
     monkeypatch.setattr(
         "tests.saas.test_production_runner_control.NOW",
-        datetime.now(timezone.utc) - timedelta(days=1),
+        datetime.now(UTC) - timedelta(days=1),
     )
 
     certificates = _certificates(tmp_path, runner_id=RUNNER_ID)
     leaf = x509.load_pem_x509_certificate(certificates["runner"].certificate.read_bytes())
 
-    assert leaf.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(minutes=29)
+    assert leaf.not_valid_after_utc > datetime.now(UTC) + timedelta(minutes=29)
 
 
 def _server_context(files: _CertificateFiles) -> ssl.SSLContext:
@@ -502,7 +502,7 @@ class _TransportAuthority:
     def mint_preview_tunnel(self, *, runner_id: UUID, **values) -> PreviewTunnelRegistrationGrant:
         self.calls.append(("mint_preview_tunnel", runner_id, values))
         token = "preview-registration-" + "z" * 40
-        issued_at = datetime.now(timezone.utc).replace(microsecond=0)
+        issued_at = datetime.now(UTC).replace(microsecond=0)
         return PreviewTunnelRegistrationGrant(
             registration_id=uuid4(),
             runner_id=runner_id,

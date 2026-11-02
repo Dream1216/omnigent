@@ -747,3 +747,151 @@ def test_bootstrap_rate_advisory_is_same_job_only_and_unknown_is_not_a_gate(tmp_
             "exception_type": "CalledProcessError",
         }
         assert calls == ["rate_limit"] and evidence._failure is None
+
+
+@pytest.fixture
+def compatibility_path_scope(scenario, monkeypatch):
+    data = scenario
+    profile = copy.deepcopy(data["profile"])
+    profile["component"] = "Compatibility018"
+    data["policy"]["component"] = data["identity"]["component"] = profile["component"]
+    data["identity"].update(
+        validation_pr=214, validation_base_ref="codex/p18-a7-validation-base-20261102"
+    )
+    omitted = set(qualifier._COMPATIBILITY_PATH_FILTERS)
+    # Reuse the real two-commit product fixture; substitute only its reviewed hashes.
+    for path, (_, patterns) in list(qualifier._COMPATIBILITY_PATH_FILTERS.items()):
+        monkeypatch.setitem(
+            qualifier._COMPATIBILITY_PATH_FILTERS, path, (data["catalog"][path], patterns)
+        )
+        data["policy"]["workflow_catalog"][path]["disposition"] = "original-not-triggered"
+        del data["policy"]["job_evidence"][path]
+    data["identity"]["workflows"] = [
+        row for row in data["identity"]["workflows"] if row["path"] not in omitted
+    ]
+    data["observations"] = [
+        row for row in data["observations"] if row["run"]["path"] not in omitted
+    ]
+    removed_suites = {
+        run["check_suite_id"]
+        for snapshot in data["snapshots"].values()
+        for run in snapshot["runs"]
+        if run["path"] in omitted
+    }
+    for snapshot in data["snapshots"].values():
+        snapshot["runs"] = [run for run in snapshot["runs"] if run["path"] not in omitted]
+        snapshot["checks"] = [
+            check
+            for check in snapshot["checks"]
+            if check["check_suite"]["id"] not in removed_suites
+        ]
+    data["policy"]["identity_contract_sha256"] = qualifier._digest(data["identity"])
+    monkeypatch.setattr(core, "_COMPATIBILITY_PROFILE_SHA256", qualifier._digest(profile))
+    data["compatibility_profile"] = profile
+    return data
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing_profile",
+        "profile_hash",
+        "other_component",
+        "PR",
+        "base",
+        "tree",
+        "workflow_bytes",
+        "disposition",
+        "third_workflow",
+        "matching_literal",
+        "matching_prefix",
+    ],
+)
+def test_exact_compatibility_original_path_scope_does_not_drop_other_requirements(
+    compatibility_path_scope, monkeypatch, fault
+):
+    data = compatibility_path_scope
+    profile = data["compatibility_profile"]
+    path = ".github/workflows/web-tests.yml"
+    if fault == "missing_profile":
+        profile = None
+    elif fault == "profile_hash":
+        profile["source_delta"][0]["after"]["sha256"] = "a" * 64
+    elif fault == "other_component":
+        data["policy"]["component"] = data["identity"]["component"] = "Core"
+    elif fault == "PR":
+        data["identity"]["validation_pr"] += 1
+    elif fault == "base":
+        data["identity"]["validation_base_ref"] = "main"
+    elif fault == "tree":
+        data["policy"]["product_tree"] = "a" * 40
+    elif fault == "workflow_bytes":
+        data["catalog"][path] = data["policy"]["workflow_catalog"][path]["sha256"] = "a" * 64
+    elif fault == "disposition":
+        data["policy"]["workflow_catalog"][path]["disposition"] = "original-informational"
+    elif fault == "third_workflow":
+        third = ".github/workflows/ci.yml"
+        data["identity"]["workflows"] = [
+            row for row in data["identity"]["workflows"] if row["path"] != third
+        ]
+        del data["policy"]["job_evidence"][third]
+        data["policy"]["workflow_catalog"][third]["disposition"] = "original-not-triggered"
+    elif fault in {"matching_literal", "matching_prefix"}:
+        profile["source_delta"][0]["path"] = (
+            "package.json" if fault == "matching_literal" else "web/src/changed.tsx"
+        )
+        monkeypatch.setattr(core, "_COMPATIBILITY_PROFILE_SHA256", qualifier._digest(profile))
+    data["policy"]["identity_contract_sha256"] = qualifier._digest(data["identity"])
+    if fault is not None:
+        with pytest.raises(ValueError):
+            qualifier.validate_qualification_policy(
+                data["policy"], data["identity"], data["catalog"], profile=profile
+            )
+    else:
+        qualifier.validate_qualification_policy(
+            data["policy"], data["identity"], data["catalog"], profile=profile
+        )
+        assert len(data["identity"]["workflows"]) == 14
+        result = qualifier.assess_all_app_policy(
+            data["snapshots"], data["observations"], data["policy"]
+        )
+        assert result["all_original_governance_clear"] is True
+
+
+@pytest.mark.parametrize("role", ["head", "merge"])
+@pytest.mark.parametrize("with_check", [False, True])
+def test_compatibility_path_scope_rejects_native_run_even_without_check(
+    compatibility_path_scope, role, with_check
+):
+    data = compatibility_path_scope
+    snapshot = data["snapshots"][role]
+    run = copy.deepcopy(data["observations"][0]["run"])
+    run.update(path=".github/workflows/web-tests.yml", id=9988, check_suite_id=9977)
+    snapshot["runs"].append(run)
+    if with_check:
+        check = copy.deepcopy(data["snapshots"]["head"]["checks"][0])
+        check.update(id=9966, check_suite={"id": 9977})
+        snapshot["checks"].append(check)
+    with pytest.raises(ValueError, match="contradicts original path-filtered scope"):
+        qualifier.assess_all_app_policy(data["snapshots"], data["observations"], data["policy"])
+
+
+def test_registered_compatibility_profile_has_no_original_path_filter_matches():
+    profile = core.load_profile(ROOT, "Compatibility018")
+    policy = {key: profile[key] for key in ("component", "product_revision", "product_tree")}
+    policy["workflow_catalog"] = {
+        path: {"disposition": "original-not-triggered"}
+        for path in qualifier._COMPATIBILITY_PATH_FILTERS
+    }
+    identity = {
+        **policy,
+        "validation_pr": 214,
+        "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    }
+    catalog = {path: row[0] for path, row in qualifier._COMPATIBILITY_PATH_FILTERS.items()}
+    assert (
+        qualifier._required_technical_workflows(policy, identity, catalog, profile)
+        == qualifier._MANDATORY_TECHNICAL - catalog.keys()
+    )
+    assert len(profile["source_delta"]) == 94

@@ -9,7 +9,7 @@ import re
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Literal, cast
 from urllib.parse import urlencode, urlsplit
@@ -36,13 +36,13 @@ _MAX_TOKEN_RESPONSE_BYTES = 1_048_576
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _comparable_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _digest(value: str) -> str:

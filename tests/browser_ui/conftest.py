@@ -23,6 +23,8 @@ from urllib.parse import urlparse
 import pytest
 from playwright.sync_api import BrowserContext, Request, Route, WebSocketRoute
 
+from tests.helpers.ui_configuration import isolate_playwright_output
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUILD_OUTPUT = _REPO_ROOT / "omnigent" / "server" / "static" / "web-ui"
 _API_PATH = re.compile(r"^/(?:v1(?:/|$)|health(?:\?|$))")
@@ -39,6 +41,11 @@ class AttachmentFixture:
 @pytest.fixture(scope="session")
 def _attachments() -> dict[str, AttachmentFixture]:
     return {}
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Under xdist each worker keeps its failure traces in its own output directory.
+    isolate_playwright_output(config)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

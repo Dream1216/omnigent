@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Collection
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Protocol, cast
 from uuid import UUID, uuid4
@@ -67,19 +67,26 @@ class OutboxClaimRoute:
 
     aggregate_type: str
     event_type: str
-    payload_event_type: str
+    payload_event_type: str | None = None
 
     def __post_init__(self) -> None:
-        values = (self.aggregate_type, self.event_type, self.payload_event_type)
+        values = (self.aggregate_type, self.event_type)
+        if self.payload_event_type is not None:
+            values += (self.payload_event_type,)
         if any(_SAFE_ERROR_CODE.fullmatch(value) is None for value in values):
             raise ValueError("Outbox claim route is invalid")
 
     def predicate(self) -> sa.ColumnElement[bool]:
-        return sa.and_(
+        predicates = [
             ControlPlaneOutboxEvent.aggregate_type == self.aggregate_type,
             ControlPlaneOutboxEvent.event_type == self.event_type,
-            ControlPlaneOutboxEvent.payload["event_type"].as_string() == self.payload_event_type,
-        )
+        ]
+        if self.payload_event_type is not None:
+            predicates.append(
+                ControlPlaneOutboxEvent.payload["event_type"].as_string()
+                == self.payload_event_type
+            )
+        return sa.and_(*predicates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,13 +114,13 @@ class ClaimedOutboxEvent:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _canonical_timestamp(value: datetime) -> str:
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 def _delivery_error_digest(error: Exception) -> str:

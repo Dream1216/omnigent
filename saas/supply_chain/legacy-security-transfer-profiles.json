@@ -1,5 +1,12 @@
 {
   "profiles": {
+    "Compatibility018": {
+      "actor": "Dream1216",
+      "base_ref": "codex/p18-a7-validation-base-20261102",
+      "component": "Compatibility018",
+      "pull_number": 214,
+      "workflow_sha256": "1be166ffdc4d7325241c881c717676477aafc438a92d3f1f68be4c41e8f61821"
+    },
     "Core": {
       "actor": "Dream1216",
       "base_ref": "codex/legacy-validation-core-dc1e9a97",

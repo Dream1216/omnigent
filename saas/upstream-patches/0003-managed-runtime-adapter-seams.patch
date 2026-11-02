@@ -1,11 +1,11 @@
 diff --git a/omnigent/stores/host_store.py b/omnigent/stores/host_store.py
-index 9b3cde274..916d1d20e 100644
+index 69c5bb970cc19567a6ad643319c477315dabff34..69b4b2b8b87cb0e15a80479459f7ebb5668763ba 100644
 --- a/omnigent/stores/host_store.py
 +++ b/omnigent/stores/host_store.py
-@@ -21 +21 @@ from typing import cast
+@@ -22 +22 @@ from typing import cast
 -from sqlalchemy import Engine, or_, select, tuple_, update
 +from sqlalchemy import Engine, and_, or_, select, tuple_, update
-@@ -309,3 +309,4 @@ class HostStore:
+@@ -314,3 +314,4 @@ class HostStore:
 -        :param managed_token: Raw launch token for a managed host. When set,
 -            registration atomically revalidates the current credential instead
 -            of performing the external-host upsert path.
@@ -13,7 +13,7 @@ index 9b3cde274..916d1d20e 100644
 +            set, registration atomically revalidates either an active managed
 +            sandbox generation or an explicitly armed external Host instead of
 +            performing the user-authenticated external-host upsert path.
-@@ -332,2 +333,14 @@ class HostStore:
+@@ -337,2 +338,14 @@ class HostStore:
 -                            SqlHost.token_expires_at >= now,
 -                            SqlHost.sandbox_id.is_not(None),
 +                            SqlHost.token_expires_at > now,
@@ -30,6 +30,6 @@ index 9b3cde274..916d1d20e 100644
 +                                    SqlHost.terminating_sandbox_id.is_(None),
 +                                ),
 +                            ),
-@@ -1077 +1090 @@ class HostStore:
+@@ -1233 +1246 @@ class HostStore:
 -            if row.token_expires_at < now_epoch():
 +            if row.token_expires_at <= now_epoch():

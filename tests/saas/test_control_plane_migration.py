@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -457,10 +457,26 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         assert runner_fence_index["column_names"] == ["run_id", "run_fence_token"]
         assert runner_fence_index["unique"] == 1
 
+        with pytest.raises(
+            RuntimeError, match="P18 downgrade requires reviewed runtime-maintenance"
+        ):
+            command.downgrade(config, "base")
+        assert set(sa.inspect(connection).get_table_names()) == (
+            application_tables | {"saas_alembic_version"}
+        )
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            _migration_head()
+        )
+    engine.dispose()
+
+    legacy = sa.create_engine("sqlite://")
+    with legacy.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "p0s000000016")
         command.downgrade(config, "base")
         remaining_tables = set(sa.inspect(connection).get_table_names())
         assert remaining_tables <= {"saas_alembic_version"}
-    engine.dispose()
+    legacy.dispose()
 
 
 def test_platform_model_provider_migration_is_exact_and_reversible() -> None:
@@ -668,8 +684,8 @@ def test_dispatch_profile_binding_migration_requires_drained_p0s7_and_replays() 
                 "project_id": identifiers[3],
                 "pool_id": identifiers[4],
                 "requirements_hash": "a" * 64,
-                "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
-                "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+                "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=UTC),
+                "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=UTC),
             },
         )
 
@@ -735,8 +751,8 @@ def test_dispatch_profile_binding_migration_requires_drained_p0s7_and_replays() 
                 "egress_policy_id": uuid4().hex,
                 "egress_policy_hash": "c" * 64,
                 "requirements_hash": "d" * 64,
-                "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
-                "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+                "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=UTC),
+                "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=UTC),
             },
         )
         with pytest.raises(RuntimeError) as rejected_downgrade:
@@ -1027,7 +1043,7 @@ def test_registration_rate_limit_migration_has_exact_schema_and_rollback() -> No
             ("registration.resend", "email"),
             ("registration.verify", "registration"),
         }
-        old_now = datetime(2026, 8, 26, 5, 55, tzinfo=timezone.utc)
+        old_now = datetime(2026, 8, 26, 5, 55, tzinfo=UTC)
         connection.execute(
             sa.text(
                 "INSERT INTO saas_registration_rate_limits "
@@ -1130,7 +1146,7 @@ def test_registration_rate_limit_migration_has_exact_schema_and_rollback() -> No
                 "registration-rate-limit-v1",
             ),
         }
-        now = datetime(2026, 8, 26, 6, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 26, 6, 0, tzinfo=UTC)
         connection.execute(
             sa.text(
                 "INSERT INTO saas_registration_rate_limits "
@@ -1488,8 +1504,8 @@ def test_real_postgresql_dispatch_profile_binding_requires_drain_and_round_trips
                     "pool_id": pool_id,
                     "capabilities": "[]",
                     "requirements_hash": "b" * 64,
-                    "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
-                    "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+                    "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=UTC),
+                    "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=UTC),
                 },
             )
 
@@ -1652,8 +1668,8 @@ def test_real_postgresql_dispatch_profile_binding_requires_drain_and_round_trips
                     "required_capabilities": [],
                     "requirements_hash": "b" * 64,
                     "cost_units": 1,
-                    "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
-                    "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=timezone.utc),
+                    "eligible_at": datetime(2026, 9, 1, 0, 0, tzinfo=UTC),
+                    "max_wait_at": datetime(2026, 9, 1, 1, 0, tzinfo=UTC),
                     "status": "pending",
                     "dispatch_generation": 0,
                 },
@@ -2096,7 +2112,7 @@ def test_outbox_quarantine_migration_backfills_safe_error_and_terminal_constrain
     engine = sa.create_engine("sqlite://")
     event_id, published_id = uuid4(), uuid4()
     legacy_secret = "provider rejected customer-secret"
-    now = datetime(2026, 8, 25, 1, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 25, 1, 0, tzinfo=UTC)
     with engine.begin() as connection:
         config = _migration_config(connection)
         command.upgrade(config, "p0s000000002")
@@ -2219,7 +2235,7 @@ def test_outbox_quarantine_migration_backfills_safe_error_and_terminal_constrain
 def test_outbox_quarantine_migration_rejects_dirty_terminal_dispatch_state() -> None:
     engine = sa.create_engine("sqlite://")
     event_id = uuid4()
-    now = datetime(2026, 8, 25, 1, 15, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 25, 1, 15, tzinfo=UTC)
     with engine.begin() as connection:
         config = _migration_config(connection)
         command.upgrade(config, "p0s000000002")
@@ -2271,10 +2287,10 @@ def test_outbox_quarantine_migration_rejects_dirty_terminal_dispatch_state() -> 
 def test_outbox_quarantine_migration_ledger_is_content_blind_and_immutable() -> None:
     engine = sa.create_engine("sqlite://")
     source_event_id, receipt_id = uuid4(), uuid4()
-    now = datetime(2026, 8, 25, 1, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 25, 1, 30, tzinfo=UTC)
     with engine.begin() as connection:
         config = _migration_config(connection)
-        command.upgrade(config, "head")
+        command.upgrade(config, "p0s000000016")
         connection.execute(
             sa.text(
                 "INSERT INTO saas_control_plane_outbox "
@@ -2570,7 +2586,7 @@ def test_real_postgresql_pinned_n1_outbox_compatibility_bridge(
     login_role = f"zz_n1_outbox_probe_{uuid4().hex[:12]}"
     login_password = f"n1-test-{uuid4().hex}{uuid4().hex}"
     planning_principal_id = uuid4()
-    now = datetime(2026, 8, 25, 4, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 25, 4, 0, tzinfo=UTC)
     request_hash = "a" * 64
     raw_error = "provider rejected plaintext customer-secret"
     allowed_p0s3_updates = {
@@ -3562,7 +3578,7 @@ def test_real_postgresql_outbox_downgrade_nonbypass_owner_sees_evidence(
 ) -> None:
     engine = sa.create_engine(isolated_postgres_url)
     source_event_id, receipt_id = uuid4(), uuid4()
-    now = datetime(2026, 8, 25, 2, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 25, 2, 0, tzinfo=UTC)
     probe_role = f"p0s3_owner_{uuid4().hex[:12]}"
     admin_role = ""
     role_created = False
@@ -3740,7 +3756,7 @@ def test_onboarding_vertical_migration_backfills_ids_snapshot_and_pending_intent
     with engine.begin() as connection:
         config = _migration_config(connection)
         command.upgrade(config, "p0s000000001")
-        now = datetime(2026, 8, 24, 3, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 24, 3, 0, tzinfo=UTC)
         identifiers = {
             name: uuid4()
             for name in (
@@ -3984,7 +4000,7 @@ def test_onboarding_vertical_migration_ensures_nonterminal_recovery_wake(
     with engine.begin() as connection:
         config = _migration_config(connection)
         command.upgrade(config, "p0s000000001")
-        now = datetime(2026, 8, 24, 5, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 24, 5, 0, tzinfo=UTC)
         identifiers = {
             name: uuid4()
             for name in (
@@ -4228,7 +4244,7 @@ def test_enterprise_lifecycle_migration_backfills_legacy_terminal_states() -> No
         project_id = uuid4()
         group_id = uuid4()
         role_id = uuid4()
-        legacy_time = datetime(2026, 8, 4, 12, tzinfo=timezone.utc)
+        legacy_time = datetime(2026, 8, 4, 12, tzinfo=UTC)
         connection.execute(
             metadata.tables["saas_global_users"].insert(),
             {
@@ -4338,7 +4354,7 @@ def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() 
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
         config = _migration_config(connection)
-        command.upgrade(config, "head")
+        command.upgrade(config, "p0s000000016")
         inspector = sa.inspect(connection)
         assert {"provider_type", "attribute_mapping"} <= {
             column["name"] for column in inspector.get_columns("saas_enterprise_scim_directories")
@@ -4347,7 +4363,7 @@ def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() 
             column["name"] for column in inspector.get_columns("saas_enterprise_scim_users")
         }
 
-        now = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 10, 8, tzinfo=UTC)
         user_id, tenant_id, directory_id = uuid4(), uuid4(), uuid4()
         connection.execute(
             sa.text(
@@ -4463,3 +4479,75 @@ def test_real_postgresql_p0s11_rejects_predecessor_policy_role_drift(
             assert _p0s11_policy_projection(connection) == drifted
     finally:
         engine.dispose()
+
+
+def test_migration_cli_guard_rejects_lost_receipt_and_unrelated_cli_failure(tmp_path):
+    from saas.scripts import check_control_plane_migration_cli as cli
+
+    database = tmp_path / "protected-current.db"
+    engine = sa.create_engine("sqlite:///" + str(database))
+    try:
+        with engine.begin() as connection:
+            command.upgrade(_migration_config(connection), "head")
+    finally:
+        engine.dispose()
+    cli._seed_receipt(database)
+    before = cli._snapshot(database)
+    root = Path(__file__).resolve().parents[2]
+    rejected = cli._run(root, database, "downgrade", "base")
+    cli._assert_protected(before, cli._snapshot(database), rejected)
+
+    unrelated_failure = cli._run(root, database, "downgrade", "not_a_revision")
+    with pytest.raises(RuntimeError, match="exact preserving refusal"):
+        cli._assert_protected(before, cli._snapshot(database), unrelated_failure)
+
+    engine = sa.create_engine("sqlite:///" + str(database))
+    try:
+        with engine.begin() as connection:
+            assert (
+                connection.execute(sa.text("DELETE FROM saas_revocation_replica_applied")).rowcount
+                == 1
+            )
+    finally:
+        engine.dispose()
+    with pytest.raises(RuntimeError, match="changed durable schema, head, or facts"):
+        cli._assert_protected(before, cli._snapshot(database), rejected)
+
+
+def test_runtime_maintenance_revision_preserves_p17_facts_and_rejects_implicit_inverse(
+    tmp_path: Path,
+) -> None:
+    from saas.scripts import check_control_plane_migration_cli as cli
+
+    root = Path(__file__).resolve().parents[2]
+    database = tmp_path / "runtime-maintenance-current.db"
+    cli._success(cli._run(root, database, "upgrade", "p0s000000017"))
+    cli._seed_receipt(database)
+    predecessor = json.loads(cli._snapshot(database))
+    cli._success(cli._run(root, database, "upgrade", "head"))
+    cli._success(cli._run(root, database, "check"))
+    current = json.loads(cli._snapshot(database))
+    assert cli._head(database) == _migration_head() == "p0s000000018"
+    assert current["schema"] == predecessor["schema"]
+    assert {
+        table: rows for table, rows in current["rows"].items() if table != "saas_alembic_version"
+    } == {
+        table: rows
+        for table, rows in predecessor["rows"].items()
+        if table != "saas_alembic_version"
+    }
+    before = cli._snapshot(database)
+    rejected = cli._run(root, database, "downgrade", "base")
+    assert rejected.returncode != 0
+    assert "P18 downgrade requires reviewed runtime-maintenance inverse" in rejected.stderr
+    assert cli._snapshot(database) == before
+
+    historical = tmp_path / "runtime-maintenance-historical-p17.db"
+    cli._success(cli._run(root, historical, "upgrade", "p0s000000017"))
+    cli._seed_receipt(historical)
+    historical_before = cli._snapshot(historical)
+    historical_rejected = cli._run(root, historical, "downgrade", "base")
+    cli._assert_protected(
+        historical_before, cli._snapshot(historical), historical_rejected, refusal=cli.P17_REFUSAL
+    )
+    assert cli._head(historical) == "p0s000000017"

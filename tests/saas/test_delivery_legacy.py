@@ -1,5 +1,6 @@
 """Original browser request shapes use Cookie -> project RBAC -> JWT -> DCP."""
 
+from datetime import UTC
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -97,7 +98,7 @@ def test_early_cancel_retry_and_authority_boundaries(harness):  # noqa: F811
 
 
 def test_session_build_shape_resolves_current_run_and_uses_checkpoint_authority(tmp_path):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from saas.control_plane.execution_models import ExecutionSessionRecord, RunRecord, TaskRecord
     from tests.saas.test_delivery_http import build_harness
@@ -139,7 +140,7 @@ def test_session_build_shape_resolves_current_run_and_uses_checkpoint_authority(
                     session_id=session_id,
                     task_id=task_id,
                     status="succeeded",
-                    terminal_at=datetime.now(timezone.utc),
+                    terminal_at=datetime.now(UTC),
                     idempotency_key="completed-run",
                     request_hash="a" * 64,
                     input={},

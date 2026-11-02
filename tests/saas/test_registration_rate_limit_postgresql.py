@@ -507,12 +507,28 @@ def test_concurrent_same_subject_saturates_one_shared_quota(
     subject = f"concurrent-{uuid4()}@example.test"
     barrier = Barrier(12)
 
+    def synchronize_consume(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "public.saas_consume_registration_rate_limit" in statement:
+            # Prepare each database session before competing for the bounded
+            # subject lock; connection startup is outside the quota operation.
+            barrier.wait()
+
     def consume() -> str:
-        barrier.wait()
         return _consume_result(limiter, subject)
 
-    with ThreadPoolExecutor(max_workers=12) as workers:
-        results = list(workers.map(lambda _index: consume(), range(12)))
+    sa.event.listen(rate_limit_postgresql_engine, "before_cursor_execute", synchronize_consume)
+    try:
+        with ThreadPoolExecutor(max_workers=12) as workers:
+            results = list(workers.map(lambda _index: consume(), range(12)))
+    finally:
+        sa.event.remove(rate_limit_postgresql_engine, "before_cursor_execute", synchronize_consume)
 
     assert results.count("allowed") == 5
     assert results.count("registration_rate_limited") == 7
@@ -570,7 +586,7 @@ def test_same_subject_contention_waits_past_policy_lock_timeout(
         with ThreadPoolExecutor(max_workers=1) as workers:
             future = workers.submit(_consume_result, limiter, subject)
             assert consume_started.wait(timeout=3)
-            sleep(0.35)
+            sleep(0.35)  # custom-lint: disable=sleep-then-assert -- subject lock timeout
             transaction.commit()
             assert future.result(timeout=3) == "allowed"
     finally:
@@ -633,7 +649,7 @@ def test_caller_transaction_holds_same_subject_quota_lock_until_commit(
         try:
             second = workers.submit(_consume_result, limiter, subject)
             assert second_consume_started.wait(timeout=3)
-            sleep(0.35)
+            sleep(0.35)  # custom-lint: disable=sleep-then-assert -- subject lock timeout
             assert not second.done()
             release_first_transaction.set()
             assert first.result(timeout=3) == "allowed"
@@ -706,7 +722,7 @@ def test_same_subject_wait_refreshes_database_clock_before_window_decision(
         with ThreadPoolExecutor(max_workers=1) as workers:
             future = workers.submit(_consume_result, limiter, subject)
             assert consume_started.wait(timeout=3)
-            sleep(0.75)
+            sleep(0.75)  # custom-lint: disable=sleep-then-assert -- cross rate-limit window
             transaction.commit()
             assert future.result(timeout=3) == "allowed"
     finally:
@@ -1144,7 +1160,7 @@ def test_counter_evidence_blocks_downgrade_atomically_then_clean_round_trip_succ
     rate_limit_postgresql_engine = sa.create_engine(isolated_postgres_url)
     request.addfinalizer(rate_limit_postgresql_engine.dispose)
     with rate_limit_postgresql_engine.begin() as connection:
-        command.upgrade(_migration_config(connection), "head")
+        command.upgrade(_migration_config(connection), "p0s000000015")
         connection.exec_driver_sql(
             (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
         )

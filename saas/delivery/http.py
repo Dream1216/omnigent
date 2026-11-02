@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -351,8 +351,8 @@ def create_delivery_router(
             raise HTTPException(409, detail={"code": "preview_endpoint_unavailable"})
         expires_at = datetime.fromisoformat(preview["expires_at"])
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at <= datetime.now(timezone.utc):
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at <= datetime.now(UTC):
             raise HTTPException(409, detail={"code": "preview_expired"})
         domain_path = (
             f"/v1/domains/{project.preview_domain_binding_id}"
@@ -379,8 +379,7 @@ def create_delivery_router(
             or domain["environment_id"] != preview["environment_id"]
             or domain["target_generation"] != preview["target_generation"]
             or domain["git_revision"] != preview["git_revision"]
-            or datetime.fromisoformat(domain["certificate_not_after"])
-            <= datetime.now(timezone.utc)
+            or datetime.fromisoformat(domain["certificate_not_after"]) <= datetime.now(UTC)
         ):
             raise HTTPException(409, detail={"code": "preview_endpoint_stale"})
         hostname = domain["hostname"]
@@ -427,8 +426,8 @@ def create_delivery_router(
             raise HTTPException(409, detail={"code": "preview_endpoint_unavailable"})
         expires_at = datetime.fromisoformat(preview["expires_at"])
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at <= datetime.now(timezone.utc):
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at <= datetime.now(UTC):
             raise HTTPException(409, detail={"code": "preview_expired"})
         assert client is not None
         hostname = f"app-r{preview_id.hex}.{client.config.release_preview_root_domain}"
@@ -454,13 +453,13 @@ def create_delivery_router(
         try:
             grant_expires = datetime.fromisoformat(grant["expires_at"])
             if grant_expires.tzinfo is None:
-                grant_expires = grant_expires.replace(tzinfo=timezone.utc)
+                grant_expires = grant_expires.replace(tzinfo=UTC)
             grant_matches = (
                 grant["preview_id"] == str(preview_id)
                 and grant["hostname"] == hostname
                 and grant["target_generation"] == generation
                 and grant["git_revision"] == revision
-                and grant_expires > datetime.now(timezone.utc)
+                and grant_expires > datetime.now(UTC)
             )
         except (KeyError, TypeError, ValueError):
             grant_matches = False

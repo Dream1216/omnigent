@@ -87,11 +87,11 @@ def test_current_adr_gate_reopens_for_exact_upstream_sync_candidate() -> None:
 
     assert gate["status"] == "pending"
     assert baseline["approval"]["state"] == "review_required"
-    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000012")
+    assert baseline["approval"]["approved_control_plane_schema_revision"] == ("p0s000000018")
     assert baseline["approval"]["record"] is None
     assert all(adr["status"] == "proposed" for adr in baseline["adrs"])
-    assert candidate["upstream_revision"] == ("825f8500d7cc8e997e5562fa55694cd146165f3c")
-    assert candidate["implementation_revision"] == ("a90c89d5c4644d45c29c442a825ebe5e24240437")
+    assert candidate["upstream_revision"] == ("ee728a02004749e7f6971beee6c66d990bfbd216")
+    assert candidate["implementation_revision"] == ("4b96516237596951db4e55b020244e35d0b66a81")
     assert candidate["evidence_revision"] == candidate["implementation_revision"]
 
     # The previous approval remains immutable historical evidence, but cannot

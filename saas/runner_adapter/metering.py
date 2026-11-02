@@ -10,7 +10,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, TypedDict
@@ -170,9 +170,9 @@ class StagedManagedRunnerLaunchAuthority:
                         "managed_metering_budget_authority_invalid",
                         "Platform model budget authority is unavailable",
                     )
-                if datetime.now(
-                    timezone.utc
-                ) + platform_model_budget.ttl > grant.expires_at.astimezone(timezone.utc):
+                if datetime.now(UTC) + platform_model_budget.ttl > grant.expires_at.astimezone(
+                    UTC
+                ):
                     raise ManagedMeteringError(
                         "managed_metering_budget_lifetime_invalid",
                         "Platform model budget exceeds the metering grant lifetime",
@@ -220,7 +220,7 @@ class StagedManagedRunnerLaunchAuthority:
             raise ManagedMeteringError(
                 "managed_metering_grant_missing", "managed launch has no staged metering grant"
             )
-        if grant.expires_at <= datetime.now(timezone.utc):
+        if grant.expires_at <= datetime.now(UTC):
             self.complete_metering_grant(grant)
             raise ManagedMeteringError(
                 "managed_metering_grant_expired", "managed launch metering grant has expired"
@@ -429,7 +429,7 @@ def consume_metering_envelope(
         raise ManagedMeteringError(
             "managed_metering_envelope_invalid", "managed metering envelope body is invalid"
         ) from exc
-    if expires_at <= (now or datetime.now(timezone.utc)):
+    if expires_at <= (now or datetime.now(UTC)):
         raise ManagedMeteringError(
             "managed_metering_grant_expired", "managed metering grant has expired"
         )
@@ -530,7 +530,7 @@ class ProviderUsageMeter:
                 if self._grant.model_budget_reservation_id is not None
                 else None
             ),
-            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "occurred_at": datetime.now(UTC).isoformat(),
             "provider": provider,
             "provider_request_id": f"omnigent-observer-{event_id}",
             "run_id": str(self._grant.run_id),
@@ -797,7 +797,7 @@ def _aware_datetime(value: object) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("datetime offset required")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _text(value: object, maximum: int) -> str:

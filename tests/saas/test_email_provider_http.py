@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -57,7 +57,7 @@ class _Sender:
 
 
 def _client() -> tuple[PlatformHttpConfig, TestClient, str]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},

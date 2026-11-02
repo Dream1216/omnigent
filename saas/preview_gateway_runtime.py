@@ -17,7 +17,7 @@ import ssl
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from cryptography import x509
@@ -62,7 +62,7 @@ class PreviewGatewayRuntimeLeaf:
             or not self.trust_bundle_version.strip()
             or len(self.trust_bundle_version) > 64
             or self.not_after.tzinfo is None
-            or certificate_not_after != self.not_after.astimezone(timezone.utc)
+            or certificate_not_after != self.not_after.astimezone(UTC)
         ):
             raise ValueError("Preview Gateway runtime leaf is invalid")
 
@@ -358,11 +358,11 @@ class PreviewGatewayRuntimeConfig:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 class PreviewGatewayRuntime:

@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from configparser import Error as ConfigParserError
 from configparser import RawConfigParser
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
@@ -36,6 +36,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindingsError,
     ProductionServiceRoleGraph,
     compose_production_service_role_graph,
+    load_business_delivery_service_role_bindings,
     load_model_projection_service_role_bindings,
     load_platform_admin_service_role_bindings,
     load_platform_model_service_role_bindings,
@@ -113,6 +114,7 @@ class ProductionDatabaseUrls:
     governance: str = field(repr=False)
     public_api: str = field(repr=False)
     billing: str | None = field(default=None, repr=False)
+    revocation_consumer: str | None = field(default=None, repr=False)
 
     def as_mapping(self) -> Mapping[str, str]:
         """Return a read-only role-to-URL mapping."""
@@ -126,6 +128,8 @@ class ProductionDatabaseUrls:
         }
         if self.billing is not None:
             urls["billing"] = self.billing
+        if self.revocation_consumer is not None:
+            urls["revocation_consumer"] = self.revocation_consumer
         return MappingProxyType(urls)
 
 
@@ -228,10 +232,14 @@ class ProductionServerConfig:
     preview_root_domain: str | None = None
     preview_lease_seconds: int = 300
     delivery_config: DeliveryConfig | None = field(default=None, repr=False)
+    host_sharded: bool = False
     model_projection_service_role_bindings: ProductionServiceRoleBindings | None = field(
         default=None, repr=False
     )
     aliyun_profile: AliyunServerProfile | None = field(default=None, repr=False)
+    business_delivery_service_role_bindings: ProductionServiceRoleBindings | None = field(
+        default=None, repr=False
+    )
     official_builtin_agent_seed_enabled: bool = field(default=False, init=False)
     official_cross_workspace_scheduler_enabled: bool = field(default=False, init=False)
 
@@ -244,6 +252,7 @@ class ProductionServerConfig:
             self.platform_model_service_role_bindings,
             self.platform_admin_service_role_bindings,
             self.model_projection_service_role_bindings,
+            self.business_delivery_service_role_bindings,
         )
 
     @property
@@ -272,6 +281,7 @@ class ProductionServerConfig:
                     if self.aliyun_profile is not None
                     else {}
                 ),
+                "host_sharded": self.host_sharded,
             }
         )
 
@@ -418,7 +428,15 @@ def _load_database_urls(
         raise ProductionServerConfigError(
             "production server process must not receive ambient, owner, or migration database URLs"
         )
-    roles = (*_DATABASE_ROLES, *(("billing",) if "billing" in capabilities else ()))
+    roles = (
+        *_DATABASE_ROLES,
+        *(("billing",) if "billing" in capabilities else ()),
+        *(
+            ("revocation_consumer",)
+            if "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE" in environ
+            else ()
+        ),
+    )
     loaded = {role: _database_url(environ, role) for role in roles}
     urls = [value[0] for value in loaded.values()]
     paths = [value[2] for value in loaded.values()]
@@ -753,7 +771,7 @@ def load_production_artifact_admission_receipt(
         raise ProductionServerConfigError(f"{name} completion time is invalid") from None
     if (
         not completed_at.endswith("+00:00")
-        or completed.utcoffset() != timezone.utc.utcoffset(completed)
+        or completed.utcoffset() != UTC.utcoffset(completed)
         or completed.microsecond != 0
     ):
         raise ProductionServerConfigError(f"{name} completion time is invalid")
@@ -1012,6 +1030,9 @@ def load_production_server_config(
     if _REVISION.fullmatch(active_key_id) is None or len(active_key_id) > 16:
         raise ProductionServerConfigError("OMNIGENT_SAAS_ACTIVE_KEY_ID is invalid")
     capabilities = _capabilities(_required(source, "OMNIGENT_SAAS_CAPABILITIES"))
+    host_sharded = source.get("OMNIGENT_SAAS_HOST_SHARDED", "false")
+    if host_sharded not in {"true", "false"}:
+        raise ProductionServerConfigError("OMNIGENT_SAAS_HOST_SHARDED must be true or false")
 
     try:
         service_role_bindings = load_production_service_role_bindings(source)
@@ -1030,11 +1051,23 @@ def load_production_server_config(
             if "OMNIGENT_SAAS_MODEL_PROJECTION_SERVICE_ROLE_BINDINGS_FILE" in source
             else None
         )
+        business_delivery_service_role_bindings = (
+            load_business_delivery_service_role_bindings(source)
+            if "OMNIGENT_SAAS_BUSINESS_DELIVERY_SERVICE_ROLE_BINDINGS_FILE" in source
+            else None
+        )
+        if (
+            source.get("OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION")
+            in {"p0s000000017", "p0s000000018"}
+            and business_delivery_service_role_bindings is None
+        ):
+            raise ProductionServerConfigError("P17 requires native business-delivery bindings")
         service_role_graph = compose_production_service_role_graph(
             service_role_bindings,
             platform_model_service_role_bindings,
             platform_admin_service_role_bindings,
             model_projection_service_role_bindings,
+            business_delivery_service_role_bindings,
         )
     except ProductionServiceRoleBindingsError as error:
         raise ProductionServerConfigError(str(error)) from error
@@ -1185,6 +1218,7 @@ def load_production_server_config(
         platform_model_service_role_bindings=platform_model_service_role_bindings,
         platform_admin_service_role_bindings=platform_admin_service_role_bindings,
         model_projection_service_role_bindings=model_projection_service_role_bindings,
+        business_delivery_service_role_bindings=business_delivery_service_role_bindings,
         migration_receipt=receipt,
         artifact_admission_receipt=artifact_admission_receipt,
         secrets=secrets,
@@ -1192,6 +1226,7 @@ def load_production_server_config(
         preview_lease_seconds=preview_lease_seconds,
         delivery_config=delivery_config,
         aliyun_profile=aliyun_profile,
+        host_sharded=host_sharded == "true",
     )
 
 

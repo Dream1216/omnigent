@@ -653,6 +653,7 @@ def test_worker_workflow_is_unprivileged_and_forces_fresh_UI_and_hashed_backend(
         "Core",
         "Gateway",
         "Model",
+        "Compatibility018",
     ]
     assert set(workflow["jobs"]) == {
         "build-initial",
@@ -1363,7 +1364,64 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
     assert set(store) == {"schema_version", table["key"]}
     assert type(store["schema_version"]) is int and store["schema_version"] == 1
     records = store[table["key"]]
-    assert set(records) == set(expected["sources"]) == {"Core", "Gateway", "Model"}
+    assert set(expected["sources"]) == {"Core", "Gateway", "Model"}
+    compatibility = (
+        {"Compatibility018"}
+        if filename
+        in {
+            "legacy-security-build-profiles.json",
+            "legacy-security-transfer-profiles.json",
+            "legacy-security-pg-profiles.json",
+            "legacy-security-ci-profiles.json",
+            "legacy-security-original-inputs.json",
+            "legacy-source-qualification-profiles.json",
+        }
+        else set()
+    )
+    assert set(records) == set(expected["sources"]) | compatibility
+    if compatibility:
+        if filename == "legacy-security-build-profiles.json":
+            core.validate_profile(records["Compatibility018"], "Compatibility018")
+        elif filename == "legacy-security-transfer-profiles.json":
+            assert (
+                controller.load_transfer_profile(ROOT, "Compatibility018")
+                == records["Compatibility018"]
+            )
+        elif filename == "legacy-security-ci-profiles.json":
+            from saas.scripts.legacy_source_ci import _load_contract
+
+            assert (
+                _load_contract(ROOT, core.load_profile(ROOT, "Compatibility018"))
+                == records["Compatibility018"]
+            )
+            assert (
+                hashlib.sha256(
+                    json.dumps(
+                        records["Compatibility018"], sort_keys=True, separators=(",", ":")
+                    ).encode()
+                ).hexdigest()
+                == "9592119c64a91fe3993bf06a14b865abee31c7b07f7fd2e20b0d06ae45821cf6"
+            )
+        else:
+            reviewed_compatibility = {
+                "legacy-security-pg-profiles.json": (
+                    "4536a99df6b93146a0d803a47fc7674732308f631d31427b7ff15f9b7bbfdcc4"
+                ),
+                "legacy-security-original-inputs.json": (
+                    "86c420e249c55aa1940e5f6aff42729c86adcda6bcc5e7c5d9f77a5f7d145e9c"
+                ),
+                "legacy-source-qualification-profiles.json": (
+                    "a051ed48a7f2a6383b68091cc752a66473a9c7384ee7c7c3bcbf368f3b28316d"
+                ),
+            }
+            assert (
+                hashlib.sha256(
+                    json.dumps(
+                        records["Compatibility018"], sort_keys=True, separators=(",", ":")
+                    ).encode()
+                ).hexdigest()
+                == reviewed_compatibility[filename]
+            )
     for component, identity in expected["sources"].items():
         record = records[component]
         assert record["component"] == component
@@ -1389,9 +1447,112 @@ def test_populated_build_store_keeps_unknown_components_closed(component):
         core.load_profile(ROOT, component)
 
 
-@pytest.mark.parametrize("component", ["Core", "Gateway", "Model"])
+@pytest.mark.parametrize("component", ["Core", "Gateway", "Model", "Compatibility018"])
 def test_populated_original_inputs_reject_another_product_revision(component):
     profile = copy.deepcopy(core.load_profile(ROOT, component))
     profile["product_revision"] = "a" * 40
     with pytest.raises(ValueError, match="no reviewed exact-product binding"):
         controller.load_original_inputs(ROOT, profile)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "revision",
+        "tree",
+        "baseline",
+        "budget",
+        "version",
+        "missing",
+        "extra",
+        "mode",
+        "bytes",
+        "nan",
+    ],
+)
+def test_fixed_compatibility_registration_rejects_each_changed_coordinate(fault):
+    profiles = json.loads(
+        (ROOT / "saas/supply_chain/legacy-security-build-profiles.json").read_text()
+    )["profiles"]
+    for component in ("Core", "Gateway", "Model"):
+        core.validate_profile(profiles[component], component)
+    profile = copy.deepcopy(profiles["Compatibility018"])
+    if fault in {"revision", "tree", "baseline"}:
+        field = {
+            "revision": "product_revision",
+            "tree": "product_tree",
+            "baseline": "baseline_revision",
+        }[fault]
+        profile[field] = "f" * 40
+    elif fault == "budget":
+        profile["budget_file_cap"] = 225
+    elif fault == "version":
+        profile["application_version"] = "0.21.0"
+    elif fault == "missing":
+        profile["source_delta"].pop()
+    elif fault == "extra":
+        profile["source_delta"].append(copy.deepcopy(profile["source_delta"][0]))
+    elif fault == "mode":
+        current = profile["source_delta"][0]["after"]["mode"]
+        profile["source_delta"][0]["after"]["mode"] = "100644" if current == "100755" else "100755"
+    elif fault == "bytes":
+        profile["source_delta"][0]["after"]["sha256"] = "f" * 64
+    elif fault == "nan":
+        profile["source_date_epoch"] = float("nan")
+    if fault:
+        with pytest.raises(ValueError):
+            core.validate_profile(profile, "Compatibility018")
+    else:
+        core.validate_profile(profile, "Compatibility018")
+
+
+@pytest.mark.parametrize("fault", [None, "baseline_present", "mode", "undeclared_path"])
+def test_compatibility_added_source_still_requires_complete_exact_Git_objects(
+    product, monkeypatch, fault
+):
+    source, profile = product
+
+    def git(*arguments):
+        return subprocess.check_output(["git", *arguments], cwd=source, text=True).strip()
+
+    path = source / "saas/control_plane/compatibility_fixture.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("FIXTURE_VALUE = 1\n")
+    git("add", ".")
+    git("commit", "-qm", "fixture owned compatibility source addition")
+    profile.update(
+        component="Compatibility018",
+        product_revision=git("rev-parse", "HEAD"),
+        product_tree=git("rev-parse", "HEAD^{tree}"),
+        source_date_epoch=int(git("show", "-s", "--format=%ct", "HEAD")),
+    )
+    profile["source_delta"].append(
+        {
+            "path": "saas/control_plane/compatibility_fixture.py",
+            "before": None,
+            "after": {"mode": "100644", "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+        }
+    )
+    if fault == "baseline_present":
+        profile["source_delta"][0]["before"] = None
+    elif fault == "mode":
+        profile["source_delta"][-1]["after"]["mode"] = "100755"
+    elif fault == "undeclared_path":
+        (source / "saas/control_plane/unreviewed_fixture.py").write_text("VALUE = 2\n")
+        git("add", ".")
+        git("commit", "-qm", "fixture owned unlisted source")
+        profile.update(
+            product_revision=git("rev-parse", "HEAD"),
+            product_tree=git("rev-parse", "HEAD^{tree}"),
+            source_date_epoch=int(git("show", "-s", "--format=%ct", "HEAD")),
+        )
+    digest = hashlib.sha256(
+        json.dumps(profile, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+    monkeypatch.setattr(core, "_COMPATIBILITY_PROFILE_SHA256", digest)
+    if fault:
+        with pytest.raises(ValueError):
+            core.verify_source_delta(source, profile)
+    else:
+        core.verify_source_delta(source, profile)

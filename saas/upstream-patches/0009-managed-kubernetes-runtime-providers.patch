@@ -1,71 +1,8 @@
-diff --git a/omnigent/onboarding/sandboxes/kubernetes.py b/omnigent/onboarding/sandboxes/kubernetes.py
-index 456b2f58c..e7352a923 100644
---- a/omnigent/onboarding/sandboxes/kubernetes.py
-+++ b/omnigent/onboarding/sandboxes/kubernetes.py
-@@ -108,0 +109,7 @@ Prefer :data:`SANDBOX_SECRET_ENV_VAR` for credentials. The
-+MANAGED_SERVER_URL_ENV_VAR: str = "OMNIGENT_MANAGED_SERVER_URL"
-+"""Server URL injected by the launcher for reviewed custom Host commands.
-+
-+The default ``omnigent host`` child receives the URL as argv; downstream Host
-+compositions can read the same authority from this reserved environment name.
-+"""
-+
-@@ -257 +264,8 @@ _RESERVED_ENV_NAMES: frozenset[str] = frozenset(
--    {"HOME", "IS_SANDBOX", HOST_ID_ENV_VAR, HOST_NAME_ENV_VAR, HOST_TOKEN_ENV_VAR}
-+    {
-+        "HOME",
-+        "IS_SANDBOX",
-+        HOST_ID_ENV_VAR,
-+        HOST_NAME_ENV_VAR,
-+        HOST_TOKEN_ENV_VAR,
-+        MANAGED_SERVER_URL_ENV_VAR,
-+    }
-@@ -649 +663,4 @@ def _render_workspace_prep_command(
--def _render_host_command(server_url: str) -> list[str]:
-+def _render_host_command(
-+    server_url: str,
-+    host_command: Sequence[str] | None = None,
-+) -> list[str]:
-@@ -656 +673,3 @@ def _render_host_command(server_url: str) -> list[str]:
--    ``omnigent host --server <url>`` — as its child. Identity + token reach the
-+    ``omnigent host --server <url>`` — as its child. A deployment may instead
-+    supply a reviewed *host_command* for a downstream Host composition; it is
-+    still run beneath the same reaper. Identity + token reach the
-@@ -660,0 +680,3 @@ def _render_host_command(server_url: str) -> list[str]:
-+    :param host_command: Optional replacement child argv. This is operator
-+        configuration, not user input; the server config parser validates its
-+        bounded string-list shape before a launcher is constructed.
-@@ -663,3 +685,3 @@ def _render_host_command(server_url: str) -> list[str]:
--    script = (
--        f"exec python3 -c {shlex.quote(_REAPER_SRC)} "
--        f"omnigent host --server {shlex.quote(server_url)}"
-+    child = list(host_command or ("omnigent", "host", "--server", server_url))
-+    script = f"exec python3 -c {shlex.quote(_REAPER_SRC)} " + " ".join(
-+        shlex.quote(argument) for argument in child
-@@ -727,0 +750 @@ def build_job_manifest(
-+    host_command: Sequence[str] | None = None,
-@@ -968,0 +992 @@ def build_job_manifest(
-+        {"name": MANAGED_SERVER_URL_ENV_VAR, "value": server_url},
-@@ -980 +1004 @@ def build_job_manifest(
--        "command": _render_host_command(server_url),
-+        "command": _render_host_command(server_url, host_command),
-@@ -1283,0 +1308 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
-+        host_command: Sequence[str] | None = None,
-@@ -1296,0 +1322,2 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
-+        :param host_command: Optional reviewed child argv to run beneath the
-+            PID-1 reaper instead of the default ``omnigent host`` command.
-@@ -1312,0 +1340 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
-+        self._host_command = tuple(host_command) if host_command is not None else None
-@@ -1602,0 +1631 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
-+                    host_command=self._host_command,
 diff --git a/omnigent/onboarding/sandboxes/agent_sandbox.py b/omnigent/onboarding/sandboxes/agent_sandbox.py
-index ac991438b..28b44c6d8 100644
+index ac991438bc1715248961334ec34c3fffdd9618ab..28b44c6d8698269e4dd912442dff6646989041e3 100644
 --- a/omnigent/onboarding/sandboxes/agent_sandbox.py
 +++ b/omnigent/onboarding/sandboxes/agent_sandbox.py
-@@ -363,9 +363,10 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
- 
-         Both halves of the lifecycle land here, because the managed wake path
-         calls :meth:`~KubernetesSandboxLauncher.start_host` again under the same
+@@ -366,3 +366,4 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
 -        sandbox id. A fresh launch creates; a wake finds the suspended object
 -        (409) and patches it back to life instead, which is what preserves the
 -        workspace claim. The patch deliberately omits ``volumeClaimTemplates``
@@ -73,28 +10,18 @@ index ac991438b..28b44c6d8 100644
 +        admission before returning 409. A wake patches the existing object,
 +        preserving its workspace claim. Only a missing object is created, with
 +        the 409 fallback retained for a concurrent create. The patch omits ``volumeClaimTemplates``
-         (immutable after creation) and carries the re-rendered ``podTemplate``,
-         so a token-Secret or ``host_config`` change since the last run is picked
-         up when the controller rebuilds the Pod.
-@@ -382,18 +383,30 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
-         )
-         custom = self._load_custom()
-         try:
+@@ -385 +386 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
 -            custom.create_namespaced_custom_object(
 +            custom.get_namespaced_custom_object(
-                 API_GROUP,
-                 API_VERSION,
-                 namespace,
-                 SANDBOX_PLURAL,
+@@ -390 +391 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
 -                body,
 +                body["metadata"]["name"],  # type: ignore[index]
-                 _request_timeout=_POD_READY_REQUEST_TIMEOUT_S,
-             )
+@@ -393 +393,0 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
 -            return
-         except ApiException as exc:
+@@ -395 +395 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
 -            if getattr(exc, "status", None) != 409:
 +            if getattr(exc, "status", None) != 404:
-                 raise
+@@ -396,0 +397,13 @@ class AgentSandboxLauncher(KubernetesSandboxLauncher):
 +            try:
 +                custom.create_namespaced_custom_object(
 +                    API_GROUP,
@@ -108,6 +35,63 @@ index ac991438b..28b44c6d8 100644
 +            except ApiException as exc:
 +                if getattr(exc, "status", None) != 409:
 +                    raise
-         spec = dict(body["spec"])  # type: ignore[arg-type]
-         spec.pop("volumeClaimTemplates", None)
-         click.echo(f"  → waking suspended agent-sandbox '{body['metadata']['name']}'")  # type: ignore[index]
+diff --git a/omnigent/onboarding/sandboxes/kubernetes.py b/omnigent/onboarding/sandboxes/kubernetes.py
+index 0b9531940f0f7dedefd1e0fbad776cf472983a66..9c1a3ca51599abd29bc404530fdb2c9455714c96 100644
+--- a/omnigent/onboarding/sandboxes/kubernetes.py
++++ b/omnigent/onboarding/sandboxes/kubernetes.py
+@@ -109,0 +110,7 @@ Prefer :data:`SANDBOX_SECRET_ENV_VAR` for credentials. The
++MANAGED_SERVER_URL_ENV_VAR: str = "OMNIGENT_MANAGED_SERVER_URL"
++"""Server URL injected by the launcher for reviewed custom Host commands.
++
++The default ``omnigent host`` child receives the URL as argv; downstream Host
++compositions can read the same authority from this reserved environment name.
++"""
++
+@@ -258 +265,8 @@ _RESERVED_ENV_NAMES: frozenset[str] = frozenset(
+-    {"HOME", MANAGED_SANDBOX_ENV_VAR, HOST_ID_ENV_VAR, HOST_NAME_ENV_VAR, HOST_TOKEN_ENV_VAR}
++    {
++        "HOME",
++        MANAGED_SANDBOX_ENV_VAR,
++        HOST_ID_ENV_VAR,
++        HOST_NAME_ENV_VAR,
++        HOST_TOKEN_ENV_VAR,
++        MANAGED_SERVER_URL_ENV_VAR,
++    }
+@@ -650 +664,4 @@ def _render_workspace_prep_command(
+-def _render_host_command(server_url: str) -> list[str]:
++def _render_host_command(
++    server_url: str,
++    host_command: Sequence[str] | None = None,
++) -> list[str]:
+@@ -657 +674,3 @@ def _render_host_command(server_url: str) -> list[str]:
+-    ``omnigent host --server <url>`` — as its child. Identity + token reach the
++    ``omnigent host --server <url>`` — as its child. A deployment may instead
++    supply a reviewed *host_command* for a downstream Host composition; it is
++    still run beneath the same reaper. Identity + token reach the
+@@ -661,0 +681,3 @@ def _render_host_command(server_url: str) -> list[str]:
++    :param host_command: Optional replacement child argv. This is operator
++        configuration, not user input; the server config parser validates its
++        bounded string-list shape before a launcher is constructed.
+@@ -664,3 +686,3 @@ def _render_host_command(server_url: str) -> list[str]:
+-    script = (
+-        f"exec python3 -c {shlex.quote(_REAPER_SRC)} "
+-        f"omnigent host --server {shlex.quote(server_url)}"
++    child = list(host_command or ("omnigent", "host", "--server", server_url))
++    script = f"exec python3 -c {shlex.quote(_REAPER_SRC)} " + " ".join(
++        shlex.quote(argument) for argument in child
+@@ -728,0 +751 @@ def build_job_manifest(
++    host_command: Sequence[str] | None = None,
+@@ -969,0 +993 @@ def build_job_manifest(
++        {"name": MANAGED_SERVER_URL_ENV_VAR, "value": server_url},
+@@ -981 +1005 @@ def build_job_manifest(
+-        "command": _render_host_command(server_url),
++        "command": _render_host_command(server_url, host_command),
+@@ -1284,0 +1309 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
++        host_command: Sequence[str] | None = None,
+@@ -1297,0 +1323,2 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
++        :param host_command: Optional reviewed child argv to run beneath the
++            PID-1 reaper instead of the default ``omnigent host`` command.
+@@ -1313,0 +1341 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
++        self._host_command = tuple(host_command) if host_command is not None else None
+@@ -1603,0 +1632 @@ class KubernetesSandboxLauncher(SandboxHostLauncher):
++                    host_command=self._host_command,

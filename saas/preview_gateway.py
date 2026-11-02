@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
 
@@ -342,7 +342,7 @@ def create_preview_gateway_app(
             return _error(403, error.code, str(error))
         maximum_age = max(
             1,
-            int((route.expires_at - datetime.now(timezone.utc)).total_seconds()),
+            int((route.expires_at - datetime.now(UTC)).total_seconds()),
         )
         response = Response(
             status_code=303,
@@ -446,7 +446,7 @@ def _set_session_cookie(response: Response, grant: PreviewBrowserSessionGrantLik
         return
     maximum_age = max(
         1,
-        int((grant.route.expires_at - datetime.now(timezone.utc)).total_seconds()),
+        int((grant.route.expires_at - datetime.now(UTC)).total_seconds()),
     )
     response.set_cookie(
         PREVIEW_COOKIE_NAME,

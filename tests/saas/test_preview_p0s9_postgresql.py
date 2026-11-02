@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from queue import Queue
 from time import monotonic, sleep
@@ -33,7 +33,7 @@ def _set_local(connection: sa.Connection, setting: str, value: str) -> None:
 
 
 def _seed_ready_preview(connection: sa.Connection) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     identifiers: dict[str, Any] = {
         "execution_id": uuid4(),
         "tenant_id": uuid4(),

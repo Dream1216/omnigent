@@ -556,13 +556,21 @@ def reviewed_source_bytes(root, relative, expected):
     body = (root / relative).read_bytes()
     if isinstance(expected, str):
         return body
-    correction = expected.get("type_and_context_correction")
-    if correction is not None:
+    for name in (
+        "compatibility_scope_correction",
+        "upstream_sync_correction",
+        "type_and_context_correction",
+    ):
+        correction = expected.get(name)
+        if correction is None:
+            continue
         assert hashlib.sha256(body).hexdigest() == correction["corrected_sha256"]
         for fragment in correction["inverse_fragments"]:
             before, after = fragment["before"].encode(), fragment["after"].encode()
             assert before != after and body.count(after) == 1
             body = body.replace(after, before)
+        if "restored_sha256" in correction:
+            assert hashlib.sha256(body).hexdigest() == correction["restored_sha256"]
     return body
 
 
@@ -801,3 +809,86 @@ def test_parallel_discovery_owns_typed_results_and_preserves_phase_barriers(
     assert result["source_ci_pass"] is result["production_admission"] is False
     assert result["unattributed_expected_attempts"] == [(n, 1) for n in expected_ids]
     assert calls == ["enumerate", "enumerate"]
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+def test_original_trigger_group_does_not_absorb_following_same_second_environment(
+    scenario, native_domain
+):
+    data = native_domain
+    step = data["job"]["steps"][1]
+    step["conclusion"] = "success"
+    log = framed_log(data, scenario)
+    timestamp = discovery._instant(step["completed_at"]).isoformat()
+    log += "".join(
+        timestamp + " " + line + "\n"
+        for line in [
+            "##[group]Run set -euo pipefail",
+            "env:",
+            "  REPO: other-following-step",
+            "##[endgroup]",
+        ]
+    )
+    with pytest.raises(ValueError):
+        discovery.trigger_environment(log, step)
+    framed = discovery._cancelled_trigger_group(log, step)
+    environment = discovery.trigger_environment(framed, step)
+    assert environment["REPO"] == discovery.REPOSITORY
+    assert environment["EVENT_HEAD_SHA"] == scenario["profile"]["product_revision"]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "current_source",
+        "profile",
+        "repository",
+        "event",
+        "duplicate_PR",
+        "short_source",
+        "other_component",
+    ],
+)
+def test_only_non_current_compatibility_event_can_keep_older_source_with_newer_PR_snapshot(fault):
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    profile = load_profile(Path(__file__).resolve().parents[2], "Compatibility018")
+    source = "b" * 40
+    pull = {
+        "number": 214,
+        "url": discovery._REPO_URL + "/pulls/214",
+        "head": {"sha": "c" * 40, "repo": {"url": discovery._REPO_URL}},
+        "base": {"repo": {"url": discovery._REPO_URL}},
+    }
+    environment = {
+        "REPO": discovery.REPOSITORY,
+        "EVENT_NAME": "workflow_run",
+        "EVENT_PR": "",
+        "EVENT_HEAD_SHA": "",
+        "WORKFLOW_HEAD_SHA": source,
+        "WORKFLOW_PRS": [pull],
+    }
+    if fault == "current_source":
+        environment["WORKFLOW_HEAD_SHA"] = profile["product_revision"]
+    if fault == "profile":
+        profile["product_tree"] = "a" * 40
+    if fault == "repository":
+        pull["head"]["repo"]["url"] = "https://example.invalid/other"
+    if fault == "event":
+        environment["EVENT_PR"] = "214"
+    if fault == "duplicate_PR":
+        environment["WORKFLOW_PRS"].append(copy.deepcopy(pull))
+    if fault == "short_source":
+        environment["WORKFLOW_HEAD_SHA"] = "short"
+    if fault == "other_component":
+        profile["component"] = "Core"
+    if fault is not None:
+        with pytest.raises(ValueError):
+            discovery._discovery_trigger_identity(environment, "workflow_run", profile)
+    else:
+        assert discovery._discovery_trigger_identity(environment, "workflow_run", profile) == (
+            214,
+            source,
+        )
+        assert pull["head"]["sha"] == "c" * 40

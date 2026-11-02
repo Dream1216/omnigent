@@ -497,7 +497,7 @@ class MutualTlsBillingMeteringServer:
             else:
                 status = 403
             await _write_response(writer, status=status, body=_error_document(exc.code))
-        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError):
+        except (TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             await _write_response(
                 writer,
                 status=400,

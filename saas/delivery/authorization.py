@@ -9,11 +9,13 @@ from __future__ import annotations
 import os
 import ssl
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -21,6 +23,12 @@ from saas.control_plane.authorization import ProjectAuthorizationError, ProjectA
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
 from saas.delivery.checkpoints import CheckpointExportBody
 from saas.delivery.client import DeliveryConfig
+from saas.delivery.snapshot_objects import (
+    SnapshotObjectAllocation,
+    SnapshotObjectAuthority,
+    SnapshotObjectReference,
+    SnapshotObjectSettings,
+)
 
 
 class AuthorizationBody(BaseModel):
@@ -95,7 +103,10 @@ class DeliveryAuthorization:
 
 
 def create_authorization_app(
-    authority: DeliveryAuthorization, *, checkpoint_exporter: Any = None
+    authority: DeliveryAuthorization,
+    *,
+    checkpoint_exporter: Any = None,
+    snapshot_objects: SnapshotObjectAuthority | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -113,6 +124,57 @@ def create_authorization_app(
                 raise HTTPException(
                     403, detail={"code": "checkpoint_authorization_denied"}
                 ) from error
+
+    if snapshot_objects is not None:
+        objects = snapshot_objects
+
+        def invoke(operation: Callable[..., Any], *args: Any) -> Any:
+            try:
+                return operation(*args)
+            except HTTPException:
+                raise
+            except (ControlPlaneResolutionError, ProjectAuthorizationError):
+                raise HTTPException(403, detail={"code": "snapshot_object_scope_denied"}) from None
+            except Exception:  # noqa: BLE001 - never expose provider credentials in HTTP errors.
+                raise HTTPException(503, detail={"code": "snapshot_object_unavailable"}) from None
+
+        def authenticated(authorization: str | None) -> None:
+            invoke(objects.authenticate, authorization)
+
+        @app.post("/v1/snapshot-upload-targets", status_code=201)
+        def snapshot_allocate(
+            body: SnapshotObjectAllocation,
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> dict[str, Any]:
+            authenticated(authorization)
+            return invoke(objects.allocate, body)
+
+        @app.post("/v1/snapshot-objects:head")
+        def snapshot_head(
+            body: SnapshotObjectReference,
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> dict[str, Any]:
+            authenticated(authorization)
+            return invoke(objects.head, body.object_ref)
+
+        @app.post("/v1/snapshot-objects:stream")
+        def snapshot_stream(
+            body: SnapshotObjectReference,
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> StreamingResponse:
+            authenticated(authorization)
+            return StreamingResponse(
+                invoke(objects.stream, body.object_ref), media_type="application/octet-stream"
+            )
+
+        @app.post("/v1/snapshot-upload-targets:revoke", status_code=204)
+        def snapshot_revoke(
+            body: SnapshotObjectReference,
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> Response:
+            authenticated(authorization)
+            invoke(objects.revoke, body.object_ref)
+            return Response(status_code=204)
 
     return app
 
@@ -156,17 +218,39 @@ def main() -> None:
         )
         authority = DeliveryAuthorization(config.delivery_config, resolver, sessions.app)
         checkpoint_exporter = None
-        if config.delivery_config.repository_mirrors:
-            from saas.delivery.checkpoints import CheckpointExporter
+        snapshot_objects = None
+        snapshot_settings_file = os.environ.get(
+            "OMNIGENT_SAAS_SNAPSHOT_OBJECT_AUTHORITY_FILE", ""
+        ).strip()
+        built_artifacts = None
+        if config.delivery_config.repository_mirrors or snapshot_settings_file:
             from saas.production.artifact_store import build_production_s3_artifact_store
+
+            built_artifacts = build_production_s3_artifact_store(config)
+        if config.delivery_config.repository_mirrors:
+            assert built_artifacts is not None
+            from saas.delivery.checkpoints import CheckpointExporter
             from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore
 
             checkpoint_exporter = CheckpointExporter(
                 authority,
-                ObjectRecoveryArtifactStore(build_production_s3_artifact_store(config).store),
+                ObjectRecoveryArtifactStore(built_artifacts.store),
                 config.delivery_config.repository_mirrors,
             )
-        app = create_authorization_app(authority, checkpoint_exporter=checkpoint_exporter)
+        if snapshot_settings_file:
+            from pathlib import Path
+
+            assert built_artifacts is not None
+            snapshot_objects = SnapshotObjectAuthority(
+                authority,
+                SnapshotObjectSettings.from_file(Path(snapshot_settings_file)),
+                client=built_artifacts.client,
+                artifact_store_uri=config.artifact_store_uri,
+                endpoint_url=config.artifact_endpoint_url,
+            )
+        app = create_authorization_app(
+            authority, checkpoint_exporter=checkpoint_exporter, snapshot_objects=snapshot_objects
+        )
         uvicorn.run(
             app,
             host="0.0.0.0",

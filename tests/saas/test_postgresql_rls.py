@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from threading import Barrier, Lock
@@ -29,14 +29,14 @@ from saas.outbox_worker import verify_dispatcher_database_role
 _CONTROL_PLANE_RLS_TABLES = CONTROL_PLANE_RLS_TABLES
 
 
-def _migrate(connection: sa.Connection, root: Path) -> None:
+def _migrate(connection: sa.Connection, root: Path, revision: str = "head") -> None:
     connection.exec_driver_sql(
         (root / "saas/control_plane/postgresql_database.sql").read_text(encoding="utf-8")
     )
     config = Config(root / "saas/control_plane/alembic.ini")
     config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)
 
 
 def test_real_postgresql_rls_denies_cross_tenant_and_missing_context(
@@ -474,7 +474,7 @@ def test_real_postgresql_tenant_member_directory_is_dual_filtered_and_audited(
         tenant_id=tenant_a,
         invitation_id=rotatable_a,
         expected_version=1,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=2),
+        expires_at=datetime.now(UTC) + timedelta(days=2),
         reason="rotate after delivery channel change",
         idempotency_key=f"pg-member-reissue-{rotatable_a}",
     )
@@ -612,7 +612,7 @@ def test_real_postgresql_exact_invitation_policy_round_trips_fail_closed(
     engine = sa.create_engine(isolated_postgres_url)
 
     with engine.begin() as connection:
-        _migrate(connection, root)
+        _migrate(connection, root, "p0s000000015")
         config = Config(root / "saas/control_plane/alembic.ini")
         config.set_main_option("script_location", str(root / "saas/control_plane/migrations"))
         config.attributes["connection"] = connection
@@ -957,7 +957,7 @@ def test_real_postgresql_outbox_dispatcher_concurrent_claim_and_lease_recovery(
     engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=0)
     event_ids = (uuid4(), uuid4())
     stale_event_id = uuid4()
-    dispatch_at = datetime(2026, 8, 4, 6, 0, tzinfo=timezone.utc)
+    dispatch_at = datetime(2026, 8, 4, 6, 0, tzinfo=UTC)
 
     with engine.begin() as connection:
         _migrate(connection, root)
@@ -1087,7 +1087,7 @@ def test_real_postgresql_owner_transfer_serializes_and_preserves_single_owner(
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(isolated_postgres_url, pool_size=4, max_overflow=0)
     owner_id, target_id, tenant_id = uuid4(), uuid4(), uuid4()
-    changed_at = datetime(2026, 8, 4, 6, 30, tzinfo=timezone.utc)
+    changed_at = datetime(2026, 8, 4, 6, 30, tzinfo=UTC)
 
     with engine.begin() as connection:
         _migrate(connection, root)

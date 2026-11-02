@@ -9,7 +9,7 @@ source layer never imports the delivery implementation or a provider SDK.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -314,7 +314,7 @@ def bounded_deadlines(
 def _aware(value: datetime | None) -> datetime:
     if value is None or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("source approval time must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 __all__ = [

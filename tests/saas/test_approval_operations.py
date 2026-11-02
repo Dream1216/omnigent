@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -28,7 +28,7 @@ from saas.control_plane.notification_models import (
     OperationBatchRecord,
 )
 
-NOW = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 10, 0, tzinfo=UTC)
 OLD = ApprovalSecretDigester("approval-old", b"o" * 32)
 NEW = ApprovalSecretDigester("approval-new", b"n" * 32)
 

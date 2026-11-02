@@ -79,6 +79,21 @@
       "normal_EOF_full_statistics": true,
       "stop_and_join_before_diagnostic": true,
       "partial_statistics_stderr_complete": false
+    },
+    "compatibility_scope_correction": {
+      "corrected_sha256": "d14adc81514286b8ecfe7869cb80c164e6936f530cd476a20999f0cfc965ee43",
+      "restored_sha256": "002c89fff3680483a0ea5459de5a1d431eab2c702ccb026552585454ab01e00d",
+      "context": "Exact proposed Compatibility018 delta; inverse restores frozen H source before all existing parent/function checks. Review only; no source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "            f\"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}\"\n        )\n        require(\n            type(value.get(\"total_count\")) is int and 0 < value[\"total_count\"] <= 512,\n            \"native job count is invalid\",\n        )\n        require(\n",
+          "after": "            f\"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}\"\n        )\n        require(\n            type(value.get(\"total_count\")) is int and 0 <= value[\"total_count\"] <= 512,\n            \"native job count is invalid\",\n        )\n        require(\n"
+        },
+        {
+          "before": "        )\n        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(isinstance(rows, list) and bool(rows), \"native job page is missing\")\n        jobs.extend(cast(list[dict[str, Any]], rows))\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n",
+          "after": "        )\n        total = value[\"total_count\"]\n        rows = value.get(\"jobs\")\n        require(\n            isinstance(rows, list) and (bool(rows) or (total == 0 and page == 1)),\n            \"native job page is missing\",\n        )\n        jobs.extend(cast(list[dict[str, Any]], rows))\n        require(len(jobs) <= total, \"native job pages contain excess entries\")\n        if len(jobs) == total:\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
@@ -136,6 +151,21 @@
           "after": "        stream = bundle.extractfile(member)\n        require(stream is not None, \"missing Syft executable\")\n        with (root / \"syft\").open(\"xb\") as output:\n            shutil.copyfileobj(cast(BinaryIO, stream), output)\n    (root / \"syft\").chmod(0o700)\n    return root / \"syft\"\n\n"
         }
       ]
+    },
+    "compatibility_scope_correction": {
+      "corrected_sha256": "837fee182ee8894a68c93af5dcdc14d0263baeb0d9d3f1a4ed38de2fcd9a4b6a",
+      "restored_sha256": "f8f1cda86c8e22fcfe173cfb1d35f95849e130332122afb4d5c3ba34fd28bc3b",
+      "context": "Exact proposed Compatibility018 delta; inverse restores frozen H source before all existing parent/function checks. Review only; no source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "from saas.scripts.legacy_control_results import collect_pg_receipts, verify_control_run\nfrom saas.scripts.legacy_native_evidence import api, preserve_native_evidence\nfrom saas.scripts.legacy_pr_candidate import (\n    UPLOAD_STEP,\n    load_transfer_profile,\n    transfer_provenance,\n)\nfrom saas.scripts.legacy_pytest_results import verify_job_artifact_identity\nfrom saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log\n",
+          "after": "from saas.scripts.legacy_control_results import collect_pg_receipts, verify_control_run\nfrom saas.scripts.legacy_native_evidence import api, preserve_native_evidence\nfrom saas.scripts.legacy_pr_candidate import (\n    UPLOAD_STEP as UPLOAD_STEP,\n)\nfrom saas.scripts.legacy_pr_candidate import (\n    load_transfer_profile,\n    transfer_provenance,\n    upload_step_name,\n)\nfrom saas.scripts.legacy_pytest_results import verify_job_artifact_identity\nfrom saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log\n"
+        },
+        {
+          "before": "        jobs = [job for job in result[\"native_jobs\"] if job.get(\"id\") == original[\"job_id\"]]\n        require(len(jobs) == 1, \"original OCI upload has no unique native producer job\")\n        job = jobs[0]\n        uploads = [step for step in job.get(\"steps\", []) if step.get(\"name\") == UPLOAD_STEP]\n        require(len(uploads) == 1, \"original OCI producer upload step is ambiguous\")\n        metadata = result[\"native_artifact\"]\n        verify_job_artifact_identity(\n",
+          "after": "        jobs = [job for job in result[\"native_jobs\"] if job.get(\"id\") == original[\"job_id\"]]\n        require(len(jobs) == 1, \"original OCI upload has no unique native producer job\")\n        job = jobs[0]\n        uploads = [\n            step\n            for step in job.get(\"steps\", [])\n            if step.get(\"name\") == upload_step_name(profile[\"component\"])\n        ]\n        require(len(uploads) == 1, \"original OCI producer upload step is ambiguous\")\n        metadata = result[\"native_artifact\"]\n        verify_job_artifact_identity(\n"
+        }
+      ]
     }
   },
   ".github/workflows/saas-legacy-security-build.yml": {
@@ -191,6 +221,67 @@
           "after": "          GH_TOKEN: ${{ github.token }}\n        run: |\n          set -euo pipefail\n          python -B -m saas.scripts.legacy_initial_publisher consume \\\n            --control \"$PWD\" --product \"$GITHUB_WORKSPACE/product\" \\\n            --component \"$LEGACY_COMPONENT\" --control-revision \"$CONTROL_REVISION\" \\\n            --destination \"$RUNNER_TEMP/legacy-publication\" --github-output \"$GITHUB_OUTPUT\"\n      - name: Retain independent native consumer result\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-consumer-${{ inputs.component }}-${{ steps.selection.outputs.product_revision }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-publication/export/\n          compression-level: 0\n"
         }
       ]
+    },
+    "upstream_sync_correction": {
+      "corrected_sha256": "6fddf0695eb69c8a25d353f7e381fa89df3774139b07d8e14083080ca2320d3b",
+      "context": "0.21 toolchain pins and static version constants only; exact inverse restores prior independently hashed source; does not approve a release",
+      "inverse_fragments": [
+        {
+          "before": "jobs:\n  build-initial:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    timeout-minutes: 90\n    permissions:\n      contents: read\n",
+          "after": "jobs:\n  build-initial:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 90\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.12.1\"\n      - name: Derive hashed build backend constraints from the product lock\n        working-directory: control\n        run: |\n",
+          "after": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.13.4\"\n      - name: Derive hashed build backend constraints from the product lock\n        working-directory: control\n        run: |\n"
+        },
+        {
+          "before": "\n  qualify-source:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    timeout-minutes: 45\n    permissions:\n      contents: read\n",
+          "after": "\n  qualify-source:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  verify-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    name: legacy-pg (${{ matrix.major }})\n    runs-on: ubuntu-latest\n    timeout-minutes: 45\n    permissions:\n      contents: read\n",
+          "after": "  verify-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    name: legacy-pg (${{ matrix.major }})\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.12.1\"\n      - name: Install locked product contract dependencies without build hooks\n        working-directory: product\n        run: |\n",
+          "after": "      - name: Set up uv\n        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0\n        with:\n          version: \"0.13.4\"\n      - name: Install locked product contract dependencies without build hooks\n        working-directory: product\n        run: |\n"
+        },
+        {
+          "before": "  collect-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-product-pg\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    permissions:\n      contents: read\n",
+          "after": "  collect-product-pg:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-product-pg\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  prepare-publication:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: [build-initial, qualify-source, collect-product-pg]\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "  prepare-publication:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: [build-initial, qualify-source, collect-product-pg]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: prepare-publication\n    environment: production-image\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: prepare-publication\n    environment: production-image\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  verify-published-runtime:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: publish-exact-oci\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "  verify-published-runtime:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: publish-exact-oci\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-published-runtime\n    environment: production-image\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: verify-published-runtime\n    environment: production-image\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        },
+        {
+          "before": "  independent-readback:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: attest-exact-inputs\n    runs-on: ubuntu-latest\n    timeout-minutes: 120\n    permissions:\n      contents: read\n",
+          "after": "  independent-readback:\n    if: github.repository == 'Dream1216/omnigent' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'\n    needs: attest-exact-inputs\n    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n    permissions:\n      contents: read\n"
+        }
+      ]
+    },
+    "compatibility_scope_correction": {
+      "corrected_sha256": "d93fd878ed55b627c8b0da10d7e9487c436174455cdb662a664c7eb1252a56b0",
+      "restored_sha256": "6fddf0695eb69c8a25d353f7e381fa89df3774139b07d8e14083080ca2320d3b",
+      "context": "Exact proposed Compatibility018 delta; inverse restores frozen H source before all existing parent/function checks. Review only; no source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "        description: Exact legacy component registered in the reviewed main profiles\n        type: choice\n        required: true\n        options: [Core, Gateway, Model]\n\npermissions:\n  contents: read\n",
+          "after": "        description: Exact legacy component registered in the reviewed main profiles\n        type: choice\n        required: true\n        options: [Core, Gateway, Model, Compatibility018]\n\npermissions:\n  contents: read\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_pg_contract.py": {
@@ -228,9 +319,9 @@
   },
   "saas/scripts/oci_promotion.py": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
   "saas/scripts/check_image_supply_chain.py": {
-    "parent_sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23",
-    "combined_sha256": "c611dfbcfe10f50b7681ca31335041e83c69d0650f153b94d1f276348cfcd457",
-    "approved_change": "A60e typed adapter only, preserving every original Root generic verifier function and assertion; exact inverse restores full Root base file; proposed Aliyun SDK, immutable OCI identity and offline dual-architecture checks, retaining original generic admission functions",
+    "parent_sha256": "63f30befba6a656f5bd70f36389f5f15e84b145b79a28adbe2d74b416be9cf0c",
+    "combined_sha256": "18412a80f174da0e1523d1701ca4cc3232e2f7dcccad56fc6ae1de3ede71ef24",
+    "approved_change": "A60e typed adapter only, preserving every original Root generic verifier function and assertion; exact inverse restores full Root base file",
     "preserved_functions": {
       "_sha256": "9da2ea2c4f7f9301e06e1ac26911597bbebdfdf8b3864861379b3e0612b9b38b",
       "canonical_release_evidence_sha256": "0aeafb36b2503bd1fbdf4bdd8e4e45fe24508b9890438927e3a2409e47c5ee28",
@@ -245,21 +336,21 @@
       "_ids": "8e661e518d1923f9c8eb9f93798700b8214067d7b90e5173591ec07ae2fab77a",
       "_read_repository_contract": "d964913b453d45c9c35bf8bf8a29ee791cbd0649dc69f653e35d71ed164df342",
       "_named_workflow_step": "c25c174fd99c37073c5f7314f47b4bad0dd5a740c6711f822c8f8777c1df2568",
+      "validate_candidate_build_contract": "3faacf46f3c4599c191975d52a2e966e3aa748cb176df93a0e0510e9394123bf",
       "validate_image_material_lock": "5249ee1bbf2ccb57db16135d088bb88bb282c70df4d68b570add10d9ef9182ea",
       "_validate_policy": "cd3aeb307696e47b720328dded6f0988787e9e032085a8be90775599e385b6d1",
       "_validate_workflow": "30217457e05f6fc2ca8c8f6d4627bd9884d580a5be80529244a55bce850a365b",
       "_validate_image": "1332f7438db50ba586348c56ce3a3000406e7f81e85f25247422dd4d52559225",
       "_validate_promotion": "2a4f4c4505988c3e5c8506eeeee8bfe42dccbd98e41a4e695b3a9a6783b8f954",
-      "_validate_release_attestations": "58f721e8215bd3ba8679aaab2a539c7d78a14ba9ead4cf5370776c6936d076a2",
-      "_validate_evidence": "96fe8337dc225262d4fd0c878e17edaf43aa028a1dbcd9d177a1ed3041234d96",
+      "_validate_release_attestations": "f0c7d43b0cb386fed859c56fa4070136be89812fa53833f36a62aa9fd60a4b53",
+      "_validate_evidence": "9510839bf96fb0d57cd21afd50989f959be8de796240a9190c95024eca400aa2",
       "main": "793393ec42be00a6221570528ae7467c74d282666c2fd1a1f5612b316149df3c"
     },
     "approved_functions": {
-      "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b",
-      "validate_candidate_build_contract": "b8b31c82b95cdd95bb75569f40cd093d8c1cf88a3effb0c84819832c8d0ff212"
+      "validate_release": "ac466fb5378a4b7746baf892df7ff797587e4f189498556eae5fc603f6d2c67b"
     },
     "type_and_context_correction": {
-      "corrected_sha256": "65bbfdf85b609abc924fc61102a6373d020aba64181e50ecd30f37ffbbbc460d",
+      "corrected_sha256": "b686a809e43a477866837a5e7b14f01575cb226493480237615dd0e16e6a51ad",
       "inverse_fragments": [
         {
           "before": "_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n",
@@ -271,14 +362,43 @@
         }
       ]
     },
-    "prior_combined_sha256": "ded133dddef0e5185a396a936b83e66eecd3cd2532abb24c258f21f5e1dd95ca",
-    "prior_corrected_sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185",
-    "superseded_preserved_functions": {
-      "validate_candidate_build_contract": "3faacf46f3c4599c191975d52a2e966e3aa748cb176df93a0e0510e9394123bf"
+    "upstream_sync_correction": {
+      "corrected_sha256": "ebf978f26cca52b290b342ff8cb9ff51c33e9a695e2d0a503f5a6835d3bc1dec",
+      "context": "0.21 toolchain pins and static version constants only; exact inverse restores prior independently hashed source; does not approve a release",
+      "inverse_fragments": [
+        {
+          "before": "import json\nimport re\nimport subprocess\nfrom datetime import UTC, datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any\nfrom urllib.parse import urlsplit\n\nimport tomllib\n\nfrom saas.production.review_exception import apply_review_exception, review_verification_scope\n\n",
+          "after": "import json\nimport re\nimport subprocess\nimport tomllib\nfrom datetime import UTC, datetime, timedelta\nfrom pathlib import Path\nfrom typing import Any\nfrom urllib.parse import urlsplit\n\nfrom saas.production.review_exception import apply_review_exception, review_verification_scope\n\n"
+        },
+        {
+          "before": "_GITHUB_CLI_SOURCE_LOCK = \"saas/supply_chain/github-cli-source-lock.json\"\n_BUILD_PUSH_ACTION = \"docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf\"\n_ATTEST_ACTION = \"actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4\"\n_APPROVED_UV_VERSION = \"0.12.1\"\n_APPROVED_PNPM_VERSION = \"12.10.1\"\n_APPROVED_PSYCOPG_VERSION = \"3.3.4\"\n_APPROVED_HOST_CLI_VERSIONS = {\n    \"@anthropic-ai/claude-code\": (\"CLAUDE_CODE_VERSION\", \"2.1.283\"),\n    \"@earendil-works/pi-coding-agent\": (\"PI_CODING_AGENT_VERSION\", \"1.0.4\"),\n    \"@moonshot-ai/kimi-code\": (\"KIMI_CODE_VERSION\", \"0.43.1\"),\n    \"@openai/codex\": (\"CODEX_CLI_VERSION\", \"0.139.0\"),\n    \"@qwen-code/qwen-code\": (\"QWEN_CODE_VERSION\", \"0.23.4\"),\n    \"opencode-ai\": (\"OPENCODE_VERSION\", \"1.18.31\"),\n}\n",
+          "after": "_GITHUB_CLI_SOURCE_LOCK = \"saas/supply_chain/github-cli-source-lock.json\"\n_BUILD_PUSH_ACTION = \"docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf\"\n_ATTEST_ACTION = \"actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4\"\n_APPROVED_UV_VERSION = \"0.13.4\"\n_APPROVED_PNPM_VERSION = \"12.10.1\"\n_APPROVED_PSYCOPG_VERSION = \"3.3.4\"\n_APPROVED_HOST_CLI_VERSIONS = {\n    \"@anthropic-ai/claude-code\": (\"CLAUDE_CODE_VERSION\", \"2.1.295\"),\n    \"@earendil-works/pi-coding-agent\": (\"PI_CODING_AGENT_VERSION\", \"1.3.0\"),\n    \"@moonshot-ai/kimi-code\": (\"KIMI_CODE_VERSION\", \"0.43.1\"),\n    \"@openai/codex\": (\"CODEX_CLI_VERSION\", \"0.142.0\"),\n    \"@qwen-code/qwen-code\": (\"QWEN_CODE_VERSION\", \"0.23.4\"),\n    \"opencode-ai\": (\"OPENCODE_VERSION\", \"1.18.31\"),\n}\n"
+        },
+        {
+          "before": "    if f\"ARG UV_VERSION={_APPROVED_UV_VERSION}\" not in dockerfile or not re.search(\n        r'pip install[^\\n]*\"uv==\\$\\{UV_VERSION\\}\"', dockerfile\n    ):\n        violations.append(\"production Dockerfile must pin and install uv 0.12.1\")\n    if 'case \"$(uv --version)\" in \"uv ${UV_VERSION}\"|\"uv ${UV_VERSION} \"*' not in dockerfile:\n        violations.append(\"production Dockerfile must verify the installed uv version\")\n    if \"COPY pyproject.toml setup.py uv.lock ./\" not in dockerfile:\n",
+          "after": "    if f\"ARG UV_VERSION={_APPROVED_UV_VERSION}\" not in dockerfile or not re.search(\n        r'pip install[^\\n]*\"uv==\\$\\{UV_VERSION\\}\"', dockerfile\n    ):\n        violations.append(f\"production Dockerfile must pin and install uv {_APPROVED_UV_VERSION}\")\n    if 'case \"$(uv --version)\" in \"uv ${UV_VERSION}\"|\"uv ${UV_VERSION} \"*' not in dockerfile:\n        violations.append(\"production Dockerfile must verify the installed uv version\")\n    if \"COPY pyproject.toml setup.py uv.lock ./\" not in dockerfile:\n"
+        }
+      ]
     },
-    "reviewed_extension_application_head": "4af5556d8bd5c068136852a12549b6ecc17c048f",
-    "reviewed_extension_trusted_main": "57c4802561bd5789d0f3a997a313ec3f4f4ee366",
-    "current_combination_source_sha256": "65bbfdf85b609abc924fc61102a6373d020aba64181e50ecd30f37ffbbbc460d"
+    "compatibility_scope_correction": {
+      "corrected_sha256": "e944ec338f9a3c47fd45b5be0531d43695bc70715207634a0a2565501ce487e9",
+      "restored_sha256": "ebf978f26cca52b290b342ff8cb9ff51c33e9a695e2d0a503f5a6835d3bc1dec",
+      "context": "Proposed Aliyun extension against accepted main25cd; inverse restores its entire current file before the existing exact parent/function checks. No new parent/function hash is substituted. Candidate review pending.",
+      "inverse_fragments": [
+        {
+          "before": "            '\"opencode\", \"gemini\", \"devin\", \"jcode\")'\n        ),\n        '\"$PRODUCT_REVISION\"',\n    }\n    if (\n        runtime_verification is None\n",
+          "after": "            '\"opencode\", \"gemini\", \"devin\", \"jcode\")'\n        ),\n        '\"$PRODUCT_REVISION\"',\n        'assert version(\"e2b\") == \"2.31.0\"',\n        'assert version(\"alibabacloud-sandbox20260820\") == \"1.2.0\"',\n        'assert version(\"alibabacloud-sts20150401\") == \"1.2.0\"',\n        'assert version(\"alibabacloud-oss-v2\") == \"1.4.0\"',\n        'assert version(\"defusedxml\") == \"0.7.1\"',\n        \"import saas.production.aliyun_artifacts\",\n        \"import saas.production.aliyun_server_profile\",\n        \"import saas.production.aliyun_storage_admission\",\n        \"import saas.production.aliyun_sts_issuer\",\n    }\n    if (\n        runtime_verification is None\n"
+        },
+        {
+          "before": "            \"protected release must verify both published runtime revisions before signing\"\n        )\n\n    action = _read_repository_contract(\n        repo,\n        _CANDIDATE_BUILD_ACTION,\n",
+          "after": "            \"protected release must verify both published runtime revisions before signing\"\n        )\n\n    candidate_runtime = _named_workflow_step(\n        workflow, \"Verify executable Server candidate SDK on both architectures\"\n    )\n    if workflow.count(\"uv sync --frozen --extra all --group dev --extra saas --extra e2b\") != 3:\n        violations.append(\"candidate test jobs must install the qualified sandbox SDK\")\n    candidate_runtime_contract = {\n        '\"server-1.tar\"',\n        'inspect_oci_archive(archive, label_profile=\"executable\")',\n        '\"docker\", \"load\", \"-i\", str(archive)',\n        'for arch in (\"amd64\", \"arm64\"):',\n        'actual[\"RootFS\"][\"Layers\"] == expected[\"rootfs_diff_ids\"]',\n        'actual[\"Descriptor\"][\"digest\"] == root and actual[\"Id\"] == root',\n        'actual[\"Descriptor\"][\"digest\"] == actual[\"Id\"] == expected[\"manifest_digest\"]',\n        '\"--network\", \"none\"',\n        '\"--pull\", \"never\"',\n        '\"--no-healthcheck\"',\n        '\"--user\", \"1000:1000\"',\n        '\"--cap-drop\", \"ALL\"',\n        '\"--security-opt\", \"no-new-privileges:true\"',\n        '\"--read-only\"',\n        '\"--memory\", \"512m\", \"--cpus\", \"1\"',\n        \"check=True, timeout=180\",\n        \"owner = secrets.token_hex(16)\",\n        '\"--filter\", f\"name=^/{name}$\"',\n        '\"--filter\", f\"label=io.omnigent.sdk-probe={owner}\"',\n        'assert re.fullmatch(r\"[0-9a-f]{64}\", identifier)',\n        '\"docker\", \"container\", \"rm\", \"--force\", identifier',\n        '\"docker\", \"image\", \"rm\", root], check=True, timeout=30',\n        'raise BaseExceptionGroup(\"SDK verification and cleanup failed\", errors)',\n        'assert version(\"e2b\")==\"2.31.0\"',\n        'assert version(\"alibabacloud-sandbox20260820\")==\"1.2.0\"',\n        'assert version(\"alibabacloud-sts20150401\")==\"1.2.0\"',\n        'assert version(\"alibabacloud-oss-v2\")==\"1.4.0\"',\n        'assert version(\"defusedxml\")==\"0.7.1\"',\n        \"import saas.production.aliyun_artifacts\",\n        \"import saas.production.aliyun_model_ingress\",\n        \"import saas.production.aliyun_storage_admission\",\n        \"import saas.production.aliyun_sts_issuer\",\n        \"assert _build_info.COMMIT_SHA==sys.argv[1]\",\n        'Path(\"artifacts/server-candidate-runtime.json\")',\n    }\n    if (\n        candidate_runtime is None\n        or any(fragment not in candidate_runtime for fragment in candidate_runtime_contract)\n        or (\n            workflow.index(\"name: Verify executable Server candidate SDK on both architectures\")\n            > workflow.index(\"name: Preflight scan exact server candidate on both architectures\")\n        )\n        or \"artifacts/server-candidate-runtime.json\"\n        not in workflow.partition(\"name: Upload candidate evidence\")[2]\n    ):\n        violations.append(\"candidate workflow must verify the exact Server SDK on both platforms\")\n\n    action = _read_repository_contract(\n        repo,\n        _CANDIDATE_BUILD_ACTION,\n"
+        },
+        {
+          "before": "        ),\n        \"server:runtime|host:host\",\n        \"1|2)\",\n    }\n    if any(fragment not in action for fragment in required_action_fragments):\n        violations.append(\"candidate composite build action weakens the approved build contract\")\n",
+          "after": "        ),\n        \"server:runtime|host:host\",\n        \"1|2)\",\n        (\n            \"OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && \"\n            \"'kubernetes,e2b,aliyun-sandbox-control' || '' }}\"\n        ),\n    }\n    if any(fragment not in action for fragment in required_action_fragments):\n        violations.append(\"candidate composite build action weakens the approved build contract\")\n"
+        }
+      ]
+    }
   },
   "saas/scripts/scan_oci_candidates.py": {
     "parent_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",

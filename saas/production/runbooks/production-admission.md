@@ -173,3 +173,54 @@ Archive the workflow run URL, artifact ID and digest, evidence revision, product
 revision, image digests, and aggregate report digest. A green compatibility workflow,
 candidate image build, unsigned JSON file, local rehearsal, or manually edited ledger
 is not production admission.
+
+
+## Release-specific single-owner review exception
+
+The normal independent role requirements remain the default. For release
+`omnigent-saas-v0.19.0.dev20261020-3db749d7` only, the explicit owner directive
+authorizes `Dream1216` (GitHub user ID `39821512`) to perform the human reviews.
+This is a **degraded, sole-owner-risk-waiver**: separation of duties is absent.
+`review-exception-policy.json` records the accepted governance risk, exact upstream
+`3db749d784ff044304473939acaae3a65c0fec61`, adapter `0.2.0`, schema
+`p0s000000018`, and expiry before `2026-12-20T00:00:00Z`. It waives no technical
+gate, customer acceptance, signature, recovery, negative test, or metric. In
+particular, the exact candidate still needs the full 30-day production SLO window;
+a 3600-second canary does not satisfy final full production admission.
+
+Complete the following after the source and trust root are frozen on protected main:
+
+1. Dispatch this workflow with the exact Product/Evidence Revisions, empty
+   `receipt_request_json`, and `review_exception_request_json` containing exactly
+   `attestor_commitment` (the one real owner's SHA-256 commitment) and `expires_at`
+   (UTC, within the policy interval). `Dream1216` must actually approve the
+   `production-evidence` Environment in GitHub. The agent cannot approve for them.
+2. The workflow writes a standalone canonical
+   `review-exception-authorization.json` artifact. This is an authorization request
+   bound to the Product/Evidence inputs, real actor commitment, expiry, workflow
+   identity, and approved directive. It does not require a domain receipt or an
+   exception record, avoiding a circular dependency. Require success on **run
+   attempt 1**. A rerun is rejected; use a fresh dispatch and fresh human approval.
+3. Run `uv run python -m saas.scripts.prepare_review_exception` with
+   `--product-revision`, `--evidence-revision`, `--workflow-run`,
+   `--attestor-commitment`, and `--expires-at`. The verifier fetches live repository,
+   run, Environment approval and native artifact facts. It checks the archive's
+   native digest, size, contents and exact manifest bindings. Repository/actions
+   read permissions are sufficient; it has no write or approval authority.
+4. Review and commit the generated canonical JSON under
+   `saas/production/review-exception-evidence/`. Only that exact governed JSON
+   format is allowed in the later evidence-only lineage; policies, arbitrary files,
+   symlinks, amendments and changed source remain forbidden.
+5. Use one actual domain attestation with role `sole-owner-risk-waiver`, its one
+   real actor commitment, normal time/product/subject fields, and
+   `review_exception: {"path": "<generated path>", "sha256": "<exact byte hash>"}`.
+   Deletion retains its existing `actor_id_hmac` and subject binding. Other domains
+   retain `actor_id_hash`. Do not fabricate separate people or duplicate roles.
+6. Complete the original domain measurements and two-phase KMS/HSM receipts. Each
+   signed domain byte hash binds the included exception reference. Every consuming
+   check revalidates the live native authorization; facts are cached only inside
+   that check and fail closed on API failure, expiry or retention loss.
+
+The exception cannot authorize another product, upstream, schema, actor commitment,
+expiry, workflow run or policy. Final admission still requires all eight signed
+evidence domains, all ten aggregate gates, the ledger and all phase decisions.

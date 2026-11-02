@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -139,7 +139,7 @@ def _directory(service: EnterpriseScimService, ids: _Ids) -> str:
     issued = service.issue_directory(
         _context(ids, ids.owner),
         display_name="Corporate IdP",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="directory-1",
     )
     assert issued.bearer_token is not None
@@ -154,7 +154,7 @@ def test_directory_token_is_one_time_hash_stored_and_permission_guarded(scim_fix
         service.issue_directory(
             _context(ids, ids.member),
             display_name="Unauthorized",
-            reauthenticated_at=datetime.now(timezone.utc),
+            reauthenticated_at=datetime.now(UTC),
             idempotency_key="denied-directory",
         )
     assert denied.value.code == "enterprise_identity_manage_forbidden"
@@ -162,14 +162,14 @@ def test_directory_token_is_one_time_hash_stored_and_permission_guarded(scim_fix
     issued = service.issue_directory(
         _context(ids, ids.owner),
         display_name="Corporate IdP",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="directory-1",
     )
     assert issued.bearer_token is not None
     replay = service.issue_directory(
         _context(ids, ids.owner),
         display_name="Corporate IdP",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="directory-1",
     )
     assert replay.id == issued.id
@@ -186,7 +186,7 @@ def test_directory_token_is_one_time_hash_stored_and_permission_guarded(scim_fix
         service.issue_directory(
             _context(ids, ids.owner),
             display_name="Stale authentication",
-            reauthenticated_at=datetime.now(timezone.utc) - timedelta(minutes=6),
+            reauthenticated_at=datetime.now(UTC) - timedelta(minutes=6),
             idempotency_key="stale-auth-directory",
         )
     assert stale.value.code == "fresh_auth_required"
@@ -198,7 +198,7 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
     issued = service.issue_directory(
         _context(ids, ids.owner),
         display_name="Rotating IdP",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="rotation-directory",
     )
     assert issued.bearer_token is not None
@@ -208,7 +208,7 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
         _context(ids, ids.owner),
         directory_id=issued.id,
         expected_version=1,
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="rotate-1",
     )
     assert rotated.version == 2
@@ -220,7 +220,7 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
         _context(ids, ids.owner),
         directory_id=issued.id,
         expected_version=1,
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="rotate-1",
     )
     assert replay.replayed is True
@@ -244,7 +244,7 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
             _context(ids, ids.owner),
             directory_id=issued.id,
             expected_version=1,
-            reauthenticated_at=datetime.now(timezone.utc),
+            reauthenticated_at=datetime.now(UTC),
             idempotency_key="rotate-stale",
         )
     assert stale.value.code == "scim_directory_version_conflict"
@@ -254,7 +254,7 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
             _context(ids, ids.member),
             directory_id=issued.id,
             expected_version=2,
-            reauthenticated_at=datetime.now(timezone.utc),
+            reauthenticated_at=datetime.now(UTC),
             idempotency_key="disable-forbidden",
         )
     assert forbidden.value.code == "enterprise_identity_manage_forbidden"
@@ -263,7 +263,7 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
         _context(ids, ids.owner),
         directory_id=issued.id,
         expected_version=2,
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="disable-1",
     )
     assert disabled.status == "disabled"
@@ -275,7 +275,7 @@ def test_directory_credential_rotation_and_disable_are_cas_and_idempotent(scim_f
         _context(ids, ids.owner),
         directory_id=issued.id,
         expected_version=2,
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="disable-1",
     )
     assert disabled_replay.replayed is True
@@ -308,12 +308,12 @@ def test_directory_scheduled_rotation_enforces_activation_grace_and_compaction(
     issued = service.issue_directory(
         _context(ids, ids.owner),
         display_name="Overlapping IdP",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="overlap-directory",
     )
     assert issued.bearer_token is not None
     old_token = issued.bearer_token
-    scheduled_at = datetime.now(timezone.utc)
+    scheduled_at = datetime.now(UTC)
     activation = scheduled_at + timedelta(minutes=2)
     scheduled = service.schedule_directory_credential_rotation(
         _context(ids, ids.owner),
@@ -352,7 +352,7 @@ def test_directory_scheduled_rotation_enforces_activation_grace_and_compaction(
         service.list_users(successor_token)
     assert successor_early.value.code == "scim_authentication_failed"
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with sessions.begin() as db:
         stored = db.get(EnterpriseScimDirectoryRecord, issued.id)
         assert stored is not None
@@ -418,16 +418,16 @@ def test_directory_scheduled_rotation_rejects_unbounded_or_ambiguous_windows(
     issued = service.issue_directory(
         _context(ids, ids.owner),
         display_name="Bounded IdP",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="bounded-directory",
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     cases = (
         (now.replace(tzinfo=None), 300, "scim_directory_rotation_time_invalid"),
         (now - timedelta(minutes=2), 300, "scim_directory_rotation_time_invalid"),
         (now + timedelta(days=31), 300, "scim_directory_rotation_time_invalid"),
-        (datetime.max.replace(tzinfo=timezone.utc), 300, "scim_directory_rotation_time_invalid"),
+        (datetime.max.replace(tzinfo=UTC), 300, "scim_directory_rotation_time_invalid"),
         (now + timedelta(minutes=1), 59, "scim_directory_rotation_grace_invalid"),
         (now + timedelta(minutes=1), 86_401, "scim_directory_rotation_grace_invalid"),
     )
@@ -453,7 +453,7 @@ def test_directory_collection_queries_are_scoped_filtered_and_bounded(scim_fixtu
     second_directory = service.issue_directory(
         _context(ids, ids.owner),
         display_name="Second IdP",
-        reauthenticated_at=datetime.now(timezone.utc),
+        reauthenticated_at=datetime.now(UTC),
         idempotency_key="directory-2",
     )
     assert second_directory.bearer_token is not None
@@ -599,7 +599,7 @@ def test_deprovision_wins_over_late_group_update_and_replay_is_idempotent(scim_f
                 token_hash=sha256(b"scim-session").hexdigest(),
                 security_version=1,
                 authn_method="oidc",
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
             )
         )
 

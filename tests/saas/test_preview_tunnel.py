@@ -10,7 +10,7 @@ import stat
 import sys
 import tempfile
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
@@ -83,7 +83,7 @@ def _route(*, generation: int = 4, opaque_key: str = "pvr_abc123") -> PreviewRou
             "user-agent": "preview-contract-test",
         },
         response_headers={"Content-Security-Policy": "sandbox"},
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
 
 
@@ -227,7 +227,7 @@ async def _dispatch_one(
 ) -> RequestFrame:
     raw = await session.outbound_queue.get()
     assert raw is not None
-    frame = decode_frame(raw)
+    frame = decode_frame(raw.data)
     assert isinstance(frame, RequestFrame)
 
     async def send_back(payload: str) -> None:
@@ -368,7 +368,7 @@ async def test_preview_response_close_sends_cancel_and_releases_inflight_slot() 
     )
     raw = await session.outbound_queue.get()
     assert raw is not None
-    request_frame = decode_frame(raw)
+    request_frame = decode_frame(raw.data)
     assert isinstance(request_frame, RequestFrame)
     assert registry.route_response_frame(
         session.runner_id,
@@ -381,7 +381,7 @@ async def test_preview_response_close_sends_cancel_and_releases_inflight_slot() 
 
     cancel_raw = await session.outbound_queue.get()
     assert cancel_raw is not None
-    cancel = decode_frame(cancel_raw)
+    cancel = decode_frame(cancel_raw.data)
     assert isinstance(cancel, RequestCancelFrame)
     assert cancel.id == request_frame.id
     assert not session.in_flight

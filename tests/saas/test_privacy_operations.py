@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -53,7 +53,7 @@ from saas.control_plane.privacy_operations import (
     PrivacyOperationService,
 )
 
-NOW = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 8, 0, tzinfo=UTC)
 
 
 def _digest(value: object) -> str:

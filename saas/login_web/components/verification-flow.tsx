@@ -26,7 +26,7 @@ interface VerificationState {
 }
 
 export function VerificationFlow() {
-  const router = useRouter();
+  const { isReady, asPath, replace } = useRouter();
   const { t } = useI18n();
   const [state, setState] = useState<VerificationState | null>(null);
   const [email, setEmail] = useState("");
@@ -63,16 +63,12 @@ export function VerificationFlow() {
   }, []);
 
   useEffect(() => {
-    // The exported Pages router restores its initial asPath during hydration.
-    // Once it is ready, scrub its state too so that it cannot restore the token.
-    if (state?.token && router.isReady && window.location.hash) {
-      void router.replace(
-        window.location.pathname + window.location.search,
-        undefined,
-        { shallow: true, scroll: false },
-      );
+    if (!state?.token || !isReady) return;
+    if (window.location.hash || asPath.includes("#")) {
+      const canonical = window.location.pathname + window.location.search;
+      void replace(canonical, canonical, { shallow: true, scroll: false });
     }
-  }, [state, router]);
+  }, [isReady, asPath, replace, state?.token]);
 
   const verifyKey = useMemo(() => {
     if (!state) return "";

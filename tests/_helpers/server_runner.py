@@ -15,33 +15,13 @@ import httpx
 
 from omnigent.runner.identity import token_bound_runner_id
 from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
-from tests._helpers.live_server import find_free_port, local_server_env, terminate_process
-
-
-def _process_env(
-    home: Path, overrides: Mapping[str, str | None], base_env: Mapping[str, str] | None
-) -> dict[str, str]:
-    if {"HOME", "OMNIGENT_DATA_DIR"} & overrides.keys():
-        raise ValueError("HOME and OMNIGENT_DATA_DIR are owned by the isolated stack")
-    env = local_server_env({}, base_env=base_env)
-    # A parent runner's identity, zygote FDs and logging paths cannot belong to
-    # this fresh runtime. Tests opt into their required settings explicitly.
-    for name in list(env):
-        if name.startswith("OMNIGENT") or name == "RUNNER_SERVER_URL":
-            env.pop(name)
-    env.update(
-        HOME=str(home),
-        OMNIGENT_DATA_DIR=str(home / ".omnigent"),
-        OMNIGENT_AUTH_PROVIDER="header",
-        OMNIGENT_LOCAL_SINGLE_USER="1",
-        OMNIGENT_DISABLE_CATALOG_LOOKUP="1",
-    )
-    for name, value in overrides.items():
-        if value is None:
-            env.pop(name, None)
-        else:
-            env[name] = value
-    return env
+from tests._helpers.compat import (
+    compat_runner_cwd,
+    compat_runner_python,
+    compat_server_cwd,
+    compat_server_python,
+)
+from tests._helpers.live_server import find_free_port, isolated_process_env, terminate_process
 
 
 class ServerRunner:
@@ -97,9 +77,16 @@ class ServerRunner:
         cwd: Path | None = None,
     ) -> subprocess.Popen[bytes]:
         log = self._resources.enter_context(self.log_path(name).open("ab"))
+        pinned_python = compat_server_python() if name == "server" else compat_runner_python()
+        if pinned_python is not None:
+            # Neither the checkout cwd nor PYTHONPATH may shadow the pinned build.
+            env = {**env, "PYTHONPATH": None}
+            neutral_cwd = compat_server_cwd() if name == "server" else compat_runner_cwd()
+            assert neutral_cwd is not None
+            cwd = Path(neutral_cwd)
         proc = subprocess.Popen(
-            [sys.executable, *args],
-            env=_process_env(home, env, self._base_env),
+            [pinned_python or sys.executable, *args],
+            env=isolated_process_env(home, env, self._base_env),
             cwd=cwd,
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -126,13 +113,14 @@ class ServerRunner:
                 continue
         return "\n".join(tails)
 
-    def _wait_ready(self, *, runner: bool = False) -> None:
+    def _wait_ready(self, *, runner: bool = False, deadline: float | None = None) -> None:
         url = (
             f"{self.base_url}/v1/runners/{self.runner_id}/status"
             if runner
             else f"{self.base_url}/health"
         )
-        deadline = time.monotonic() + self._health_timeout
+        if deadline is None:
+            deadline = time.monotonic() + self._health_timeout
         last = "not polled"
         while time.monotonic() < deadline:
             for proc in (self.server, self.runner, self.host):
@@ -157,31 +145,65 @@ class ServerRunner:
     def start_server(self, *, wait_ready: bool = True) -> None:
         """Start the server, preserving its database and endpoint on restart."""
         assert self.server is None or self.server.poll() is not None
-        args = ["-c", self._server_bootstrap] if self._server_bootstrap else ["-m", "omnigent.cli"]
-        self.server = self._spawn(
-            "server",
-            [
-                *args,
-                "server",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(self.port),
-                "--database-uri",
-                self.database_uri,
-                "--artifact-location",
-                str(self.artifact_location),
-            ],
-            self.server_home,
-            {"OMNIGENT_RUNNER_TUNNEL_TOKEN": self._token, **self._server_env},
-            cwd=self._server_cwd,
+        retry_bind = (
+            wait_ready
+            and self.server is None
+            and self.runner is None
+            and self.host is None
+            and self._server_bootstrap is None
         )
-        if wait_ready:
-            self._wait_ready()
+        deadline = time.monotonic() + self._health_timeout
+        args = ["-c", self._server_bootstrap] if self._server_bootstrap else ["-m", "omnigent.cli"]
+        for attempt in range(3 if retry_bind else 1):
+            path = self.log_path("server")
+            log_offset = path.stat().st_size if path.exists() else 0
+            self.server = self._spawn(
+                "server",
+                [
+                    *args,
+                    "server",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(self.port),
+                    "--database-uri",
+                    self.database_uri,
+                    "--artifact-location",
+                    str(self.artifact_location),
+                ],
+                self.server_home,
+                {"OMNIGENT_RUNNER_TUNNEL_TOKEN": self._token, **self._server_env},
+                cwd=self._server_cwd,
+            )
+            if not wait_ready:
+                return
+            try:
+                self._wait_ready(deadline=deadline)
+                return
+            except AssertionError:
+                output = path.read_bytes()[log_offset:].decode(errors="replace")
+                conflict = (
+                    f"Cannot start server on 127.0.0.1:{self.port}: "
+                    "port is unavailable (Address already in use)."
+                )
+                if (
+                    not retry_bind
+                    or attempt == 2
+                    or self.server.poll() != 1
+                    or conflict not in output
+                    or time.monotonic() >= deadline
+                ):
+                    raise
+                # No request or runner used this endpoint; retain the failed log.
+                terminate_process(self.server)
+                self.port = find_free_port()
+                self.base_url = f"http://127.0.0.1:{self.port}"
 
-    def restart_server(self) -> None:
+    def restart_server(self, *, env: Mapping[str, str | None] | None = None) -> None:
         """Clear in-memory server state and await the existing runner's reconnect."""
         terminate_process(self.server)
+        if env is not None:
+            self._server_env.update(env)
         self.start_server()
         if self.runner is not None:
             self._wait_ready(runner=True)

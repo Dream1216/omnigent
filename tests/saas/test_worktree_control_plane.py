@@ -6,7 +6,7 @@ import subprocess
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
 from typing import cast
@@ -480,7 +480,7 @@ def test_worktree_heartbeat_renews_only_within_run_and_lifetime_fences(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="heartbeat-renew")
     fixture.worktrees.configure_quota(
         fixture.request,
@@ -553,7 +553,7 @@ def test_worktree_heartbeat_stale_cas_and_authority_do_not_extend_expiry(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="heartbeat-cas")
     _configure_worktree_quota(fixture)
     leased = _lease_run(fixture, change_set_id=change_set_id, key="heartbeat-cas", now=now)
@@ -784,7 +784,7 @@ def test_postgresql_allocation_and_heartbeats_share_bounded_lock_order(
             max_concurrent=2,
             burst_limit=2,
         )
-        now = datetime.now(timezone.utc).replace(microsecond=0)
+        now = datetime.now(UTC).replace(microsecond=0)
         scheduler.prepare_dispatch(
             run_id=scope["run"],
             pool_id=pool_id,
@@ -941,7 +941,7 @@ def test_postgresql_allocation_and_heartbeats_share_bounded_lock_order(
             assert writer is not None and writer.lease_expires_at is not None
             writer_expiry = writer.lease_expires_at
             if writer_expiry.tzinfo is None:
-                writer_expiry = writer_expiry.replace(tzinfo=timezone.utc)
+                writer_expiry = writer_expiry.replace(tzinfo=UTC)
         sweep_barrier = Barrier(3)
 
         def race_heartbeat() -> object:
@@ -1052,7 +1052,7 @@ def test_recovery_and_gc_use_the_live_lifecycle_lock_order(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, expired_change_set_id = _repository_and_change_set(fixture, suffix="lock-trace-expire")
     _configure_worktree_quota(fixture)
     expired_run = _lease_run(
@@ -1199,7 +1199,7 @@ def test_changeset_writer_checkpoint_release_gc_and_opaque_storage(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     with pytest.raises(WorktreeControlPlaneError) as url_binding:
         fixture.worktrees.register_repository(
             fixture.request,
@@ -1364,7 +1364,7 @@ def test_committed_checkpoint_allows_only_new_readonly_worktree(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="preview-readonly")
     _configure_worktree_quota(fixture)
     source_run = _lease_run(
@@ -1438,7 +1438,7 @@ def test_preview_child_run_saga_derives_committed_checkpoint_and_replays(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="preview-saga")
     _configure_worktree_quota(fixture)
     source_run = _lease_run(
@@ -1612,7 +1612,7 @@ def test_expired_dirty_checkpoint_rebuilds_on_new_run_fence(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="rebuild")
     _configure_worktree_quota(fixture)
     first = _lease_run(fixture, change_set_id=change_set_id, key="rebuild", now=now)
@@ -1755,7 +1755,7 @@ def test_readonly_worktree_and_member_removal_preflight_fail_closed(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="readonly")
     _configure_worktree_quota(fixture)
     leased = _lease_run(fixture, change_set_id=change_set_id, key="readonly", now=now)
@@ -1825,7 +1825,7 @@ def test_dirty_expiry_without_recovery_material_is_quarantined(
     worktree_fixture: WorktreeFixture,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="quarantine")
     _configure_worktree_quota(fixture)
     leased = _lease_run(fixture, change_set_id=change_set_id, key="quarantine", now=now)
@@ -1859,7 +1859,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     tmp_path: Path,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     source, base_revision = _create_git_fixture(tmp_path)
     binding = f"repo_physical_{uuid4().hex}"
     repository_id = fixture.worktrees.register_repository(
@@ -2123,7 +2123,7 @@ def test_failed_materialization_is_recoverable_after_partial_state_loss(
     tmp_path: Path,
 ) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     source, _ = _create_git_fixture(tmp_path)
     outside = tmp_path / "outside.txt"
     outside.write_text("outside\n", encoding="utf-8")
@@ -2219,7 +2219,7 @@ def test_failed_materialization_is_recoverable_after_partial_state_loss(
 
 def test_worktree_event_scope_is_database_enforced(worktree_fixture: WorktreeFixture) -> None:
     fixture = worktree_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     _, change_set_id = _repository_and_change_set(fixture, suffix="event-scope")
     _configure_worktree_quota(fixture)
     leased = _lease_run(fixture, change_set_id=change_set_id, key="event-scope", now=now)

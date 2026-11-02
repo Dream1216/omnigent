@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -160,7 +160,7 @@ def test_billing_admin_http_is_cookie_bound_content_blind_and_least_privileged(
     monkeypatch.setattr(
         billing_module,
         "_utcnow",
-        lambda: datetime(2026, 9, 2, tzinfo=timezone.utc),
+        lambda: datetime(2026, 9, 2, tzinfo=UTC),
     )
     period_close = owner.post(
         f"{tenant_base}/period-closes",

@@ -11,7 +11,7 @@ import secrets
 import socket
 import ssl
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import UUID
@@ -469,19 +469,19 @@ class TlsPinnedWebhookHttpSender:
 def _time(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("Webhook time must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _database_time(value: datetime) -> datetime:
     """Treat SQLite's timezone-naive round trip as UTC; PostgreSQL remains aware."""
 
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _canonical_payload(payload: dict[str, object]) -> bytes:
@@ -942,7 +942,7 @@ class WebhookDeliveryControlPlane:
             "event": {
                 "data": delivery.payload,
                 "id": str(delivery.event_id),
-                "occurred_at": delivery.occurred_at.astimezone(timezone.utc)
+                "occurred_at": delivery.occurred_at.astimezone(UTC)
                 .isoformat()
                 .replace("+00:00", "Z"),
                 "type": delivery.event_type,

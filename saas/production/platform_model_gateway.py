@@ -19,13 +19,14 @@ import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
 from typing import Protocol, cast
 from uuid import UUID, uuid4
 
+import anyio
 import httpx
 import sqlalchemy as sa
 from fastapi import FastAPI, Request
@@ -377,7 +378,7 @@ class PlatformModelPrice:
     def rates_at(self, at: datetime) -> tuple[int, int, int]:
         """Resolve the pinned DeepSeek weekday UTC peak-window contract."""
 
-        normalized = at.astimezone(timezone.utc)
+        normalized = at.astimezone(UTC)
         peak = normalized.weekday() < 5 and (1 <= normalized.hour < 4 or 6 <= normalized.hour < 10)
         if peak:
             return (
@@ -498,7 +499,7 @@ class PlatformModelGateway:
             lambda: httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0), trust_env=False)
         )
         self._readiness_check = readiness_check
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._provider_failures = _ProviderFailures(retry_clock or time.monotonic)
 
     def require_ready(self) -> None:
@@ -724,33 +725,35 @@ class PlatformModelGateway:
             )
             raise
         finally:
-            await upstream.aclose()
-            await client.aclose()
-            if completed and parser.total_tokens is not None:
-                actual_tokens = max(1, parser.total_tokens)
-                cache_hit_rate, cache_miss_rate, output_rate = price.rates_at(requested_at)
-                actual_cost = max(
-                    1,
-                    _microusd(parser.prompt_cache_hit_tokens or 0, cache_hit_rate)
-                    + _microusd(parser.prompt_cache_miss_tokens or 0, cache_miss_rate)
-                    + _microusd(parser.completion_tokens or 0, output_rate),
-                )
-                # The reservation uses the maximum configured rate and a byte-
-                # bounded token ceiling. A malformed Provider usage frame can
-                # never expand authority after egress.
-                if (
-                    actual_tokens <= reservation.admitted_tokens
-                    and actual_cost <= reservation.admitted_microusd
-                ):
-                    await self._settle(reservation, actual_cost, actual_tokens)
-                else:
+            # A peer disconnect must not cancel transport cleanup or accounting.
+            with anyio.CancelScope(shield=True):
+                await upstream.aclose()
+                await client.aclose()
+                if (completed or parser.final_usage_received) and parser.total_tokens is not None:
+                    actual_tokens = max(1, parser.total_tokens)
+                    cache_hit_rate, cache_miss_rate, output_rate = price.rates_at(requested_at)
+                    actual_cost = max(
+                        1,
+                        _microusd(parser.prompt_cache_hit_tokens or 0, cache_hit_rate)
+                        + _microusd(parser.prompt_cache_miss_tokens or 0, cache_miss_rate)
+                        + _microusd(parser.completion_tokens or 0, output_rate),
+                    )
+                    # The reservation uses the maximum configured rate and a byte-
+                    # bounded token ceiling. A malformed Provider usage frame can
+                    # never expand authority after egress.
+                    if (
+                        actual_tokens <= reservation.admitted_tokens
+                        and actual_cost <= reservation.admitted_microusd
+                    ):
+                        await self._settle(reservation, actual_cost, actual_tokens)
+                    else:
+                        await self._settle_full(reservation)
+                elif output_observed:
+                    # A disconnect after output is financially ambiguous. Charge
+                    # the admitted ceiling instead of silently releasing spend.
                     await self._settle_full(reservation)
-            elif output_observed:
-                # A disconnect after output is financially ambiguous. Charge
-                # the admitted ceiling instead of silently releasing spend.
-                await self._settle_full(reservation)
-            else:
-                await self._release(reservation)
+                else:
+                    await self._release(reservation)
 
     async def _settle(
         self,
@@ -789,6 +792,7 @@ class _UsageParser:
         self.prompt_cache_miss_tokens: int | None = None
         self.completion_tokens: int | None = None
         self.total_tokens: int | None = None
+        self.final_usage_received = False
 
     def feed(self, chunk: bytes) -> None:
         self._pending.extend(chunk)
@@ -808,7 +812,10 @@ class _UsageParser:
         if not line.startswith(b"data:"):
             return
         payload = line[5:].strip()
-        if not payload or payload == b"[DONE]":
+        if not payload:
+            return
+        if payload == b"[DONE]":
+            self.final_usage_received = self.total_tokens is not None
             return
         try:
             document = json.loads(payload)
@@ -852,6 +859,9 @@ class _UsageParser:
             self.prompt_cache_miss_tokens = cache_miss
             self.completion_tokens = completion
             self.total_tokens = total
+            # Native clients can close after this event before HTTP EOF arrives.
+            if document.get("type") == "response.completed":
+                self.final_usage_received = True
         except (UnicodeError, json.JSONDecodeError, ValueError, TypeError):
             return
 

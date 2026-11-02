@@ -21,7 +21,7 @@ import stat
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
@@ -791,7 +791,7 @@ class KubernetesRuntimeProviderClient:
             result_hash=result_hash,
             provider_request_id=request_id or f"k8s-{operation.request_hash[:32]}",
             provider_resource_id=provider_resource_id,
-            observed_at=datetime.now(timezone.utc),
+            observed_at=datetime.now(UTC),
             receipt_hash="0" * 64,
             signature_key_id=self._signer.signature_key_id,
             signature_hex="0" * 64,

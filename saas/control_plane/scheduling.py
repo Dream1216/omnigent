@@ -6,7 +6,7 @@ import hmac
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -33,6 +33,7 @@ from saas.control_plane.scheduling_models import (
     RunnerRegistrationRecord,
     TenantQueueShareRecord,
 )
+from saas.observability import ensure_observed_factory
 
 _ACTIVE_RUN_STATUSES = frozenset(
     {"leased", "starting", "running", "waiting_input", "waiting_approval", "cancelling"}
@@ -42,11 +43,11 @@ _VIRTUAL_RUNTIME_SCALE = 1_000_000
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _validate_time(value: datetime) -> None:
@@ -157,6 +158,7 @@ class SchedulingControlPlane:
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
+        ensure_observed_factory(session_factory)
 
     def create_pool(
         self,

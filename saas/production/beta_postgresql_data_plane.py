@@ -16,7 +16,7 @@ import shutil
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -1361,7 +1361,7 @@ def _utc_timestamp(value: object, *, field: str) -> tuple[str, datetime]:
         parsed = datetime.fromisoformat(result.removesuffix("Z") + "+00:00")
     except ValueError as error:
         raise BetaPostgresqlDataPlaneError(f"{field} must be canonical UTC RFC3339") from error
-    if parsed.tzinfo != timezone.utc:
+    if parsed.tzinfo != UTC:
         raise BetaPostgresqlDataPlaneError(f"{field} must be canonical UTC RFC3339")
     return result, parsed
 

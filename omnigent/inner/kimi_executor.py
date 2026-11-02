@@ -561,9 +561,7 @@ class KimiExecutor(Executor):
             resolved_bin = shutil.which(self._binary_path) or self._binary_path
             bin_dir = Path(resolved_bin).resolve(strict=False).parent
             sandbox = with_additional_read_roots(sandbox, [bin_dir])
-            sandbox = with_additional_write_roots(
-                sandbox, [resolve_user_kimi_home(), Path("/tmp")]
-            )
+            sandbox = with_additional_write_roots(sandbox, [resolve_user_kimi_home()])
             sandbox = with_spawn_env_allowlist(sandbox, spawn_env_names)
             return create_exec_launcher(resolved_bin, sandbox)
         except (OSError, ImportError, NotImplementedError) as exc:
@@ -880,7 +878,7 @@ class KimiExecutor(Executor):
             if process is not None:
                 try:
                     await asyncio.wait_for(process.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     with contextlib.suppress(ProcessLookupError):
                         process.kill()
                     with contextlib.suppress(Exception):

@@ -12,7 +12,7 @@ import hashlib
 import importlib.util
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -172,7 +172,7 @@ def build_harness(
         row.oci_artifact_ref = "registry.example.test/source@sha256:" + "a" * 64
         row.oci_manifest_digest = "sha256:" + "a" * 64
         row.oci_layer_digest = "sha256:" + "b" * 64
-        row.oci_promoted_at = datetime.now(timezone.utc)
+        row.oci_promoted_at = datetime.now(UTC)
     entitlements = StaticEntitlementAdmission(dict.fromkeys(EntitlementKey, True))
     builds = BuildService(BuildRepository(engine), entitlement_admission=entitlements)
     releases = ReleaseService(
@@ -262,7 +262,7 @@ def tick(h):
     with Session(h.engine) as session, session.begin():
         session.execute(
             update(DeliveryRow).values(
-                next_attempt_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+                next_attempt_at=datetime(2020, 1, 1, tzinfo=UTC),
                 lease_expires_at=None,
                 lease_token=None,
             )
@@ -273,7 +273,7 @@ def tick(h):
         release._dispatcher(
             h.engine,
             release.ImmediateSuccessProvider(),
-            release.MutableClock(datetime.now(timezone.utc)),
+            release.MutableClock(datetime.now(UTC)),
         ).run_once()
     )
 
@@ -403,7 +403,7 @@ def test_preview_link_requires_current_domain_generation_and_unexpired_lease(har
     )
     binding = replace(h.project, preview_domain_binding_id=domain.id)
     h.transport.config = replace(h.transport.config, projects=(binding,))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session(h.engine) as session, session.begin():
         row = session.get(DomainBindingRow, domain.id)
         row.status = "ready"
@@ -482,7 +482,7 @@ def test_wildcard_release_preview_open_registers_one_use_exchange(harness):
         idempotency_key="wildcard-domain-fixture",
         correlation_id="wildcard-domain-fixture",
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session(h.engine) as session, session.begin():
         row = session.get(DomainBindingRow, domain.id)
         row.status = "ready"
@@ -570,7 +570,7 @@ def test_release_preview_uses_one_use_exchange_and_current_membership(harness):
         )
         .domain
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session(h.engine) as session, session.begin():
         row = session.get(DomainBindingRow, domain.id)
         row.status = "ready"

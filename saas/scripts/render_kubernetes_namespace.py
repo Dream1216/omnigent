@@ -18,6 +18,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final
 
 import yaml
@@ -26,6 +27,23 @@ SOURCE_NAMESPACE: Final = "omnigent"
 TARGET_NAMESPACE: Final = "omnigent-next-beta"
 SOURCE_EXTERNAL_DATABASE_NAMESPACE: Final = "omnigent-data"
 TARGET_EXTERNAL_DATABASE_NAMESPACE: Final = "omnigent-next-beta-data"
+DEFAULT_TARGET_PROFILE: Final = "production"
+_SOURCE_DATABASE_CLUSTER: Final = "omnigent-postgres"
+_TARGET_PROFILES: Final = MappingProxyType(
+    {
+        DEFAULT_TARGET_PROFILE: (
+            TARGET_NAMESPACE,
+            TARGET_EXTERNAL_DATABASE_NAMESPACE,
+            _SOURCE_DATABASE_CLUSTER,
+        ),
+        "isolated-qa": (
+            "omnigent-021-validation-20261102",
+            "omnigent-019-validation-20261016",
+            "og019-validation-pg",
+        ),
+    }
+)
+TARGET_PROFILE_NAMES: Final = tuple(_TARGET_PROFILES)
 EVIDENCE_FILE_NAME: Final = "namespace-render-evidence.json"
 MANIFEST_NAMES: Final = (
     "kubernetes.migration.yaml",
@@ -69,6 +87,14 @@ class NamespaceRenderError(RuntimeError):
     """Stable fail-closed namespace rendering error."""
 
 
+def resolve_target_profile(name: str) -> tuple[str, str, str]:
+    """Select one reviewed workload, database namespace and database cluster tuple."""
+    try:
+        return _TARGET_PROFILES[name]
+    except (KeyError, TypeError) as error:
+        raise NamespaceRenderError("unknown fixed namespace target profile") from error
+
+
 def _sha256(value: bytes) -> str:
     return f"sha256:{hashlib.sha256(value).hexdigest()}"
 
@@ -108,18 +134,18 @@ def _read_manifest(path: Path) -> tuple[bytes, str]:
     return raw, text
 
 
-def _replace_dns(value: str) -> tuple[str, int]:
+def _replace_dns(value: str, target_namespace: str = TARGET_NAMESPACE) -> tuple[str, int]:
     def replacement(match: re.Match[str]) -> str:
-        return match.group(0).replace(f"{SOURCE_NAMESPACE}.svc", f"{TARGET_NAMESPACE}.svc", 1)
+        return match.group(0).replace(f"{SOURCE_NAMESPACE}.svc", f"{target_namespace}.svc", 1)
 
     return _SOURCE_DNS.subn(replacement, value)
 
 
-def _replace_external_database_namespace(value: str) -> tuple[str, int]:
+def _replace_external_database_namespace(
+    value: str, target_namespace: str = TARGET_EXTERNAL_DATABASE_NAMESPACE
+) -> tuple[str, int]:
     return _SOURCE_EXTERNAL_DATABASE_NAMESPACE_LINE.subn(
-        lambda match: (
-            f"{match.group('prefix')}{TARGET_EXTERNAL_DATABASE_NAMESPACE}{match.group('suffix')}"
-        ),
+        lambda match: f"{match.group('prefix')}{target_namespace}{match.group('suffix')}",
         value,
     )
 
@@ -157,17 +183,23 @@ def _validate_mapping_keys(value: Any, *, name: str) -> None:
             _validate_mapping_keys(child, name=name)
 
 
-def _validate_database_consumers(name: str, items: list[Any]) -> None:
+def _validate_database_consumers(
+    name: str,
+    items: list[Any],
+    *,
+    database_namespace: str = SOURCE_EXTERNAL_DATABASE_NAMESPACE,
+    database_cluster: str = _SOURCE_DATABASE_CLUSTER,
+) -> int:
     if name != _NETWORK_POLICY_MANIFEST:
-        return
+        return 0
 
     expected_peer = {
         "namespaceSelector": {
             "matchLabels": {
-                "kubernetes.io/metadata.name": SOURCE_EXTERNAL_DATABASE_NAMESPACE,
+                "kubernetes.io/metadata.name": database_namespace,
             }
         },
-        "podSelector": {"matchLabels": {"cnpg.io/cluster": "omnigent-postgres"}},
+        "podSelector": {"matchLabels": {"cnpg.io/cluster": database_cluster}},
     }
     observed_consumers: set[str] = set()
     for item in items:
@@ -196,6 +228,7 @@ def _validate_database_consumers(name: str, items: list[Any]) -> None:
             observed_consumers.add(str(resource_name))
     if observed_consumers != _DATABASE_CONSUMERS:
         raise NamespaceRenderError(f"{name}: external database consumer projection is incomplete")
+    return len(observed_consumers)
 
 
 def _validate_source_document(name: str, document: dict[str, Any]) -> tuple[int, int, int]:
@@ -262,6 +295,7 @@ def _assert_authorized_changes(
     *,
     name: str,
     path: tuple[str | int, ...] = (),
+    target: tuple[str, str, str] = _TARGET_PROFILES[DEFAULT_TARGET_PROFILE],
 ) -> None:
     if isinstance(source, dict):
         if not isinstance(rendered, dict) or source.keys() != rendered.keys():
@@ -272,6 +306,7 @@ def _assert_authorized_changes(
                 rendered[key],
                 name=name,
                 path=(*path, key),
+                target=target,
             )
         return
     if isinstance(source, list):
@@ -283,15 +318,22 @@ def _assert_authorized_changes(
                 rendered[index],
                 name=name,
                 path=(*path, index),
+                target=target,
             )
         return
     if isinstance(source, str):
         if len(path) >= 2 and path[-2:] == ("metadata", "namespace"):
-            expected = TARGET_NAMESPACE
+            expected = target[0]
         elif source == SOURCE_EXTERNAL_DATABASE_NAMESPACE:
-            expected = TARGET_EXTERNAL_DATABASE_NAMESPACE
+            expected = target[1]
+        elif (
+            name == _NETWORK_POLICY_MANIFEST
+            and path[-3:] == ("podSelector", "matchLabels", "cnpg.io/cluster")
+            and source == _SOURCE_DATABASE_CLUSTER
+        ):
+            expected = target[2]
         else:
-            expected, _count = _replace_dns(source)
+            expected, _count = _replace_dns(source, target[0])
         if rendered != expected:
             raise NamespaceRenderError(f"{name}: renderer changed an unauthorized scalar")
         return
@@ -299,7 +341,11 @@ def _assert_authorized_changes(
         raise NamespaceRenderError(f"{name}: renderer changed an unauthorized scalar")
 
 
-def _audit_rendered_document(name: str, document: dict[str, Any]) -> None:
+def _audit_rendered_document(
+    name: str,
+    document: dict[str, Any],
+    target: tuple[str, str, str] = _TARGET_PROFILES[DEFAULT_TARGET_PROFILE],
+) -> None:
     items = document.get("items")
     if not isinstance(items, list):
         raise NamespaceRenderError(f"{name}: rendered List is invalid")
@@ -307,7 +353,7 @@ def _audit_rendered_document(name: str, document: dict[str, Any]) -> None:
         if not isinstance(item, dict):
             raise NamespaceRenderError(f"{name}: rendered resource is invalid")
         metadata = item.get("metadata")
-        if not isinstance(metadata, dict) or metadata.get("namespace") != TARGET_NAMESPACE:
+        if not isinstance(metadata, dict) or metadata.get("namespace") != target[0]:
             raise NamespaceRenderError(f"{name}: rendered metadata.namespace did not converge")
     scalar_values = _walk_values(document)
     for value in scalar_values:
@@ -320,14 +366,21 @@ def _audit_rendered_document(name: str, document: dict[str, Any]) -> None:
                 f"{name}: residual source external database namespace reference"
             )
         if (
-            TARGET_EXTERNAL_DATABASE_NAMESPACE in value
-            and value != TARGET_EXTERNAL_DATABASE_NAMESPACE
+            target[1] == TARGET_EXTERNAL_DATABASE_NAMESPACE
+            and target[1] in value
+            and value != target[1]
         ):
             raise NamespaceRenderError(
                 f"{name}: rendered external database namespace is malformed"
             )
-    target_database_references = sum(
-        value == TARGET_EXTERNAL_DATABASE_NAMESPACE for value in scalar_values
+    database_consumers = _validate_database_consumers(
+        name, items, database_namespace=target[1], database_cluster=target[2]
+    )
+    # The existing QA database namespace also hosts its ingress and artifact services.
+    target_database_references = (
+        sum(value == target[1] for value in scalar_values)
+        if target[1] == TARGET_EXTERNAL_DATABASE_NAMESPACE
+        else database_consumers
     )
     expected_target_database_references = (
         _EXPECTED_EXTERNAL_DATABASE_REFERENCE_COUNT if name == _NETWORK_POLICY_MANIFEST else 0
@@ -338,25 +391,44 @@ def _audit_rendered_document(name: str, document: dict[str, Any]) -> None:
         )
 
 
-def _render_manifest(name: str, raw: bytes, text: str) -> tuple[bytes, dict[str, Any]]:
+def _render_manifest(
+    name: str, raw: bytes, text: str, target: tuple[str, str, str]
+) -> tuple[bytes, dict[str, Any]]:
     source_document = _load_yaml(name, text)
     namespace_count, expected_dns_count, external_database_references = _validate_source_document(
         name, source_document
     )
+    if target[2] != _SOURCE_DATABASE_CLUSTER:
+        expected = (
+            _EXPECTED_EXTERNAL_DATABASE_REFERENCE_COUNT if name == _NETWORK_POLICY_MANIFEST else 0
+        )
+        if (
+            sum(value == _SOURCE_DATABASE_CLUSTER for value in _walk_values(source_document))
+            != expected
+        ):
+            raise NamespaceRenderError(
+                f"{name}: fixed database cluster reference count is invalid"
+            )
 
     rendered_text, namespace_replacements = _SOURCE_NAMESPACE_LINE.subn(
-        lambda match: f"{match.group('prefix')}{TARGET_NAMESPACE}{match.group('suffix')}",
+        lambda match: f"{match.group('prefix')}{target[0]}{match.group('suffix')}",
         text,
     )
     if namespace_replacements != namespace_count:
         raise NamespaceRenderError(
             f"{name}: metadata.namespace textual replacement count is invalid"
         )
-    rendered_text, dns_replacements = _replace_dns(rendered_text)
+    rendered_text, dns_replacements = (
+        _replace_dns(rendered_text)
+        if target[0] == TARGET_NAMESPACE
+        else _replace_dns(rendered_text, target[0])
+    )
     if dns_replacements != expected_dns_count:
         raise NamespaceRenderError(f"{name}: service DNS replacement count is invalid")
-    rendered_text, external_database_text_replacements = _replace_external_database_namespace(
-        rendered_text
+    rendered_text, external_database_text_replacements = (
+        _replace_external_database_namespace(rendered_text)
+        if target[1] == TARGET_EXTERNAL_DATABASE_NAMESPACE
+        else _replace_external_database_namespace(rendered_text, target[1])
     )
     expected_external_database_text_replacements = 1 if name == _NETWORK_POLICY_MANIFEST else 0
     if external_database_text_replacements != expected_external_database_text_replacements:
@@ -368,9 +440,22 @@ def _render_manifest(name: str, raw: bytes, text: str) -> tuple[bytes, dict[str,
     if _SOURCE_EXTERNAL_DATABASE_NAMESPACE_LINE.search(rendered_text):
         raise NamespaceRenderError(f"{name}: source external database namespace line remains")
 
+    if target[2] != _SOURCE_DATABASE_CLUSTER:
+        cluster_line = re.compile(
+            rf"^(?P<prefix>[ \t]+cnpg\.io/cluster:[ \t]*){_SOURCE_DATABASE_CLUSTER}"
+            r"(?P<suffix>[ \t]*(?:#.*)?)$",
+            re.MULTILINE,
+        )
+        rendered_text, count = cluster_line.subn(
+            lambda match: f"{match.group('prefix')}{target[2]}{match.group('suffix')}",
+            rendered_text,
+        )
+        if count != (1 if name == _NETWORK_POLICY_MANIFEST else 0):
+            raise NamespaceRenderError(f"{name}: fixed database cluster projection is invalid")
+
     rendered_document = _load_yaml(name, rendered_text)
-    _audit_rendered_document(name, rendered_document)
-    _assert_authorized_changes(source_document, rendered_document, name=name)
+    _audit_rendered_document(name, rendered_document, target)
+    _assert_authorized_changes(source_document, rendered_document, name=name, target=target)
     rendered = rendered_text.encode("utf-8")
     return rendered, {
         "dns_suffix_replacements": dns_replacements,
@@ -439,15 +524,18 @@ def _write_exclusive(path: Path, value: bytes) -> None:
         raise NamespaceRenderError(f"{path.name}: rendered output cannot be written") from error
 
 
-def render_namespace_manifests(source_dir: Path, output_dir: Path) -> dict[str, Any]:
+def render_namespace_manifests(
+    source_dir: Path, output_dir: Path, *, target_profile: str = DEFAULT_TARGET_PROFILE
+) -> dict[str, Any]:
     """Render the exact four manifests and return secret-free hash evidence."""
 
+    target = resolve_target_profile(target_profile)
     _validate_source_directory(source_dir)
     rendered_files: dict[str, bytes] = {}
     evidence_rows: list[dict[str, Any]] = []
     for name in MANIFEST_NAMES:
         raw, text = _read_manifest(source_dir / name)
-        rendered, row = _render_manifest(name, raw, text)
+        rendered, row = _render_manifest(name, raw, text, target)
         rendered_files[name] = rendered
         evidence_rows.append(row)
 
@@ -466,7 +554,7 @@ def render_namespace_manifests(source_dir: Path, output_dir: Path) -> dict[str, 
                 int(row["external_database_namespace_replacements"]) for row in evidence_rows
             ),
             "source": SOURCE_EXTERNAL_DATABASE_NAMESPACE,
-            "target": TARGET_EXTERNAL_DATABASE_NAMESPACE,
+            "target": target[1],
         },
         "files": evidence_rows,
         "manifest_count": len(evidence_rows),
@@ -474,8 +562,11 @@ def render_namespace_manifests(source_dir: Path, output_dir: Path) -> dict[str, 
         "schema_version": 2,
         "source_namespace": SOURCE_NAMESPACE,
         "status": "pass",
-        "target_namespace": TARGET_NAMESPACE,
+        "target_namespace": target[0],
     }
+    if target_profile != DEFAULT_TARGET_PROFILE:
+        evidence["target_profile"] = target_profile
+        evidence["database_cluster"] = target[2]
     evidence_bytes = _canonical_json(evidence)
     created_paths: list[Path] = []
     try:
@@ -514,9 +605,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--source-dir", type=Path, default=_default_source_dir())
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--target-profile", choices=TARGET_PROFILE_NAMES, default=DEFAULT_TARGET_PROFILE
+    )
     arguments = parser.parse_args(argv)
     try:
-        result = render_namespace_manifests(arguments.source_dir, arguments.output_dir)
+        result = render_namespace_manifests(
+            arguments.source_dir, arguments.output_dir, target_profile=arguments.target_profile
+        )
     except NamespaceRenderError as error:
         print(
             json.dumps(

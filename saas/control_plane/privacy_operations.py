@@ -5,7 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Literal, cast
 from uuid import UUID, uuid4
@@ -109,21 +109,21 @@ _ADAPTER_BY_SURFACE: dict[str, str] = {
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise PlatformSecurityError("platform_time_invalid", "time must include a timezone")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _stored_utc(value: datetime) -> datetime:
     """Normalize ORM timestamps; SQLite drops timezone metadata on round-trip."""
 
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _digest(value: object) -> str:

@@ -22,6 +22,7 @@ from saas.scripts import legacy_domain_native as native
 from saas.scripts.legacy_native_evidence import api, reserve_native_download
 from saas.scripts.legacy_pr_candidate import VALIDATION_REFS
 from saas.scripts.oci_promotion import require
+from saas.scripts.protected_legacy_initial_build import COMPATIBILITY_COMPONENT, validate_profile
 
 KIND = "legacy_original_main_domain_zero_execution/v1"
 INFRASTRUCTURE_KIND = "legacy_original_main_domain_infrastructure_cancellation/v1"
@@ -52,6 +53,67 @@ _INFRASTRUCTURE_STEPS = (
     (13, "Complete job", "success"),
 )
 _EMPTY_ZIP = b"PK\x05\x06" + b"\x00" * 18
+_COMPATIBILITY_INFRASTRUCTURE_CONTRACTS = {
+    "b6ec90023226590ac6278106f5dd4d0104ce196283e708f6b0eb242365ebcd02": {
+        "archive_bytes": 1436,
+        "archive_sha256": "61cccff0cd7dde473c55126ddf8b9584297885dc729a21e21a29fc72b0675b8b",
+        "git_executed": False,
+        "members": (
+            (
+                "0_evaluate.txt",
+                2077,
+                "b02541cd251e5ac88ce8fa78b4280360c12d29a644018c9db5b2489669dd5fe9",
+            ),
+            (
+                "evaluate/system.txt",
+                836,
+                "6b35b121c4e48586b9bf5635abb8ae5108c0a5ea9e43c3ad8759eee2f8abdd8b",
+            ),
+        ),
+        "operation_line": 35,
+        "runner": (1000096735, "GitHub Actions 1000096735", 0, "GitHub Actions"),
+        "steps": ((1, "Set up job", "cancelled"),),
+    },
+    "c5602beb7de92bbb1f578572c15111e837a05d3917ee600766b4648d520d4259": {
+        "archive_bytes": 3798,
+        "archive_sha256": "4207f10c5a8075338e32301e01d6db0295bdc120f4d4e946bca1e6aff8aa8e75",
+        "git_executed": True,
+        "members": (
+            (
+                "0_evaluate.txt",
+                13205,
+                "d9b89e72b05a7dc04e48122d177a24892aa8bf2bdd40e91a5f0818d29da863f7",
+            ),
+            (
+                "evaluate/system.txt",
+                836,
+                "733a592d626c6bb525c3f204f84e08d20fe27b49b274c74a261927b9cf17398b",
+            ),
+        ),
+        "operation_line": 20,
+        "runner": (1000096466, "GitHub Actions 1000096466", 0, "GitHub Actions"),
+        "steps": (
+            (1, "Set up job", "success"),
+            (2, "Check out trusted gate", "cancelled"),
+            (3, "Resolve current PR head", "skipped"),
+            (4, "Evaluate exact PostgreSQL N-1 authority", "skipped"),
+            (5, "Mark non-completed N-1 run pending", "skipped"),
+            (6, "Post exact-head gate status", "skipped"),
+            (12, "Post Check out trusted gate", "success"),
+            (13, "Complete job", "success"),
+        ),
+    },
+    "cdcd8eccc555ebb94a83dd8a173e06f93cb64f6d979c7b10fb0dd58fb0c2162d": {
+        "archive_bytes": 22,
+        "archive_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+        "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
+        "git_executed": None,
+        "members": (),
+        "operation_line": None,
+        "runner": (1000096320, "GitHub Actions 1000096320", 0, "GitHub Actions"),
+        "steps": (),
+    },
+}
 _FIELDS = {
     "kind",
     "workflow_sha256",
@@ -363,7 +425,7 @@ def _annotation(run, level, message, line=1):
     }
 
 
-def _cancelled_annotations(run, check, annotations, *, infrastructure):
+def _cancelled_annotations(run, check, annotations, *, infrastructure, operation_line=29):
     """Keep the complete ordered failure set; permit only the exact runner notice."""
     require(
         bool(
@@ -390,7 +452,7 @@ def _cancelled_annotations(run, check, annotations, *, infrastructure):
             f"saas-n1-merge-gate-{run['head_sha']} exists",
             "infrastructure cancellation concurrency key differs",
         )
-        expected.append(_annotation(run, "failure", "The operation was canceled.", 29))
+        expected.append(_annotation(run, "failure", "The operation was canceled.", operation_line))
     notice = _annotation(run, "notice", _UBUNTU26_NOTICE)
     require(
         annotations == [*expected, notice]
@@ -412,30 +474,42 @@ def validate_infrastructure_rules(rows, profile, identity):
     require(
         isinstance(rows, list) and len(rows) <= 128, "infrastructure registrations are malformed"
     )
+    compatibility = profile.get("component") == COMPATIBILITY_COMPONENT
+    if compatibility:
+        validate_profile(profile, COMPATIBILITY_COMPONENT)
     for row in rows:
         require(
             isinstance(row, dict)
             and row.get("kind") == INFRASTRUCTURE_KIND
             and row.get("event") == "pull_request_target"
-            and row.get("run_logs_sha256") == _INFRASTRUCTURE_LOG_SHA256,
+            and (
+                native.native_digest(row) in _COMPATIBILITY_INFRASTRUCTURE_CONTRACTS
+                if compatibility
+                else row.get("run_logs_sha256") == _INFRASTRUCTURE_LOG_SHA256
+            ),
             "infrastructure registration is not the reviewed cancellation archive and event",
         )
     validate_rules([{**row, "kind": KIND} for row in rows], profile, identity)
 
 
-def _infrastructure_logs(logs):
+def _infrastructure_logs(logs, contract=None):
+    size, digest, members = (
+        (2054, _INFRASTRUCTURE_LOG_SHA256, _INFRASTRUCTURE_LOG_MEMBERS)
+        if contract is None
+        else (contract["archive_bytes"], contract["archive_sha256"], contract["members"])
+    )
     require(
-        len(logs) == 2054 and hashlib.sha256(logs).hexdigest() == _INFRASTRUCTURE_LOG_SHA256,
+        len(logs) == size and hashlib.sha256(logs).hexdigest() == digest,
         "infrastructure archive differs from the fully reviewed native command log",
     )
     with zipfile.ZipFile(io.BytesIO(logs)) as archive:
         entries = archive.infolist()
         require(
             tuple((entry.filename, entry.file_size) for entry in entries)
-            == tuple((name, size) for name, size, _ in _INFRASTRUCTURE_LOG_MEMBERS),
+            == tuple((name, size) for name, size, _ in members),
             "infrastructure archive has missing, extra or duplicate members",
         )
-        for entry, (_, _, digest) in zip(entries, _INFRASTRUCTURE_LOG_MEMBERS, strict=True):
+        for entry, (_, _, digest) in zip(entries, members, strict=True):
             require(
                 entry.compress_type == zipfile.ZIP_DEFLATED
                 and entry.external_attr == 0
@@ -449,6 +523,11 @@ def verify_infrastructure_cancellation(
 ):
     """Verify the exact setup/partial-checkout cancellation, without source attribution."""
     validate_infrastructure_rules([rule], profile, identity)
+    contract = (
+        _COMPATIBILITY_INFRASTRUCTURE_CONTRACTS[native.native_digest(rule)]
+        if profile.get("component") == COMPATIBILITY_COMPONENT
+        else None
+    )
     require(
         run.get("id") == rule["run_id"]
         and run.get("run_attempt") == rule["attempt"]
@@ -485,7 +564,11 @@ def verify_infrastructure_cancellation(
             job.get("runner_group_id"),
             job.get("runner_group_name"),
         )
-        == (1000081455, "GitHub Actions 1000081455", 0, "GitHub Actions"),
+        == (
+            contract["runner"]
+            if contract is not None
+            else (1000081455, "GitHub Actions 1000081455", 0, "GitHub Actions")
+        ),
         "infrastructure cancellation native job/check/provider/runner differs",
     )
     steps = job.get("steps")
@@ -493,7 +576,7 @@ def verify_infrastructure_cancellation(
         isinstance(steps, list)
         and all(isinstance(step, dict) for step in steps)
         and tuple((step.get("number"), step.get("name"), step.get("conclusion")) for step in steps)
-        == _INFRASTRUCTURE_STEPS
+        == (contract["steps"] if contract is not None else _INFRASTRUCTURE_STEPS)
         and all(step.get("status") == "completed" for step in steps),
         "infrastructure cancellation executed another native step or changed step order",
     )
@@ -506,8 +589,14 @@ def verify_infrastructure_cancellation(
         )
         require(prior <= started <= completed <= end, "infrastructure step time/order differs")
         prior = completed
-    _cancelled_annotations(run, check, annotations, infrastructure=True)
-    _infrastructure_logs(logs)
+    _cancelled_annotations(
+        run,
+        check,
+        annotations,
+        infrastructure=contract is None or contract["operation_line"] is not None,
+        operation_line=(contract["operation_line"] or 29) if contract is not None else 29,
+    )
+    _infrastructure_logs(logs, contract)
     require(
         native.native_digest(run) == rule["run_sha256"]
         and native.native_digest(job) == rule["job_sha256"]
@@ -527,8 +616,12 @@ def verify_infrastructure_cancellation(
             "original_event_source_revision": None,
             "trusted_checkout_revision": None,
             "checkout_classification": "UNKNOWN",
-            "execution": "native-infrastructure-executed-cancelled",
-            "git_executed": True,
+            "execution": (
+                contract.get("execution", "native-infrastructure-executed-cancelled")
+                if contract is not None
+                else "native-infrastructure-executed-cancelled"
+            ),
+            "git_executed": contract["git_executed"] if contract is not None else True,
             "run_snapshot_sha256": native.native_digest(
                 {key: value for key, value in run.items() if key not in {"jobs_url", "logs_url"}}
             ),
@@ -601,7 +694,21 @@ def typed_observation(proof):
         or (
             isinstance(proof, InfrastructureCancellationObservation)
             and proof.receipt.get("kind") == INFRASTRUCTURE_KIND
-            and proof.receipt.get("execution") == "native-infrastructure-executed-cancelled"
+            and (
+                proof.receipt.get("execution") == "native-infrastructure-executed-cancelled"
+                or (
+                    proof.receipt.get("execution")
+                    == "native-assigned-runner-cancelled-execution-UNKNOWN"
+                    and proof.receipt.get("registration_sha256")
+                    in _COMPATIBILITY_INFRASTRUCTURE_CONTRACTS
+                    and proof.receipt.get("source_classification") == "UNKNOWN"
+                    and proof.receipt.get("git_executed") is None
+                    and proof.receipt.get("source_proof") is False
+                    and proof.receipt.get("guard_refusal") is False
+                    and proof.receipt.get("technical_gate_waiver") is False
+                    and proof.receipt.get("production_admission") is False
+                )
+            )
         )
     )
 
@@ -1068,6 +1175,72 @@ def verify_bootstrap_cancellation(profile, identity, policy, run, job, check, an
     )
 
 
+def _verify_compatibility_unobserved_job(
+    profile, identity, policy, run, job, check, annotations, logs
+):
+    validate_bootstrap_policy(policy, profile, identity)
+    validate_profile(profile, COMPATIBILITY_COMPONENT)
+    _unattributed_run(run)
+    require(
+        job.get("steps") == [] and logs == _EMPTY_ZIP,
+        "unobserved compatibility audit contains steps or command output",
+    )
+    if job.get("conclusion") == "cancelled":
+        coordinates = cancelled_job_coordinates(run, job, check)
+        _cancelled_annotations(run, check, annotations, infrastructure=False)
+    else:
+        require(
+            type(job.get("id")) is int
+            and job["id"] > 0
+            and job.get("run_id") == run["id"]
+            and job.get("run_attempt") == run["run_attempt"]
+            and job.get("head_sha") == check.get("head_sha") == run["head_sha"]
+            and job.get("name") == check.get("name") == "evaluate"
+            and job.get("status") == check.get("status") == "completed"
+            and job.get("conclusion") == check.get("conclusion") == "skipped"
+            and job.get("labels") in ([], ["ubuntu-latest"])
+            and all(
+                job.get(key) is None
+                for key in ("runner_id", "runner_name", "runner_group_id", "runner_group_name")
+            )
+            and type(check.get("id")) is int
+            and check["id"] > 0
+            and job.get("check_run_url") == f"{native._REPO_URL}/check-runs/{check['id']}"
+            and check.get("app", {}).get("id") == 15368
+            and check.get("check_suite", {}).get("id") == run["check_suite_id"]
+            and check.get("details_url")
+            == f"https://github.com/Dream1216/omnigent/actions/runs/{run['id']}/job/{job['id']}"
+            and annotations == []
+            and check.get("output", {}).get("annotations_count") == 0
+            and check.get("output", {}).get("annotations_url")
+            == f"{native._REPO_URL}/check-runs/{check['id']}/annotations"
+            and all(
+                check.get("output", {}).get(key) is None for key in ("title", "summary", "text")
+            ),
+            "cancelled-run/skipped-job native provider, runner or outcome differs",
+        )
+        coordinates = {
+            "run_id": run["id"],
+            "attempt": run["run_attempt"],
+            "job_id": job["id"],
+            "check_id": check["id"],
+        }
+    return UnattributedBootstrapCancellationObservation(
+        {
+            **_audit_receipt(BOOTSTRAP_KIND, policy, run),
+            **coordinates,
+            "execution": "native-cancelled-run-unobserved-job-execution-UNKNOWN",
+            "original_job_conclusion": job["conclusion"],
+            "original_check_conclusion": check["conclusion"],
+            "git_executed": None,
+            "job_sha256": native.native_digest(job),
+            "check_sha256": native.native_digest(check),
+            "annotations_sha256": native.native_digest(annotations),
+            "run_logs_sha256": hashlib.sha256(logs).hexdigest(),
+        }
+    )
+
+
 def collect_unattributed_audit(
     profile, identity, zero_policy, bootstrap_policy, run, jobs, destination
 ):
@@ -1090,7 +1263,16 @@ def collect_unattributed_audit(
             profile, identity, zero_policy, run, raw_jobs, suite, checks, path.read_bytes()
         )
     require(len(jobs) == 1, "unattributed native audit job set differs")
-    if jobs[0].get("steps") == []:
+    unobserved_compatibility = (
+        profile.get("component") == COMPATIBILITY_COMPONENT
+        and bootstrap_policy is not None
+        and jobs[0].get("steps") == []
+        and (
+            (type(jobs[0].get("runner_id")) is int and jobs[0]["runner_id"] > 0)
+            or jobs[0].get("conclusion") != run.get("conclusion")
+        )
+    )
+    if jobs[0].get("steps") == [] and not unobserved_compatibility:
         require(zero_policy is not None, "unassigned-job native audit policy is disabled")
         return collect_unattributed_zero_execution(
             profile, identity, zero_policy, run, jobs, destination
@@ -1108,6 +1290,10 @@ def collect_unattributed_audit(
     annotations = annotations_for(check_id)
     path = destination / f"bootstrap-run-{run['id']}-attempt-{run['run_attempt']}.zip"
     download_infrastructure_run_logs(run["id"], run["run_attempt"], path)
+    if unobserved_compatibility:
+        return _verify_compatibility_unobserved_job(
+            profile, identity, bootstrap_policy, run, job, check, annotations, path.read_bytes()
+        )
     return verify_bootstrap_cancellation(
         profile, identity, bootstrap_policy, run, job, check, annotations, path.read_bytes()
     )

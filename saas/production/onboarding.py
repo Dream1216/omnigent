@@ -216,6 +216,10 @@ class ProductionOnboardingOutboxPublisher:
         self.composition.validate_outbox_configuration()
         self.runtime.assert_production_ready()
 
+    @property
+    def claim_routes(self):
+        return self.composition.publisher.claim_routes
+
     def publish(self, **event: Any) -> None:
         self.composition.publish(**event)
 

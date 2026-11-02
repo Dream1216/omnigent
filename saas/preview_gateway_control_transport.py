@@ -17,7 +17,7 @@ import re
 import ssl
 from collections.abc import Mapping
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -362,8 +362,8 @@ def _certificate_der(document: Mapping[str, object]) -> bytes:
 def _datetime_text(value: datetime | None) -> str | None:
     if value is None:
         return None
-    normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    return normalized.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return normalized.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _parse_datetime(value: object) -> datetime:
@@ -372,7 +372,7 @@ def _parse_datetime(value: object) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("datetime has no timezone")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _gateway_document(receipt: RegisteredPreviewGateway) -> dict[str, object]:

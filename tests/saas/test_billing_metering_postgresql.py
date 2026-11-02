@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -112,7 +112,7 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
     scheduling = SchedulingControlPlane(executor_factory)
     billing = BillingControlPlane(billing_factory)
     authority = BillingMeteringAuthority(metering_factory)
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     owner_id, tenant_id, space_id, project_id, placement_id = (
         uuid4(),
         uuid4(),
@@ -634,7 +634,11 @@ def test_real_postgresql_machine_metering_exact_identity_rls_and_fencing(
             RuntimeError,
             match=(
                 r"^(retained execution schema cannot be downgraded|"
-                r"retained model budgets require owner settlement policy)$"
+                r"retained model budgets require owner settlement policy|"
+                r"P17 downgrade requires reviewed preserving-driver archive; "
+                r"never DROP durable facts|"
+                r"P18 downgrade requires reviewed runtime-maintenance inverse; "
+                r"never remove policy contracts implicitly)$"
             ),
         ):
             with connection.begin_nested():

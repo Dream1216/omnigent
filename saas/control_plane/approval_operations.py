@@ -7,7 +7,7 @@ import json
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
@@ -318,7 +318,7 @@ class ApprovalProjectionService:
         *,
         now: datetime | None = None,
     ) -> ApprovalWorkItemView:
-        projected_at = _aware(now or datetime.now(timezone.utc))
+        projected_at = _aware(now or datetime.now(UTC))
         _validate_projection(command, projected_at)
         _apply_notification_rls(
             db,
@@ -515,7 +515,7 @@ class ApprovalOperationsService:
         self._digesters = (digester, *previous_digesters)
         if len({value.key_id for value in self._digesters}) != len(self._digesters):
             raise ValueError("approval HMAC key IDs must be unique")
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._notifier = notifier
 
     def list_work_items(
@@ -527,7 +527,7 @@ class ApprovalOperationsService:
         cursor: UUID | None = None,
         now: datetime | None = None,
     ) -> ApprovalWorkItemPage:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _validate_actor(actor, at)
         if not 1 <= limit <= 100:
             raise ApprovalOperationsError("approval_page_limit_invalid")
@@ -613,7 +613,7 @@ class ApprovalOperationsService:
         idempotency_key: str,
         now: datetime | None = None,
     ) -> ApprovalDelegationView:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _validate_actor(actor, at)
         start, expiry = _aware(starts_at), _aware(expires_at)
         cleaned_reason = _code(reason, "reason", 1024)
@@ -798,7 +798,7 @@ class ApprovalOperationsService:
         cursor: UUID | None = None,
         now: datetime | None = None,
     ) -> ApprovalDelegationPage:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _validate_actor(actor, at)
         if status is not None and status not in {"active", "revoked", "expired"}:
             raise ApprovalOperationsError("approval_delegation_status_invalid")
@@ -844,7 +844,7 @@ class ApprovalOperationsService:
         idempotency_key: str,
         now: datetime | None = None,
     ) -> ApprovalDelegationView:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _validate_actor(actor, at)
         key = _code(idempotency_key, "idempotency_key", 128)
         with self._sessions.begin() as db:
@@ -896,7 +896,7 @@ class ApprovalOperationsService:
         idempotency_key: str,
         now: datetime | None = None,
     ) -> ApprovalWorkItemView:
-        at = _aware(now or datetime.now(timezone.utc))
+        at = _aware(now or datetime.now(UTC))
         _validate_actor(actor, at)
         if decision not in {"approve", "reject"}:
             raise ApprovalOperationsError("approval_decision_invalid")
@@ -1560,15 +1560,11 @@ def _hash(value: str, field: str) -> str:
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ApprovalOperationsError("approval_time_invalid")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _stored_utc(value: datetime) -> datetime:
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _work_view(value: ApprovalWorkItemRecord) -> ApprovalWorkItemView:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -274,7 +274,7 @@ def test_source_roles_cross_realm_forgery_and_n_minus_one_rollback() -> None:
     password = f"SourceRole-{uuid4().hex}"
     login_engines: dict[str, sa.Engine] = {}
     login_names: dict[str, str] = {}
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
 
     try:
         with admin_engine.connect() as connection:

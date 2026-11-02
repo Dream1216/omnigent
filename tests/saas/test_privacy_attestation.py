@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -20,7 +20,7 @@ from saas.control_plane.privacy_attestation import (
     validate_manifest_attestors,
 )
 
-NOW = datetime(2026, 8, 10, 5, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 5, 0, tzinfo=UTC)
 
 
 def _payload(*, workflow: str = "spiffe://prod/privacy-worker") -> dict[str, object]:

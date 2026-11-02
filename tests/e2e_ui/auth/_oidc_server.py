@@ -58,6 +58,8 @@ def spawn_oidc_server(
     *,
     public_client: bool = False,
     public_origin: bool = True,
+    include_auth_time: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> Iterator[OIDCServer]:
     """Spawn an OIDC-mode server wired to a fake IdP; yield a handle.
 
@@ -71,6 +73,8 @@ def spawn_oidc_server(
     :param public_client: Exercise secretless PKCE, PS256, and explicit endpoints.
     :param public_origin: Use the public-looking loopback alias. Native-shell
         coverage uses the literal RFC 8252 loopback origin instead.
+    :param include_auth_time: Whether the fake IdP's ID tokens carry ``auth_time``.
+    :param extra_env: Additional server environment variables.
     :yields: An :class:`OIDCServer` handle.
     """
     with fake_idp(
@@ -78,6 +82,7 @@ def spawn_oidc_server(
         signing_algorithm="PS256" if public_client else "RS256",
         endpoint_prefix="/custom" if public_client else "",
         canonical_issuer="https://issuer.example.test" if public_client else None,
+        include_auth_time=include_auth_time,
     ) as idp:
         port = _find_free_port()
         log_path = server_tmp / "server.log"
@@ -126,6 +131,7 @@ def spawn_oidc_server(
                     f"{idp.base_url}{idp.endpoint_prefix}/{path}"
                 )
             server_env["OMNIGENT_OIDC_AUTHORIZATION_ENDPOINT"] += "?p=policy"
+        server_env.update(extra_env or {})
 
         log_handle = open(log_path, "w")  # noqa: SIM115 — lives for the Popen; closed in finally
         proc = subprocess.Popen(

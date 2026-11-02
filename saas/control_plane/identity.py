@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Literal, cast
 from uuid import UUID, uuid4
@@ -91,13 +91,13 @@ class IdentityConflictResolved:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _comparable_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _hash_payload(payload: dict[str, object]) -> str:
@@ -758,6 +758,16 @@ class PasswordCredentialService:
                 f"password must contain {_MIN_PASSWORD_LENGTH} to "
                 f"{_MAX_PASSWORD_LENGTH} characters",
             )
+
+    def get_password_version(self, user_id: UUID) -> int | None:
+        """Return only the credential version needed for a self-service change."""
+
+        with self._session_factory() as db:
+            return db.execute(
+                sa.select(PasswordCredential.password_version).where(
+                    PasswordCredential.user_id == user_id
+                )
+            ).scalar_one_or_none()
 
     def authenticate(self, email: str, password: str, *, now: datetime | None = None) -> UUID:
         """Authenticate one unambiguous verified email without revealing failure cause."""

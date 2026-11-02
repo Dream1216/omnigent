@@ -24,7 +24,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -211,7 +211,7 @@ class RunnerPreviewProcessSupervisor:
     ) -> PreviewProcessSnapshot:
         """Start, pin, health-check, then publish one exact Preview target."""
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if (
             route.runner_id != self._runner_id
             or route.runner_connection_generation != self._connection_generation
@@ -327,7 +327,7 @@ class RunnerPreviewProcessSupervisor:
                 socket_path=target.socket_path,
                 socket_identity=identity,
                 log_path=log_path,
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
             running = _RunningPreview(
                 route=route,
@@ -391,7 +391,7 @@ class RunnerPreviewProcessSupervisor:
             pid=running.snapshot.pid,
             reason="stopped",
             returncode=returncode,
-            stopped_at=datetime.now(timezone.utc),
+            stopped_at=datetime.now(UTC),
             cleanup_error_code=process_cleanup_error or socket_cleanup_error,
         )
         async with self._lock:
@@ -425,7 +425,7 @@ class RunnerPreviewProcessSupervisor:
     async def _watch(self, running: _RunningPreview) -> None:
         expires_in = max(
             0.0,
-            (running.route.expires_at - datetime.now(timezone.utc)).total_seconds(),
+            (running.route.expires_at - datetime.now(UTC)).total_seconds(),
         )
         reason = "exited"
         try:
@@ -454,7 +454,7 @@ class RunnerPreviewProcessSupervisor:
             pid=running.snapshot.pid,
             reason=reason,
             returncode=returncode,
-            stopped_at=datetime.now(timezone.utc),
+            stopped_at=datetime.now(UTC),
             cleanup_error_code=process_cleanup_error or socket_cleanup_error,
         )
         async with self._lock:
@@ -576,7 +576,7 @@ async def _wait_for_private_socket(
 ) -> UnixSocketIdentity:
     deadline = min(
         time.monotonic() + timeout_seconds,
-        time.monotonic() + max(0.0, (expires_at - datetime.now(timezone.utc)).total_seconds()),
+        time.monotonic() + max(0.0, (expires_at - datetime.now(UTC)).total_seconds()),
     )
     while time.monotonic() < deadline:
         if os.path.lexists(socket_path):

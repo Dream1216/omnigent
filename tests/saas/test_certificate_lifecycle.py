@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
 from typing import TypedDict
@@ -164,7 +164,7 @@ def certificate_fixture(tmp_path: Path):
     engine = sa.create_engine(f"sqlite+pysqlite:///{tmp_path / 'certificates.db'}")
     SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    now = datetime(2026, 8, 5, 9, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 5, 9, 0, tzinfo=UTC)
     runner_id, _ = _seed_runner(factory, now=now)
     authority = RunnerCertificateAuthority(
         factory,
@@ -336,7 +336,7 @@ def test_runner_control_authorizer_uses_durable_activation_and_revocation(
     certificate_fixture,
 ) -> None:
     _, _, authority, runner_id, _fixture_now = certificate_fixture
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     certificate_der = _runner_certificate(runner_id, now=now)
     activated = authority.activate_certificate(
         runner_id=runner_id,
@@ -432,7 +432,7 @@ def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
 def test_real_postgresql_certificate_rls_rotation_revocation_and_monotonicity() -> None:
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(_postgres_url())
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     with engine.begin() as connection:
         _migrate(connection, root)
         connection.exec_driver_sql(

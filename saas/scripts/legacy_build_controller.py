@@ -14,11 +14,10 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
-
-import tomllib
 
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
 from saas.scripts.legacy_native_evidence import api

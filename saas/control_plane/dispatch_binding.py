@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import UUID
 
@@ -46,8 +46,8 @@ def dispatch_requirements_hash(
 
 
 def _aware(value: datetime) -> datetime:
-    aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     # PostgreSQL materializes ``timestamptz`` values in the connection's current
     # timezone.  Bind the hash to the instant, not to that presentation offset,
     # so prepare/replay/claim agree across database and process timezones.
-    return aware.astimezone(timezone.utc)
+    return aware.astimezone(UTC)

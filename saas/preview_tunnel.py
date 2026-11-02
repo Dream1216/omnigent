@@ -12,7 +12,7 @@ import threading
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import UUID
@@ -278,7 +278,7 @@ class OfficialRunnerPreviewTunnel:
 
     async def forward(self, request: PreviewTunnelRequest) -> PreviewTunnelResponse:
         route = request.route
-        if route.expires_at <= datetime.now(timezone.utc):
+        if route.expires_at <= datetime.now(UTC):
             raise PreviewTunnelAdapterError("preview_route_expired", "Preview route expired")
         if not _OPAQUE_KEY.fullmatch(route.opaque_preview_key):
             raise PreviewTunnelAdapterError(
@@ -524,7 +524,7 @@ class LocalPreviewTargetRegistry:
             target = self._targets.get(opaque_key)
         if target is None or metadata != _route_headers(target.route):
             return None
-        if target.route.expires_at <= datetime.now(timezone.utc):
+        if target.route.expires_at <= datetime.now(UTC):
             return None
         return target
 
@@ -725,7 +725,7 @@ class UnixSocketPreviewTarget:
             scope.get("type") != "http"
             or not isinstance(client, tuple)
             or client != ("preview-tunnel", 0)
-            or self.route.expires_at <= datetime.now(timezone.utc)
+            or self.route.expires_at <= datetime.now(UTC)
         ):
             await _asgi_error(send, status=404, code="preview_route_not_found")
             return

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -80,7 +80,7 @@ def _client(
     sessionmaker,
     ModelProviderConfigurationReader,
 ]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},

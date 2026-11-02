@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -137,13 +137,13 @@ def plan_retained_job_image_repair(
         remaining = math.floor((expiry - now).total_seconds())
         _require(remaining >= 600, "Job expiry is too close for a safe controller handoff")
         spec["activeDeadlineSeconds"] = remaining
-        expires_at = expiry.astimezone(timezone.utc).isoformat()
+        expires_at = expiry.astimezone(UTC).isoformat()
     annotations = deepcopy(metadata.get("annotations", {}))
     annotations.update(
         {
             "omnigent.io/retained-job-source-uid": expected_job_uid,
             "omnigent.io/retained-job-image": image,
-            "omnigent.io/retained-job-planned-at": now.astimezone(timezone.utc).isoformat(),
+            "omnigent.io/retained-job-planned-at": now.astimezone(UTC).isoformat(),
         }
     )
     if expires_at is not None:

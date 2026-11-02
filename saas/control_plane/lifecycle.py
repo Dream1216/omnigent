@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -113,7 +113,7 @@ def normalize_email(email: str) -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _require_aware(value: datetime, field: str) -> None:
@@ -1088,5 +1088,5 @@ class MembershipLifecycleService:
 
 def _comparable_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

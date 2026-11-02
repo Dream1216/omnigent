@@ -4,7 +4,7 @@ import asyncio
 import ipaddress
 import socket
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -39,7 +39,7 @@ class _Release:
 
 
 def _tls_files(root: Path, server_name: str) -> tuple[Path, Path, Path]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Preview Readiness CA")])
     ca = (

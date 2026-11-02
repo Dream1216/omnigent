@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
 from uuid import UUID, uuid4
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from saas.control_plane import BillingControlPlane, BillingControlPlaneError
 
-NOW = datetime(2026, 8, 6, 5, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 6, 5, tzinfo=UTC)
 
 
 def _postgres_url() -> str:

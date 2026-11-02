@@ -339,6 +339,37 @@ def _cancelled_other_pr_attempt(run, jobs, number, destination):
     }
 
 
+def _discovery_trigger_identity(environment, event, profile):
+    source = environment.get("WORKFLOW_HEAD_SHA")
+    if (
+        profile.get("component") == "Compatibility018"
+        and event == "workflow_run"
+        and isinstance(source, str)
+        and re.fullmatch(r"[0-9a-f]{40}", source)
+        and source != profile["product_revision"]
+    ):
+        from saas.scripts.protected_legacy_initial_build import validate_profile
+
+        validate_profile(profile, "Compatibility018")
+        pulls = environment["WORKFLOW_PRS"]
+        numbers = _pr_numbers(pulls)
+        require(
+            environment["EVENT_NAME"] == event
+            and environment.get("REPO") == REPOSITORY
+            and environment["EVENT_PR"] == environment["EVENT_HEAD_SHA"] == ""
+            and len(numbers) == 1
+            and pulls[0].get("url") == f"{_REPO_URL}/pulls/{numbers[0]}"
+            and isinstance(pulls[0].get("head", {}).get("sha"), str)
+            and re.fullmatch(r"[0-9a-f]{40}", pulls[0]["head"]["sha"]) is not None
+            and pulls[0].get("head", {}).get("repo", {}).get("url") == _REPO_URL
+            and pulls[0].get("base", {}).get("repo", {}).get("url") == _REPO_URL,
+            "non-current workflow event has no unique native PR/repository identity",
+        )
+        # A newer PR snapshot must not rewrite the original, non-current event source.
+        return numbers[0], source
+    return trigger_identity(environment, event)
+
+
 def _inspect_run(
     run: dict[str, Any],
     profile: dict[str, Any],
@@ -505,8 +536,8 @@ def _inspect_run(
             "domain checkout and trigger step order differs",
         )
         control = checkout_commit(log, checkout)
-        environment = trigger_environment(log, resolve)
-        original_pr, source = trigger_identity(environment, run["event"])
+        environment = trigger_environment(_cancelled_trigger_group(log, resolve), resolve)
+        original_pr, source = _discovery_trigger_identity(environment, run["event"], profile)
         require(
             not numbers or original_pr in numbers,
             "native PR association contradicts original trigger",

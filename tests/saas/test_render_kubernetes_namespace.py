@@ -27,6 +27,56 @@ _ROOT = Path(__file__).resolve().parents[2]
 _DEPLOYMENT = _ROOT / "saas" / "deployment" / "server"
 
 
+def test_fixed_qa_profile_isolates_workloads_and_preserves_exact_database_peer(
+    tmp_path: Path,
+) -> None:
+    source = _copy_sources(tmp_path)
+    original = {name: (source / name).read_bytes() for name in MANIFEST_NAMES}
+    output = tmp_path / "qa"
+    render_namespace_manifests(source, output, target_profile="isolated-qa")
+    for name in MANIFEST_NAMES:
+        assert (source / name).read_bytes() == original[name]
+        assert all(
+            row["metadata"]["namespace"] == "omnigent-021-validation-20261102"
+            for row in _items(output / name)
+        )
+    policies = _items(output / "kubernetes.network-policy.yaml")
+    peers = [
+        rule["to"][0]
+        for policy in policies
+        for rule in policy["spec"].get("egress", [])
+        if rule.get("ports") == [{"protocol": "TCP", "port": 5432}]
+    ]
+    assert (
+        peers
+        == [
+            {
+                "namespaceSelector": {
+                    "matchLabels": {
+                        "kubernetes.io/metadata.name": "omnigent-019-validation-20261016"
+                    }
+                },
+                "podSelector": {"matchLabels": {"cnpg.io/cluster": "og019-validation-pg"}},
+            }
+        ]
+        * 6
+    )
+    evidence = json.loads((output / EVIDENCE_FILE_NAME).read_text())
+    assert evidence["target_profile"] == "isolated-qa"
+    assert evidence["database_cluster"] == "og019-validation-pg"
+    assert evidence["external_database_namespace"]["replacement_count"] == 6
+
+
+@pytest.mark.parametrize("profile", ["arbitrary", "omnigent-next-beta", "../isolated-qa"])
+def test_namespace_renderer_rejects_unregistered_target_profile(
+    tmp_path: Path, profile: str
+) -> None:
+    output = tmp_path / "rejected"
+    with pytest.raises(NamespaceRenderError, match="unknown fixed namespace target profile"):
+        render_namespace_manifests(_copy_sources(tmp_path), output, target_profile=profile)
+    assert not output.exists()
+
+
 def _copy_sources(tmp_path: Path) -> Path:
     source_dir = tmp_path / "source"
     source_dir.mkdir()

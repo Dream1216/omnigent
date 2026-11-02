@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -174,7 +174,7 @@ class EnterpriseCustomRoleRetirementView:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _clean_text(value: str, *, maximum: int, code: str) -> str:
@@ -203,7 +203,7 @@ def _hash(payload: dict[str, object]) -> str:
 
 
 def _comparable(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _require_fresh_auth(reauthenticated_at: datetime, now: datetime) -> None:

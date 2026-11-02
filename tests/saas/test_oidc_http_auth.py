@@ -4,7 +4,7 @@ import base64
 import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
@@ -144,7 +144,7 @@ class _FakeOidcProvider:
         ):
             return httpx.Response(400)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         claims: dict[str, object] = {
             "iss": _ISSUER,
             "sub": pending.subject,

@@ -219,7 +219,9 @@ def _fleet() -> RunnerDatabaseFleet:
     return RunnerDatabaseFleet(Path("/fleet"), "f" * 64, _members())
 
 
-def _projection() -> RunnerDatabaseFleetCatalogProjection:
+def _projection(
+    *, schema_revision: str = _CONTROL_PLANE_SCHEMA_REVISION
+) -> RunnerDatabaseFleetCatalogProjection:
     runners = _members()
     roles = tuple(
         sorted(
@@ -276,7 +278,7 @@ def _projection() -> RunnerDatabaseFleetCatalogProjection:
             transaction_read_only=True,
             operator_is_superuser=True,
         ),
-        schema_revision=_CONTROL_PLANE_SCHEMA_REVISION,
+        schema_revision=schema_revision,
         cluster_settings=(
             ("max_notify_queue_pages", "64", "postmaster", False, "configuration file"),
             ("max_prepared_transactions", "0", "postmaster", False, "configuration file"),

@@ -7,7 +7,7 @@ Revises: p4e000000001
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 from alembic import op
@@ -108,7 +108,7 @@ def _backfill_legacy_gateway_tombstones() -> None:
     gateway_ids = connection.execute(
         sa.text("SELECT DISTINCT gateway_instance_id FROM saas_runner_tunnel_placements")
     ).scalars()
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     table = sa.table(
         "saas_preview_gateway_instances",
         sa.column("id"),

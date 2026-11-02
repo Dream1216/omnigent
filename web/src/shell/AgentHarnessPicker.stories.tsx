@@ -153,6 +153,9 @@ type Story = StoryObj<typeof meta>;
 
 async function openPicker(canvasElement: HTMLElement): Promise<void> {
   await userEvent.click(within(canvasElement).getByTestId("new-chat-landing-agent-select"));
+  const menu = await within(canvasElement.ownerDocument.body).findByRole("menu");
+  // Submenus must measure the parent after its entrance transform settles.
+  await Promise.all(menu.getAnimations().map((animation) => animation.finished));
 }
 
 export const ReadyOnHost: Story = {

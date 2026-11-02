@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
 from uuid import uuid4
@@ -124,7 +124,7 @@ def _placement(gateway_instance_id: str) -> RunnerTunnelPlacement:
         gateway_instance_id=gateway_instance_id,
         relay_subject=f"rtp_{uuid4().hex}",
         status="active",
-        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
 
 
@@ -144,7 +144,7 @@ def gateway_fixture():
 
     SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     directory = PreviewGatewayDirectoryAuthority(factory, service_session_factory=factory)
     certificates = PreviewGatewayCertificateAuthority(
         factory,
@@ -552,7 +552,7 @@ def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
 def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards() -> None:
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(_postgres_url())
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     gateway_instance_id = f"gateway-rls-{uuid4().hex[:12]}"
     token = f"gateway-rls-token-{uuid4().hex}" + "x" * 16
     with engine.begin() as connection:

@@ -91,7 +91,7 @@ env:
 
 jobs:
   verify-candidate-preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout immutable preflight candidate
@@ -134,7 +134,7 @@ jobs:
         run: uv run python -m saas.scripts.check_image_supply_chain
 
   verify-production-migration-replay:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -193,7 +193,7 @@ jobs:
     needs:
       - verify-candidate-preflight
       - verify-production-migration-replay
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     outputs:
       oci-artifact-id: ${{ steps.upload-oci.outputs.artifact-id }}
@@ -254,15 +254,15 @@ jobs:
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
         run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_control_plane_migration_cli
           uv run python -m saas.scripts.check_patch_queue
           uv run python -m saas.scripts.check_upstream_delta
           uv run python -m saas.scripts.check_production_baseline
           uv run python -m saas.scripts.check_image_supply_chain
       - name: Install Chromium
-        run: uv run playwright install --with-deps chromium
+        run: |
+          bash saas/scripts/ci_install_ubuntu_packages.sh --playwright-chromium
+          uv run --no-sync playwright install chromium
       - name: Set up login UI build runtime
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -518,7 +518,7 @@ jobs:
       github.ref == 'refs/heads/main'
     needs: build-candidate
     environment: production-image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       actions: read
@@ -886,7 +886,7 @@ jobs:
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
     needs: [build-candidate, publish-signed]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from hashlib import sha256
 from typing import TypedDict, cast
@@ -236,7 +236,7 @@ class BillingOverview(TypedDict):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _time(value: datetime, field: str) -> datetime:
@@ -248,7 +248,7 @@ def _time(value: datetime, field: str) -> datetime:
 def _stored_time(value: datetime) -> datetime:
     """Normalize SQLite's timezone-naive round trip to the PostgreSQL UTC contract."""
 
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def _text(value: str, field: str, maximum: int) -> str:
@@ -310,8 +310,11 @@ def _next_period_end(period: str, current_end: datetime) -> datetime:
 class BillingControlPlane:
     """Own all commercial-state writes and keep customer/provider ledgers separate."""
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self, session_factory: sessionmaker[Session], *, require_usage_ingress: bool = False
+    ) -> None:
         self._session_factory = session_factory
+        self._require_usage_ingress = require_usage_ingress
 
     def configure_subscription(
         self,
@@ -1523,6 +1526,24 @@ class BillingControlPlane:
                     .order_by(UsageEventRecord.id)
                 )
             )
+            if self._require_usage_ingress:
+                from saas.control_plane.outbox import OutboxPublishError
+                from saas.control_plane.outbox_delivery import verify_usage_ingress
+
+                # Never omit undelivered Usage from reconciliation totals. Pending
+                # ingestion blocks this report before it creates a batch or mismatch.
+                for usage in usage_events:
+                    pricing = db.get(PricingSnapshotRecord, usage.pricing_snapshot_id)
+                    if pricing is None:
+                        raise BillingControlPlaneError(
+                            "pricing_snapshot_missing", "Usage pricing is unavailable"
+                        )
+                    try:
+                        verify_usage_ingress(db, usage, pricing)
+                    except OutboxPublishError as error:
+                        raise BillingControlPlaneError(
+                            error.code, "Usage reconciliation ingress is not ready"
+                        ) from None
             usage_ids = tuple(event.id for event in usage_events)
             ledger_entries = (
                 tuple(

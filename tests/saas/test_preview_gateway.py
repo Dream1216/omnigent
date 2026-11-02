@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -48,7 +48,7 @@ class _Authority:
                 "X-Frame-Options": "DENY",
                 "X-Content-Type-Options": "nosniff",
             },
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
 
     def authorize_preview_request(

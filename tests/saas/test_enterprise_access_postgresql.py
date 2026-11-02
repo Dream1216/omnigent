@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -22,7 +22,7 @@ from saas.control_plane import (
 )
 from saas.control_plane.rls_inventory import CONTROL_PLANE_RLS_TABLES
 
-_NOW = datetime(2026, 8, 5, 14, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 8, 5, 14, 0, tzinfo=UTC)
 
 
 def _postgres_url() -> str:

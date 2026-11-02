@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -193,7 +193,7 @@ class ProjectRemovalImpactProvider:
         space_id: UUID | None,
         user_id: UUID,
     ) -> RemovalImpact:
-        checked_at = datetime.now(timezone.utc)
+        checked_at = datetime.now(UTC)
         with self._session_factory.begin() as db:
             apply_rls_context(
                 db,
@@ -241,8 +241,8 @@ class ProjectRemovalImpactProvider:
     @staticmethod
     def _comparable(value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 class EnterpriseAccessRemovalImpactProvider:
@@ -446,5 +446,5 @@ class ServiceAccountRemovalImpactProvider:
     @staticmethod
     def _comparable(value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)

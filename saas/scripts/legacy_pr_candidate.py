@@ -30,6 +30,7 @@ from saas.scripts.oci_promotion import (
     verify_candidate,
 )
 from saas.scripts.protected_legacy_initial_build import (
+    COMPATIBILITY_COMPONENT,
     REPOSITORY,
     load_profile,
     provenance,
@@ -45,6 +46,7 @@ VALIDATION_REFS = {
     "Core": "codex/legacy-validation-core-dc1e9a97",
     "Gateway": "codex/legacy-validation-gateway-3319b59a",
     "Model": "codex/legacy-validation-model-7cea0940",
+    COMPATIBILITY_COMPONENT: "codex/p18-a7-validation-base-20261102",
 }
 _REQUIRED_STEPS = (
     "Checkout immutable candidate",
@@ -62,6 +64,14 @@ _REQUIRED_STEPS = (
     UPLOAD_STEP,
 )
 _HEX256 = re.compile(r"[0-9a-f]{64}")
+_COMPATIBILITY_TRANSFER_SHA256 = "1ee0ff9e34b89c7991e3d12ade1dbad82cc91bc25c039a9b3fc5034d6293ee89"
+
+
+def upload_step_name(component: str) -> str:
+    require(component in VALIDATION_REFS, "unknown legacy transfer component")
+    if component == COMPATIBILITY_COMPONENT:
+        return "Upload unsigned OCI bytes for isolated PR validation"
+    return UPLOAD_STEP
 
 
 def load_transfer_profile(control: Path, component: str) -> dict[str, Any]:
@@ -100,6 +110,14 @@ def validate_transfer_profile(value: dict[str, Any], component: str) -> None:
         and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?", value["actor"]) is not None,
         "missing reviewed native PR actor",
     )
+    if component == COMPATIBILITY_COMPONENT:
+        canonical = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+        require(
+            hashlib.sha256(canonical).hexdigest() == _COMPATIBILITY_TRANSFER_SHA256,
+            "compatibility transfer differs from the exact reviewed PR contract",
+        )
 
 
 def verify_pr_oci_artifact(
@@ -174,7 +192,8 @@ def verify_pr_oci_artifact(
     )
     steps = cast(list[dict[str, Any]], steps)
     selected = []
-    for name in _REQUIRED_STEPS:
+    required_steps = (*_REQUIRED_STEPS[:-1], upload_step_name(component))
+    for name in required_steps:
         matching = [step for step in steps if step.get("name") == name]
         require(len(matching) == 1, "required native OCI step is missing or ambiguous")
         step = matching[0]
@@ -201,10 +220,13 @@ def verify_pr_oci_artifact(
         ),
         "invalid PR OCI input digest",
     )
-    name = (
-        f"legacy-validation-oci-{component}-{profile['product_revision']}-"
-        f"{run['id']}-{run['run_attempt']}"
-    )
+    if component == COMPATIBILITY_COMPONENT:
+        name = f"saas-oci-validation-{profile['product_revision']}"
+    else:
+        name = (
+            f"legacy-validation-oci-{component}-{profile['product_revision']}-"
+            f"{run['id']}-{run['run_attempt']}"
+        )
     require(
         type(artifact_id) is int
         and artifact_id > 0

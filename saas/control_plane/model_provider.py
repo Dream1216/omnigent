@@ -6,7 +6,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -579,12 +579,12 @@ def _require_fresh(actor: ValidatedPlatformPrincipal, changed_at: datetime) -> N
 
 def _stored_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 __all__ = [

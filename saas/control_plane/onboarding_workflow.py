@@ -10,7 +10,7 @@ from __future__ import annotations
 import hmac
 import json
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from typing import Protocol, cast
@@ -394,7 +394,7 @@ class TenantOnboardingWorkflow:
     ) -> OnboardingWorkflowResult:
         """Claim and execute at most one stage; terminal/waiting stages replay safely."""
 
-        effective_now = _stored_time(now or datetime.now(timezone.utc))
+        effective_now = _stored_time(now or datetime.now(UTC))
         claim, replay = self._claim(
             scope,
             effective_now,
@@ -438,7 +438,7 @@ class TenantOnboardingWorkflow:
     ) -> OnboardingWorkflowResult:
         """Close the customer journey only after a real, normally admitted user Run."""
 
-        occurred_at = _stored_time(now or datetime.now(timezone.utc))
+        occurred_at = _stored_time(now or datetime.now(UTC))
         with self._sessions() as db:
             self._apply_scope(db, scope)
             saga = self._saga(db, scope, lock=False)
@@ -1464,7 +1464,7 @@ class TenantOnboardingWorkflow:
         checked_at = (
             _stored_time(cast(datetime, database_now))
             if isinstance(database_now, datetime)
-            else _stored_time(datetime.now(timezone.utc))
+            else _stored_time(datetime.now(UTC))
         )
         if not allow_expired and _stored_time(cast(datetime, saga.lease_expires_at)) <= checked_at:
             raise OnboardingWorkflowError(
@@ -1766,8 +1766,8 @@ def onboarding_scope_from_payload(payload: dict[str, object]) -> OnboardingScope
 
 def _stored_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _digest(payload: object) -> str:

@@ -1,0 +1,58 @@
+{
+  "admission": "new independent source/material review and full signed image qualification required; no original approval inherited",
+  "base_images": {
+    "host": "ghcr.io/dream1216/omnigent-saas-host@sha256:8e459374205b62f383893d1c624375a18020b2df7711a71ea5a7638e62363ea6",
+    "server": "ghcr.io/dream1216/omnigent-saas-server@sha256:b96e64e71ec14879806d1a788b8aa5b3c95f6eccb42da0a1afec84447cad4004"
+  },
+  "base_product_revision": "3659f0b010f86d581299e8035e19ce226d518fab",
+  "contract": "M3659-D0-retaining-T-compatibility-v1",
+  "database_mutation": false,
+  "dependency_changes": false,
+  "files": {
+    "omnigent/db/migrations/versions/9e82957bd115_add_scheduled_task_completed_state.py": {
+      "original_sha256": null,
+      "patched_sha256": "497d87efc94cd85b50c50483054b141e933aa72d31081c0059f19a6a146c76bd"
+    },
+    "omnigent/db/migrations/versions/b2e4f6a8c013_merge_completed_state_and_pull_requests.py": {
+      "original_sha256": null,
+      "patched_sha256": "1f6f4ce94b8bf3c2032a14125b94aa0798ddb79886a86ee46753a2f61afa57f6"
+    },
+    "omnigent/db/migrations/versions/c8e4f2a6b901_add_scheduled_task_dispatch_fields.py": {
+      "original_sha256": null,
+      "patched_sha256": "b6f98682918aa2a75d62f88ddf7403f3d866a1933421ac4740e09f49ebcfe6dd"
+    },
+    "omnigent/db/migrations/versions/d0a1f879a01d_add_scheduled_task_session_mode.py": {
+      "original_sha256": null,
+      "patched_sha256": "99c4855712416887b1b08f3d2cb5a5f8ba7e60ca7bcb2a2ea150447c31215cd0"
+    },
+    "omnigent/db/migrations/versions/d3f7a1c9e2b4_add_pull_requests_to_conversation_metadata.py": {
+      "original_sha256": null,
+      "patched_sha256": "3e5c3120fb1e8a773365145dd6a7c033bc4d4ffacad6a70c22c9f466a6233413"
+    },
+    "omnigent/db/migrations/versions/nf12ab34cd56_index_conversations_by_host.py": {
+      "original_sha256": null,
+      "patched_sha256": "7126b13500030bb25a0a20d80a73339ac085329bc19be3e7a1e8a2bbe8dee80e"
+    },
+    "saas/production/postgresql_migration.py": {
+      "original_sha256": "e9c5e9210da07c1825d62cc8f198e5471e0e41001a87a7b318206ac28ce91127",
+      "patched_sha256": "84c7c557e9e8be0ca56563718b8e1dbb0a2c2c64290a418c47734793b78ac3d9"
+    },
+    "saas/upstream-baseline.json": {
+      "original_sha256": "da0cb54a894bd8153996f21f12bc08be4dc845122a3b8adbe3f1723407ff488d",
+      "patched_sha256": "fa12b599956db471d84d0e21a6cd68d4da80163dc5f75db8a657a4615576709a"
+    }
+  },
+  "legacy_normal_source_budget": "prototype 184 files exceeds unchanged M0 cap 178; not qualified by original budget",
+  "legacy_runtime_version": "0.18.0.dev20261006",
+  "official_definition_source": "ee728a02004749e7f6971beee6c66d990bfbd216",
+  "original_wheel_sha256": "c7e7a87387dacd5b8e0eaaa1f471ea741bcdd0ae9494593be91bf9468ec5ee2f",
+  "patch_sha256": "623efeb47a84de2c5f07d1cff17982e491bdead90104d371112cf3b9e8dfd7ec",
+  "production_authority": false,
+  "required_schema": {
+    "official": "d0a1f879a01d",
+    "saas": "lm2t00000001"
+  },
+  "runner_permissions_changed": false,
+  "schema_version": 1,
+  "wheel_attestation": "https://github.com/Dream1216/omnigent/attestations/62179810"
+}

@@ -39,7 +39,7 @@ concurrency:
 jobs:
   verify:
     if: inputs.mode != 'promote-reviewed-gen2' && inputs.mode != 'qualify-poc-alias'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -88,7 +88,7 @@ jobs:
 
   build:
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -168,7 +168,7 @@ jobs:
 
   compare-and-scan:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -211,7 +211,7 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.mode == 'promote-reviewed-gen2' &&
       github.repository == 'Dream1216/omnigent' &&
       github.ref == 'refs/heads/codex/aliyun-sandbox-p1-p5-20261031'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -357,7 +357,7 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.mode == 'qualify-poc-alias' &&
       github.repository == 'Dream1216/omnigent' &&
       github.ref == 'refs/heads/codex/aliyun-sandbox-p1-p5-20261031'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

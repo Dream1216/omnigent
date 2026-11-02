@@ -5,7 +5,7 @@ import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
 from typing import cast
@@ -93,7 +93,7 @@ def _fixture() -> tuple[
     SaasBase.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     placement_id = uuid4()
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     with factory.begin() as db:
         db.add(
             RuntimePlacementRecord(
@@ -191,7 +191,7 @@ def _route(runner_id: UUID, generation: int) -> PreviewRouteGrant:
         preview_token_hash="a" * 64,
         upstream_request_headers={},
         response_headers={},
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
 
 
@@ -488,7 +488,7 @@ def test_real_postgresql_concurrent_placement_claim_and_monotonic_guards() -> No
         schema_revision="runtime-schema-v1",
         adapter_contract_version="0.2.0",
     )
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     directory = PreviewGatewayDirectoryAuthority(
         _role_factory(engine, "saas_platform"),
         service_session_factory=_role_factory(engine, "saas_preview_gateway"),

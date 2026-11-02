@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -195,7 +195,7 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts(
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     engine = sa.create_engine(isolated_postgres_url, pool_pre_ping=True)
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     tenant_a, tenant_b = uuid4(), uuid4()
     requester, approver, assignee, delegate, outsider, tenant_b_user = (
         uuid4(),
@@ -1019,7 +1019,7 @@ def test_real_postgresql_notification_approval_security_and_worker_contracts(
                 "last_error_hmac = NULL, version = 2, updated_at = :available WHERE id = :id"
             ),
             {
-                "available": datetime.now(timezone.utc) + timedelta(seconds=1),
+                "available": datetime.now(UTC) + timedelta(seconds=1),
                 "idempotency": _digest(38),
                 "request": _digest(39),
                 "id": delivery_dlq,

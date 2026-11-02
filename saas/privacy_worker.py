@@ -9,7 +9,7 @@ import signal
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal, Protocol, cast
 from uuid import UUID
 
@@ -287,7 +287,7 @@ class PrivacyWorker:
         self._idle_interval = idle_interval
         self._error_backoff = error_backoff
         self._max_error_backoff = max_error_backoff
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._logger = logger or _LOGGER
 
     def run_once(
@@ -747,7 +747,7 @@ class PrivacyWorker:
         value = fixed or self._clock()
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Privacy worker clock must return a timezone-aware value")
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -159,7 +159,7 @@ def test_real_postgresql_context_shell_replica_revocation_and_degradation() -> N
     tenant_id, other_tenant_id = uuid4(), uuid4()
     space_id, other_space_id = uuid4(), uuid4()
     placement_id, partition_id = uuid4(), uuid4()
-    clock = _Clock(datetime.now(timezone.utc).replace(microsecond=0))
+    clock = _Clock(datetime.now(UTC).replace(microsecond=0))
 
     with engine.begin() as connection:
         _migrate(connection, root)

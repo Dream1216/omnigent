@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 from saas.scripts.check_wheel_contents import REQUIRED_WHEEL_PATHS, find_missing_paths
 
@@ -112,6 +111,10 @@ def test_onboarding_vertical_chain_is_a_required_outbox_worker_dependency() -> N
     assert (
         "saas/control_plane/migrations/versions/"
         "p0s000000015_preview_tunnel_reconnect.py" in REQUIRED_WHEEL_PATHS
+    )
+    assert (
+        "saas/control_plane/migrations/versions/"
+        "p0s000000016_public_api_bound_logins.py" in REQUIRED_WHEEL_PATHS
     )
     assert "saas/admin_ui/platform_login.html" in REQUIRED_WHEEL_PATHS
     assert "saas/admin_ui/platform_login.css" in REQUIRED_WHEEL_PATHS

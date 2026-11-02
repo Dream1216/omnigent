@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -16,7 +16,7 @@ from saas.preview_relay_transport import PreviewRelayEndpointPolicy, PreviewRela
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _token_hash(token: str) -> str:

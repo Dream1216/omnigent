@@ -29,7 +29,7 @@ import struct
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import UUID
@@ -657,7 +657,7 @@ def _request(document: Mapping[str, object]) -> tuple[str, dict[str, object]]:
 def _timestamp(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("authority returned a naive timestamp")
-    return value.astimezone(timezone.utc).isoformat()
+    return value.astimezone(UTC).isoformat()
 
 
 def _lease_document(lease: FairRunLease | None) -> dict[str, object]:
@@ -785,7 +785,7 @@ async def _read_frame(reader: asyncio.StreamReader, *, timeout: float) -> dict[s
             raise ValueError("frame prefix is invalid")
         body = await asyncio.wait_for(reader.readexactly(length), timeout=timeout)
         return _strict_document(body)
-    except (asyncio.IncompleteReadError, asyncio.TimeoutError, UnicodeError, ValueError) as error:
+    except (TimeoutError, asyncio.IncompleteReadError, UnicodeError, ValueError) as error:
         raise RunnerControlError(
             "runner_control_frame_invalid", "Runner control frame is invalid"
         ) from error
@@ -888,7 +888,7 @@ class MutualTlsRunnerControlServer:
         try:
             writer.write(_encoded(response))
             await asyncio.wait_for(writer.drain(), timeout=self._timeout)
-        except (ConnectionError, OSError, RuntimeError, asyncio.TimeoutError):
+        except (TimeoutError, ConnectionError, OSError, RuntimeError):
             pass
         finally:
             writer.close()
@@ -1241,7 +1241,7 @@ class MutualTlsRunnerControlClient:
                 fence_token=fence_token,
                 dispatch_generation=_positive_integer(value["dispatch_generation"]),
                 failure_domain=failure_domain,
-                expires_at=expiry.astimezone(timezone.utc),
+                expires_at=expiry.astimezone(UTC),
                 capability_id=_canonical_uuid(value["capability_id"]),
                 capability_token=_secret(value["capability_token"]),
                 execution_envelope=envelope,
@@ -1293,7 +1293,7 @@ class MutualTlsRunnerControlClient:
                 or audience != server_name
                 or port > 65_535
                 or expires_at.tzinfo is None
-                or expires_at <= datetime.now(timezone.utc)
+                or expires_at <= datetime.now(UTC)
             ):
                 raise ValueError("Preview tunnel response binding invalid")
             return RunnerPreviewTunnelRegistration(
@@ -1306,7 +1306,7 @@ class MutualTlsRunnerControlClient:
                 server_name=server_name,
                 audience=audience,
                 registration_token=token,
-                expires_at=expires_at.astimezone(timezone.utc),
+                expires_at=expires_at.astimezone(UTC),
             )
         except (TypeError, ValueError) as error:
             raise RunnerControlError(

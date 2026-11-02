@@ -16,7 +16,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, NoReturn, cast
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -50,6 +50,7 @@ from saas.control_plane.runner_execution_spec import (
 )
 from saas.control_plane.scheduling_models import RunnerRegistrationRecord
 from saas.control_plane.worktree_models import ChangeSetRecord, WorktreeInstanceRecord
+from saas.observability import ensure_observed_factory, require_run_witness
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _DNS_SUFFIX = re.compile(
@@ -60,15 +61,15 @@ _RUNNER_AGENT_LOGIN = re.compile(r"^runner_[0-9a-f]{32}_g[1-9][0-9]*$")
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_utc(value: datetime) -> datetime:
     """Normalize SQLite's timezone-naive round trip without weakening UTC policy."""
 
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _canonical_hash(payload: object) -> str:
@@ -164,6 +165,7 @@ class PreviewExecutionControlPlane:
         authorizer: ProjectAuthorizer | None = None,
     ) -> None:
         self._session_factory = session_factory
+        ensure_observed_factory(session_factory)
         self._policy = policy
         self._authorizer = authorizer or ProjectAuthorizer(session_factory)
 
@@ -222,6 +224,10 @@ class PreviewExecutionControlPlane:
                     or existing.profile != STATIC_WEB_PREVIEW_PROFILE
                 ):
                     raise PreviewExecutionControlPlaneError("preview_idempotency_conflict")
+                child = db.get(RunRecord, existing.child_run_id)
+                if child is None:
+                    raise PreviewExecutionControlPlaneError("preview_child_unavailable")
+                require_run_witness(db, child)
                 return self._state(existing, replayed=True)
             active = db.scalar(
                 sa.select(PreviewExecutionRecord)
@@ -1553,7 +1559,7 @@ class PreviewRunnerExecutionAuthority:
         )
         run_expiry = None if run is None else run.lease_expires_at
         if run_expiry is not None and run_expiry.tzinfo is None:
-            run_expiry = run_expiry.replace(tzinfo=timezone.utc)
+            run_expiry = run_expiry.replace(tzinfo=UTC)
         if (
             runner is None
             or runner.status not in {"online", "draining"}

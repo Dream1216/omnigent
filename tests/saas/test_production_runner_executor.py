@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import threading
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -475,7 +475,7 @@ class _PreviewSupervisor:
             pid=123,
             reason="stopped",
             returncode=0,
-            stopped_at=datetime.now(timezone.utc),
+            stopped_at=datetime.now(UTC),
         )
 
     async def last_exit(self, _preview_id: UUID) -> None:
@@ -491,7 +491,7 @@ def _build_prepared_executor(
     *,
     suffix: str,
 ) -> _PreparedExecutor:
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0)
     git_root = tmp_path / f"git-{suffix}"
     git_root.mkdir(mode=0o700)
     source, source_head = _create_git_fixture(git_root)
@@ -707,7 +707,7 @@ async def test_preview_execution_uses_readonly_static_supervisor_and_durable_sto
     original_envelope = context.lease.execution_envelope
     assert original_envelope is not None
     preview_id = uuid4()
-    operation_at = datetime.now(timezone.utc)
+    operation_at = datetime.now(UTC)
     preview_root = tmp_path / "preview-readonly"
     publish_root = preview_root / "dist"
     publish_root.mkdir(parents=True, mode=0o700)
@@ -898,7 +898,7 @@ async def test_checkpoint_failure_downgrades_success_and_leaves_durable_recovery
         assert quota is not None and quota.active_instances == quota.active_writers == 1
 
     recovered = context.fixture.worktrees.expire_stale_leases(
-        now=datetime.now(timezone.utc) + timedelta(minutes=10)
+        now=datetime.now(UTC) + timedelta(minutes=10)
     )
     assert len(recovered) == 1 and recovered[0].status == "quarantined"
 
@@ -1271,7 +1271,7 @@ async def test_checkpoint_longer_than_original_ttl_keeps_exact_fence_live(
     # that renewal has succeeded and the checkpoint is demonstrably blocked.
     await context.executor._stop_worktree_heartbeat(active, require_healthy=True)
 
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=0.12)
+    expires_at = datetime.now(UTC) + timedelta(seconds=0.12)
     async with active.heartbeat_lock:
         with context.fixture.factory.begin() as database:
             record = database.get(WorktreeInstanceRecord, active.worktree_lease.worktree_id)
@@ -1329,8 +1329,8 @@ async def test_checkpoint_longer_than_original_ttl_keeps_exact_fence_live(
         active.heartbeat_stop = heartbeat_stop
         active.heartbeat_task = heartbeat
     assert await asyncio.to_thread(wait_for_renew_fence_after, pre_checkpoint_renewals)
-    await asyncio.sleep(0.2)
-    assert datetime.now(timezone.utc) > expires_at
+    await asyncio.sleep(0.2)  # custom-lint: disable=sleep-then-assert -- cross original lease TTL
+    assert datetime.now(UTC) > expires_at
     release_upload.set()
     assert await asyncio.wait_for(preparation, timeout=2) == "succeeded"
     assert active.worktree_lease.expires_at > expires_at
@@ -1604,7 +1604,7 @@ async def test_late_heartbeat_response_after_timeout_cannot_restore_execution(
     expiry_before_late_response = active.worktree_lease.expires_at
     assert await asyncio.wait_for(execution, timeout=1) == "orphaned"
     release_response.set()
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.05)  # custom-lint: disable=sleep-then-assert -- late-response window
     assert active.lease_lost and context.executor._heartbeat_worker_poisoned
     assert active.worktree_lease.expires_at == expiry_before_late_response
     assert environment.closed == 1
@@ -1673,7 +1673,7 @@ async def test_runner_reconciles_only_its_exact_gc_eligible_physical_state(
     _terminalize(context, result)
     await context.executor.finalize(context.lease, result=result)
     eligible = context.fixture.worktrees.mark_gc_eligible(
-        now=datetime.now(timezone.utc) + timedelta(minutes=10)
+        now=datetime.now(UTC) + timedelta(minutes=10)
     )
     assert [item.worktree_id for item in eligible] == [active.worktree_lease.worktree_id]
 
@@ -1695,7 +1695,7 @@ def test_worker_loop_releases_worktree_quota_after_runner_process_loss(
     with context.fixture.factory.begin() as database:
         record = database.get(WorktreeInstanceRecord, active.worktree_lease.worktree_id)
         assert record is not None
-        record.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        record.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
         quota = database.scalar(sa.select(WorktreeQuotaRecord))
         assert quota is not None and quota.active_instances == 1
 

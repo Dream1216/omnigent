@@ -6,7 +6,7 @@ import socket
 import ssl
 import threading
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
@@ -49,7 +49,7 @@ def _certificate_fixture(
     *,
     extra_runner_uri: bool = False,
 ) -> dict[str, _CertificateFiles]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Omnigent Metering CA")])
     ca_certificate = (
@@ -334,7 +334,7 @@ def _record(client: MutualTlsBillingMeteringClient, runner_id: UUID, run_id: UUI
         provider="openai",
         provider_request_id="provider-request-1",
         idempotency_key="stable-metering-key",
-        occurred_at=datetime.now(timezone.utc).replace(microsecond=0),
+        occurred_at=datetime.now(UTC).replace(microsecond=0),
         attributes={"model": "gpt-5"},
     )
 
@@ -382,7 +382,7 @@ def test_mtls_metering_rejects_duplicate_json_and_caller_scope(tmp_path: Path) -
         tmp_path,
         runner_ids=(runner_id,),
     )
-    occurred_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    occurred_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     duplicate = (
         '{"attributes":{},"capability_token":"capability-token",'
         '"idempotency_key":"stable","meter":"llm.input_tokens",'

@@ -353,17 +353,26 @@ def test_v2_record_bytes_and_runtime_default_semantics_are_preserved() -> None:
     policy["schema_version"] = 2
     del policy["runner_seccomp"]
     record = _v2_record()
+    # The byte-compatibility fixture belongs to its original release, even
+    # when the active policy advances to a newer upstream revision.
+    policy["revision_contract"] = record["revision_contract"] = {
+        **policy["revision_contract"],
+        "upstream_revision": "3db749d784ff044304473939acaae3a65c0fec61",
+    }
+    baseline = json.loads((_repo() / "saas/production/baseline.json").read_text())
+    baseline["revision_contract"] = policy["revision_contract"]
+    _resign(record)
     assert (
         record["record_sha256"]
-        == "7cf620beb26c17533433a2c4a4ca7b54b1caaea0c2d30195359d4bce4ad7f832"
+        == "5966eecda7061c10edc8ab9b916b370334dfd51e18d0cd51aaeddebe477da014"
     )
     assert (
         hashlib.sha256(
             json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
         ).hexdigest()
-        == "8407f0cfcba5a327247a369be098aee661c9ddec188e46de477c273f86a65586"
+        == "2365e3fd4fc5afbfbfde6d19dcdb07a8e36289e264a47a036be0cae0fed18aab"
     )
-    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW)
+    report = validate_deployment_readiness(_repo(), policy, [record], now=_NOW, baseline=baseline)
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
     record["components"]["runner"]["seccomp_profile"] = "Localhost"

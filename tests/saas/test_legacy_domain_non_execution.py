@@ -1155,3 +1155,211 @@ def test_infrastructure_all_app_rejects_relabelled_or_changed_native_proof(
     monkeypatch.setattr(qualifier, "assess_all_app_policy", altered)
     with pytest.raises(ValueError):
         invoke(scenario, tmp_path)
+
+
+@pytest.fixture
+def compatibility_infrastructure(scenario, infrastructure_case, monkeypatch):
+    observed = infrastructure_case
+    profile = {**scenario["profile"], "component": "Compatibility018"}
+    identity = {
+        **scenario["identity"],
+        "component": "Compatibility018",
+        "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    }
+    rule = {**observed["rule"], "validation_base_ref": identity["validation_base_ref"]}
+    contract = {
+        "runner": (1000081455, "GitHub Actions 1000081455", 0, "GitHub Actions"),
+        "steps": audit._INFRASTRUCTURE_STEPS,
+        "archive_bytes": len(observed["logs"]),
+        "archive_sha256": audit._INFRASTRUCTURE_LOG_SHA256,
+        "members": audit._INFRASTRUCTURE_LOG_MEMBERS,
+        "operation_line": 29,
+        "git_executed": True,
+    }
+    # Reuse the owning native fixture; fake fingerprints are scoped to this unit test.
+    monkeypatch.setitem(
+        audit.validate_profile.__globals__,
+        "_COMPATIBILITY_PROFILE_SHA256",
+        domain.native_digest(profile),
+    )
+    monkeypatch.setitem(
+        audit._COMPATIBILITY_INFRASTRUCTURE_CONTRACTS, domain.native_digest(rule), contract
+    )
+    return profile, identity, rule, observed, contract
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [None, "unregistered", "profile", "other_component", "provider", "gate", "annotation", "ZIP"],
+)
+def test_compatibility_exact_pre_guard_audit_retains_unknown_and_strict_native_guards(
+    compatibility_infrastructure, monkeypatch, fault
+):
+    profile, identity, rule, observed, contract = compatibility_infrastructure
+    if fault == "unregistered":
+        rule["job_id"] += 1
+    elif fault == "profile":
+        profile["product_tree"] = "a" * 40
+    elif fault == "other_component":
+        profile["component"] = identity["component"] = "Core"
+    elif fault == "provider":
+        observed["check"]["app"]["id"] = 42
+        rule["check_sha256"] = domain.native_digest(observed["check"])
+    elif fault == "gate":
+        observed["job"]["steps"][3]["conclusion"] = "success"
+        rule["job_sha256"] = domain.native_digest(observed["job"])
+    elif fault == "annotation":
+        observed["annotations"][1]["start_line"] += 1
+        observed["annotations"][1]["end_line"] += 1
+        rule["annotations_sha256"] = domain.native_digest(observed["annotations"])
+    elif fault == "ZIP":
+        observed["logs"] += b"unexpected"
+        rule["run_logs_sha256"] = hashlib.sha256(observed["logs"]).hexdigest()
+    if fault in {"provider", "gate", "annotation", "ZIP"}:
+        monkeypatch.setitem(
+            audit._COMPATIBILITY_INFRASTRUCTURE_CONTRACTS, domain.native_digest(rule), contract
+        )
+    args = (
+        profile,
+        identity,
+        rule,
+        observed["run"],
+        observed["job"],
+        observed["check"],
+        observed["annotations"],
+        observed["logs"],
+    )
+    if fault is not None:
+        with pytest.raises(ValueError):
+            audit.verify_infrastructure_cancellation(*args)
+    else:
+        receipt = audit.verify_infrastructure_cancellation(*args).receipt
+        assert receipt["source_classification"] == "UNKNOWN"
+        assert receipt["original_conclusion"] == "cancelled"
+        assert (
+            receipt["source_proof"]
+            is receipt["guard_refusal"]
+            is receipt["technical_gate_waiver"]
+            is receipt["production_admission"]
+            is False
+        )
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("extra_step", [False, True])
+def test_compatibility_assigned_runner_with_no_records_keeps_execution_unknown(
+    compatibility_infrastructure, monkeypatch, extra_step
+):
+    profile, identity, rule, observed, original_contract = compatibility_infrastructure
+    observed["job"]["steps"] = []
+    observed["annotations"].pop(1)
+    observed["check"]["output"]["annotations_count"] = len(observed["annotations"])
+    observed["logs"] = audit._EMPTY_ZIP
+    contract = {
+        **original_contract,
+        "steps": (),
+        "archive_bytes": 22,
+        "archive_sha256": hashlib.sha256(observed["logs"]).hexdigest(),
+        "members": (),
+        "operation_line": None,
+        "git_executed": None,
+        "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
+    }
+    if extra_step:
+        observed["job"]["steps"].append(copy.deepcopy(_INFRASTRUCTURE_NATIVE_STEPS[3]))
+    rule.update(
+        job_sha256=domain.native_digest(observed["job"]),
+        check_sha256=domain.native_digest(observed["check"]),
+        annotations_sha256=domain.native_digest(observed["annotations"]),
+        run_logs_sha256=contract["archive_sha256"],
+    )
+    monkeypatch.setitem(
+        audit._COMPATIBILITY_INFRASTRUCTURE_CONTRACTS, domain.native_digest(rule), contract
+    )
+    args = (
+        profile,
+        identity,
+        rule,
+        observed["run"],
+        observed["job"],
+        observed["check"],
+        observed["annotations"],
+        observed["logs"],
+    )
+    if extra_step:
+        with pytest.raises(ValueError, match="native step"):
+            audit.verify_infrastructure_cancellation(*args)
+    else:
+        proof = audit.verify_infrastructure_cancellation(*args)
+        assert audit.typed_observation(proof)
+        assert proof.receipt["execution"] == contract["execution"]
+        assert proof.receipt["git_executed"] is None
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert (
+            proof.receipt["source_proof"]
+            is proof.receipt["guard_refusal"]
+            is proof.receipt["technical_gate_waiver"]
+            is proof.receipt["production_admission"]
+            is False
+        )
+        forged = audit.InfrastructureCancellationObservation(
+            {**proof.receipt, "source_proof": True}
+        )
+        assert not audit.typed_observation(forged)
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("skipped", [False, True])
+@pytest.mark.parametrize("fault", [None, "steps", "log", "provider", "run_success", "profile"])
+def test_compatibility_unattributed_unobserved_job_is_unknown_not_zero_or_source(
+    compatibility_infrastructure, skipped, fault
+):
+    profile, identity, _rule, observed, _contract = compatibility_infrastructure
+    run, job, check = observed["run"], observed["job"], observed["check"]
+    run.update(event="workflow_run", pull_requests=[])
+    job["steps"] = []
+    observed["annotations"].pop(1)
+    check["output"]["annotations_count"] = len(observed["annotations"])
+    logs = audit._EMPTY_ZIP
+    if skipped:
+        job["conclusion"] = check["conclusion"] = "skipped"
+        for key in ("runner_id", "runner_name", "runner_group_id", "runner_group_name"):
+            job[key] = None
+        observed["annotations"] = []
+        check["output"]["annotations_count"] = 0
+    policy = {
+        "kind": audit.BOOTSTRAP_POLICY_KIND,
+        "workflow_sha256": domain.MAIN_WORKFLOW_SHA256,
+        **{
+            k: identity[k]
+            for k in ("validation_pr", "validation_base_ref", "product_revision", "product_tree")
+        },
+    }
+    if fault == "steps":
+        job["steps"].append(copy.deepcopy(_INFRASTRUCTURE_NATIVE_STEPS[3]))
+    if fault == "log":
+        logs += b"command"
+    if fault == "provider":
+        check["app"]["id"] = 42
+    if fault == "run_success":
+        run["conclusion"] = "success"
+    if fault == "profile":
+        profile["product_tree"] = "a" * 40
+    args = (profile, identity, policy, run, job, check, observed["annotations"], logs)
+    if fault is not None:
+        with pytest.raises(ValueError):
+            audit._verify_compatibility_unobserved_job(*args)
+    else:
+        proof = audit._verify_compatibility_unobserved_job(*args)
+        assert isinstance(proof, audit.UnattributedBootstrapCancellationObservation)
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert proof.receipt["original_job_conclusion"] == ("skipped" if skipped else "cancelled")
+        assert proof.receipt["git_executed"] is None
+        assert (
+            proof.receipt["source_proof"]
+            is proof.receipt["guard_refusal"]
+            is proof.receipt["technical_gate_waiver"]
+            is proof.receipt["production_admission"]
+            is False
+        )

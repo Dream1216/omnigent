@@ -6,7 +6,7 @@ import json
 import os
 import threading
 from collections.abc import Coroutine
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -87,7 +87,7 @@ def _grant(
         run_id=uuid4(),
         runner_id=uuid4(),
         capability_token=capability,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
         metering_base_url="https://billing-metering.internal",
         expected_host="billing-metering.internal",
         ca_certificate_path=(tmp_path / "ca.pem").absolute(),

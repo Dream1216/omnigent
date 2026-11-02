@@ -22,10 +22,13 @@ from saas.scripts.resume_oci_promotion import (
 
 REPOSITORY = "Dream1216/omnigent"
 WORKFLOW = ".github/workflows/saas-legacy-security-build.yml"
+COMPATIBILITY_COMPONENT = "Compatibility018"
+_COMPATIBILITY_PROFILE_SHA256 = "e8f9cc6b319ddedeff5583968ea3bd248de98d20ac6bce1c9dfaf9426a8f3d97"
 BASELINES = {
     "Core": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
     "Gateway": "3319b59a5d75a411f339b294cbe6b4133bfb851a",
     "Model": "7cea09404d49fc965ce053e51803688a5be5fe53",
+    COMPATIBILITY_COMPONENT: "a7b5cf29294556084216e9e2746125ccafc9cda0",
 }
 _SHA = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -79,6 +82,23 @@ _MODEL_REVIEWED_BLOB_PAIRS = {
 def validate_profile(profile: dict[str, Any], component: str) -> None:
     """Validate a profile read exclusively from the trusted control checkout."""
     require(component in BASELINES, "unknown legacy component")
+    if component == COMPATIBILITY_COMPONENT:
+        require(type(profile) is dict, "compatibility profile must be an object")
+        try:
+            canonical = json.dumps(
+                profile,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode()
+        except (TypeError, ValueError, RecursionError) as error:
+            raise ValueError("invalid compatibility profile") from error
+        require(
+            hashlib.sha256(canonical).hexdigest() == _COMPATIBILITY_PROFILE_SHA256,
+            "compatibility profile differs from the exact reviewed source contract",
+        )
+        return
     require(
         set(profile) - {"budget_file_cap"}
         == {
@@ -258,6 +278,14 @@ def verify_source_delta(repository: Path, profile: dict[str, Any]) -> None:
     for row in profile["source_delta"]:
         for side, revision in (("before", base), ("after", product)):
             tree = git("ls-tree", revision, "--", row["path"]).decode().split()
+            if row[side] is None:
+                require(
+                    profile["component"] == COMPATIBILITY_COMPONENT
+                    and side == "before"
+                    and not tree,
+                    "reviewed compatibility addition already exists in the baseline",
+                )
+                continue
             require(
                 len(tree) >= 3 and tree[0] == row[side]["mode"] and tree[1] == "blob",
                 "legacy source mode or file type differs",
@@ -280,6 +308,19 @@ def verify_source_delta(repository: Path, profile: dict[str, Any]) -> None:
 
 def verify_metadata_delta(path: str, before: bytes, after: bytes, profile: dict[str, Any]) -> None:
     """Bind exact reviewed metadata bytes and the original narrow field transitions."""
+    if profile.get("component") == COMPATIBILITY_COMPONENT:
+        validate_profile(profile, COMPATIBILITY_COMPONENT)
+        rows = [row for row in profile["source_delta"] if row["path"] == path]
+        require(len(rows) == 1, "metadata path is absent from the reviewed source")
+        row = rows[0]
+        require(
+            row["before"] is not None
+            and row["after"] is not None
+            and hashlib.sha256(before).hexdigest() == row["before"]["sha256"]
+            and hashlib.sha256(after).hexdigest() == row["after"]["sha256"],
+            "compatibility metadata differs from its exact reviewed byte transition",
+        )
+        return
 
     def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}

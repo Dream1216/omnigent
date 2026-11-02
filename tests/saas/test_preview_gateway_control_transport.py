@@ -7,7 +7,7 @@ import socket
 import ssl
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -55,7 +55,7 @@ def _control_certificates(
     root: Path, gateway_ids: tuple[str, ...]
 ) -> dict[str, _CertificateFiles]:
     root.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Gateway Control CA")])
     ca_certificate = (
@@ -186,7 +186,7 @@ def _client_context(files: _CertificateFiles) -> ssl.SSLContext:
 
 
 def _relay_certificate(gateway_id: str, *, purpose: str, serial: int) -> bytes:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     key = ec.generate_private_key(ec.SECP256R1())
     names: list[x509.GeneralName] = [
@@ -674,7 +674,7 @@ def test_gateway_control_rejects_weak_tls_client_time_and_local_identity_mismatc
                 source_revision="a" * 40,
                 adapter_contract_version="0.2.0",
                 registration_token="token-" + "x" * 40,
-                now=datetime.now(timezone.utc),
+                now=datetime.now(UTC),
             )
         assert time_forbidden.value.code == "preview_gateway_control_client_time_forbidden"
 

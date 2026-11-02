@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -8,7 +8,7 @@ from saas.production.retained_sandbox_job import plan_retained_job_image_repair
 
 OLD = "ghcr.io/dream1216/omnigent-saas-host@sha256:" + "1" * 64
 NEW = "ghcr.io/dream1216/omnigent-saas-host@sha256:" + "2" * 64
-NOW = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 22, 9, 0, tzinfo=UTC)
 
 
 def fixture():
@@ -176,4 +176,4 @@ def test_preserves_pvc_and_accepts_already_updated_running_container():
 def test_refuses_expiry_inside_handoff_safety_window():
     job, pods = fixture()
     with pytest.raises(ValueError, match="expiry"):
-        plan(job, pods, now=datetime(2026, 10, 22, 11, 55, tzinfo=timezone.utc))
+        plan(job, pods, now=datetime(2026, 10, 22, 11, 55, tzinfo=UTC))

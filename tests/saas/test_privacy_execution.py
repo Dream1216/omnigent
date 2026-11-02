@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -48,7 +48,7 @@ from saas.control_plane.privacy_models import (
     PrivacyLegalHoldRecord,
 )
 
-NOW = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 8, 0, tzinfo=UTC)
 LOCATOR_KEY = b"l" * 32
 POLICY = PrivacyExecutionPolicy(
     audience="omnigent:privacy-execution",

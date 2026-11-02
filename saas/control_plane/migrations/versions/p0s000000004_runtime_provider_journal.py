@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -52,8 +52,8 @@ def _digest(payload: object) -> str:
 
 def _stored_time(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _preflight_postgresql_role() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -301,7 +301,7 @@ def test_lease_fencing_effect_unknown_artifact_and_event_replay(
         request, project_id=scope.project_id, resource="run_units", limit_units=4
     )
     run_id, task_id, _session_id = _admitted_run(service, scope, request)
-    now = datetime(2026, 8, 4, 9, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
     lease = service.claim_next_run(
         worker_id="worker-a", lease_duration=timedelta(minutes=5), now=now
     )
@@ -494,7 +494,7 @@ def test_cancel_recover_and_stale_worker_are_durable(
     ).replayed
 
     recover_run, _, _ = _admitted_run(service, scope, request, idempotency_key="recover-run")
-    now = datetime(2026, 8, 4, 10, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 4, 10, 0, tzinfo=UTC)
     first = service.claim_next_run(
         worker_id="worker-old", lease_duration=timedelta(seconds=10), now=now
     )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from inspect import signature
 
 import pytest
@@ -108,7 +108,7 @@ def test_database_policy_blocks_each_action_across_replicas_and_commits_denial(
     subject_kind: str,
     subject: str,
 ) -> None:
-    clock = _Clock(datetime(2026, 8, 26, 2, 0, tzinfo=timezone.utc))
+    clock = _Clock(datetime(2026, 8, 26, 2, 0, tzinfo=UTC))
     keyring = _keyring()
     first = SharedRegistrationRateLimiter(
         sessions, subject_keyring=keyring, development_clock=clock
@@ -138,7 +138,7 @@ def test_database_policy_blocks_each_action_across_replicas_and_commits_denial(
 def test_expired_rows_release_bounded_capacity(
     sessions: sessionmaker[Session],
 ) -> None:
-    clock = _Clock(datetime(2026, 8, 26, 3, 0, tzinfo=timezone.utc))
+    clock = _Clock(datetime(2026, 8, 26, 3, 0, tzinfo=UTC))
     limiter = SharedRegistrationRateLimiter(
         sessions, subject_keyring=_keyring(), development_clock=clock
     )
@@ -173,7 +173,7 @@ def test_expired_rows_release_bounded_capacity(
 def test_rotation_overlap_keeps_anchor_writes_until_old_replicas_drain(
     sessions: sessionmaker[Session],
 ) -> None:
-    clock = _Clock(datetime(2026, 8, 26, 3, 30, tzinfo=timezone.utc))
+    clock = _Clock(datetime(2026, 8, 26, 3, 30, tzinfo=UTC))
     old = SharedRegistrationRateLimiter(
         sessions, subject_keyring=_keyring(active="old"), development_clock=clock
     )
@@ -242,7 +242,7 @@ def test_storage_failure_denies_before_domain_work(
             plan_key="starter",
             home_region="cn-east-1",
             idempotency_key="storage-failure",
-            now=datetime(2026, 8, 26, 4, 0, tzinfo=timezone.utc),
+            now=datetime(2026, 8, 26, 4, 0, tzinfo=UTC),
         )
     assert denied.value.code == "registration_rate_limit_unavailable"
     assert _http_error(denied.value).status_code == 503
@@ -349,7 +349,7 @@ def test_consume_contract_has_no_caller_clock_or_policy_parameters() -> None:
 def test_sqlite_counter_rejects_non_hex_hmac_like_production(
     sessions: sessionmaker[Session],
 ) -> None:
-    now = datetime(2026, 8, 26, 8, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 26, 8, 0, tzinfo=UTC)
     with pytest.raises(sa.exc.IntegrityError):
         with sessions.begin() as db:
             db.add(

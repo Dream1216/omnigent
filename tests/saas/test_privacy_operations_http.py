@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -156,7 +156,7 @@ def _build_http_authority() -> tuple[
     IssuedPlatformSession,
     IssuedPlatformSession,
 ]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     engine = sa.create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -271,7 +271,7 @@ def _prepare_finalization_and_replay(
     factory: sessionmaker[Session],
     target_id: UUID,
 ) -> tuple[UUID, int, UUID, int, UUID, int]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with factory.begin() as db:
         manifest = db.scalar(sa.select(PrivacyDeletionManifestRecord))
         assert manifest is not None
@@ -453,7 +453,7 @@ def _prepare_finalization_and_replay(
 def test_governed_privacy_http_is_exact_strict_content_blind_and_idempotent() -> None:
     client, config, factory, target_id, requester, approver = _build_http_authority()
     target_path = f"/v2/platform-admin/privacy/global_user/{target_id}"
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat()
 
     client.cookies.set(config.cookie_name, requester.token)
     preview = client.get(f"{target_path}/deletion-preview")
@@ -603,7 +603,7 @@ def test_finalize_work_item_backup_replay_and_operation_list_http_contracts() ->
     client.cookies.set(config.cookie_name, requester.token)
     requester_headers = {"Origin": ORIGIN, "X-CSRF-Token": requester.csrf_token}
     preview = client.get(f"{target_path}/deletion-preview").json()
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(minutes=15)).isoformat()
     started = client.post(
         f"{target_path}/deletion-requests",
         headers={**requester_headers, "Idempotency-Key": "privacy-http-start-002"},
@@ -660,7 +660,7 @@ def test_finalize_work_item_backup_replay_and_operation_list_http_contracts() ->
         work_item.outcome_content_sha256 = None
         work_item.evidence_attestation_id = None
         work_item.version += 1
-        work_item.updated_at = datetime.now(timezone.utc)
+        work_item.updated_at = datetime.now(UTC)
         work_version = work_item.version
         backup_item = db.get(PrivacyBackupRetentionItemRecord, backup_id)
         assert backup_item is not None
@@ -669,7 +669,7 @@ def test_finalize_work_item_backup_replay_and_operation_list_http_contracts() ->
         backup_item.last_error_code = "provider_timeout"
         backup_item.last_error_sha256 = _hash("backup-error-details")
         backup_item.version += 1
-        backup_item.updated_at = datetime.now(timezone.utc)
+        backup_item.updated_at = datetime.now(UTC)
         backup_version = backup_item.version
 
     replay_case = "privacy-replay-case-secret"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -65,7 +65,7 @@ from saas.control_plane.platform_security import (
 from saas.control_plane.privacy_lifecycle import DeletionEvidenceKey, PrivacyLifecycleService
 from saas.control_plane.privacy_operations import PrivacyLocatorKey, PrivacyOperationService
 
-NOW = datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 10, 9, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)

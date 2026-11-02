@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -264,7 +264,7 @@ def onboarding_workflow() -> Iterator[_Harness]:
         composition=composition,
         sender=sender,
         dispatcher=OutboxDispatcher(sessions, composition),
-        now=datetime.now(timezone.utc).replace(microsecond=0),
+        now=datetime.now(UTC).replace(microsecond=0),
         placement_id=uuid4(),
     )
     yield harness
@@ -275,7 +275,7 @@ def onboarding_workflow() -> Iterator[_Harness]:
 def _dispatch_one(harness: _Harness) -> DispatchResult:
     result = harness.dispatcher.dispatch_once(
         batch_size=1,
-        now=datetime.now(timezone.utc) + timedelta(seconds=1),
+        now=datetime.now(UTC) + timedelta(seconds=1),
     )
     assert (result.claimed, result.published, result.failed) == (1, 1, 0)
     return result
@@ -388,7 +388,7 @@ def _compatibility_policy() -> RuntimeCompatibilityPolicy:
 
 
 def _failure_times() -> tuple[datetime, datetime, datetime]:
-    start = datetime.now(timezone.utc) + timedelta(minutes=1)
+    start = datetime.now(UTC) + timedelta(minutes=1)
     return start, start + timedelta(seconds=6), start + timedelta(seconds=17)
 
 
@@ -770,7 +770,7 @@ def test_replay_is_idempotent_and_live_claim_lease_fences_work(
         assert billing_event is not None
         replay_payload = dict(billing_event.payload)
 
-    claimed_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    claimed_at = datetime.now(UTC) + timedelta(minutes=1)
     claim_token = uuid4()
     with harness.sessions.begin() as db:
         saga = db.get(TenantOnboardingRecord, scope.onboarding_id)
@@ -819,7 +819,7 @@ def test_claim_persists_lease_recovery_wakeup_and_expired_claim_is_reclaimed(
 ) -> None:
     harness = onboarding_workflow
     scope = _registration_to_tenant_created(harness, suffix="claim-recovery")
-    claimed_at = datetime.now(timezone.utc)
+    claimed_at = datetime.now(UTC)
 
     claim, _result = harness.workflow._claim(scope, claimed_at)
     assert claim is not None
@@ -868,7 +868,7 @@ def test_slow_claimant_cannot_commit_after_database_lease_expiry(
 ) -> None:
     harness = onboarding_workflow
     scope = _registration_to_tenant_created(harness, suffix="expired-commit")
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     claim, _result = harness.workflow._claim(scope, started_at)
     assert claim is not None
 
@@ -896,7 +896,7 @@ def test_frozen_runtime_target_survives_retry_and_placement_drain(
     _dispatch_one(harness)
     harness.runtime.allocation_failures_remaining = 1
 
-    first_attempt = datetime.now(timezone.utc) + timedelta(minutes=1)
+    first_attempt = datetime.now(UTC) + timedelta(minutes=1)
     failed = harness.workflow.advance(scope, now=first_attempt)
     assert failed.status == "billing_ready"
     frozen = _saga(harness, scope)
@@ -1118,7 +1118,7 @@ def test_preexisting_runtime_partition_conflict_never_reaches_runtime_ready(
 
     failed = harness.workflow.advance(
         scope,
-        now=datetime.now(timezone.utc) + timedelta(minutes=1),
+        now=datetime.now(UTC) + timedelta(minutes=1),
     )
 
     assert failed.status == "compensating"

@@ -63,6 +63,8 @@ def test_s5_host_offline_user_acts(
     lab_factory: Callable[..., Lab], harness: Harness, action: str, outage_s: int
 ) -> None:
     lab = lab_factory()
+    assert lab.client is not None
+    lab.client.headers["x-omnigent-hold-when-host-offline"] = "on"
     driver = SessionDriver.create(lab, harness)
     session_id = driver.session_id
     report = ScenarioReport(

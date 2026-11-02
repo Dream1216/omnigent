@@ -16,6 +16,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
+import anyio
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
@@ -179,7 +180,9 @@ class PlatformModelRelay:
             async for chunk in response.aiter_raw():
                 yield chunk
         finally:
-            await response.aclose()
+            # Close the gateway stream even when the agent disconnects first.
+            with anyio.CancelScope(shield=True):
+                await response.aclose()
 
     @staticmethod
     async def _error_body(response: httpx.Response) -> bytes:

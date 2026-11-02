@@ -16,7 +16,7 @@ jobs:
   mirror:
     name: Mirror immutable official tags
     if: github.repository == 'Dream1216/omnigent'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Require workflow-scoped tag credential

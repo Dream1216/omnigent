@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -23,7 +23,7 @@ from saas.control_plane.platform_models import (
 )
 from saas.control_plane.platform_security import PlatformSecurityError, ValidatedPlatformPrincipal
 
-NOW = datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 8, 10, 0, tzinfo=UTC)
 
 GovernedFixture = tuple[
     sessionmaker[Session],

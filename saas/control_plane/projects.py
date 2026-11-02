@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -88,7 +88,7 @@ class _ScopeRoles:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _request_hash(payload: dict[str, object]) -> str:

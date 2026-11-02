@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -22,7 +22,7 @@ from saas.control_plane.billing_models import (
 )
 from saas.control_plane.db_models import GlobalUser, SaasBase, Tenant, TenantMembership
 
-NOW = datetime(2026, 8, 6, 4, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 6, 4, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -575,9 +575,7 @@ def test_period_close_requires_reconciliation_and_atomically_rolls_entitlement(
         checkpoint = db.get(BillingPeriodCloseRecord, closed.id)
         assert entitlement is not None
         assert entitlement.period_start == period_end.replace(tzinfo=None)
-        assert entitlement.period_end.replace(tzinfo=timezone.utc) == datetime(
-            2026, 10, 5, 4, tzinfo=timezone.utc
-        )
+        assert entitlement.period_end.replace(tzinfo=UTC) == datetime(2026, 10, 5, 4, tzinfo=UTC)
         assert entitlement.consumed_quantity == 0
         assert entitlement.reserved_quantity == 0
         assert entitlement.active_reservations == 0

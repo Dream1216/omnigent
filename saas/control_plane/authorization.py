@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -101,7 +101,7 @@ class _ScopeFacts:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ProjectAuthorizer:

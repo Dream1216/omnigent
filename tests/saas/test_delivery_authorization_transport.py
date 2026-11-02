@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import ssl
 import threading
@@ -16,6 +17,7 @@ from saas.control_plane.db_models import GlobalUser
 from saas.delivery.authorization import create_authorization_app
 from tests.saas.test_billing_metering_transport import _certificate_fixture
 from tests.saas.test_delivery_http import build_harness
+from tests.saas.test_delivery_snapshot_objects import _object_authority
 
 
 def test_real_mtls_authorization_and_fail_closed_revocation(tmp_path):
@@ -23,13 +25,14 @@ def test_real_mtls_authorization_and_fail_closed_revocation(tmp_path):
     from omnigent_dcp.domain.models import ActorContext
 
     h = build_harness(app_database=f"sqlite+pysqlite:///{tmp_path / 'authority.sqlite3'}")
+    objects, storage = _object_authority(tmp_path, h.authority)
     certs = _certificate_fixture(tmp_path, (uuid4(),))
     server_files, client_files = certs["server"], certs["runner-0"]
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     server = uvicorn.Server(
         uvicorn.Config(
-            create_authorization_app(h.authority),
+            create_authorization_app(h.authority, snapshot_objects=objects),
             ssl_certfile=str(server_files.certificate),
             ssl_keyfile=str(server_files.private_key),
             ssl_ca_certs=str(server_files.ca),
@@ -86,6 +89,54 @@ def test_real_mtls_authorization_and_fail_closed_revocation(tmp_path):
         assert not allowed(actor.model_copy(update={"project_id": str(uuid4())}))
         assert not allowed(actor.model_copy(update={"membership_version": 99}))
         assert not allowed(target={**resource, "environment_id": "other"})
+        from omnigent_dcp.snapshot.authorities import (
+            HttpSnapshotObjectReader,
+            HttpSnapshotUploadAuthority,
+            SnapshotAuthorityError,
+            SnapshotAuthorityHttpConfig,
+        )
+        from omnigent_dcp.snapshot.gateway import SnapshotRequest
+        from pydantic import SecretStr
+
+        config = SnapshotAuthorityHttpConfig(
+            base_url=endpoint.rsplit("/", 1)[0],
+            bearer_token=SecretStr(objects.settings.bearer_token().decode()),
+            ca_file=client_files.ca,
+            certificate_file=client_files.certificate,
+            private_key_file=client_files.private_key,
+        )
+        upload = HttpSnapshotUploadAuthority(config)
+        intent = SnapshotRequest(
+            space_id=str(h.project.space_id),
+            session_id="transport-session",
+            environment_id=h.project.preview_environment,
+            build_id=uuid4().hex,
+            workspace_generation=1,
+            max_bytes=4096,
+            ignore_policy_revision="sha256:" + "a" * 64,
+        )
+        target = asyncio.run(upload.allocate(identity=actor, request=intent))
+        payload = b"source bytes for the private object transport fixture"
+        storage.upload({"object_ref": target.object_ref}, payload)
+        metadata = asyncio.run(upload.head(object_ref=target.object_ref))
+        assert metadata.encrypted and metadata.tenant_id == actor.tenant_id
+        assert metadata.size == len(payload)
+
+        async def stream():
+            return b"".join(
+                [
+                    chunk
+                    async for chunk in HttpSnapshotObjectReader(config).stream(
+                        object_ref=target.object_ref
+                    )
+                ]
+            )
+
+        assert asyncio.run(stream()) == payload
+        unused = asyncio.run(upload.allocate(identity=actor, request=intent))
+        asyncio.run(upload.revoke(object_ref=unused.object_ref))
+        with pytest.raises(SnapshotAuthorityError):
+            asyncio.run(upload.head(object_ref=unused.object_ref))
         # The public Cookie listener never exposes this authority.
         assert (
             h.client.post(
@@ -102,9 +153,19 @@ def test_real_mtls_authorization_and_fail_closed_revocation(tmp_path):
         ) as client:
             with pytest.raises(httpx.HTTPError):
                 client.post(endpoint, json={})
+            with pytest.raises(httpx.HTTPError):
+                client.post(
+                    config.base_url + "/v1/snapshot-objects:head",
+                    json={"object_ref": target.object_ref},
+                    headers={"Authorization": "Bearer " + config.bearer_token.get_secret_value()},
+                )
         with h.app.state.saas_test_sessions.begin() as session:
             session.get(GlobalUser, UUID(h.scope["user_id"])).status = "suspended"
         assert not allowed()
+        before = list(storage.calls)
+        with pytest.raises(SnapshotAuthorityError):
+            asyncio.run(upload.allocate(identity=actor, request=intent))
+        assert storage.calls == before
         assert not adapter.authorize_resource(
             identity=actor,
             action="preview.open",

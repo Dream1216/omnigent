@@ -7,7 +7,7 @@ import re
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -58,11 +58,11 @@ class PreviewBrowserSessionGrant:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _canonical_host(value: str) -> str:

@@ -238,7 +238,7 @@ class TlsPreviewReadinessServer:
         try:
             writer.write(response)
             await asyncio.wait_for(writer.drain(), timeout=self._timeout)
-        except (ConnectionError, OSError, RuntimeError, asyncio.TimeoutError):
+        except (TimeoutError, ConnectionError, OSError, RuntimeError):
             pass
         finally:
             writer.close()

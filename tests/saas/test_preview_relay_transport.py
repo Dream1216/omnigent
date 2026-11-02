@@ -7,7 +7,7 @@ import ssl
 import struct
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from ssl import SSLContext
 from typing import Protocol, cast
@@ -67,7 +67,7 @@ def _certificate_fixture(
     server_gateway_id: str = "gateway-b",
     client_gateway_uris: tuple[str, ...] = ("gateway-a",),
 ) -> dict[str, _CertificateFiles]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Preview Relay Test CA")])
     ca_certificate = (
@@ -343,7 +343,7 @@ def _placement() -> RunnerTunnelPlacement:
         gateway_instance_id="gateway-b",
         relay_subject=f"rtp_{placement_id.hex}",
         status="active",
-        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=2),
     )
 
 
@@ -371,7 +371,7 @@ def _route(placement: RunnerTunnelPlacement) -> PreviewRouteGrant:
             "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY",
         },
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        expires_at=datetime.now(UTC) + timedelta(minutes=1),
         preview_host="preview-a.example.test",
     )
 

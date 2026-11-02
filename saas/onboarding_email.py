@@ -8,7 +8,7 @@ import smtplib
 import ssl
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import timezone
+from datetime import UTC
 from email.message import EmailMessage
 from email.utils import formataddr
 from typing import TYPE_CHECKING, Protocol
@@ -477,7 +477,7 @@ def _verification_content(
         verification_url = (
             f"{public_origin}/signup/verify?registration_id={registration_id}#token={token}"
         )
-        expiry = message.expires_at.astimezone(timezone.utc).isoformat()
+        expiry = message.expires_at.astimezone(UTC).isoformat()
     except (AttributeError, TypeError, ValueError, OverflowError):
         raise EmailVerificationDeliveryError(
             "email_verification_message_invalid",

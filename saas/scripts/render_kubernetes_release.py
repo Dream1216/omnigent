@@ -35,18 +35,24 @@ from saas.production.postgresql_migration import (
     _runtime_saas_head,
 )
 from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
+    EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     OPTIONAL_SERVICE_ROLE_PROFILES,
     ProductionServiceRoleBinding,
     render_production_service_role_bindings,
 )
 from saas.scripts.render_kubernetes_namespace import (
+    DEFAULT_TARGET_PROFILE,
     MANIFEST_NAMES,
     SOURCE_NAMESPACE,
     TARGET_NAMESPACE,
+    TARGET_PROFILE_NAMES,
     NamespaceRenderError,
     render_namespace_manifests,
+    resolve_target_profile,
 )
 
 EVIDENCE_FILE_NAME: Final = "release-render-evidence.json"
@@ -62,7 +68,7 @@ _TEMPLATE_RELEASE_INCARNATION = "0" * 32
 _TEMPLATE_ARTIFACT_STORE_URI = "s3://replace-with-production-bucket/omnigent"
 _TEMPLATE_ARTIFACT_ENDPOINT = "https://replace-artifact-endpoint.example.invalid"
 _TEMPLATE_ARTIFACT_REGION = "replace-with-artifact-region"
-_TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000015"
+_TEMPLATE_CONTROL_PLANE_SCHEMA_REVISION = "p0s000000018"
 _MIGRATION_COMMAND = ["python", "-m", "saas.scripts.run_postgresql_migration"]
 _MIGRATION_ARGS = ["--product-revision", "$(OMNIGENT_SAAS_SOURCE_SHA)"]
 _RELEASE_SERVICE_ROLES = {
@@ -244,6 +250,7 @@ class KubernetesReleaseSpec:
     runner_fleet: RunnerFleetReleaseSpec
     service_logins: Mapping[str, str]
     source_sha256: str
+    target_profile: str = DEFAULT_TARGET_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,6 +691,7 @@ def _parse_runner_fleet(
     mode: str,
     product_revision: str,
     schema_revision: str,
+    target_namespace: str = TARGET_NAMESPACE,
 ) -> RunnerFleetReleaseSpec:
     fields = {
         "namespace",
@@ -697,7 +705,7 @@ def _parse_runner_fleet(
     }
     row = _mapping(source, name="runner_fleet", fields=fields)
     namespace = _string(row, "namespace", parent="runner_fleet")
-    if namespace != TARGET_NAMESPACE:
+    if namespace != target_namespace:
         raise ReleaseRenderError("runner_fleet.namespace must equal the target namespace")
     admission_epoch = row.get("admission_epoch")
     if type(admission_epoch) is not int or not 1 <= admission_epoch <= 2**63 - 1:
@@ -821,9 +829,17 @@ def _parse_runner_fleet(
     )
 
 
-def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
+def load_public_release_spec(
+    path: Path, *, target_profile: str = DEFAULT_TARGET_PROFILE
+) -> KubernetesReleaseSpec:
     """Load the exact owner-only canonical release spec without secret material."""
 
+    try:
+        target_namespace, _database_namespace, _database_cluster = resolve_target_profile(
+            target_profile
+        )
+    except NamespaceRenderError as error:
+        raise ReleaseRenderError(str(error)) from error
     raw, document = _read_owner_only_spec(path)
     fields = {
         "schema_version",
@@ -878,6 +894,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         document.get("runner_fleet"),
         mode=mode,
         product_revision=product_revision,
+        target_namespace=target_namespace,
         schema_revision=_revision(
             _string(document, "official_schema_revision"),
             name="official_schema_revision",
@@ -889,6 +906,8 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         fields={"namespace", "workload"},
     )
     ingress_namespace = _string(ingress, "namespace", parent="ingress")
+    if target_profile == "isolated-qa" and ingress_namespace != _database_namespace:
+        raise ReleaseRenderError("isolated QA ingress must use the fixed validation namespace")
     ingress_workload = _string(ingress, "workload", parent="ingress")
     if (
         _DNS_LABEL.fullmatch(ingress_namespace) is None
@@ -935,20 +954,39 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         document.get("service_logins"),
         name="service_logins",
     )
-    if set(login_rows) not in (
-        set(EXPECTED_PRODUCTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES),
-    ):
+    core_roles = set(EXPECTED_PRODUCTION_SERVICE_ROLES)
+    if control_plane_schema_revision in {"p0s000000017", "p0s000000018"}:
+        required_roles = core_roles | set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        model_roles = required_roles | set(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
+        admin_roles = model_roles | set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
+        allowed_profiles = (
+            required_roles,
+            model_roles,
+            admin_roles,
+            admin_roles | set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+        )
+    else:
+        legacy_roles = set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        allowed_profiles = (
+            core_roles,
+            legacy_roles - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+            legacy_roles,
+        )
+    if set(login_rows) not in allowed_profiles:
         raise ReleaseRenderError(
-            "service_logins must contain a complete core or full release profile"
+            "service_logins must contain a complete schema-bound release profile"
         )
     if "model_projection" in login_rows and control_plane_schema_revision not in {
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
+        "p0s000000016",
+        "p0s000000017",
+        "p0s000000018",
     }:
-        raise ReleaseRenderError("model projection profile requires the R, S or T schema")
+        raise ReleaseRenderError(
+            "model projection profile requires R, S, T or its P16/P17/P18 successor"
+        )
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
         for service in sorted(login_rows)
@@ -1004,6 +1042,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         runner_fleet=runner_fleet,
         service_logins=service_logins,
         source_sha256=_sha256(raw),
+        target_profile=target_profile,
     )
 
 
@@ -1262,6 +1301,52 @@ def _stage_role_profiles(script: str, spec: KubernetesReleaseSpec, directory: st
     return script if not lines else script.replace(core, "\n".join((core, *lines)))
 
 
+def _validate_revocation_projection(server: Mapping[str, Any]) -> None:
+    pod = _nested_mapping(server, "spec", "template", "spec")
+    init = _named_row(pod.get("initContainers"), name="stage-server-secrets", row_type="init")
+    main = _named_row(pod.get("containers"), name="server", row_type="container")
+    volume = _named_row(pod.get("volumes"), name="revocation-source", row_type="volume")
+    expected = {
+        "name": "revocation-source",
+        "secret": {
+            "secretName": "omnigent-saas-revocation-consumer-database",
+            "defaultMode": 0o400,
+            "optional": True,
+            "items": [{"key": "value", "path": "value"}],
+        },
+    }
+    mount = {"name": "revocation-source", "mountPath": "/source/revocation", "readOnly": True}
+    env = _named_row(main.get("env"), name="OMNIGENT_SAAS_POD_UID", row_type="environment")
+    url = _named_row(
+        main.get("env"),
+        name="OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE",
+        row_type="environment",
+    )
+    if (
+        volume != expected
+        or _named_row(init.get("volumeMounts"), name="revocation-source", row_type="mount")
+        != mount
+        or any(row.get("name") == "revocation-source" for row in main.get("volumeMounts", []))
+        or env
+        != {
+            "name": "OMNIGENT_SAAS_POD_UID",
+            "valueFrom": {"fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"}},
+        }
+        or url
+        != {
+            "name": "OMNIGENT_SAAS_REVOCATION_CONSUMER_DATABASE_URL_FILE",
+            "value": "/runtime/revocation-consumer-database-url",
+        }
+        or "\n".join(init.get("args", [])).count(
+            "if [ -f /source/revocation/value ]; then\n"
+            "  install -m 0400 /source/revocation/value "
+            "/runtime/revocation-consumer-database-url\nfi"
+        )
+        != 1
+    ):
+        raise ReleaseRenderError("Server native revocation projection is invalid")
+
+
 def _migration_args(spec: KubernetesReleaseSpec) -> list[str]:
     if spec.control_plane_schema_revision == _expected_head("saas"):
         return list(_MIGRATION_ARGS)
@@ -1393,7 +1478,7 @@ def _render_release_documents(
         ),
         "OMNIGENT_SAAS_CONTROL_PLANE_SCHEMA_REVISION": (
             spec.control_plane_schema_revision,
-            "p0s000000015",
+            "p0s000000018",
         ),
         "OMNIGENT_SAAS_ADAPTER_CONTRACT_VERSION": (
             spec.adapter_contract_version,
@@ -1492,6 +1577,7 @@ def _render_release_documents(
                 args[0] = _stage_role_profiles(args[0], spec, directory)
 
     server = _resource(production, kind="Deployment", name="omnigent-saas-server")
+    _validate_revocation_projection(server)
     server_annotations = _nested_mapping(server, "spec", "template", "metadata", "annotations")
     for field, rendered in {
         "omnigent.io/artifact-credential-revision": spec.artifact.credential_revision,
@@ -2980,7 +3066,7 @@ def _audit_projection(
     for name, document in documents.items():
         for item in _items(document, name=name):
             metadata = _mapping(item.get("metadata"), name=f"{name} metadata")
-            if metadata.get("namespace") != TARGET_NAMESPACE:
+            if metadata.get("namespace") != resolve_target_profile(spec.target_profile)[0]:
                 raise ReleaseRenderError(f"{name}: target namespace projection is incomplete")
         for value in _walk_strings(document):
             if value.startswith(f"{_IMAGE_REPOSITORY}@") and value != final_image:
@@ -3389,11 +3475,15 @@ def _load_rendered_manifest(path: Path) -> tuple[bytes, dict[str, Any]]:
 
 
 def render_kubernetes_release(
-    spec_file: Path, source_dir: Path, output_dir: Path
+    spec_file: Path,
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
 ) -> dict[str, Any]:
     """Render four manifests and one canonical secret-free evidence document."""
 
-    spec = load_public_release_spec(spec_file)
+    spec = load_public_release_spec(spec_file, target_profile=target_profile)
     sources = _load_source_manifests(source_dir)
     release_documents, suffixes = _render_release_documents(sources, spec)
     release_bytes: dict[str, bytes] = {}
@@ -3421,7 +3511,9 @@ def render_kubernetes_release(
             for name in MANIFEST_NAMES:
                 _write_exclusive(release_source / name, release_bytes[name])
             try:
-                namespace_summary = render_namespace_manifests(release_source, namespace_output)
+                namespace_summary = render_namespace_manifests(
+                    release_source, namespace_output, target_profile=spec.target_profile
+                )
             except NamespaceRenderError as error:
                 raise ReleaseRenderError(
                     f"namespace renderer rejected release: {error}"
@@ -3555,6 +3647,8 @@ def render_kubernetes_release(
     }
     if _role_profile_texts(spec):
         evidence["service_role_graph_sha256"] = _release_role_graph_sha256(spec)
+    if spec.target_profile != DEFAULT_TARGET_PROFILE:
+        evidence["target_profile"] = spec.target_profile
     evidence_bytes = _canonical_json(evidence)
 
     _prepare_output_directory(source_dir, output_dir)
@@ -3598,10 +3692,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--spec-file", type=Path, required=True)
     parser.add_argument("--source-dir", type=Path, default=_default_source_dir())
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--target-profile", choices=TARGET_PROFILE_NAMES, default=DEFAULT_TARGET_PROFILE
+    )
     arguments = parser.parse_args(argv)
     try:
         result = render_kubernetes_release(
-            arguments.spec_file, arguments.source_dir, arguments.output_dir
+            arguments.spec_file,
+            arguments.source_dir,
+            arguments.output_dir,
+            target_profile=arguments.target_profile,
         )
     except ReleaseRenderError as error:
         print(

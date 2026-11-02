@@ -9,7 +9,7 @@ import ssl
 import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -41,7 +41,7 @@ from saas.control_plane import (
     WebhookTargetPolicy,
 )
 
-NOW = datetime(2026, 8, 5, 2, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 5, 2, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -370,7 +370,7 @@ def test_webhook_target_policy_rejects_unsafe_urls_and_mixed_dns_answers(url: st
 
 
 def _tls_files(root: Path) -> tuple[Path, Path, Path]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Webhook CA")])
     ca = (

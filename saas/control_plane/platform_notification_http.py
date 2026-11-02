@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -65,7 +65,7 @@ def create_platform_notification_router(
         raise ValueError("Platform notification Origin contract differs from session authority")
     if sessions.audience != config.audience:
         raise ValueError("Platform notification Audience contract differs from session authority")
-    clock = now or (lambda: datetime.now(timezone.utc))
+    clock = now or (lambda: datetime.now(UTC))
     router = APIRouter(route_class=_ContentBlindRoute)
 
     def actor_for_request(request: Request) -> ApprovalActor:

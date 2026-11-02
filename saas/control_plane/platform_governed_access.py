@@ -6,7 +6,7 @@ import hmac
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from itertools import pairwise
 from typing import Literal, Protocol, cast
@@ -199,15 +199,11 @@ class SignedAuditExport:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_utc(value: datetime) -> datetime:
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _require_aware(value: datetime, field: str) -> None:
