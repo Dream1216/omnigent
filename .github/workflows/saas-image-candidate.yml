@@ -254,9 +254,7 @@ jobs:
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
         run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_control_plane_migration_cli
           uv run python -m saas.scripts.check_patch_queue
           uv run python -m saas.scripts.check_upstream_delta
           uv run python -m saas.scripts.check_production_baseline
