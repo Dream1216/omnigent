@@ -283,7 +283,7 @@
   "saas/scripts/scan_oci_candidates.py": {
     "parent_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
     "combined_sha256": "e980769bb53a8da04b7707adc83db1950e495b09b0e406b293f8428fd6950507",
-    "approved_change": "Proposed exact Aliyun Host profile; generic complete and Server scopes retain their original architecture, raw vulnerability, digest and attestation checks",
+    "approved_change": "Proposed exact Aliyun Host profile; generic complete and Server scopes retain their original architecture, raw vulnerability, digest and attestation checks; owner-authorized 2026-11-02 Aliyun-only advisory counts, exact inverse restores all original parent/function checks",
     "preserved_functions": {
       "parse_database_status": "8278842657507f9545191b9bd62169de87698f8e9668409f07fe46b383dedb19",
       "scan_report": "b7dfe6a0e66e09b16475d9bfdc5a9c9ca65cccfaaeba17c9770c6af6aebce0d3",
@@ -297,7 +297,36 @@
     },
     "reviewed_extension_application_head": "4af5556d8bd5c068136852a12549b6ecc17c048f",
     "reviewed_extension_trusted_main": "57c4802561bd5789d0f3a997a313ec3f4f4ee366",
-    "current_combination_source_sha256": "e980769bb53a8da04b7707adc83db1950e495b09b0e406b293f8428fd6950507"
+    "current_combination_source_sha256": "e980769bb53a8da04b7707adc83db1950e495b09b0e406b293f8428fd6950507",
+    "type_and_context_correction": {
+      "corrected_sha256": "3935684003aa9be3d036b5e80a1122892af268cc0c1c2edf15d70f69be4732e4",
+      "inverse_fragments": [
+        {
+          "before": "\"\"\"Scan both platforms of exact OCI candidate archives with a fresh Grype DB.\"\"\"\n\nfrom __future__ import annotations\n",
+          "after": "\"\"\"Scan exact OCI archives; Aliyun Host findings are advisory, other scopes block.\"\"\"\n\nfrom __future__ import annotations\n"
+        },
+        {
+          "before": "        database_built_at = parse_database_status(status, now=datetime.now(UTC))\n        summaries = []\n        blocked = False\n        for name, archive in sorted(images.items()):\n            archive_digest = file_sha256(archive)\n",
+          "after": "        database_built_at = parse_database_status(status, now=datetime.now(UTC))\n        summaries = []\n        findings_present = False\n        for name, archive in sorted(images.items()):\n            archive_digest = file_sha256(archive)\n"
+        },
+        {
+          "before": "                parsed = scan_report(json.loads(output.read_text()))\n                counts = parsed[\"counts\"]\n                blocked |= result.returncode == 2 or any(counts.values())\n                summaries.append(\n                    {\n",
+          "after": "                parsed = scan_report(json.loads(output.read_text()))\n                counts = parsed[\"counts\"]\n                findings_present |= result.returncode == 2 or any(counts.values())\n                summaries.append(\n                    {\n"
+        },
+        {
+          "before": "                        \"archive_sha256\": archive_digest,\n                        \"report_sha256\": file_sha256(output),\n                        \"critical\": counts[\"Critical\"],\n                        \"high\": counts[\"High\"],\n",
+          "after": "                        \"archive_sha256\": archive_digest,\n                        \"report_sha256\": file_sha256(output),\n                        \"scanner_returncode\": result.returncode,\n                        \"critical\": counts[\"Critical\"],\n                        \"high\": counts[\"High\"],\n"
+        },
+        {
+          "before": "                    }\n                )\n    receipt = {\n        \"scope\": args.scope,\n        \"scanner\": f\"grype {GRYPE_VERSION}\",\n        \"database_built_at\": database_built_at,\n",
+          "after": "                    }\n                )\n    advisory = args.scope == \"aliyun-host\"\n    receipt = {\n        \"scope\": args.scope,\n        \"vulnerability_policy\": \"advisory\" if advisory else \"blocking\",\n        \"vulnerability_findings_present\": findings_present,\n        \"scanner\": f\"grype {GRYPE_VERSION}\",\n        \"database_built_at\": database_built_at,\n"
+        },
+        {
+          "before": "    }[args.scope]\n    (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + \"\\n\")\n    return 2 if blocked else 0\n\n\n",
+          "after": "    }[args.scope]\n    (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + \"\\n\")\n    if advisory and findings_present:\n        print(\n            \"::warning::Aliyun Host vulnerability findings are advisory; \"\n            \"original reports, counts and scanner exit codes are retained.\"\n        )\n    return 2 if findings_present and not advisory else 0\n\n\n"
+        }
+      ]
+    }
   },
   "saas/scripts/compare_oci_rebuilds.py": {
     "parent_sha256": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
