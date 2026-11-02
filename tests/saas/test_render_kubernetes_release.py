@@ -222,6 +222,85 @@ def _resource(
     return matches[0]
 
 
+@pytest.mark.parametrize("mode", ["stage", "final"])
+def test_fixed_qa_release_binds_fleet_namespace_and_retains_runner_security(
+    tmp_path: Path, mode: str
+) -> None:
+    spec = _write_spec(tmp_path, mode=mode)
+    document = json.loads(spec.read_text())
+    document["runner_fleet"]["namespace"] = "omnigent-021-validation-20261102"
+    document["ingress"]["namespace"] = "omnigent-019-validation-20261016"
+    document["artifact"]["endpoint_url"] = (
+        "https://v019-artifact-store.omnigent-019-validation-20261016.svc"
+    )
+    spec.write_bytes(_canonical_json(document))
+    output = tmp_path / "qa"
+    result = render_kubernetes_release(
+        spec, _copy_sources(tmp_path), output, target_profile="isolated-qa"
+    )
+    assert result["status"] == "pass"
+    production = _document(output / "kubernetes.production.yaml")
+    assert all(
+        r["metadata"]["namespace"] == "omnigent-021-validation-20261102"
+        for r in production["items"]
+    )
+    runners = [
+        r
+        for r in production["items"]
+        if r["kind"] == "Deployment"
+        and r["metadata"]["name"].startswith("omnigent-saas-runner-agent")
+    ]
+    assert len(runners) == 2
+    for runner in runners:
+        assert runner["spec"]["replicas"] == (0 if mode == "stage" else 1)
+        pod = runner["spec"]["template"]["spec"]
+        assert pod["automountServiceAccountToken"] is False
+        assert pod["runtimeClassName"] == "omnigent-runner"
+        assert [c["name"] for c in pod["initContainers"]] == ["stage-runner-identity"]
+        assert [c["name"] for c in pod["containers"]] == ["runner-agent"]
+        for container in pod["initContainers"] + pod["containers"]:
+            assert container["securityContext"]["runAsUser"] == 65532
+            assert container["securityContext"]["runAsGroup"] == 65532
+    evidence = json.loads((output / EVIDENCE_FILE_NAME).read_text())
+    assert evidence["target_profile"] == "isolated-qa"
+    assert evidence["runner_fleet"]["namespace"] == "omnigent-021-validation-20261102"
+    assert evidence["namespace_render"]["target_namespace"] == "omnigent-021-validation-20261102"
+
+
+@pytest.mark.parametrize(
+    ("profile", "fleet_namespace", "ingress_namespace", "error"),
+    [
+        (
+            "production",
+            "omnigent-021-validation-20261102",
+            "omnigent-019-validation-20261016",
+            "target namespace",
+        ),
+        (
+            "isolated-qa",
+            "omnigent-next-beta",
+            "omnigent-019-validation-20261016",
+            "target namespace",
+        ),
+        ("isolated-qa", "omnigent-021-validation-20261102", "omnigent-next-beta", "QA ingress"),
+        ("arbitrary", "omnigent-next-beta", "omnigent-019-validation-20261016", "unknown fixed"),
+    ],
+)
+def test_release_rejects_mixed_or_unknown_target_identity(
+    tmp_path: Path, profile: str, fleet_namespace: str, ingress_namespace: str, error: str
+) -> None:
+    spec = _write_spec(tmp_path)
+    document = json.loads(spec.read_text())
+    document["runner_fleet"]["namespace"] = fleet_namespace
+    document["ingress"]["namespace"] = ingress_namespace
+    spec.write_bytes(_canonical_json(document))
+    with pytest.raises(ReleaseRenderError, match=error):
+        render_kubernetes_release(
+            spec, _copy_sources(tmp_path), tmp_path / "rejected", target_profile=profile
+        )
+    assert not (tmp_path / "rejected").exists()
+
+
 def test_stage_renderer_binds_four_manifests_and_only_six_pending_receipts(
     tmp_path: Path,
 ) -> None:

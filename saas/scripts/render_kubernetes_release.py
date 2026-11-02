@@ -45,11 +45,14 @@ from saas.production.service_bindings import (
     render_production_service_role_bindings,
 )
 from saas.scripts.render_kubernetes_namespace import (
+    DEFAULT_TARGET_PROFILE,
     MANIFEST_NAMES,
     SOURCE_NAMESPACE,
     TARGET_NAMESPACE,
+    TARGET_PROFILE_NAMES,
     NamespaceRenderError,
     render_namespace_manifests,
+    resolve_target_profile,
 )
 
 EVIDENCE_FILE_NAME: Final = "release-render-evidence.json"
@@ -247,6 +250,7 @@ class KubernetesReleaseSpec:
     runner_fleet: RunnerFleetReleaseSpec
     service_logins: Mapping[str, str]
     source_sha256: str
+    target_profile: str = DEFAULT_TARGET_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -687,6 +691,7 @@ def _parse_runner_fleet(
     mode: str,
     product_revision: str,
     schema_revision: str,
+    target_namespace: str = TARGET_NAMESPACE,
 ) -> RunnerFleetReleaseSpec:
     fields = {
         "namespace",
@@ -700,7 +705,7 @@ def _parse_runner_fleet(
     }
     row = _mapping(source, name="runner_fleet", fields=fields)
     namespace = _string(row, "namespace", parent="runner_fleet")
-    if namespace != TARGET_NAMESPACE:
+    if namespace != target_namespace:
         raise ReleaseRenderError("runner_fleet.namespace must equal the target namespace")
     admission_epoch = row.get("admission_epoch")
     if type(admission_epoch) is not int or not 1 <= admission_epoch <= 2**63 - 1:
@@ -824,9 +829,17 @@ def _parse_runner_fleet(
     )
 
 
-def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
+def load_public_release_spec(
+    path: Path, *, target_profile: str = DEFAULT_TARGET_PROFILE
+) -> KubernetesReleaseSpec:
     """Load the exact owner-only canonical release spec without secret material."""
 
+    try:
+        target_namespace, _database_namespace, _database_cluster = resolve_target_profile(
+            target_profile
+        )
+    except NamespaceRenderError as error:
+        raise ReleaseRenderError(str(error)) from error
     raw, document = _read_owner_only_spec(path)
     fields = {
         "schema_version",
@@ -881,6 +894,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         document.get("runner_fleet"),
         mode=mode,
         product_revision=product_revision,
+        target_namespace=target_namespace,
         schema_revision=_revision(
             _string(document, "official_schema_revision"),
             name="official_schema_revision",
@@ -892,6 +906,8 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         fields={"namespace", "workload"},
     )
     ingress_namespace = _string(ingress, "namespace", parent="ingress")
+    if target_profile == "isolated-qa" and ingress_namespace != _database_namespace:
+        raise ReleaseRenderError("isolated QA ingress must use the fixed validation namespace")
     ingress_workload = _string(ingress, "workload", parent="ingress")
     if (
         _DNS_LABEL.fullmatch(ingress_namespace) is None
@@ -1026,6 +1042,7 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         runner_fleet=runner_fleet,
         service_logins=service_logins,
         source_sha256=_sha256(raw),
+        target_profile=target_profile,
     )
 
 
@@ -3049,7 +3066,7 @@ def _audit_projection(
     for name, document in documents.items():
         for item in _items(document, name=name):
             metadata = _mapping(item.get("metadata"), name=f"{name} metadata")
-            if metadata.get("namespace") != TARGET_NAMESPACE:
+            if metadata.get("namespace") != resolve_target_profile(spec.target_profile)[0]:
                 raise ReleaseRenderError(f"{name}: target namespace projection is incomplete")
         for value in _walk_strings(document):
             if value.startswith(f"{_IMAGE_REPOSITORY}@") and value != final_image:
@@ -3458,11 +3475,15 @@ def _load_rendered_manifest(path: Path) -> tuple[bytes, dict[str, Any]]:
 
 
 def render_kubernetes_release(
-    spec_file: Path, source_dir: Path, output_dir: Path
+    spec_file: Path,
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
 ) -> dict[str, Any]:
     """Render four manifests and one canonical secret-free evidence document."""
 
-    spec = load_public_release_spec(spec_file)
+    spec = load_public_release_spec(spec_file, target_profile=target_profile)
     sources = _load_source_manifests(source_dir)
     release_documents, suffixes = _render_release_documents(sources, spec)
     release_bytes: dict[str, bytes] = {}
@@ -3490,7 +3511,9 @@ def render_kubernetes_release(
             for name in MANIFEST_NAMES:
                 _write_exclusive(release_source / name, release_bytes[name])
             try:
-                namespace_summary = render_namespace_manifests(release_source, namespace_output)
+                namespace_summary = render_namespace_manifests(
+                    release_source, namespace_output, target_profile=spec.target_profile
+                )
             except NamespaceRenderError as error:
                 raise ReleaseRenderError(
                     f"namespace renderer rejected release: {error}"
@@ -3624,6 +3647,8 @@ def render_kubernetes_release(
     }
     if _role_profile_texts(spec):
         evidence["service_role_graph_sha256"] = _release_role_graph_sha256(spec)
+    if spec.target_profile != DEFAULT_TARGET_PROFILE:
+        evidence["target_profile"] = spec.target_profile
     evidence_bytes = _canonical_json(evidence)
 
     _prepare_output_directory(source_dir, output_dir)
@@ -3667,10 +3692,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--spec-file", type=Path, required=True)
     parser.add_argument("--source-dir", type=Path, default=_default_source_dir())
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--target-profile", choices=TARGET_PROFILE_NAMES, default=DEFAULT_TARGET_PROFILE
+    )
     arguments = parser.parse_args(argv)
     try:
         result = render_kubernetes_release(
-            arguments.spec_file, arguments.source_dir, arguments.output_dir
+            arguments.spec_file,
+            arguments.source_dir,
+            arguments.output_dir,
+            target_profile=arguments.target_profile,
         )
     except ReleaseRenderError as error:
         print(
