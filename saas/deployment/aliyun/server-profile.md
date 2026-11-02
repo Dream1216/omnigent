@@ -15,8 +15,11 @@ checks or production release approval. No production profile has been activated.
 The profile binds the product commit, Server image digest, digest-pinned Host
 image, Hangzhou Team, generation-2 template ID, HTTPS Server origin and model
 gateway. The Server commit, image digest and public origin must match the normal
-production configuration. The current image policy accepts GHCR; using ACR also
-requires an equivalent reviewed registry-policy change.
+production configuration. Host references accept GHCR or a Hangzhou ACR
+Enterprise VPC endpoint in the form
+`<instance>-registry-vpc.cn-hangzhou.cr.aliyuncs.com/<namespace>/<image>@sha256:<digest>`.
+Both require an immutable SHA-256. ACR public endpoints, Personal Edition,
+other regions, credentials in URLs and mutable tags are rejected.
 
 Each admitted tenant has one positive workspace and one independent model
 signing key. There are at most 32 tenants, with no duplicate tenant, workspace,
@@ -61,6 +64,33 @@ The loader requires canonical JSON: sorted keys, compact separators and one
 trailing newline. The environment hash covers those exact bytes. Key hashes
 cover the bytes after stripping trailing CR/LF, matching existing secret-file
 handling. Never put key contents into this JSON or environment variables.
+
+## ACR mirror and template qualification
+
+Use an Enterprise Basic instance in the same account and Hangzhou region as the
+template. Economy Edition is not supported by Agent Sandbox. The associated
+VPC must be active, its vSwitch must be in a supported Function Compute zone,
+and a non-service-managed security group must allow the required HTTPS egress.
+Leave image acceleration disabled. These are cloud prerequisites; accepting an
+image reference in this loader does not provision or verify them.
+
+Copy every manifest and layer of the qualified original OCI index without
+rebuilding it. Use a private temporary registry auth file or standard input for
+credentials, never command arguments, URLs or source files. Verify the target
+index, executable manifest/config and all layer digests against the original,
+and retain the original source identity, signature and copy receipt. A digest
+equality claim is invalid if the registry converts or drops OCI manifests.
+
+Pin the ACR VPC digest in `host_image` and bind the actual ready template ID in
+the canonical profile. The template build uses a unique fixed source tag. For
+the currently observed builder issue that reads `latest`, keep its compatibility
+alias on that same qualified digest and verify both immediately before and after
+the build. Do not replace the profile digest with `latest` or infer readiness
+from a successful template creation request. Preserve an existing ready template
+for rollback and run the full Host, managed-session, storage and release
+acceptance after the new template reaches `ready`.
+
+See the vendor's [custom template and ACR requirements](https://help.aliyun.com/en/agent-sandbox/build-and-manage-custom-templates-with-code).
 
 ## Credential delivery
 

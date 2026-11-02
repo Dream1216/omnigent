@@ -26,7 +26,9 @@ PROFILE_FILE_ENV = "OMNIGENT_SAAS_ALIYUN_PROFILE_FILE"
 PROFILE_HASH_ENV = "OMNIGENT_SAAS_ALIYUN_PROFILE_SHA256"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _HOST_IMAGE = re.compile(
-    r"ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}"
+    r"(?:ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*"
+    r"|[a-z0-9][a-z0-9-]{1,28}[a-z0-9]-registry-vpc\.cn-hangzhou\.cr\.aliyuncs\.com"
+    r"/[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9._-]*)@sha256:[0-9a-f]{64}"
 )
 _FIELDS = {
     "schema_version",

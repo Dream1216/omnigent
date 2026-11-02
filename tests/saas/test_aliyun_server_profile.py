@@ -279,6 +279,31 @@ def test_profile_load_is_offline_and_selects_the_explicit_model_authority(
 
 
 @pytest.mark.parametrize(
+    "image",
+    [
+        "omnigent-registry-vpc.cn-shanghai.cr.aliyuncs.com/omnigent/host@sha256:",
+        "omnigent-registry.cn-hangzhou.cr.aliyuncs.com/omnigent/host@sha256:",
+        "crpi-example-vpc.cn-hangzhou.personal.cr.aliyuncs.com/omnigent/host@sha256:",
+        "omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com.evil.test/omnigent/host@sha256:",
+        "evil.test/omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com/host@sha256:",
+        "user:password@omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com/omnigent/host@sha256:",
+        "https://omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com/omnigent/host@sha256:",
+        "omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com:443/omnigent/host@sha256:",
+        "omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com/omnigent/../host@sha256:",
+        "omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com/omnigent//host@sha256:",
+        "omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com/omnigent/host:latest@sha256:",
+        "omnigent-registry-vpc.cn-hangzhou.cr.aliyuncs.com/omnigent/host:latest",
+    ],
+)
+def test_acr_profile_rejects_unqualified_origin_path_and_mutable_reference(profile_case, image):
+    c = profile_case
+    c.document["host_image"] = image + "4" * 64
+    c.save()
+    with pytest.raises(ValueError, match="configuration is invalid"):
+        c.load()
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("schema_version", True),
@@ -429,10 +454,23 @@ def test_partial_or_unknown_activation_fails_closed(bad_env):
         )
 
 
-def test_real_server_config_loads_profile_and_exposes_only_its_digest(profile_case, tmp_path):
+@pytest.mark.parametrize(
+    "host_repository",
+    [
+        "ghcr.io/example/host",
+        "omnigent-poc-hz-registry-vpc.cn-hangzhou.cr.aliyuncs.com/omnigent/host",
+    ],
+)
+def test_real_server_config_loads_profile_and_exposes_only_its_digest(
+    profile_case, tmp_path, host_repository
+):
     c = profile_case
+    c.document["host_image"] = host_repository + "@sha256:" + "4" * 64
+    c.save()
     config = load_production_server_config({**_environment(tmp_path), **c.source})
     assert config.aliyun_profile is not None
+    assert config.aliyun_profile.host_image == c.document["host_image"]
+    assert config.aliyun_profile.managed.template == c.document["template_id"]
     version = dict(config.version_document)
     assert version["aliyun_sandbox_profile_sha256"] == c.source[PROFILE_HASH_ENV]
     assert "e2b_" not in json.dumps(version) and "gateway_key_file" not in json.dumps(version)
