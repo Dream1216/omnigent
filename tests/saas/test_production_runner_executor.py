@@ -1265,13 +1265,33 @@ async def test_checkpoint_longer_than_original_ttl_keeps_exact_fence_live(
     assert (
         await context.executor.execute(context.lease, cancellation=asyncio.Event()) == "succeeded"
     )
-    # Remove the cadence race before forcing an artificial 120 ms expiry.
-    # Finalization must perform its own authoritative renewal before the
-    # checkpoint starts; the test restarts the background heartbeat only after
-    # that renewal has succeeded and the checkpoint is demonstrably blocked.
+    # Advance authority time only after the real checkpoint and its background
+    # renewal are observed, keeping database latency outside the test's TTL.
     await context.executor._stop_worktree_heartbeat(active, require_healthy=True)
 
-    expires_at = datetime.now(UTC) + timedelta(seconds=0.12)
+    from datetime import datetime as WallClock
+
+    class LeaseClock(WallClock):
+        current = WallClock.now(UTC)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz) if tz else cls.current.replace(tzinfo=None)
+
+    def at_lease_time(method):
+        def call(*args, **kwargs):
+            return method(*args, **kwargs, now=LeaseClock.current)
+
+        return call
+
+    for name in ("heartbeat", "checkpoint", "release"):
+        monkeypatch.setattr(
+            context.fixture.worktrees,
+            name,
+            at_lease_time(getattr(context.fixture.worktrees, name)),
+        )
+    datetime = LeaseClock
+    expires_at = datetime.now(UTC) + timedelta(seconds=30)
     async with active.heartbeat_lock:
         with context.fixture.factory.begin() as database:
             record = database.get(WorktreeInstanceRecord, active.worktree_lease.worktree_id)
@@ -1329,7 +1349,7 @@ async def test_checkpoint_longer_than_original_ttl_keeps_exact_fence_live(
         active.heartbeat_stop = heartbeat_stop
         active.heartbeat_task = heartbeat
     assert await asyncio.to_thread(wait_for_renew_fence_after, pre_checkpoint_renewals)
-    await asyncio.sleep(0.2)  # custom-lint: disable=sleep-then-assert -- cross original lease TTL
+    LeaseClock.current += timedelta(seconds=31)
     assert datetime.now(UTC) > expires_at
     release_upload.set()
     assert await asyncio.wait_for(preparation, timeout=2) == "succeeded"
