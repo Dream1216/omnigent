@@ -270,6 +270,17 @@
           "after": "        \"python-3.12=3.12.16-r0\",\n"
         }
       ]
+    },
+    "runtime_dependency_security_correction": {
+      "corrected_sha256": "42d8b8d2c706dd719c7229b1554eb9bcb07e7326bf487f878a4da1c3ab6e1f48",
+      "restored_sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185",
+      "context": "Exact runtime dependency token inverse restores the complete preceding checker before every original full-file and preserved-function guard. No original expected hash or assertion changes.",
+      "inverse_fragments": [
+        {
+          "before": "expat_2.9.0",
+          "after": "expat_2.10.0"
+        }
+      ]
     }
   },
   "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
