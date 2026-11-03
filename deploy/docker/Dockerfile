@@ -286,17 +286,20 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
     apk add --no-cache \
       ca-certificates-bundle=20260909-r3 \
       gdbm=1.26-r7 \
+      libbrotlicommon1=1.2.0-r7 \
+      libbrotlidec1=1.2.0-r7 \
+      libbrotlienc1=1.2.0-r7 \
       libbz2-1=1.0.8-r25 \
-      libexpat1=2.9.0-r0 \
+      libexpat1=2.10.0-r0 \
       libffi=3.8.0-r2 \
       libstdc++=16.2.0-r1 \
       libuuid=2.42.4-r0 \
       mpdecimal=4.0.1-r4 \
       ncurses=6.6.20260926-r0 \
       ncurses-terminfo-base=6.6.20260926-r0 \
-      py3-pip-wheel=26.2.1-r3 \
-      python-3.12=3.12.15-r3 \
-      python-3.12-base=3.12.15-r3 \
+      py3-pip-wheel=26.2.2-r1 \
+      python-3.12=3.12.16-r0 \
+      python-3.12-base=3.12.16-r0 \
       readline=8.3-r3 \
       sqlite-libs=3.53.4-r2 \
       xz=5.8.4-r0 \
@@ -304,7 +307,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
  && ln -s /usr/bin/python3.12 /usr/local/bin/python \
  && ln -s /usr/bin/python3.12 /usr/local/bin/python3 \
  && ln -s /usr/bin/python3.12 /usr/local/bin/python3.12 \
- && python -B -I -c 'import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION' \
+ && python -B -I -c 'import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.10.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION' \
  && test ! -d /usr/include/c++ \
  && rm -rf /var/cache/apk/* \
  && rm -f /var/cache/ldconfig/aux-cache \
@@ -567,6 +570,12 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
  && install -d -m 0700 "$XDG_RUNTIME_DIR" \
  && npm install --prefix "$OMNIGENT_CLI_STATE/pnpm-prefix" --global \
       --no-audit --no-fund --allow-scripts=pnpm "pnpm@${PNPM_VERSION}" \
+ && test -d "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && rm -rf "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && cp -a /usr/local/lib/node_modules/npm/node_modules/undici \
+      "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici" \
+ && node -e 'const p=require(process.argv[1]); if(p.version!=="6.29.1") throw Error("pnpm undici overlay version differs")' \
+      "$OMNIGENT_CLI_STATE/pnpm-prefix/lib/node_modules/pnpm/dist/node_modules/undici/package.json" \
  && test "$(pnpm --version)" = "${PNPM_VERSION}" \
  && mkdir -p .github/ci-deps \
  && printf '%s\n' \

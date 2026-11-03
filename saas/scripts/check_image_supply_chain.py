@@ -47,6 +47,9 @@ _APPROVED_HOST_CLI_VERSIONS = {
 _APPROVED_MCP_SDK_VERSION = "1.32.0"
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
     "http-cache-semantics@4.3.0",
+    "body-parser@2.4.0",
+    "electron@42.11.16",
+    "fast-uri@3.1.9",
     "source-map-js@1.2.2",
     "@modelcontextprotocol/sdk@1.32.0",
     "@moonshot-ai/kimi-code@0.43.1",
@@ -118,11 +121,11 @@ _APPROVED_NPM_SECURITY_OVERLAYS = {
         },
         {
             "name": "undici",
-            "version": "6.28.1",
-            "tarball": "https://registry.npmjs.org/undici/-/undici-6.28.1.tgz",
+            "version": "6.29.1",
+            "tarball": "https://registry.npmjs.org/undici/-/undici-6.29.1.tgz",
             "integrity": (
-                "sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5Co"
-                "DcO53J4Pu5uXp7lNfjc6DRA=="
+                "sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2"
+                "XOZjKkYgueD12ZmGA=="
             ),
         },
     ],
@@ -915,12 +918,12 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             "sharp": login_packages["node_modules/sharp"]["version"],
             "source-map-js": login_packages["node_modules/source-map-js"]["version"],
         }
-        if login_manifest_data["dependencies"].get("next") != "16.3.8" or (
-            login_packages[""]["dependencies"].get("next") != "16.3.8"
+        if login_manifest_data["dependencies"].get("next") != "16.4.1" or (
+            login_packages[""]["dependencies"].get("next") != "16.4.1"
         ):
             raise ValueError("Next.js manifest and lock root are not fixed")
         if login_versions != {
-            "next": "16.3.8",
+            "next": "16.4.1",
             "sharp": "0.35.5",
             "source-map-js": "1.2.2",
         }:
@@ -1272,7 +1275,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "COPY --from=secured-python-runtime-rootfs / /",
         "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
         "apk add --no-cache",
-        "python-3.12=3.12.15-r3",
+        "python-3.12=3.12.16-r0",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3",
         "ln -s /usr/bin/python3.12 /usr/local/bin/python3.12",
@@ -1284,7 +1287,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "--connect-timeout 30 --max-time 900 -o /tmp/kiro.zip",
         "rm -rf /var/cache/apk/*",
         "import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib",
-        'pyexpat.EXPAT_VERSION == "expat_2.9.0"',
+        'pyexpat.EXPAT_VERSION == "expat_2.10.0"',
         'zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley"',
         "test ! -d /usr/include/c++",
     }
@@ -1300,6 +1303,8 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     ):
         violations.append("final images must use the approved locked Wolfi runtime contract")
     host_cli_reproducibility_contract = {
+        "cp -a /usr/local/lib/node_modules/npm/node_modules/undici",
+        'throw Error("pnpm undici overlay version differs")',
         "ARG SOURCE_DATE_EPOCH",
         ": > /etc/machine-id",
         "HOME=/tmp/npm-version-home",
