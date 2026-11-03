@@ -38,6 +38,23 @@ _ENV_KEYS = {
 }
 
 
+def matches_hosted_runner_label(
+    labels: Any,
+    expected: str = "ubuntu-latest",
+    *,
+    trusted_checkout_revision: str | None = None,
+) -> bool:
+    """Bind the alternate hosted label to the exact protected policy checkout."""
+    return expected in {"ubuntu-latest", "ubuntu-24.04"} and (
+        labels == [expected]
+        or (
+            expected == "ubuntu-latest"
+            and labels == ["ubuntu-24.04"]
+            and trusted_checkout_revision == "796b5da14fed424f9eec11170db05a3316da3a12"
+        )
+    )
+
+
 def native_digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()

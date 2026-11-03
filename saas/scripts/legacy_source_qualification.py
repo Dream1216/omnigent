@@ -182,7 +182,7 @@ def _required_technical_workflows(policy, identity, actual_catalog, profile):
             policy[key] == identity[key] == profile[key]
             for key in ("component", "product_revision", "product_tree")
         )
-        and identity["validation_pr"] == 214
+        and identity["validation_pr"] == 223
         and identity["validation_base_ref"] == "codex/p18-a7-validation-base-20261102",
         "compatibility path scope differs from the exact source and PR",
     )

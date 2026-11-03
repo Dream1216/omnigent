@@ -114,6 +114,35 @@ _COMPATIBILITY_INFRASTRUCTURE_CONTRACTS = {
         "steps": (),
     },
 }
+# Exact current C2 cancellations: assigned runner plus empty archive is UNKNOWN,
+# never zero execution or source proof. Every metadata, annotation and ZIP hash
+# remains mandatory; no other label/source gains a compatibility alias.
+_CURRENT_C2_EMPTY_ARCHIVE_CASES = {
+    "7a8a6dfc62f7df30b8d04175c009bab42cfd5dda45c43b56d8fdb6f1de7bec22": {
+        "archive_bytes": 22,
+        "archive_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+        "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
+        "git_executed": None,
+        "members": (),
+        "operation_line": None,
+        "runner": (0, "", 0, ""),
+        "steps": (),
+        "labels": ["ubuntu-24.04"],
+    },
+    "0177df8b266a458d8773e6a25288e3ca63ef6837af9a688945c5e7da75b06626": {
+        "archive_bytes": 22,
+        "archive_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+        "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
+        "git_executed": None,
+        "members": (),
+        "operation_line": None,
+        "runner": (0, "", 0, ""),
+        "steps": (),
+        "labels": ["ubuntu-24.04"],
+    },
+}
+_COMPATIBILITY_INFRASTRUCTURE_CONTRACTS.update(_CURRENT_C2_EMPTY_ARCHIVE_CASES)
+
 _FIELDS = {
     "kind",
     "workflow_sha256",
@@ -604,7 +633,12 @@ def verify_infrastructure_cancellation(
         and job.get("run_attempt") == rule["attempt"]
         and job.get("head_sha") == check.get("head_sha") == run["head_sha"]
         and job.get("name") == check.get("name") == "evaluate"
-        and job.get("labels") == ["ubuntu-latest"]
+        and job.get("labels")
+        == (
+            contract.get("labels", ["ubuntu-latest"])
+            if contract is not None
+            else ["ubuntu-latest"]
+        )
         and job.get("check_run_url") == f"{native._REPO_URL}/check-runs/{rule['check_id']}"
         and check.get("id") == rule["check_id"]
         and check.get("app", {}).get("id") == 15368

@@ -443,6 +443,17 @@
           "after": "    if f\"ARG UV_VERSION={_APPROVED_UV_VERSION}\" not in dockerfile or not re.search(\n        r'pip install[^\\n]*\"uv==\\$\\{UV_VERSION\\}\"', dockerfile\n    ):\n        violations.append(f\"production Dockerfile must pin and install uv {_APPROVED_UV_VERSION}\")\n    if 'case \"$(uv --version)\" in \"uv ${UV_VERSION}\"|\"uv ${UV_VERSION} \"*' not in dockerfile:\n        violations.append(\"production Dockerfile must verify the installed uv version\")\n    if \"COPY pyproject.toml setup.py uv.lock ./\" not in dockerfile:\n"
         }
       ]
+    },
+    "runtime_dependency_security_correction": {
+      "corrected_sha256": "d800a906f64f20cb0454c4ddeaf9792f4cda8f707787c8104c74b973d23ab3f4",
+      "restored_sha256": "ebf978f26cca52b290b342ff8cb9ff51c33e9a695e2d0a503f5a6835d3bc1dec",
+      "context": "Exact Expat2.10 runtime probe floor for CVE-2026-113351 and CVE-2026-115506. Inverse restores complete prior checker before all original full-file/function guards. Zero High/Critical and raw fresh dual-architecture scans unchanged.",
+      "inverse_fragments": [
+        {
+          "before": "pyexpat.EXPAT_VERSION == \"expat_2.9.0\"",
+          "after": "pyexpat.EXPAT_VERSION == \"expat_2.10.0\""
+        }
+      ]
     }
   },
   "saas/scripts/scan_oci_candidates.py": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
