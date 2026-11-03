@@ -276,7 +276,7 @@ async def test_claude_osc_error_without_a_hook_fails_the_turn_once(
         raw_status = Mock(wraps=poller._on_status)
         monkeypatch.setattr(poller, "_on_status", raw_status)
         async with asyncio.timeout(5):
-            while instance.program_status.child_pid is None:
+            while instance.program_status.status is None:
                 await asyncio.sleep(0.02)
         await instance.send(keys="w")
         await _wait_for_status_edge(statuses, ("running", None))
@@ -315,7 +315,7 @@ async def test_claude_osc_error_is_not_failed_again_once_the_hook_lands(
         raw_status = Mock(wraps=poller._on_status)
         monkeypatch.setattr(poller, "_on_status", raw_status)
         async with asyncio.timeout(5):
-            while instance.program_status.child_pid is None:
+            while instance.program_status.status is None:
                 await asyncio.sleep(0.02)
         await instance.send(keys="w")
         await _wait_for_status_edge(statuses, ("running", None))
