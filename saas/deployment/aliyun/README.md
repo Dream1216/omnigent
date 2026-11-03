@@ -12,14 +12,18 @@ still fail. This does not qualify a template, change authentication, source or
 signature checks, or replace real cloud/business and rollback acceptance.
 The existing `complete` and `server-preflight` release scopes retain their policy.
 
-The current boot experiment follows Aliyun support's recommendation to disable
-chrony autostart after the complete ACR image reached system initialization and
-timed out starting `chrony.service`. The package, binary and original unit remain
-installed; the build verifies the unit is disabled, without masking it. A new
-version and template must verify the actual clock, strict TLS and complete Host
-tools. Explicit platform startup can still start a disabled unit, so this change
-does not establish a root cause or qualify production use. Keep the failed
-template for comparison.
+The MicroVM chrony drop-in aligns the service type with the platform's observed
+startup override. The official Gen2 runtime uses `Type=forking`; its platform
+override clears `ExecStart`, runs `/usr/sbin/chronyd` without `-n`, and sets the
+service user/group to root. The newer Debian chrony unit uses `Type=notify`,
+which requires non-forking startup; the platform override removes that option.
+See the [chronyd notification contract](https://chrony-project.org/doc/4.9/chronyd.html#_environment_variables).
+The drop-in changes only `Type` and retains the real daemon, package unit and
+PID-file supervision. Disabling autostart did not prevent the observed platform
+startup timeout. Each new image still needs its own complete build, comparison,
+scan, signature and actual MicroVM clock/TLS/tool validation. Keep failed
+templates for comparison; an official-runtime control is not full Host or
+production acceptance.
 
 The candidate uses a digest-pinned Debian sid rootfs with a hash-checked, signed
 snapshot index dated 2026-10-30. It installs the required systemd, sshd, sudo,
