@@ -1290,7 +1290,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "--connect-timeout 30 --max-time 900 -o /tmp/kiro.zip",
         "rm -rf /var/cache/apk/*",
         "import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib",
-        'pyexpat.EXPAT_VERSION == "expat_2.9.0"',
+        'pyexpat.EXPAT_VERSION == "expat_2.10.0"',
         'zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley"',
         "test ! -d /usr/include/c++",
     }

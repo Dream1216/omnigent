@@ -13,9 +13,10 @@ from saas.scripts.oci_promotion import require
 
 WORKFLOW = ".github/workflows/security-scan.yml"
 MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
-_REVIEWED_MAIN_CHECKOUTS = {MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe"}
+_CURRENT_MAIN = "796b5da14fed424f9eec11170db05a3316da3a12"
+_REVIEWED_MAIN_CHECKOUTS = {MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe", _CURRENT_MAIN}
 _COMPATIBILITY_OWNER_POLICY_SHA256 = (
-    "da0114e7742eb15a4263011b22c2722a1bd4ed21b529535c5d3134a10f0d48ce"
+    "9a5506ae3d2b4f10198c250e88bafc6f2f405b4e7dab35785ed6a825ac3b502d"
 )
 KIND = "legacy_original_OWNER_security_policy_decision/v1"
 SOURCES = {
@@ -25,6 +26,13 @@ SOURCES = {
     ),
     ".github/scripts/merge-ready/load-maintainers.sh": (
         "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78"
+    ),
+}
+_CURRENT_MAIN_SOURCES = {
+    **SOURCES,
+    WORKFLOW: "9e2a6c4d985c9afb27ea03162361f7567092d3a451956af0e2f9c107ce9a2325",
+    ".github/scripts/security-scan/should-scan.sh": (
+        "ef682dbda4e903303af3b670cf256140dfd1ecd8711d9fb3148a6ad64e37d250"
     ),
 }
 ROOT = "repos/Dream1216/omnigent"
@@ -98,6 +106,9 @@ def validate_registration(profile, identity, specification):
         isinstance(row, dict) and set(row) == _FIELDS,
         "original OWNER security-policy registration fields differ",
     )
+    trusted_sources = (
+        _CURRENT_MAIN_SOURCES if row["trusted_checkout_revision"] == _CURRENT_MAIN else SOURCES
+    )
     compatibility = profile["component"] == "Compatibility018"
     if compatibility:
         require(
@@ -125,9 +136,10 @@ def validate_registration(profile, identity, specification):
         and specification["name"] == "Security Scan"
         and specification["source_sha256"] == row["workflow_sha256"] == SOURCES[WORKFLOW]
         and (compatibility or row["trusted_checkout_revision"] in _REVIEWED_MAIN_CHECKOUTS)
-        and row["should_scan_sha256"] == SOURCES[".github/scripts/security-scan/should-scan.sh"]
+        and row["should_scan_sha256"]
+        == trusted_sources[".github/scripts/security-scan/should-scan.sh"]
         and row["load_maintainers_sha256"]
-        == SOURCES[".github/scripts/merge-ready/load-maintainers.sh"]
+        == trusted_sources[".github/scripts/merge-ready/load-maintainers.sh"]
         and specification["run_id"] == row["run_id"]
         and specification["attempt"] == row["attempt"]
         and specification["jobs"]
@@ -342,7 +354,10 @@ def collect_policy_decision(
     from saas.scripts.legacy_domain_native import _native_file
 
     row = validate_registration(profile, identity, specification)
-    for path, expected in SOURCES.items():
+    trusted_sources = (
+        _CURRENT_MAIN_SOURCES if row["trusted_checkout_revision"] == _CURRENT_MAIN else SOURCES
+    )
+    for path, expected in trusted_sources.items():
         require(
             hashlib.sha256(
                 _native_file(path, row["trusted_checkout_revision"], read=api)

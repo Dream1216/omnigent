@@ -136,6 +136,17 @@
           "after": "        if active_job is not None:\n            if any(400 <= status < 500 for status in diagnostic.get(\"http_statuses\", [])):\n                raise\n            _recover_active_job_log(job_id, destination, active_job)\n            return\n"
         }
       ]
+    },
+    "raw_native_log_capture_correction": {
+      "corrected_sha256": "5e93c958b52f0e81e77d312eefaceef271429df9c36380cc08e037e93373c361",
+      "restored_sha256": "b2ade7664f7b701a7f6edf8f02f8abc527ca7ccf3fbf903301285a91687c596f",
+      "context": "Exact CLI escape-sequence refusal correction only for bounded private raw job-log capture. Inverse restores entire 796b source before all pre-existing whole-file and function guards. No source, policy or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "    argv = [\"gh\", \"api\", f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\"]\n",
+          "after": "    # Preserve raw evidence in the private pipe/file, never in a terminal.\n    argv = [\n        \"gh\",\n        \"api\",\n        \"--allow-escape-sequences\",\n        f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\",\n    ]\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
@@ -430,6 +441,17 @@
         {
           "before": "    if f\"ARG UV_VERSION={_APPROVED_UV_VERSION}\" not in dockerfile or not re.search(\n        r'pip install[^\\n]*\"uv==\\$\\{UV_VERSION\\}\"', dockerfile\n    ):\n        violations.append(\"production Dockerfile must pin and install uv 0.12.1\")\n    if 'case \"$(uv --version)\" in \"uv ${UV_VERSION}\"|\"uv ${UV_VERSION} \"*' not in dockerfile:\n        violations.append(\"production Dockerfile must verify the installed uv version\")\n    if \"COPY pyproject.toml setup.py uv.lock ./\" not in dockerfile:\n",
           "after": "    if f\"ARG UV_VERSION={_APPROVED_UV_VERSION}\" not in dockerfile or not re.search(\n        r'pip install[^\\n]*\"uv==\\$\\{UV_VERSION\\}\"', dockerfile\n    ):\n        violations.append(f\"production Dockerfile must pin and install uv {_APPROVED_UV_VERSION}\")\n    if 'case \"$(uv --version)\" in \"uv ${UV_VERSION}\"|\"uv ${UV_VERSION} \"*' not in dockerfile:\n        violations.append(\"production Dockerfile must verify the installed uv version\")\n    if \"COPY pyproject.toml setup.py uv.lock ./\" not in dockerfile:\n"
+        }
+      ]
+    },
+    "runtime_dependency_security_correction": {
+      "corrected_sha256": "d800a906f64f20cb0454c4ddeaf9792f4cda8f707787c8104c74b973d23ab3f4",
+      "restored_sha256": "ebf978f26cca52b290b342ff8cb9ff51c33e9a695e2d0a503f5a6835d3bc1dec",
+      "context": "Exact Expat2.10 runtime probe floor for CVE-2026-113351 and CVE-2026-115506. Inverse restores complete prior checker before all original full-file/function guards. Zero High/Critical and raw fresh dual-architecture scans unchanged.",
+      "inverse_fragments": [
+        {
+          "before": "pyexpat.EXPAT_VERSION == \"expat_2.9.0\"",
+          "after": "pyexpat.EXPAT_VERSION == \"expat_2.10.0\""
         }
       ]
     }

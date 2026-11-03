@@ -44,6 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
 from tests.e2e.conftest import configure_mock_llm, find_free_port, reset_mock_llm
 
 _MODEL = "mock-caller-traceparent-model"
@@ -364,3 +365,5 @@ def test_daemon_backed_run_keeps_response_derived_traces(
         )
     finally:
         collector.close()
+        _, survivors = reap_leaked_omnigent_processes(fake_home / ".omnigent")
+        assert not survivors, f"Trace test processes survived cleanup: {survivors}"

@@ -55,6 +55,136 @@ trigger_environment = domain.trigger_environment
 trigger_identity = domain.trigger_identity
 
 
+# These exact, already executed attachments are evidence of a guard refusal,
+# but their fixed-runner workflow cannot supply legacy source eligibility.
+# Keep the original denial for every unregistered coordinate or changed byte.
+_EXACT_FIXED_RUNNER_C2_AUDITS = {
+    (41640943620, 1, 125933997679, 125933997679): (
+        "9309dcf17f44fc1d6f513056f6c1eb087f1ac41e465d5962ca4de7d0f75436aa",
+        "bccab22426f253c653214e64b22e8b9bd5eb00b09e8ff811a821510d6600378b",
+        "1fa1a7982d7fe83691def28d8e0fde09bfd4f0724af0e761e6211c70f288c270",
+        "657929654f8c026cbfeec0257a3e74c737666bb02b9b38a64ed176949940bbb3",
+    ),
+    (41642385669, 1, 125938897300, 125938897300): (
+        "ce999325e48ab67d704dad6828ef944d44092956a192fe75612ddd2a5597da06",
+        "bef0dac672c04d41a752394124482fc5adce1d05fe1ca74b85dc5988cc680486",
+        "c548f3a97eed6e924e493a2555fb3a2f0aa2e40d415101407639a455577b9b3c",
+        "7f179fa1775d680ceba14b36f833ca40ac09e860a02300efb21df8b81f51d11a",
+    ),
+    (41643363449, 1, 125942235556, 125942235556): (
+        "d0dfb8a277277b38d33e63114d4ea07c369144134bbaefd8d83688206690fba2",
+        "3c4a974342b27748cad356699bc508ea190df0786f3b0da9548426aa6305e4d3",
+        "9f2c58524c72dae85bb8ea088c23f397d0c4451afe94e0679f99b57e9492101b",
+        "c327c761033a522ba73c2d38db5a1fd5289df270cee447fd19719d3ab025077a",
+    ),
+}
+_EXACT_FOREIGN_CANCELLED_REFUSALS = {
+    (41656904503, 1, 125989513772, 125989513772): (
+        "c6170569067e7f36c1bd53e3c5154d6fe48bf54d377c48f59bb7f58deca8b651",
+        "c14215a51421a7ec2eaa31363c720cb64287c0095d69ec831261b66fe7a5ae3b",
+        "4cb2a4863427cba75eee70bb837f47481519b7d99a737e498cff836f97a7dd35",
+        "1859a23f2c621266804af704efc5f5a1be921d0192e30107700d7d554f4e260a",
+    )
+}
+
+
+def _exact_audit(row, registry):
+    fields = ("run_sha256", "job_sha256", "check_sha256", "job_log_sha256")
+    return registry.get(
+        tuple(row.get(k) for k in ("run_id", "attempt", "job_id", "check_id"))
+    ) == tuple(row.get(k) for k in fields)
+
+
+def _exact_current_C2(profile, identity):
+    return (
+        profile.get("component") == "Compatibility018"
+        and profile.get("product_revision") == "7e774d673980729f591304d8d7b991af36a06920"
+        and profile.get("product_tree") == "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+        and isinstance(identity, dict)
+        and identity.get("validation_pr") == 223
+        and identity.get("validation_base_ref") == "codex/p18-a7-validation-base-20261102"
+    )
+
+
+def exact_fixed_runner_exclusion(row):
+    return (
+        _exact_audit(row, _EXACT_FIXED_RUNNER_C2_AUDITS)
+        and row.get("classification") == "audited-fixed-runner-exclusion"
+        and row.get("attachment_revision") == "796b5da14fed424f9eec11170db05a3316da3a12"
+        and row.get("trusted_checkout_revision") == row.get("attachment_revision")
+        and row.get("original_PR") == 223
+        and row.get("original_event_source_revision") == "7e774d673980729f591304d8d7b991af36a06920"
+        and all(
+            row.get(k) is False
+            for k in (
+                "current_legacy_eligibility",
+                "source_proof",
+                "production_admission",
+                "technical_gate_waiver",
+            )
+        )
+    )
+
+
+def _exact_foreign_cancelled_refusal(run, profile, identity, number, destination):
+    """Audit one fully retained foreign-PR refusal; it grants no source eligibility."""
+    require(_exact_current_C2(profile, identity), "foreign audit is not the exact C2 domain")
+    jobs = _job_pages(run["id"], run["run_attempt"])
+    require(len(jobs) == 1, "foreign refusal job set differs")
+    job = jobs[0]
+    match = re.fullmatch(
+        re.escape(_REPO_URL) + r"/check-runs/([1-9][0-9]*)", job.get("check_run_url", "")
+    )
+    require(match is not None, "foreign refusal check URL is not native")
+    match = cast(re.Match[str], match)
+    check = api(f"{_ROOT}/check-runs/{match[1]}")
+    path = destination / f"run-{run['id']}-attempt-{run['run_attempt']}-job-{job['id']}.log"
+    download_job_log(job["id"], path)
+    raw = path.read_bytes()
+    row = {
+        "run_id": run["id"],
+        "attempt": run["run_attempt"],
+        "job_id": job["id"],
+        "check_id": check["id"],
+        "run_sha256": domain.native_digest(run),
+        "job_sha256": domain.native_digest(job),
+        "check_sha256": domain.native_digest(check),
+        "job_log_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    require(
+        _exact_audit(row, _EXACT_FOREIGN_CANCELLED_REFUSALS),
+        "foreign refusal differs from its exact original bytes",
+    )
+    log = raw.decode()
+    checkout, resolve = (
+        _one_step(job, name) for name in ("Check out trusted gate", "Resolve current PR head")
+    )
+    control = checkout_commit(log, checkout)
+    environment = trigger_environment(_cancelled_trigger_group(log, resolve), resolve)
+    original_pr, source = _discovery_trigger_identity(environment, run["event"], profile)
+    require(
+        original_pr != number and control == "796b5da14fed424f9eec11170db05a3316da3a12",
+        "foreign cancellation cannot replace current-domain source proof",
+    )
+    return {
+        **row,
+        "classification": "other-pr",
+        "original_PR": original_pr,
+        "original_event_source_revision": source,
+        "attachment_revision": run["head_sha"],
+        "trusted_checkout_revision": control,
+        "trusted_gate_sha256": hashlib.sha256(
+            domain._native_file(domain._GATE, control)
+        ).hexdigest(),
+        "original_run_conclusion": run["conclusion"],
+        "original_job_conclusion": job["conclusion"],
+        "current_legacy_eligibility": False,
+        "source_proof": False,
+        "production_admission": False,
+        "technical_gate_waiver": False,
+    }
+
+
 def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[str, Any]:
     # CLI-only dependency; the discovery reader is also used by the qualifier.
     from saas.scripts.legacy_source_qualification import load_qualification_policy as load
@@ -445,6 +575,17 @@ def _inspect_run(
             not fixed_runner_attachment or not matches,
             "fixed-runner attachment cannot replace a registered legacy proof",
         )
+        if (
+            observed.get("conclusion") == "cancelled"
+            and not numbers
+            and not matches
+            and _exact_current_C2(profile, identity)
+            and (run["id"], attempt) in {key[:2] for key in _EXACT_FOREIGN_CANCELLED_REFUSALS}
+        ):
+            record["attempts"].append(
+                _exact_foreign_cancelled_refusal(observed, profile, identity, number, destination)
+            )
+            continue
         if observed.get("conclusion") == "cancelled" and not numbers and not matches:
             cancellation_jobs = _job_pages(run["id"], attempt)
             if len(cancellation_jobs) == 1 and _cancelled_other_pr_context(cancellation_jobs[0]):
@@ -554,7 +695,11 @@ def _inspect_run(
             observed,
             job,
             check,
-            expected_runner_label=("ubuntu-24.04" if fixed_runner_attachment else "ubuntu-latest"),
+            expected_runner_label=(
+                "ubuntu-24.04"
+                if fixed_runner_attachment or job.get("labels") == ["ubuntu-24.04"]
+                else "ubuntu-latest"
+            ),
         )
         path = destination / f"run-{run['id']}-attempt-{attempt}-job-{job['id']}.log"
         download_job_log(job["id"], path)
@@ -570,12 +715,37 @@ def _inspect_run(
             "domain checkout and trigger step order differs",
         )
         control = checkout_commit(log, checkout)
+        require(
+            domain.matches_hosted_runner_label(
+                job.get("labels"),
+                "ubuntu-24.04" if fixed_runner_attachment else "ubuntu-latest",
+                trusted_checkout_revision=control,
+            ),
+            "domain runner label lacks its exact reviewed trusted checkout",
+        )
         environment = trigger_environment(_cancelled_trigger_group(log, resolve), resolve)
         original_pr, source = _discovery_trigger_identity(environment, run["event"], profile)
+        fixed_current = (
+            fixed_runner_attachment
+            and original_pr == number
+            and source == profile["product_revision"]
+        )
+        exact_exclusion = (
+            fixed_current
+            and _exact_current_C2(profile, identity)
+            and _exact_audit(
+                {
+                    **coordinate,
+                    "run_sha256": domain.native_digest(observed),
+                    "job_sha256": domain.native_digest(job),
+                    "check_sha256": domain.native_digest(check),
+                    "job_log_sha256": hashlib.sha256(raw_log).hexdigest(),
+                },
+                _EXACT_FIXED_RUNNER_C2_AUDITS,
+            )
+        )
         require(
-            not fixed_runner_attachment
-            or original_pr != number
-            or source != profile["product_revision"],
+            not fixed_current or exact_exclusion,
             "fixed-runner attachment cannot grant current legacy source eligibility",
         )
         require(
@@ -583,7 +753,9 @@ def _inspect_run(
             "native PR association contradicts original trigger",
         )
         classification = (
-            "other-pr"
+            "audited-fixed-runner-exclusion"
+            if exact_exclusion
+            else "other-pr"
             if original_pr != number
             else "related"
             if source == profile["product_revision"]
@@ -607,6 +779,15 @@ def _inspect_run(
                 "check_sha256": domain.native_digest(check),
                 "job_log_sha256": hashlib.sha256(raw_log).hexdigest(),
                 "technical_gate_waiver": False,
+                **(
+                    {
+                        "current_legacy_eligibility": False,
+                        "source_proof": False,
+                        "production_admission": False,
+                    }
+                    if exact_exclusion
+                    else {}
+                ),
             }
         )
         require(

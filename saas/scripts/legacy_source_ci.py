@@ -213,7 +213,13 @@ def _download_job_log_direct(job_id: int, destination: Path, *, http1: bool = Fa
     require(type(job_id) is int and job_id > 0, "invalid native job ID")
     reserve_native_download(f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs")
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    argv = ["gh", "api", f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs"]
+    # Preserve raw evidence in the private pipe/file, never in a terminal.
+    argv = [
+        "gh",
+        "api",
+        "--allow-escape-sequences",
+        f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs",
+    ]
     started = time.monotonic()
     environment = None
     if http1:
