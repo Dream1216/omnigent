@@ -12,6 +12,15 @@ still fail. This does not qualify a template, change authentication, source or
 signature checks, or replace real cloud/business and rollback acceptance.
 The existing `complete` and `server-preflight` release scopes retain their policy.
 
+The current boot experiment follows Aliyun support's recommendation to disable
+chrony autostart after the complete ACR image reached system initialization and
+timed out starting `chrony.service`. The package, binary and original unit remain
+installed; the build verifies the unit is disabled, without masking it. A new
+version and template must verify the actual clock, strict TLS and complete Host
+tools. Explicit platform startup can still start a disabled unit, so this change
+does not establish a root cause or qualify production use. Keep the failed
+template for comparison.
+
 The candidate uses a digest-pinned Debian sid rootfs with a hash-checked, signed
 snapshot index dated 2026-10-30. It installs the required systemd, sshd, sudo,
 chronyd, FUSE and iptables components, plus Git, tmux and bubblewrap. Python

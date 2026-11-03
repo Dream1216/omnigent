@@ -38,6 +38,8 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac \
  && test -x /sbin/init \
  && test -x /usr/sbin/sshd \
  && test -x /usr/sbin/chronyd \
+ && systemctl disable chrony.service \
+ && test "$(systemctl is-enabled chrony.service)" = disabled \
  && test -x /usr/sbin/iptables \
  && rm -f /etc/ssh/ssh_host_* /var/lib/systemd/random-seed \
       /var/cache/ldconfig/aux-cache \
