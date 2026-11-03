@@ -237,7 +237,7 @@ def native_original(data, destination, monkeypatch, *, expired=False):
 
     def spawn(arguments, **kwargs):
         if arguments[:2] == ["gh", "api"]:
-            endpoint = arguments[2]
+            endpoint = arguments[3] if arguments[2] == "--allow-escape-sequences" else arguments[2]
             if endpoint.endswith("/logs"):
                 command = "import os;os.write(1," + repr(log) + ")"
             else:
