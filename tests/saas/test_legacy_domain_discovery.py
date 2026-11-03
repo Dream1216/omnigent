@@ -7,6 +7,7 @@ import base64
 import copy
 import hashlib
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -381,10 +382,8 @@ def test_reviewed_fixed_runner_execution_only_classifies_other_source(
 ):
     data = discovery_case
     profile = {**scenario["profile"], "component": "Compatibility018"}
-    from tests.saas.test_legacy_source_qualification import core
-
-    monkeypatch.setattr(
-        core,
+    monkeypatch.setitem(
+        sys.modules["saas.scripts.protected_legacy_initial_build"].validate_profile.__globals__,
         "_COMPATIBILITY_PROFILE_SHA256",
         discovery.domain.native_digest(profile),
     )
