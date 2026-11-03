@@ -100,6 +100,71 @@ def test_checkout_accepts_native_fractional_completion_and_windows_git_quoting(n
     assert reader.checkout_commit(log, step) == native["actual_merge"]["sha"]
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing-next",
+        "wrong-name",
+        "wrong-declaration",
+        "early-next",
+        "duplicate",
+        "unpinned",
+    ],
+)
+def test_checkout_completion_second_excludes_only_declared_next_action(fault):
+    step = {
+        "number": 2,
+        "name": "Check out source",
+        "status": "completed",
+        "conclusion": "success",
+        "started_at": "2026-11-03T13:12:37Z",
+        "completed_at": "2026-11-03T13:12:44Z",
+    }
+    following = {
+        "number": 3,
+        "name": "Scan locked dependencies",
+        "conclusion": "success",
+        "started_at": "2026-11-03T13:12:44Z",
+    }
+    merge = "4b6fffc351eb2b4bee2ee6c13b8c9abca74038c6"
+    scanner = "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
+    source = f"- name: Scan locked dependencies\n  uses: {scanner}\n".encode()
+    checkout = (
+        f"2026-11-03T13:12:37.4729577Z ##[group]Run actions/checkout@{reader.CHECKOUT_REVISION}\n"
+        "2026-11-03T13:12:44.1000000Z [command]/usr/bin/git log -1 --format=%H\n"
+        f"2026-11-03T13:12:44.1100000Z {merge}\n"
+    )
+    log = (
+        checkout
+        + f"2026-11-03T13:12:44.1995135Z ##[group]Run {scanner}\n"
+        + "2026-11-03T13:12:44.4808438Z ##[group]Run actions/checkout@"
+        "8e8c483db84b4bee98b60c0593521ed34d9990e8\n"
+    )
+    steps = [step, following]
+    if fault == "missing-next":
+        steps = [step]
+    elif fault == "wrong-name":
+        following["name"] = "Another step"
+    elif fault == "wrong-declaration":
+        source = source.replace(scanner.encode(), b"example/unreviewed@" + b"0" * 40)
+    elif fault == "early-next":
+        following["started_at"] = "2026-11-03T13:12:43Z"
+    elif fault == "duplicate":
+        log = checkout + log
+    elif fault == "unpinned":
+        log = log.replace(reader.CHECKOUT_REVISION, "v7")
+    with pytest.raises(ValueError):
+        reader.checkout_commit(log, step)
+    scoped = reader.checkout_step_log(log, step, steps, source)
+    if fault is None:
+        assert reader.checkout_commit(scoped, step) == merge
+        assert scanner not in scoped
+    else:
+        with pytest.raises(ValueError):
+            reader.checkout_commit(scoped, step)
+
+
 def expected(native):
     run, job = native["original_run"], native["original_job"]
     return {

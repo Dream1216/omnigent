@@ -5355,9 +5355,9 @@
           "app_id": 15368,
           "expected_conclusion": null,
           "name": "evaluate",
-          "reason": "Exact current native .github/workflows/saas-n1-merge-gate.yml event=pull_request_target; scope=original-domain-refusal-cancellation. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory.",
+          "reason": "Exact latest attempt2 refused this frozen non-main PR; bind its authenticated original guard refusal, retain failure and all source/technical/production authority limits.",
           "role": "head",
-          "scope": "original-domain-refusal-cancellation",
+          "scope": "original-domain-not-applicable",
           "suite_id": 112833867654
         }
       ],
@@ -5883,7 +5883,7 @@
       },
       "bootstrap_positive_origin": {
         "kind": "legacy_bootstrap_positive_origin/v1",
-        "source_bundle_sha256": "b8d6069bb1ddb0fa8a7c89ff2b71e2b8135659c73e1b26c0139090c7ac2f0cd5"
+        "source_bundle_sha256": "a3ba92beae384c0b34d8a4c9b2c33cc302ece1e4d576e276afc8c6a3e7647934"
       },
       "domain_not_applicable": {
         ".github/workflows/saas-n1-merge-gate.yml": [
@@ -5911,7 +5911,7 @@
     },
     "Gateway": {
       "component": "Gateway",
-      "identity_contract_sha256": "9f9287701ae6c4f41970a0994792fec306f0b875563e451f515040eb46d007a7",
+      "identity_contract_sha256": "602f8f3ed185556e760e039b4c8f0831ba7ac39a7122ff579eb4f2c74c354921",
       "job_evidence": {
         ".github/workflows/ci.yml": {
           "Coverage report": {
@@ -11284,9 +11284,9 @@
           "app_id": 15368,
           "expected_conclusion": null,
           "name": "evaluate",
-          "reason": "Exact current native .github/workflows/saas-n1-merge-gate.yml event=pull_request_target; scope=original-domain-zero-execution. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory.",
+          "reason": "Exact latest attempt2 refused this frozen non-main PR; bind its authenticated original guard refusal, retain failure and all source/technical/production authority limits.",
           "role": "head",
-          "scope": "original-domain-zero-execution",
+          "scope": "original-domain-not-applicable",
           "suite_id": 112918917772
         }
       ],
@@ -11812,7 +11812,7 @@
       },
       "bootstrap_positive_origin": {
         "kind": "legacy_bootstrap_positive_origin/v1",
-        "source_bundle_sha256": "d00eed7dc6f25dd9bd7e4ced9e3c1e6ec8d26c6ef3e477556c6b4372a6c745fc"
+        "source_bundle_sha256": "cf88f154e7058ae14c9781ac71547a21c423f9aa516d4dc77140f23c647a25c2"
       },
       "domain_not_applicable": {
         ".github/workflows/saas-n1-merge-gate.yml": [
@@ -17211,9 +17211,9 @@
           "app_id": 15368,
           "expected_conclusion": null,
           "name": "evaluate",
-          "reason": "Exact current native .github/workflows/saas-n1-merge-gate.yml event=pull_request_target; scope=original-domain-zero-execution. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory.",
+          "reason": "Exact latest attempt2 refused this frozen non-main PR; bind its authenticated original guard refusal, retain failure and all source/technical/production authority limits.",
           "role": "head",
-          "scope": "original-domain-zero-execution",
+          "scope": "original-domain-not-applicable",
           "suite_id": 112835287311
         }
       ],
@@ -17729,7 +17729,7 @@
       },
       "bootstrap_positive_origin": {
         "kind": "legacy_bootstrap_positive_origin/v1",
-        "source_bundle_sha256": "6e476e9958bd584689850176f9764aa3574405e6f3523e3481c18e77347c3e0a"
+        "source_bundle_sha256": "acab3dd70720755d62c19b969b0ef91c9208848da1b3feec6aaef7ca6d5f9ccd"
       },
       "domain_not_applicable": {
         ".github/workflows/saas-n1-merge-gate.yml": [
@@ -23462,9 +23462,9 @@
           "app_id": 15368,
           "suite_id": 112837206500,
           "name": "evaluate",
-          "scope": "original-domain-zero-execution",
+          "scope": "original-domain-not-applicable",
           "expected_conclusion": null,
-          "reason": "Exact current native .github/workflows/saas-n1-merge-gate.yml event=pull_request_target; scope=original-domain-zero-execution. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact latest attempt2 refused this frozen non-main PR; bind its authenticated original guard refusal, retain failure and all source/technical/production authority limits."
         }
       ],
       "statuses": [
@@ -23500,20 +23500,24 @@
         ]
       },
       "domain_unattributed_zero_execution": {
-        "kind": "legacy_original_main_domain_unattributed_zero_execution_policy/v1",
-        "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
-        "validation_pr": 223,
-        "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-        "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-        "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_zero_execution_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 223,
+          "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+          "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
+          "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+        }
       },
       "domain_unattributed_bootstrap_cancellation": {
-        "kind": "legacy_original_main_domain_unattributed_bootstrap_cancellation_policy/v1",
-        "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
-        "validation_pr": 223,
-        "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-        "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-        "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+        ".github/workflows/saas-n1-merge-gate.yml": {
+          "kind": "legacy_original_main_domain_unattributed_bootstrap_cancellation_policy/v1",
+          "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+          "validation_pr": 223,
+          "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+          "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
+          "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+        }
       },
       "domain_infrastructure_cancellation": {
         ".github/workflows/saas-n1-merge-gate.yml": [

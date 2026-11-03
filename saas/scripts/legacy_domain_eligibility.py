@@ -738,21 +738,21 @@ _BOOTSTRAP_ORIGINS = {
         "d8f0388fd20b2128f4ac7887ae399b0fb52c566b",
         220,
         "codex/legacy-validation-core-dc1e9a97",
-        "b8d6069bb1ddb0fa8a7c89ff2b71e2b8135659c73e1b26c0139090c7ac2f0cd5",
+        "a3ba92beae384c0b34d8a4c9b2c33cc302ece1e4d576e276afc8c6a3e7647934",
     ),
     "Gateway": (
         "8756f81d699a9b1cd64bc93702b0c06cc38c3fdc",
         "e18f179a8891ce28d804d7d28344e1a2f9a2292b",
         221,
         "codex/legacy-validation-gateway-3319b59a",
-        "d00eed7dc6f25dd9bd7e4ced9e3c1e6ec8d26c6ef3e477556c6b4372a6c745fc",
+        "cf88f154e7058ae14c9781ac71547a21c423f9aa516d4dc77140f23c647a25c2",
     ),
     "Model": (
         "f16e62a63cdb1802076b7712af630342daa56586",
         "e060f1b58671afdd129cbd52dd2155471decb675",
         222,
         "codex/legacy-validation-model-7cea0940",
-        "6e476e9958bd584689850176f9764aa3574405e6f3523e3481c18e77347c3e0a",
+        "acab3dd70720755d62c19b969b0ef91c9208848da1b3feec6aaef7ca6d5f9ccd",
     ),
 }
 

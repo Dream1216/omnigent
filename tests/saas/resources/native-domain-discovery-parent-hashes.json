@@ -147,6 +147,20 @@
           "after": "    # Preserve raw evidence in the private pipe/file, never in a terminal.\n    argv = [\n        \"gh\",\n        \"api\",\n        \"--allow-escape-sequences\",\n        f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\",\n    ]\n"
         }
       ]
+    },
+    "native_step_boundary_correction": {
+      "corrected_sha256": "337924fd3ad57f3435640ebb927cba5f956cd06e744a09ad028e895182a33d9c",
+      "restored_sha256": "5e93c958b52f0e81e77d312eefaceef271429df9c36380cc08e037e93373c361",
+      "inverse_fragments": [
+        {
+          "before": "",
+          "after": "def checkout_step_log(\n    log: str, step: dict[str, Any], job_steps: list[dict[str, Any]], workflow: bytes\n) -> str:\n    \"\"\"Exclude a declared following action from the completion-second overlap.\"\"\"\n    following = sorted(\n        (\n            row\n            for row in job_steps\n            if row[\"number\"] > step[\"number\"]\n            and row.get(\"conclusion\") != \"skipped\"\n            and row.get(\"started_at\") is not None\n        ),\n        key=lambda row: row[\"number\"],\n    )\n    if not following:\n        return log\n    next_step = following[0]\n    ended = _instant(step[\"completed_at\"])\n    if _instant(next_step[\"started_at\"]) != ended:\n        return log\n    source = workflow.decode(\"utf-8\")\n    offset = 0\n    for line in log.splitlines(keepends=True):\n        timestamp, separator, body = line.removeprefix(\"\\ufeff\").partition(\" \")\n        boundary = re.fullmatch(\n            r\"##\\[group\\]Run ([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+@[0-9a-f]{40})\",\n            body.rstrip(\"\\r\\n\"),\n        )\n        if separator and boundary:\n            observed = _instant(timestamp)\n            action = boundary[1]\n            declared = re.search(\n                r\"(?m)^[ \\t]*-[ \\t]*name:[ \\t]*\"\n                + re.escape(next_step[\"name\"])\n                + r\"[ \\t]*\\r?\\n[ \\t]*uses:[ \\t]*\"\n                + re.escape(action)\n                + r\"[ \\t]*(?:#.*)?$\",\n                source,\n            )\n            if ended <= observed < ended + timedelta(seconds=1) and declared:\n                return log[:offset]\n        offset += len(line)\n    return log\n\n\n"
+        },
+        {
+          "before": "                observed = checkout_commit(log, actual[0])",
+          "after": "                observed = checkout_commit(\n                    checkout_step_log(log, actual[0], job[\"steps\"], body), actual[0]\n                )"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
