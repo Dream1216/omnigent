@@ -190,7 +190,11 @@ def discover_runs(created: datetime) -> list[dict[str, Any]]:
 
 
 def _coordinates(
-    run: dict[str, Any], job: dict[str, Any], check: dict[str, Any]
+    run: dict[str, Any],
+    job: dict[str, Any],
+    check: dict[str, Any],
+    *,
+    expected_runner_label: str = "ubuntu-latest",
 ) -> dict[str, int]:
     require(
         type(job.get("id")) is int
@@ -203,7 +207,8 @@ def _coordinates(
         and job.get("conclusion") == check.get("conclusion")
         and job.get("conclusion") in {"success", "failure"}
         and job.get("runner_group_name") == "GitHub Actions"
-        and job.get("labels") == ["ubuntu-latest"]
+        and expected_runner_label in {"ubuntu-latest", "ubuntu-24.04"}
+        and job.get("labels") == [expected_runner_label]
         and type(check.get("id")) is int
         and check["id"] > 0
         and job.get("check_run_url") == f"{_REPO_URL}/check-runs/{check['id']}"
@@ -274,7 +279,9 @@ def _cancelled_trigger_group(log: str, step: dict[str, Any]) -> str:
     return candidates[0]
 
 
-def _cancelled_other_pr_attempt(run, jobs, number, destination):
+def _cancelled_other_pr_attempt(
+    run, jobs, number, destination, *, expected_runner_label="ubuntu-latest"
+):
     require(len(jobs) == 1, "cancelled other-PR native job set differs")
     job = jobs[0]
     match = re.fullmatch(
@@ -284,7 +291,9 @@ def _cancelled_other_pr_attempt(run, jobs, number, destination):
     if match is None:
         raise ValueError("cancelled other-PR check URL is not native")
     check = api(f"{_ROOT}/check-runs/{match[1]}")
-    coordinate = nonexecution.cancelled_job_coordinates(run, job, check)
+    coordinate = nonexecution.cancelled_job_coordinates(
+        run, job, check, expected_runner_label=expected_runner_label
+    )
     suite = api(f"{_ROOT}/check-suites/{run['check_suite_id']}")
     require(
         suite.get("id") == run["check_suite_id"]
@@ -399,15 +408,14 @@ def _inspect_run(
     attachment_workflow_sha256 = hashlib.sha256(
         domain._native_file(domain.MAIN_WORKFLOW, run["head_sha"])
     ).hexdigest()
-    fixed_runner_absence = (
+    fixed_runner_attachment = (
         attachment_workflow_sha256 == domain.FIXED_RUNNER_WORKFLOW_SHA256
         and profile.get("component") == nonexecution.COMPATIBILITY_COMPONENT
         and not numbers
         and run.get("status") == "completed"
-        and run.get("conclusion") in {"cancelled", "skipped"}
     )
     require(
-        attachment_workflow_sha256 == domain.MAIN_WORKFLOW_SHA256 or fixed_runner_absence,
+        attachment_workflow_sha256 == domain.MAIN_WORKFLOW_SHA256 or fixed_runner_attachment,
         "domain workflow bytes are not the reviewed original",
     )
     latest = api(f"{_ROOT}/actions/runs/{run['id']}")
@@ -434,9 +442,8 @@ def _inspect_run(
             row for row in audit_rules if (row["run_id"], row["attempt"]) == (run["id"], attempt)
         ]
         require(
-            not fixed_runner_absence
-            or (not matches and observed.get("conclusion") in {"cancelled", "skipped"}),
-            "fixed-runner attachment can only receive an unattributed absence audit",
+            not fixed_runner_attachment or not matches,
+            "fixed-runner attachment cannot replace a registered legacy proof",
         )
         if observed.get("conclusion") == "cancelled" and not numbers and not matches:
             cancellation_jobs = _job_pages(run["id"], attempt)
@@ -447,7 +454,15 @@ def _inspect_run(
                         "domain latest cancelled other-PR attempt differs",
                     )
                 record["attempts"].append(
-                    _cancelled_other_pr_attempt(observed, cancellation_jobs, number, destination)
+                    _cancelled_other_pr_attempt(
+                        observed,
+                        cancellation_jobs,
+                        number,
+                        destination,
+                        expected_runner_label=(
+                            "ubuntu-24.04" if fixed_runner_attachment else "ubuntu-latest"
+                        ),
+                    )
                 )
                 continue
         if (
@@ -535,7 +550,12 @@ def _inspect_run(
         require(match is not None, "domain check URL is not native")
         match = cast(re.Match[str], match)
         check = api(f"{_ROOT}/check-runs/{match[1]}")
-        coordinate = _coordinates(observed, job, check)
+        coordinate = _coordinates(
+            observed,
+            job,
+            check,
+            expected_runner_label=("ubuntu-24.04" if fixed_runner_attachment else "ubuntu-latest"),
+        )
         path = destination / f"run-{run['id']}-attempt-{attempt}-job-{job['id']}.log"
         download_job_log(job["id"], path)
         raw_log = path.read_bytes()
@@ -552,6 +572,12 @@ def _inspect_run(
         control = checkout_commit(log, checkout)
         environment = trigger_environment(_cancelled_trigger_group(log, resolve), resolve)
         original_pr, source = _discovery_trigger_identity(environment, run["event"], profile)
+        require(
+            not fixed_runner_attachment
+            or original_pr != number
+            or source != profile["product_revision"],
+            "fixed-runner attachment cannot grant current legacy source eligibility",
+        )
         require(
             not numbers or original_pr in numbers,
             "native PR association contradicts original trigger",

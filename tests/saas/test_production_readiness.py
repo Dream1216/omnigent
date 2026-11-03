@@ -20,6 +20,7 @@ from saas.production.readiness import (
 )
 from tests.saas._approval_history import require_current_approval_history
 from tests.saas.test_legacy_stack import complete_stack as complete_stack
+from tests.saas.test_legacy_stack import persist, publication
 
 
 def _repo() -> Path:
@@ -321,6 +322,112 @@ def test_candidate_lineage_accepts_only_current_typed_stack_evidence(
     assert report["status"] == "pass"
     assert report["production_readiness"] == "ready"
     assert report["blockers"] == []
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "overwrite_anchor",
+        "drop_anchor",
+        "unrelated_add",
+        "new_original_anchor",
+        "profile",
+        "original_OCI",
+        "producer",
+        "shared_artifact",
+        "predicate",
+        "wheel",
+        "roles",
+        "product",
+        "duplicate_key",
+        "schema",
+        "symlink",
+    ],
+)
+def test_candidate_lineage_allows_only_selected_append_only_publication_renewal(
+    legacy_stack_lineage, complete_stack, fault
+):
+    repo, _candidate, store, envelope = legacy_stack_lineage
+    registry = repo / legacy_stack.STACK_REGISTRY
+    original_stack = registry.read_bytes()
+    persist(complete_stack)
+    registry.write_bytes(original_stack)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "freeze original registered publication anchors")
+    candidate = _git(repo, "rev-parse", "HEAD")
+    envelope["product_revision"] = candidate
+    envelope["release_evidence"]["product_revision"] = candidate
+    body = envelope["legacy_fallback"]["full_stack_rollback"]
+    body["product_revision"] = candidate
+    path = repo / "saas/supply_chain/legacy-production-publications.json"
+    publications = json.loads(path.read_text())
+    anchor = publications["publications"]["fixture-Core"]
+    renewed = publication("Core", 1, generation=3)
+    renewed["deployment_roles"] = copy.deepcopy(anchor["deployment_roles"])
+    selected_id = "fixture-Core-renewed"
+    publications["publications"][selected_id] = renewed
+    row = store["stacks"]["fixture-stack"]
+    for key in ("publication_ids", "original_publication_ids"):
+        row[key] = dict(row[key])
+        envelope["legacy_fallback"][key] = row[key]
+    row["publication_ids"]["Core"] = selected_id
+    body["publication_bindings"]["Core"].update(
+        publication_id=selected_id,
+        current_predicate_sha256=renewed["predicate_sha256"],
+        current_producer=renewed["producer"],
+    )
+    if fault == "overwrite_anchor":
+        anchor["predicate_sha256"] = "f" * 64
+    elif fault == "drop_anchor":
+        publications["publications"].pop("fixture-Core")
+    elif fault == "unrelated_add":
+        publications["publications"]["unselected"] = copy.deepcopy(renewed)
+    elif fault == "new_original_anchor":
+        row["original_publication_ids"]["Core"] = selected_id
+    elif fault == "profile":
+        renewed["profile"]["product_tree"] = "f" * 40
+    elif fault == "original_OCI":
+        renewed["admission"]["original_pr_oci"]["zip_sha256"] = "f" * 64
+    elif fault == "producer":
+        renewed["producer"]["run_id"] = anchor["producer"]["run_id"]
+    elif fault == "shared_artifact":
+        renewed["stage_artifacts"]["runtime"]["artifact_id"] = anchor["stage_artifacts"][
+            "runtime"
+        ]["artifact_id"]
+    elif fault == "predicate":
+        renewed["predicate_sha256"] = anchor["predicate_sha256"]
+    elif fault == "wheel":
+        renewed["admission"]["fresh_control_wheel"]["wheel_sha256"] = "f" * 64
+    elif fault == "roles":
+        renewed["deployment_roles"] = {"unregistered": "server"}
+    elif fault == "product":
+        envelope["product_revision"] = "f" * 40
+    elif fault == "schema":
+        publications["schema_version"] = True
+    row["rollback_sha256"] = legacy_stack.publisher.digest(body)
+    raw = json.dumps(publications)
+    if fault == "duplicate_key":
+        raw = '{"schema_version": 0, ' + raw[1:]
+    path.write_text(raw, encoding="utf-8")
+    if fault == "symlink":
+        target = repo / ".git/publication-copy.json"
+        target.write_text(raw, encoding="utf-8")
+        path.unlink()
+        path.symlink_to(target)
+    registry.write_text(json.dumps(store), encoding="utf-8")
+    evidence_path = repo / "saas/acceptance/p0-production-image-evidence.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text(json.dumps(envelope), encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "record selected publication renewal")
+
+    report = validate_candidate_revision(candidate, repo)
+
+    assert report["status"] == "pass"
+    assert report["production_readiness"] == ("ready" if fault is None else "blocked")
+    if fault is not None:
+        assert report["blockers"]
 
 
 @pytest.mark.parametrize(
