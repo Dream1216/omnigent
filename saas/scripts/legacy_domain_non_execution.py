@@ -53,7 +53,7 @@ _INFRASTRUCTURE_STEPS = (
     (13, "Complete job", "success"),
 )
 _EMPTY_ZIP = b"PK\x05\x06" + b"\x00" * 18
-_COMPATIBILITY_INFRASTRUCTURE_CONTRACTS = {
+_COMPATIBILITY_INFRASTRUCTURE_CONTRACTS: dict[str, dict[str, Any]] = {
     "b6ec90023226590ac6278106f5dd4d0104ce196283e708f6b0eb242365ebcd02": {
         "archive_bytes": 1436,
         "archive_sha256": "61cccff0cd7dde473c55126ddf8b9584297885dc729a21e21a29fc72b0675b8b",
