@@ -241,7 +241,9 @@ def verify_main_domain_refusal(
         and job.get("status") == "completed"
         and job.get("conclusion") == "failure"
         and job.get("runner_group_name") == "GitHub Actions"
-        and job.get("labels") == ["ubuntu-latest"]
+        and native.matches_hosted_runner_label(
+            job.get("labels"), trusted_checkout_revision=rule["trusted_checkout_revision"]
+        )
         and job.get("check_run_url")
         == f"https://api.github.com/repos/{REPOSITORY}/check-runs/{rule['check_id']}"
         and check.get("id") == rule["check_id"]
@@ -475,9 +477,19 @@ def _discovery_binding(result: dict[str, Any]) -> str:
                 "audited-unattributed-nonexecution",
                 "audited-unattributed-no-job-execution",
                 "audited-unattributed-bootstrap-cancellation",
+                "audited-fixed-runner-exclusion",
             },
             "native main-domain source is unassignable",
         )
+        if record["classification"] == "audited-fixed-runner-exclusion":
+            from saas.scripts.legacy_domain_discovery import exact_fixed_runner_exclusion
+
+            require(
+                isinstance(result, nonexecution.DomainDiscovery)
+                and record["attempts"]
+                and all(exact_fixed_runner_exclusion(row) for row in record["attempts"]),
+                "fixed-runner audit cannot supply legacy eligibility or change native bytes",
+            )
         authenticated.append(
             {
                 "run_id": record["run_id"],
@@ -722,25 +734,25 @@ _BOOTSTRAP_STORES = (
 # source-CI origin registration, never a future publication run or signature.
 _BOOTSTRAP_ORIGINS = {
     "Core": (
-        "62b5598cdba624987921cd7c865152564b3e59f4",
-        "84bae20062a79a874c3755e6cf75728029c1f6fc",
-        189,
+        "cee6a057062844689cfa7e54c3d79bf5cb779729",
+        "d8f0388fd20b2128f4ac7887ae399b0fb52c566b",
+        220,
         "codex/legacy-validation-core-dc1e9a97",
-        "e1a858001df190c2d993f53d1b8020615bdf48380b400b6318d53e785de78c4d",
+        "b8d6069bb1ddb0fa8a7c89ff2b71e2b8135659c73e1b26c0139090c7ac2f0cd5",
     ),
     "Gateway": (
-        "b6363d1b99fa9f190589471a21c89f89057e6b88",
-        "e4db6f65c725d5cb7131e4774da3c39082553043",
-        190,
+        "8756f81d699a9b1cd64bc93702b0c06cc38c3fdc",
+        "e18f179a8891ce28d804d7d28344e1a2f9a2292b",
+        221,
         "codex/legacy-validation-gateway-3319b59a",
-        "23c54f6b758d79c84128cc03e511d21a6b6a0fa70e99c7dac61d0721dec6762a",
+        "d00eed7dc6f25dd9bd7e4ced9e3c1e6ec8d26c6ef3e477556c6b4372a6c745fc",
     ),
     "Model": (
-        "538eacfab39402307d0b477ba5efc0eddc8007b1",
-        "931eded80ed4a253f6e43311479567109568430a",
-        191,
+        "f16e62a63cdb1802076b7712af630342daa56586",
+        "e060f1b58671afdd129cbd52dd2155471decb675",
+        222,
         "codex/legacy-validation-model-7cea0940",
-        "01adb054dbe635022b433d32f1ce6160def1c74c18f8a0ca5863753c75663c70",
+        "6e476e9958bd584689850176f9764aa3574405e6f3523e3481c18e77347c3e0a",
     ),
 }
 

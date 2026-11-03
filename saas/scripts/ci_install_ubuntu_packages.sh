@@ -42,6 +42,7 @@ Acquire::http::Timeout "20";
 Acquire::https::Timeout "20";
 Acquire::Retries "2";
 Acquire::Languages "none";
+Acquire::IndexTargets::deb::CNF::DefaultEnabled "false";
 APT::Update::Error-Mode "any";
 NETWORK
 # By-hash can fall back to ordinary paths; both resolve inside this fixed view.

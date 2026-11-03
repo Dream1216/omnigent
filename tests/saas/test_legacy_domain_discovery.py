@@ -604,6 +604,8 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "runtime_dependency_security_correction",
+        "raw_native_log_capture_correction",
         "active_job_log_recovery_correction",
         "native_job_archive_correction",
         "native_runner_metadata_correction",
@@ -942,3 +944,78 @@ def test_only_non_current_compatibility_event_can_keep_older_source_with_newer_P
             source,
         )
         assert pull["head"]["sha"] == "c" * 40
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "coordinate",
+        "native-bytes",
+        "control",
+        "PR",
+        "source",
+        "eligibility",
+        "source-proof",
+        "production",
+    ],
+)
+def test_exact_fixed_attachment_audit_cannot_become_legacy_source_proof(fault):
+    key, hashes = next(iter(discovery._EXACT_FIXED_RUNNER_C2_AUDITS.items()))
+    row = dict(zip(("run_id", "attempt", "job_id", "check_id"), key, strict=True))
+    row.update(
+        zip(("run_sha256", "job_sha256", "check_sha256", "job_log_sha256"), hashes, strict=True)
+    )
+    row.update(
+        classification="audited-fixed-runner-exclusion",
+        attachment_revision="796b5da14fed424f9eec11170db05a3316da3a12",
+        trusted_checkout_revision="796b5da14fed424f9eec11170db05a3316da3a12",
+        original_PR=223,
+        original_event_source_revision="7e774d673980729f591304d8d7b991af36a06920",
+        current_legacy_eligibility=False,
+        source_proof=False,
+        production_admission=False,
+        technical_gate_waiver=False,
+    )
+    mutations = {
+        "coordinate": ("run_id", 1),
+        "native-bytes": ("job_log_sha256", "0" * 64),
+        "control": ("trusted_checkout_revision", "0" * 40),
+        "PR": ("original_PR", 219),
+        "source": ("original_event_source_revision", "0" * 40),
+        "eligibility": ("current_legacy_eligibility", True),
+        "source-proof": ("source_proof", True),
+        "production": ("production_admission", True),
+    }
+    if fault:
+        name, value = mutations[fault]
+        row[name] = value
+    assert discovery.exact_fixed_runner_exclusion(row) is (fault is None)
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "component", "revision", "tree", "PR", "ref", "no-identity"]
+)
+def test_exact_current_C2_audit_scope_does_not_cover_other_products_or_main(fault):
+    profile = {
+        "component": "Compatibility018",
+        "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
+        "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
+    }
+    identity = {
+        "validation_pr": 223,
+        "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    }
+    if fault == "component":
+        profile["component"] = "Core"
+    elif fault == "revision":
+        profile["product_revision"] = "0" * 40
+    elif fault == "tree":
+        profile["product_tree"] = "0" * 40
+    elif fault == "PR":
+        identity["validation_pr"] = 219
+    elif fault == "ref":
+        identity["validation_base_ref"] = "main"
+    elif fault == "no-identity":
+        identity = None
+    assert discovery._exact_current_C2(profile, identity) is (fault is None)

@@ -159,20 +159,26 @@ def diagnostic(path):
 def test_native_log_download_drains_stderr_without_persisting_secrets(child, tmp_path):
     secret = b"token=unit-fixture-secret https://unit.invalid/?sig=unit-fixture-SAS\n"
     prefix = b"gh: Forbidden (HTTP 403)\n"
+    native_log = b"original native log \x1b[32mPASSED\x1b[0m\n"
     stderr = prefix + secret * 32768
     processes, commands = child(
         f"import sys; sys.stderr.buffer.write({prefix!r} + {secret!r} * 32768); "
-        "sys.stderr.flush(); sys.stdout.buffer.write(b'original native log\\n')"
+        f"sys.stderr.flush(); sys.stdout.buffer.write({native_log!r})"
     )
     path = tmp_path / "job.log"
     assert reader.download_job_log(123, path) is None
-    assert path.read_bytes() == b"original native log\n"
+    assert path.read_bytes() == native_log
     assert path.stat().st_mode & 0o777 == 0o600
     result = diagnostic(path)
     assert (
         result["argv"]
         == commands[0]
-        == ["gh", "api", f"repos/{reader.REPOSITORY}/actions/jobs/123/logs"]
+        == [
+            "gh",
+            "api",
+            "--allow-escape-sequences",
+            f"repos/{reader.REPOSITORY}/actions/jobs/123/logs",
+        ]
     )
     assert result["returncode"] == 0 and result["deadline_expired"] is False
     assert result["stderr_complete"] is True

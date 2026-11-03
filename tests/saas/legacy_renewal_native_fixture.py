@@ -738,7 +738,7 @@ class NativeRenewal:
 
         def spawn(command, **kwargs):
             if command[:2] == ["gh", "api"]:
-                endpoint = command[2]
+                endpoint = command[3] if command[2] == "--allow-escape-sequences" else command[2]
                 if endpoint.endswith("/logs"):
                     identifier = int(endpoint.rsplit("/", 2)[1])
                     body = self.logs[identifier].encode()

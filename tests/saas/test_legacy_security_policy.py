@@ -461,7 +461,14 @@ _COMPATIBILITY_OWNER_ROW = {
 
 @pytest.mark.parametrize("field", [None, *sorted(policy._FIELDS)])
 def test_compatibility_owner_registration_is_one_exact_native_tuple(field):
-    row = copy.deepcopy(_COMPATIBILITY_OWNER_ROW)
+    registered = json.loads(
+        (ROOT / "saas/supply_chain/legacy-security-ci-profiles.json").read_text()
+    )["profiles"]["Compatibility018"]
+    row = copy.deepcopy(
+        next(s for s in registered["workflows"] if s["path"] == policy.WORKFLOW)[
+            "trusted_security_policy"
+        ]
+    )
     profile = json.loads(
         (ROOT / "saas/supply_chain/legacy-security-build-profiles.json").read_text()
     )["profiles"]["Compatibility018"]
@@ -497,6 +504,31 @@ def test_compatibility_owner_registration_is_one_exact_native_tuple(field):
     row[field] = row[field] + 1 if type(row[field]) is int else "changed:" + row[field]
     with pytest.raises(ValueError, match="exact reviewed native tuple"):
         policy.validate_registration(profile, identity, specification)
+
+
+@pytest.mark.parametrize("scenario", [{"owner_security_policy": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "script", "checkout", "workflow"])
+def test_current_main_policy_keeps_original_workflow_and_exact_checkout_sources(owner, fault):
+    row = owner["spec"]["trusted_security_policy"]
+    row["trusted_checkout_revision"] = policy._CURRENT_MAIN
+    row["should_scan_sha256"] = policy._CURRENT_MAIN_SOURCES[
+        ".github/scripts/security-scan/should-scan.sh"
+    ]
+    owner["spec"]["jobs"]["Security Scan"]["checkouts"][0]["revision"] = policy._CURRENT_MAIN
+    if fault == "script":
+        row["should_scan_sha256"] = policy.SOURCES[".github/scripts/security-scan/should-scan.sh"]
+    elif fault == "checkout":
+        row["trusted_checkout_revision"] = "b" * 40
+        owner["spec"]["jobs"]["Security Scan"]["checkouts"][0]["revision"] = "b" * 40
+    elif fault == "workflow":
+        row["workflow_sha256"] = policy._CURRENT_MAIN_SOURCES[policy.WORKFLOW]
+    if fault is None:
+        assert (
+            policy.validate_registration(owner["profile"], owner["identity"], owner["spec"]) == row
+        )
+    else:
+        with pytest.raises(ValueError, match="fixed-main OWNER"):
+            policy.validate_registration(owner["profile"], owner["identity"], owner["spec"])
 
 
 @pytest.fixture

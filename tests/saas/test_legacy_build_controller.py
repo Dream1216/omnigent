@@ -51,6 +51,61 @@ def login_metadata_bytes(path):
     )
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing-app",
+        "missing-test",
+        "missing-budget",
+        "cap",
+        "before",
+        "after",
+        "mode",
+        "budget-bytes",
+        "adjacent-app",
+        "version",
+    ],
+)
+def test_gateway_fragment_security_backport_keeps_exact_paired_bytes_and_budget(fault):
+    profile = copy.deepcopy(
+        json.loads((ROOT / "saas/supply_chain/legacy-security-build-profiles.json").read_text())[
+            "profiles"
+        ]["Gateway"]
+    )
+    app = "saas/login_web/components/verification-flow.tsx"
+    test_path = "tests/saas/test_onboarding_ui_browser.py"
+    budget = "saas/upstream-baseline.json"
+    rows = {row["path"]: row for row in profile["source_delta"]}
+    if fault in {"missing-app", "missing-test", "missing-budget"}:
+        removed = {"missing-app": app, "missing-test": test_path, "missing-budget": budget}[fault]
+        profile["source_delta"] = [
+            row for row in profile["source_delta"] if row["path"] != removed
+        ]
+    elif fault == "cap":
+        profile["budget_file_cap"] = 167
+    elif fault in {"before", "after"}:
+        rows[app][fault]["sha256"] = "0" * 64
+    elif fault == "mode":
+        rows[app]["after"]["mode"] = "100755"
+    elif fault == "budget-bytes":
+        rows[budget]["after"]["sha256"] = "0" * 64
+    elif fault == "adjacent-app":
+        profile["source_delta"].append(
+            {**copy.deepcopy(rows[app]), "path": "saas/login_web/pages/signup/index.tsx"}
+        )
+    elif fault == "version":
+        profile["application_version"] = "0.19.0.dev0"
+    if fault:
+        with pytest.raises(ValueError):
+            core.validate_profile(profile, "Gateway")
+    else:
+        core.validate_profile(profile, "Gateway")
+        assert profile["budget_file_cap"] == 168
+        assert profile["application_version"] == "0.18.0.dev20261006"
+        assert set(core._GATEWAY_REVIEWED_BLOB_PAIRS) == {app, test_path}
+
+
 @pytest.mark.parametrize("path", LOGIN_METADATA_PATHS)
 @pytest.mark.parametrize("fault", [None, "before", "after", "same-old", "extra", "duplicate"])
 def test_reviewed_login_metadata_requires_the_exact_before_and_after_bytes(path, fault):
@@ -1407,18 +1462,18 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
                         records["Compatibility018"], sort_keys=True, separators=(",", ":")
                     ).encode()
                 ).hexdigest()
-                == "9592119c64a91fe3993bf06a14b865abee31c7b07f7fd2e20b0d06ae45821cf6"
+                == "be96870257028c9d33f6b5e8e9b4f11353ee30038faecdf0fa871616a2873373"
             )
         else:
             reviewed_compatibility = {
                 "legacy-security-pg-profiles.json": (
-                    "4536a99df6b93146a0d803a47fc7674732308f631d31427b7ff15f9b7bbfdcc4"
+                    "c16bac1d85bb92d69584577ddbfbb4f65e8e6f71d71150a4a66069f9a1a28107"
                 ),
                 "legacy-security-original-inputs.json": (
-                    "86c420e249c55aa1940e5f6aff42729c86adcda6bcc5e7c5d9f77a5f7d145e9c"
+                    "0ca1216882e1acb602d97252a9aec49430c9f7200ee5c75b3b8b4c663b206bb3"
                 ),
                 "legacy-source-qualification-profiles.json": (
-                    "a051ed48a7f2a6383b68091cc752a66473a9c7384ee7c7c3bcbf368f3b28316d"
+                    "d7d3d05bb51e688f101e911b151e014f35144b1e713503cafcb747d7898dbd6c"
                 ),
             }
             assert (

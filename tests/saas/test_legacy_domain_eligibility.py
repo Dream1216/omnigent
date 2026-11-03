@@ -261,6 +261,47 @@ def test_native_domain_preserves_head_failure_and_rejects_unsupported_attachment
 
 @pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
 @pytest.mark.parametrize(
+    "fault", [None, "unreviewed-checkout", "self-hosted", "mixed-labels", "fixed-attachment"]
+)
+def test_original_refusal_alternate_runner_requires_exact_protected_checkout(
+    scenario, native_domain, fault
+):
+    data = native_domain
+    trusted = "796b5da14fed424f9eec11170db05a3316da3a12"
+    if fault == "unreviewed-checkout":
+        trusted = "f" * 40
+    rule = copy.deepcopy(data["rule"])
+    job = copy.deepcopy(data["job"])
+    job["labels"] = ["ubuntu-24.04"]
+    if fault == "self-hosted":
+        job["labels"] = ["self-hosted"]
+    elif fault == "mixed-labels":
+        job["labels"] = ["ubuntu-latest", "ubuntu-24.04"]
+    elif fault == "fixed-attachment":
+        rule["workflow_sha256"] = domain.native.FIXED_RUNNER_WORKFLOW_SHA256
+    log = data["log"].replace(scenario["control_sha"], trusted)
+    rule.update(
+        trusted_checkout_revision=trusted,
+        job_sha256=domain.native_digest(job),
+        job_log_sha256=hashlib.sha256(log.encode()).hexdigest(),
+    )
+    args = (scenario["profile"], scenario["identity"], rule, data["run"], job, data["check"], log)
+    if fault:
+        with pytest.raises(ValueError):
+            domain.verify_main_domain_refusal(*args)
+    else:
+        result = domain.verify_main_domain_refusal(*args)
+        assert result["original_conclusion"] == "failure"
+        assert (
+            result["technical_gate_waiver"]
+            is result["main_targeting_PR_permission"]
+            is result["production_admission"]
+            is False
+        )
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize(
     "fault",
     [
         "main_base",
@@ -271,6 +312,8 @@ def test_native_domain_preserves_head_failure_and_rejects_unsupported_attachment
         "policy_failure",
         "technical_failure",
         "wrong_event",
+        "wrong_runner",
+        "ambiguous_runner",
         "wrong_provider",
         "wrong_suite",
         "wrong_attempt",
@@ -319,6 +362,10 @@ def test_domain_rule_cannot_waive_policy_technical_unknown_or_stale_native_evide
         job["steps"][2]["conclusion"] = "success"
     elif fault == "wrong_event":
         run["event"] = "push"
+    elif fault == "wrong_runner":
+        job["labels"] = ["self-hosted"]
+    elif fault == "ambiguous_runner":
+        job["labels"] = ["ubuntu-latest", "ubuntu-24.04"]
     elif fault == "wrong_provider":
         check["app"]["id"] = 999
     elif fault == "wrong_suite":
