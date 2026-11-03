@@ -374,6 +374,54 @@ def test_unrelated_default_failures_are_not_global_technical_gates(
     assert result["source_ci_pass"] is result["technical_gate_waiver"] is False
 
 
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "current_source", "workflow", "runner"])
+def test_reviewed_fixed_runner_execution_only_classifies_other_source(
+    scenario, discovery_case, tmp_path, monkeypatch, fault
+):
+    data = discovery_case
+    profile = {**scenario["profile"], "component": "Compatibility018"}
+    from tests.saas.test_legacy_source_qualification import core
+
+    monkeypatch.setattr(
+        core,
+        "_COMPATIBILITY_PROFILE_SHA256",
+        discovery.domain.native_digest(profile),
+    )
+    run, job = data["run"], data["job"]
+    run.update(event="workflow_run", pull_requests=[])
+    job["labels"] = ["self-hosted" if fault == "runner" else "ubuntu-24.04"]
+    source = profile["product_revision"] if fault == "current_source" else "f" * 40
+    data["log"] = framed_log(data, scenario, event="workflow_run", source=source)
+    original = (RESOURCE.parent / "main-domain-merge-gate.yml").read_bytes()
+    fixed = original.replace(b"runs-on: ubuntu-latest", b"runs-on: ubuntu-24.04")
+    if fault == "workflow":
+        fixed += b"\n"
+    native_file = discovery.domain._native_file
+    monkeypatch.setattr(
+        discovery.domain,
+        "_native_file",
+        lambda path, revision: (
+            fixed if path == domain.MAIN_WORKFLOW else native_file(path, revision)
+        ),
+    )
+    args = (
+        data["latest"](run),
+        profile,
+        scenario["identity"]["validation_pr"],
+        tmp_path,
+        {"attempts": []},
+    )
+    if fault is not None:
+        with pytest.raises(ValueError):
+            discovery._inspect_run(*args)
+    else:
+        result = discovery._inspect_run(*args)
+        assert result["classification"] == "old-source"
+        assert result["attempts"][0]["original_event_source_revision"] == source
+        assert result["attempts"][0]["technical_gate_waiver"] is False
+
+
 def test_real_native_multiline_excerpt_preserves_original_main_source_and_stays_ineligible():
     fixture = json.loads(RESOURCE.read_text())
     environment = discovery.trigger_environment(fixture["selected_log"], fixture["step"])

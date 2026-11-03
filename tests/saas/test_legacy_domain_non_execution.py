@@ -925,6 +925,117 @@ def infrastructure_case(scenario, discovery_case, audit_case, monkeypatch):
     return observed
 
 
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("fixture_name", ["audit_case", "infrastructure_case"])
+@pytest.mark.parametrize(
+    "fault",
+    [None, "unregistered_head", "base", "PR", "duplicate", "native_head", "extra", "job"],
+)
+def test_registered_audit_allows_only_exact_live_PR_head_reference(
+    request, scenario, fixture_name, fault
+):
+    observed = request.getfixturevalue(fixture_name)
+    attachment = observed["run"]["head_sha"]
+    source = scenario["profile"]["product_revision"]
+    assert source != attachment
+    association = {
+        "number": scenario["identity"]["validation_pr"],
+        "url": f"{discovery._REPO_URL}/pulls/{scenario['identity']['validation_pr']}",
+        "head": {"sha": attachment, "ref": "fixture-source"},
+        "base": {"ref": scenario["identity"]["validation_base_ref"]},
+    }
+    for role in ("run", "check"):
+        observed[role]["pull_requests"] = [copy.deepcopy(association)]
+    observed["refresh"]()
+    for role in ("run", "check"):
+        observed[role]["pull_requests"][0]["head"]["sha"] = source
+    if fault == "unregistered_head":
+        observed["check"]["pull_requests"][0]["head"]["sha"] = "f" * 40
+    elif fault == "base":
+        observed["check"]["pull_requests"][0]["base"]["ref"] = "main"
+    elif fault == "PR":
+        observed["check"]["pull_requests"][0]["number"] += 1
+    elif fault == "duplicate":
+        observed["run"]["pull_requests"] *= 2
+    elif fault == "native_head":
+        observed["run"]["head_sha"] = source
+    elif fault == "extra":
+        observed["check"]["extra"] = True
+    elif fault == "job":
+        observed["job"]["runner_name"] = "changed"
+    originals = copy.deepcopy(observed)
+    verify = (
+        audit.verify_zero_execution
+        if fixture_name == "audit_case"
+        else audit.verify_infrastructure_cancellation
+    )
+    args = (
+        scenario["profile"],
+        scenario["identity"],
+        *(observed[key] for key in ("rule", "run", "job", "check", "annotations", "logs")),
+    )
+    if fault is not None:
+        with pytest.raises(ValueError):
+            verify(*args)
+    else:
+        proof = verify(*args)
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert all(
+            proof.receipt[key] is False
+            for key in (
+                "source_proof",
+                "guard_refusal",
+                "technical_gate_waiver",
+                "production_admission",
+            )
+        )
+    assert observed == originals
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "missing_reference", "other_field"])
+def test_live_PR_reference_can_restore_only_another_registered_historical_head(
+    scenario, audit_case, fault
+):
+    observed = audit_case
+    historical_head = "e" * 40
+    association = {
+        "number": scenario["identity"]["validation_pr"],
+        "url": f"{discovery._REPO_URL}/pulls/{scenario['identity']['validation_pr']}",
+        "head": {"sha": historical_head},
+    }
+    for role in ("run", "check"):
+        observed[role]["pull_requests"] = [copy.deepcopy(association)]
+    observed["refresh"]()
+    for role in ("run", "check"):
+        observed[role]["pull_requests"][0]["head"]["sha"] = scenario["profile"]["product_revision"]
+    if fault == "other_field":
+        observed["check"]["unreviewed"] = True
+    args = (
+        scenario["profile"],
+        scenario["identity"],
+        *(observed[key] for key in ("rule", "run", "job", "check", "annotations", "logs")),
+    )
+    heads = () if fault == "missing_reference" else (historical_head,)
+    if fault is not None:
+        with pytest.raises(ValueError):
+            audit.verify_zero_execution(*args, reference_heads=heads)
+    else:
+        original = copy.deepcopy(args)
+        proof = audit.verify_zero_execution(*args, reference_heads=heads)
+        assert args == original
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert all(
+            proof.receipt[key] is False
+            for key in (
+                "source_proof",
+                "guard_refusal",
+                "technical_gate_waiver",
+                "production_admission",
+            )
+        )
+
+
 def add_all_app_infrastructure(scenario, data, observed):
     add_all_app_audit(scenario, data, observed)
     source = observed["run"]["head_sha"]
@@ -1389,6 +1500,59 @@ def test_fixed_runner_workflow_pin_changes_only_the_reviewed_runner_label():
     assert original.count(b"runs-on: ubuntu-latest") == 1
     fixed = original.replace(b"runs-on: ubuntu-latest", b"runs-on: ubuntu-24.04")
     assert hashlib.sha256(fixed).hexdigest() == audit.native.FIXED_RUNNER_WORKFLOW_SHA256
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "steps", "logs", "provider", "workflow", "label"])
+def test_fixed_runner_assigned_empty_job_keeps_execution_unknown(
+    compatibility_infrastructure, fault
+):
+    profile, identity, _rule, observed, _contract = compatibility_infrastructure
+    run, job, check = (observed[key] for key in ("run", "job", "check"))
+    run["pull_requests"] = []
+    job.update(steps=[], labels=["ubuntu-24.04"])
+    observed["annotations"].pop(1)
+    check["output"]["annotations_count"] = len(observed["annotations"])
+    logs = audit._EMPTY_ZIP
+    attached = audit.native.FIXED_RUNNER_WORKFLOW_SHA256
+    policy = {
+        "kind": audit.BOOTSTRAP_POLICY_KIND,
+        "workflow_sha256": domain.MAIN_WORKFLOW_SHA256,
+        **{
+            key: identity[key]
+            for key in ("validation_pr", "validation_base_ref", "product_revision", "product_tree")
+        },
+    }
+    if fault == "steps":
+        job["steps"] = copy.deepcopy(_INFRASTRUCTURE_NATIVE_STEPS)
+    elif fault == "logs":
+        logs += b"command output"
+    elif fault == "provider":
+        check["app"]["id"] = 42
+    elif fault == "workflow":
+        attached = "f" * 64
+    elif fault == "label":
+        job["labels"] = ["self-hosted"]
+    args = (profile, identity, policy, run, job, check, observed["annotations"], logs)
+    if fault is not None:
+        with pytest.raises(ValueError):
+            audit._verify_compatibility_unobserved_job(*args, attachment_workflow_sha256=attached)
+    else:
+        proof = audit._verify_compatibility_unobserved_job(
+            *args, attachment_workflow_sha256=attached
+        )
+        assert proof.receipt["attachment_workflow_sha256"] == attached
+        assert proof.receipt["git_executed"] is None
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert all(
+            proof.receipt[key] is False
+            for key in (
+                "source_proof",
+                "guard_refusal",
+                "technical_gate_waiver",
+                "production_admission",
+            )
+        )
 
 
 @pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)

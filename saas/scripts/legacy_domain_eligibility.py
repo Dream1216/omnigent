@@ -889,11 +889,21 @@ def collect_bootstrap_positive_origin(profile, identity, policy, destination):
             "native positive refusal changed",
         )
     observations = []
-    for field in (
+    audit_fields = (
         "domain_non_execution",
         "domain_infrastructure_cancellation",
         "domain_refusal_cancellation",
-    ):
+    )
+    reference_heads = tuple(
+        row["attachment_revision"]
+        for field in audit_fields
+        for row in policy.get(field, {}).get(MAIN_WORKFLOW, [])
+        if all(
+            row.get(key) == identity[key]
+            for key in ("validation_pr", "validation_base_ref", "product_revision", "product_tree")
+        )
+    )
+    for field in audit_fields:
         for index, rule in enumerate(policy.get(field, {}).get(MAIN_WORKFLOW, [])):
             endpoint = (
                 f"repos/{REPOSITORY}/actions/runs/{rule['run_id']}/attempts/{rule['attempt']}"
@@ -902,7 +912,9 @@ def collect_bootstrap_positive_origin(profile, identity, policy, destination):
             jobs = _job_pages(rule["run_id"], rule["attempt"])
             path = destination / f"{field}-{index}"
             path.mkdir(mode=0o700)
-            proof = nonexecution.collect_observation(profile, identity, rule, run, jobs, path)
+            proof = nonexecution.collect_observation(
+                profile, identity, rule, run, jobs, path, reference_heads=reference_heads
+            )
             require(
                 nonexecution.typed_observation(proof)
                 and any(
