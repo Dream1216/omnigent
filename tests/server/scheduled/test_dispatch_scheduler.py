@@ -678,6 +678,8 @@ async def test_expiry_cancels_old_executor_and_reconciles_without_refiring(store
     try:
         await scheduler.poll_once()
         await asyncio.wait_for(started.wait(), 10)
+        assert scheduler._recovery is not None
+        await scheduler._recovery
         clock.advance(120)
         await scheduler.poll_once()
         await _drain(scheduler)
