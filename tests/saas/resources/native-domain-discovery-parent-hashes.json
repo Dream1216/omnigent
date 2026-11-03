@@ -109,6 +109,33 @@
           "after": "def _download_job_log_direct(job_id: int, destination: Path) -> None:"
         }
       ]
+    },
+    "active_job_log_recovery_correction": {
+      "corrected_sha256": "b2ade7664f7b701a7f6edf8f02f8abc527ca7ccf3fbf903301285a91687c596f",
+      "restored_sha256": "5b043485214c3aa3385942a5dc4141a011c43205c7c4e305e6d649d997887802",
+      "context": "Exact bounded active-run completed-job HTTP1 recovery; this inverse restores full e733 source before all original complete-file, generic parser, archive and preserved-function checks. No native source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "def _download_job_log_direct(job_id: int, destination: Path) -> None:\n",
+          "after": "def _download_job_log_direct(job_id: int, destination: Path, *, http1: bool = False) -> None:\n"
+        },
+        {
+          "before": "",
+          "after": "    environment = None\n    if http1:\n        environment = os.environ.copy()\n        environment[\"GODEBUG\"] = \",\".join(\n            part for part in (environment.get(\"GODEBUG\", \"\"), \"http2client=0\") if part\n        )\n"
+        },
+        {
+          "before": "",
+          "after": "            env=environment,\n"
+        },
+        {
+          "before": "def download_job_log(job_id: int, destination: Path) -> None:\n",
+          "after": "def _recover_active_job_log(job_id: int, destination: Path, expected_job: dict[str, Any]) -> None:\n    \"\"\"Read the same completed job once over HTTP/1 while its parent is active.\"\"\"\n    endpoint = f\"repos/{REPOSITORY}/actions/jobs/{job_id}\"\n    require(\n        expected_job.get(\"id\") == job_id\n        and expected_job.get(\"status\") == \"completed\"\n        and expected_job.get(\"conclusion\") == \"success\"\n        and api(endpoint) == expected_job,\n        \"active-run native job identity differs before log recovery\",\n    )\n    recovered = destination.with_name(destination.name + \".active-job-http1\")\n    _download_job_log_direct(job_id, recovered, http1=True)\n    data = recovered.read_bytes()\n    require(bool(data), \"active-run native job log is empty\")\n    data.decode(\"utf-8\")\n    require(api(endpoint) == expected_job, \"active-run native job changed during log recovery\")\n    failed = destination.with_name(destination.name + \".direct-failed\")\n    require(destination.is_file() and not failed.exists(), \"failed native read custody differs\")\n    original = destination.read_bytes()\n    destination.rename(failed)\n    with os.fdopen(\n        os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), \"wb\"\n    ) as output:\n        output.write(data)\n    receipt = {\n        \"kind\": \"native_active_run_completed_job_log_http1_recovery/v1\",\n        \"job_id\": job_id,\n        \"run_id\": expected_job[\"run_id\"],\n        \"attempt\": expected_job[\"run_attempt\"],\n        \"head_sha\": expected_job[\"head_sha\"],\n        \"endpoint\": endpoint + \"/logs\",\n        \"job_sha256\": hashlib.sha256(\n            json.dumps(expected_job, sort_keys=True).encode()\n        ).hexdigest(),\n        \"log_bytes\": len(data),\n        \"log_sha256\": hashlib.sha256(data).hexdigest(),\n        \"failed_direct_read_path\": str(failed),\n        \"failed_direct_read_bytes\": len(original),\n        \"failed_direct_read_sha256\": hashlib.sha256(original).hexdigest(),\n        \"recovery_diagnostic_path\": str(recovered) + \".native-download.json\",\n        \"maximum_direct_reads\": 2,\n        \"each_read_seconds\": 45,\n        \"each_log_size_bound\": 32 * 1024 * 1024,\n        \"existing_source_checkout_test_and_refusal_assertions_unchanged\": True,\n    }\n    path = destination.with_name(destination.name + \".native-log-recovery.json\")\n    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), \"w\") as output:\n        json.dump(receipt, output, sort_keys=True)\n        output.write(\"\\n\")\n\n\ndef download_job_log(\n    job_id: int, destination: Path, *, active_job: dict[str, Any] | None = None\n) -> None:\n"
+        },
+        {
+          "before": "",
+          "after": "        if active_job is not None:\n            if any(400 <= status < 500 for status in diagnostic.get(\"http_statuses\", [])):\n                raise\n            _recover_active_job_log(job_id, destination, active_job)\n            return\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
