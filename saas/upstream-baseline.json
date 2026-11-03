@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 198,
-    "max_upstream_net_added_loc": 5353,
+    "max_direct_upstream_files": 200,
+    "max_upstream_net_added_loc": 5386,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -876,6 +876,52 @@
       "max_upstream_net_added_loc": 5353,
       "measured_upstream_net_added_loc": 5352,
       "reason": "Reconcile two existing upstream test scenarios after native CI: unique content-routed Host mock replies, and offline browser assertions for the implemented shared reconnect deadline. Runtime source unchanged; preserve5353 net lines,nine patches,.85 isolation,accepted trusted rows and all technical,signing,merge and production requirements. Uses verified project-wide authorization,not a new exact-hash approval."
+    },
+    "trace_daemon_cleanup_followup": {
+      "approval_status": "AUTHORIZED_UNDER_VERIFIED_DIRECT_HUMAN_BLANKET_BUDGET_SCOPE",
+      "recorded_at": "2026-11-03",
+      "human_authorization": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002",
+      "human_authorization_thread": "01a17455-6f33-74c2-8216-f90ead19427c",
+      "native_human_record_sha256": "087b64d5d965ece49619161aa8efa6de8f0c133c4c187060d05d5f2122237f2e",
+      "previous_max_direct_upstream_files": 187,
+      "max_direct_upstream_files": 188,
+      "new_direct_upstream_paths": [
+        "tests/e2e/omnigent/test_run_omnigent_joins_callers_trace.py"
+      ],
+      "implementation_patch_sha256": "9c8c565ced8a39a77e2c11bbbe87d998e09d571f29175ca5a9094b8da88b4159",
+      "reason": "Original Gateway E2E raw logs prove the preceding trace test leaves a detached Host which reconnects to the next local server and rotates its same-name host identity. Reuse the existing data-dir-scoped process reaper in that test finally and assert zero survivors. Preserve every original assertion, production source, timeout, 4576 LOC, nine patches, .85 isolation and all native CI/image/review/release gates. This registration records existing direct human budget authority, not a new approval or passed release."
+    },
+    "legacy_coverage_reference_followup": {
+      "approval_status": "AUTHORIZED_UNDER_VERIFIED_DIRECT_HUMAN_BLANKET_BUDGET_SCOPE",
+      "recorded_at": "2026-11-03",
+      "human_authorization": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002",
+      "human_authorization_thread": "01a17455-6f33-74c2-8216-f90ead19427c",
+      "native_human_record_sha256": "087b64d5d965ece49619161aa8efa6de8f0c133c4c187060d05d5f2122237f2e",
+      "previous_max_direct_upstream_files": 188,
+      "max_direct_upstream_files": 189,
+      "new_direct_upstream_paths": [
+        ".github/workflows/code-coverage.yml"
+      ],
+      "implementation_patch_sha256": "f42d95e0d45b87f362d18b71ed1c95dbb2de99665c65bb1025a3c1b8b8b4323c",
+      "reason": "Exact original frozen0.18 coverage pairs retain87% backend and86.78/86.79% UI, but the original default-main ratchet compares them to0.21 Main89/90.09%. Add a protected-main-only dispatch to the existing producer, restricted to four exact frozen sources and their reviewed predecessor runs. Enforce identical versions/configuration/selection/workflow bytes, complete original matrices and artifact hashes, and unchanged0.5% tolerance before posting a native result. Original failures retained; Main ratchet,4576LOC,nine patches,.85isolation,required-success source reader and every release gate remain. Candidate pending independent review; no status posted locally.",
+      "measured_direct_upstream_files": 189,
+      "measured_upstream_net_added_loc": 4040
+    },
+    "aliyun_main1b8_security_and_ci_followup": {
+      "governance_mode": "existing directly verified user-wide project and budget authorization; no new exact-patch approval asserted",
+      "previous_max_direct_upstream_files": 198,
+      "previous_max_upstream_net_added_loc": 5353,
+      "max_direct_upstream_files": 200,
+      "max_upstream_net_added_loc": 5386,
+      "measured_direct_upstream_files": 200,
+      "measured_upstream_net_added_loc": 5386,
+      "accepted_main": "1b8f96f1ca7a57dc907d11a079e4047d82e51fe8",
+      "scoped_net_delta_from_prior_aliyun_candidate": {
+        ".github/workflows/code-coverage.yml": 31,
+        "deploy/docker/Dockerfile": 0,
+        "tests/e2e/omnigent/test_run_omnigent_joins_callers_trace.py": 3
+      },
+      "reason": "Reconcile the existing complete Aliyun adapter with accepted main security and CI fixes. The only newly divergent official files are the accepted coverage workflow and caller trace test; together they add 34 net lines. The existing Dockerfile inherits the exact Expat 2.10 correction without net added lines. Preserve nine patches, the 0.85 isolation floor, original source guards and release conditions. This budget record is not image, cloud or production acceptance."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

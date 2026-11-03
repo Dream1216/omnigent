@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from saas.production import legacy_stack
+from saas.production import legacy_publication, legacy_stack
 from saas.production.admission import validate_evidence_admission
 from saas.production.business import load_business_evidence, validate_business_readiness
 from saas.production.deletion import load_deletion_evidence, validate_deletion_readiness
@@ -84,7 +84,9 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _legacy_stack_evidence_only(repo: Path, product_revision: str) -> bool:
+def _legacy_stack_evidence_only(
+    repo: Path, product_revision: str, *, validate_publications: bool = False
+) -> bool:
     """Permit only the current product's typed rollback row, not new trust inputs."""
 
     def unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -172,9 +174,51 @@ def _legacy_stack_evidence_only(repo: Path, product_revision: str) -> bool:
         current_rows = {
             key: value for key, value in current["stacks"].items() if key != identifier
         }
-        return legacy_stack.publisher.digest(prior_rows) == legacy_stack.publisher.digest(
+        if legacy_stack.publisher.digest(prior_rows) != legacy_stack.publisher.digest(
             current_rows
-        )
+        ):
+            return False
+        if not validate_publications:
+            return True
+        original = _git(repo, "show", f"{product_revision}:{legacy_publication.REGISTRY}")
+        if original.returncode != 0:
+            return False
+        previous = strict_object(original.stdout)
+        current = current_object(legacy_publication.REGISTRY)
+        for store in (previous, current):
+            if (
+                set(store) != {"schema_version", "publications"}
+                or type(store["schema_version"]) is not int
+                or store["schema_version"] != 1
+                or not isinstance(store["publications"], dict)
+            ):
+                return False
+        before, after = previous["publications"], current["publications"]
+        if any(
+            key not in after
+            or legacy_stack.publisher.digest(value) != legacy_stack.publisher.digest(after[key])
+            for key, value in before.items()
+        ):
+            return False
+        added = set(after) - set(before)
+        if not added or added != set(row["publication_ids"].values()) - set(before):
+            return False
+        from saas.scripts.legacy_publication_renewal import verify_renewal_identity
+
+        for component, original_id in row["original_publication_ids"].items():
+            if original_id not in before:
+                return False
+            anchor = legacy_publication.registered_publication(repo, original_id)
+            if anchor["profile"]["component"] != component:
+                return False
+            selected_id = row["publication_ids"][component]
+            if selected_id == original_id:
+                continue
+            selected = legacy_publication.registered_publication(repo, selected_id)
+            verify_renewal_identity(anchor, selected)
+            if selected["deployment_roles"] != anchor["deployment_roles"]:
+                return False
+        return True
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
@@ -182,11 +226,15 @@ def _legacy_stack_evidence_only(repo: Path, product_revision: str) -> bool:
 def _evidence_only_path(
     value: str, repo: Path | None = None, *, product_revision: str | None = None
 ) -> bool:
-    if value == legacy_stack.STACK_REGISTRY:
+    if value in {legacy_stack.STACK_REGISTRY, legacy_publication.REGISTRY}:
         return (
             repo is not None
             and product_revision is not None
-            and _legacy_stack_evidence_only(repo, product_revision)
+            and _legacy_stack_evidence_only(
+                repo,
+                product_revision,
+                validate_publications=value == legacy_publication.REGISTRY,
+            )
         )
     if value.startswith(_REVIEW_RECORD_DIRECTORY + "/"):
         return repo is not None and governed_review_record(repo, value) is not None

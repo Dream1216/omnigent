@@ -109,6 +109,44 @@
           "after": "def _download_job_log_direct(job_id: int, destination: Path) -> None:"
         }
       ]
+    },
+    "active_job_log_recovery_correction": {
+      "corrected_sha256": "b2ade7664f7b701a7f6edf8f02f8abc527ca7ccf3fbf903301285a91687c596f",
+      "restored_sha256": "5b043485214c3aa3385942a5dc4141a011c43205c7c4e305e6d649d997887802",
+      "context": "Exact bounded active-run completed-job HTTP1 recovery; this inverse restores full e733 source before all original complete-file, generic parser, archive and preserved-function checks. No native source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "def _download_job_log_direct(job_id: int, destination: Path) -> None:\n",
+          "after": "def _download_job_log_direct(job_id: int, destination: Path, *, http1: bool = False) -> None:\n"
+        },
+        {
+          "before": "",
+          "after": "    environment = None\n    if http1:\n        environment = os.environ.copy()\n        environment[\"GODEBUG\"] = \",\".join(\n            part for part in (environment.get(\"GODEBUG\", \"\"), \"http2client=0\") if part\n        )\n"
+        },
+        {
+          "before": "",
+          "after": "            env=environment,\n"
+        },
+        {
+          "before": "def download_job_log(job_id: int, destination: Path) -> None:\n",
+          "after": "def _recover_active_job_log(job_id: int, destination: Path, expected_job: dict[str, Any]) -> None:\n    \"\"\"Read the same completed job once over HTTP/1 while its parent is active.\"\"\"\n    endpoint = f\"repos/{REPOSITORY}/actions/jobs/{job_id}\"\n    require(\n        expected_job.get(\"id\") == job_id\n        and expected_job.get(\"status\") == \"completed\"\n        and expected_job.get(\"conclusion\") == \"success\"\n        and api(endpoint) == expected_job,\n        \"active-run native job identity differs before log recovery\",\n    )\n    recovered = destination.with_name(destination.name + \".active-job-http1\")\n    _download_job_log_direct(job_id, recovered, http1=True)\n    data = recovered.read_bytes()\n    require(bool(data), \"active-run native job log is empty\")\n    data.decode(\"utf-8\")\n    require(api(endpoint) == expected_job, \"active-run native job changed during log recovery\")\n    failed = destination.with_name(destination.name + \".direct-failed\")\n    require(destination.is_file() and not failed.exists(), \"failed native read custody differs\")\n    original = destination.read_bytes()\n    destination.rename(failed)\n    with os.fdopen(\n        os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), \"wb\"\n    ) as output:\n        output.write(data)\n    receipt = {\n        \"kind\": \"native_active_run_completed_job_log_http1_recovery/v1\",\n        \"job_id\": job_id,\n        \"run_id\": expected_job[\"run_id\"],\n        \"attempt\": expected_job[\"run_attempt\"],\n        \"head_sha\": expected_job[\"head_sha\"],\n        \"endpoint\": endpoint + \"/logs\",\n        \"job_sha256\": hashlib.sha256(\n            json.dumps(expected_job, sort_keys=True).encode()\n        ).hexdigest(),\n        \"log_bytes\": len(data),\n        \"log_sha256\": hashlib.sha256(data).hexdigest(),\n        \"failed_direct_read_path\": str(failed),\n        \"failed_direct_read_bytes\": len(original),\n        \"failed_direct_read_sha256\": hashlib.sha256(original).hexdigest(),\n        \"recovery_diagnostic_path\": str(recovered) + \".native-download.json\",\n        \"maximum_direct_reads\": 2,\n        \"each_read_seconds\": 45,\n        \"each_log_size_bound\": 32 * 1024 * 1024,\n        \"existing_source_checkout_test_and_refusal_assertions_unchanged\": True,\n    }\n    path = destination.with_name(destination.name + \".native-log-recovery.json\")\n    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), \"w\") as output:\n        json.dump(receipt, output, sort_keys=True)\n        output.write(\"\\n\")\n\n\ndef download_job_log(\n    job_id: int, destination: Path, *, active_job: dict[str, Any] | None = None\n) -> None:\n"
+        },
+        {
+          "before": "",
+          "after": "        if active_job is not None:\n            if any(400 <= status < 500 for status in diagnostic.get(\"http_statuses\", [])):\n                raise\n            _recover_active_job_log(job_id, destination, active_job)\n            return\n"
+        }
+      ]
+    },
+    "raw_native_log_capture_correction": {
+      "corrected_sha256": "5e93c958b52f0e81e77d312eefaceef271429df9c36380cc08e037e93373c361",
+      "restored_sha256": "b2ade7664f7b701a7f6edf8f02f8abc527ca7ccf3fbf903301285a91687c596f",
+      "context": "Exact CLI escape-sequence refusal correction only for bounded private raw job-log capture. Inverse restores entire 796b source before all pre-existing whole-file and function guards. No source, policy or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "    argv = [\"gh\", \"api\", f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\"]\n",
+          "after": "    # Preserve raw evidence in the private pipe/file, never in a terminal.\n    argv = [\n        \"gh\",\n        \"api\",\n        \"--allow-escape-sequences\",\n        f\"repos/{REPOSITORY}/actions/jobs/{job_id}/logs\",\n    ]\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {
@@ -422,6 +460,17 @@
         {
           "before": "        ),\n        \"server:runtime|host:host\",\n        \"1|2)\",\n    }\n    if any(fragment not in action for fragment in required_action_fragments):\n        violations.append(\"candidate composite build action weakens the approved build contract\")\n",
           "after": "        ),\n        \"server:runtime|host:host\",\n        \"1|2)\",\n        (\n            \"OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && \"\n            \"'kubernetes,e2b,aliyun-sandbox-control' || '' }}\"\n        ),\n    }\n    if any(fragment not in action for fragment in required_action_fragments):\n        violations.append(\"candidate composite build action weakens the approved build contract\")\n"
+        }
+      ]
+    },
+    "runtime_dependency_security_correction": {
+      "corrected_sha256": "02d84bfc05e3a685976c9b6589024df5abd22db288a24ff4233786b86c8db123",
+      "restored_sha256": "e944ec338f9a3c47fd45b5be0531d43695bc70715207634a0a2565501ce487e9",
+      "context": "Exact Expat2.10 runtime probe floor for CVE-2026-113351 and CVE-2026-115506. Inverse restores complete prior checker before all original full-file/function guards. Zero High/Critical and raw fresh dual-architecture scans unchanged. Combined with the existing Aliyun-only extension: the exact inverse restores the complete pre-merge Aliyun checker; its original extension inverse and generic full-file/function guards then run unchanged.",
+      "inverse_fragments": [
+        {
+          "before": "pyexpat.EXPAT_VERSION == \"expat_2.9.0\"",
+          "after": "pyexpat.EXPAT_VERSION == \"expat_2.10.0\""
         }
       ]
     }

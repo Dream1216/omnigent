@@ -171,6 +171,58 @@ def verify_bootstrap(scenario, c):
     )
 
 
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize("fault", [None, "suite_count", "logs"])
+def test_fixed_runner_no_job_collector_retains_complete_absence_contract(
+    scenario, discovery_case, native_audit_case, tmp_path, monkeypatch, fault
+):
+    case = native_audit_case
+    profile = {**scenario["profile"], "component": "Compatibility018"}
+    identity = {
+        **scenario["identity"],
+        "component": "Compatibility018",
+        "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    }
+    policy = {
+        **case["unattributed_policy"],
+        "validation_base_ref": identity["validation_base_ref"],
+    }
+    monkeypatch.setitem(
+        audit.validate_profile.__globals__,
+        "_COMPATIBILITY_PROFILE_SHA256",
+        domain.native_digest(profile),
+    )
+    original = (Path(__file__).parent / "resources/main-domain-merge-gate.yml").read_bytes()
+    fixed = original.replace(b"runs-on: ubuntu-latest", b"runs-on: ubuntu-24.04")
+    monkeypatch.setattr(audit.native, "_native_file", lambda *_: fixed)
+    discovery_case["jobs"][case["run"]["id"]] = []
+    if fault == "suite_count":
+        case["suite"]["latest_check_runs_count"] = 1
+    elif fault == "logs":
+        case["logs"] += b"unobserved command"
+    args = (profile, identity, policy, None, case["run"], [], tmp_path)
+    if fault is not None:
+        with pytest.raises(ValueError):
+            audit.collect_unattributed_audit(*args)
+    else:
+        proof = audit.collect_unattributed_audit(*args)
+        assert isinstance(proof, audit.UnattributedNoJobExecutionObservation)
+        assert (
+            proof.receipt["attachment_workflow_sha256"]
+            == audit.native.FIXED_RUNNER_WORKFLOW_SHA256
+        )
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert all(
+            proof.receipt[key] is False
+            for key in (
+                "source_proof",
+                "guard_refusal",
+                "technical_gate_waiver",
+                "production_admission",
+            )
+        )
+
+
 def no_job(scenario, case, data):
     data["jobs"][case["run"]["id"]] = []
     return audit.verify_no_job_execution(

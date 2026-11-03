@@ -221,7 +221,17 @@ class NativeRenewal:
                 "pull_number": 9000 + number,
             }
 
-    def job(self, run, name, names, checkouts=None, stamp=None, *, runner_label="ubuntu-latest"):
+    def job(
+        self,
+        run,
+        name,
+        names,
+        checkouts=None,
+        stamp=None,
+        *,
+        runner_label="ubuntu-latest",
+        step_output=None,
+    ):
         stamp = stamp or self.now - timedelta(hours=1)
         job_id = self.identifier()
         steps, lines = [], []
@@ -244,6 +254,14 @@ class NativeRenewal:
                     checkouts[step_name],
                 ):
                     lines.append(start.isoformat() + " " + line)
+            elif step_output is not None:
+                lines.extend(
+                    start.isoformat() + " " + line
+                    for line in [
+                        "##[group]Run fixture-owned command",
+                        *step_output.get(step_name, []),
+                    ]
+                )
         row = {
             "id": job_id,
             "name": name,
@@ -530,6 +548,12 @@ class NativeRenewal:
                 }
                 self.runs[identifier] = run
                 for major in (16, 18):
+                    cases = sorted(
+                        pg_globals["verify_pg_results"].__globals__["expected_cases"](major)
+                    )
+                    lines = [f"collecting ... collected {len(cases)} items"] + [
+                        f"{c.replace('.', '/')}.py::{n} PASSED [100%]" for c, n in cases
+                    ]
                     job = self.job(
                         run,
                         f"legacy-pg ({major})",
@@ -540,20 +564,7 @@ class NativeRenewal:
                         },
                         stamp,
                         runner_label="ubuntu-24.04",
-                    )
-                    step = next(
-                        s
-                        for s in job["steps"]
-                        if s["name"] == "Execute original exact-source PostgreSQL contracts"
-                    )
-                    cases = sorted(
-                        pg_globals["verify_pg_results"].__globals__["expected_cases"](major)
-                    )
-                    lines = [f"collecting ... collected {len(cases)} items"] + [
-                        f"{c.replace('.', '/')}.py::{n} PASSED [100%]" for c, n in cases
-                    ]
-                    self.logs[job["id"]] += (
-                        "\n".join(step["started_at"] + " " + line for line in lines) + "\n"
+                        step_output={"Execute original exact-source PostgreSQL contracts": lines},
                     )
                     source = {
                         "component": component,
@@ -727,7 +738,7 @@ class NativeRenewal:
 
         def spawn(command, **kwargs):
             if command[:2] == ["gh", "api"]:
-                endpoint = command[2]
+                endpoint = command[3] if command[2] == "--allow-escape-sequences" else command[2]
                 if endpoint.endswith("/logs"):
                     identifier = int(endpoint.rsplit("/", 2)[1])
                     body = self.logs[identifier].encode()

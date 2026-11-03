@@ -5,11 +5,11 @@
       "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
       "budget_file_cap": 224,
       "component": "Compatibility018",
-      "product_revision": "ba024657ad464ddf022c8ad8bb41610aef949b46",
-      "product_tree": "6963eae5b673c3b6f6c9d3be45a0192a51586060",
+      "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
+      "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
       "repository": "Dream1216/omnigent",
       "schema_version": 1,
-      "source_date_epoch": 1793601655,
+      "source_date_epoch": 1793710955,
       "source_delta": [
         {
           "after": {
@@ -25,7 +25,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "1be166ffdc4d7325241c881c717676477aafc438a92d3f1f68be4c41e8f61821"
+            "sha256": "5ce3127d68feca0492dac1273fbff81baeed8f045135b1cd2864ba1a65dadeb8"
           },
           "before": {
             "mode": "100644",
@@ -43,6 +43,17 @@
             "sha256": "1b442b3e92c18dcf0926725040b556866757eaf8f85c8378110404d860a97bb3"
           },
           "path": ".github/workflows/saas-upstream-compat.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "513cde86e98f8018847ba9b022cdbbfc7fe9807459e09ab8326b9778925a85db"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "a9103765647e556c031814f061b3d812871b9da2d0f639b30e42848c453d1c2b"
+          },
+          "path": "deploy/docker/Dockerfile"
         },
         {
           "after": {
@@ -477,6 +488,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "42d8b8d2c706dd719c7229b1554eb9bcb07e7326bf487f878a4da1c3ab6e1f48"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185"
+          },
+          "path": "saas/scripts/check_image_supply_chain.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "fc43e578b7b9a58b71a4fd30cbaaaf6a6617341cbfddaa07aa4ae530c7395a18"
           },
           "before": {
@@ -495,6 +517,17 @@
             "sha256": "4b6175d58547a1779a1ed99a120b5baf7580037324d02b7cc209bbbcc4c6b135"
           },
           "path": "saas/scripts/run_postgresql_migration.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "15b221fb539ba107697c126850c381b78e3b9a251a9877e4d55c0e6f0dd75d12"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f1499caa80cf7a33c8776ccc7d4dd98175e672583bd2aed983defdebbcb21f2a"
+          },
+          "path": "saas/supply_chain/wolfi-runtime-lock.json"
         },
         {
           "after": {
@@ -598,6 +631,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "fa26718b3a57c50b0d338c5ebc09231d45f8cf861e07fc86a5a2913147c31a25"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "31a232c87ab57674a3c38111dae4337fcd7f90479d2dfdb59bb43a8a2256fda9"
+          },
+          "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "4a18cb8ae145bef077e5afabd4a6fe94669d065fdf494d79b80f9d6d29920dcc"
           },
           "before": {
@@ -649,6 +693,17 @@
             "sha256": "9155bded480b38fbc1072be3382fb16a914f75c2e1d6f0079f2af31765385ad3"
           },
           "path": "tests/saas/test_isolation_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "49b6e323561b5dee86c9bd700d6aa949c5cd9d82adb5fe954bf79ade510d2046"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "7f408c46842f0243f28ef11225d0f270d9280af96a942ab2b018358581832a63"
+          },
+          "path": "tests/saas/test_legacy_domain_discovery.py"
         },
         {
           "after": {
@@ -963,6 +1018,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "41290cbcea04fd490f5e64e9927529d3a106e67e7d07e4fb73e633644a07bb75"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "89d5bbbbb495a3dc74d22a1bd25a1217ae7af13eb736517caf383fa2a9013f2f"
+          },
+          "path": "tests/saas/test_runtime_security_overlays.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "8c4ca88068ec956edec5dbcaddb84fba01c6fb4c28bc7679d356720a6a4f48c3"
           },
           "before": {
@@ -989,11 +1055,11 @@
       "baseline_revision": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
       "budget_file_cap": 167,
       "component": "Core",
-      "product_revision": "62b5598cdba624987921cd7c865152564b3e59f4",
-      "product_tree": "84bae20062a79a874c3755e6cf75728029c1f6fc",
+      "product_revision": "cee6a057062844689cfa7e54c3d79bf5cb779729",
+      "product_tree": "d8f0388fd20b2128f4ac7887ae399b0fb52c566b",
       "repository": "Dream1216/omnigent",
       "schema_version": 1,
-      "source_date_epoch": 1793183345,
+      "source_date_epoch": 1793710425,
       "source_delta": [
         {
           "after": {
@@ -1163,7 +1229,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "1f3cf6f3783238b381d9ea006e4130b3535019dea08d1bfca48c5cd4beb6dd71"
+            "sha256": "e93be9cba91af7923fc1532ccf007823021efaff6061b49c0242bdb2019c8b41"
           },
           "before": {
             "mode": "100644",
@@ -1196,7 +1262,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "2ba12c093074d22eaffbc5fcde380b017574edaa7f5621522d9e7a848ff228a1"
+            "sha256": "895987f85ebe3dcd3dfe67646479cc1ece028693232782b0feb58a54d694e58f"
           },
           "before": {
             "mode": "100644",
@@ -1273,7 +1339,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23"
+            "sha256": "9e34e3c6dcb1662f986c6411d71d71a778a9f6f0e1f645d0ffb42f55df03a507"
           },
           "before": {
             "mode": "100644",
@@ -1295,7 +1361,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "6b26a791b7b114ac2a4321fe425d1ce922bdb228602df08cf683824c2a5d1ce0"
+            "sha256": "2390a404cfa8b662435f6e6d2a645b4213a859a76f4f912fe1cf080417632ce5"
           },
           "before": {
             "mode": "100644",
@@ -1324,6 +1390,17 @@
             "sha256": "beed03ae797d7a2a969bb57c25f824f22881cb8c6412f908d3095a65543c2bea"
           },
           "path": "tests/saas/test_image_supply_chain.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "a00b156d919b82e64b160e3f19749f37567ed45ed0e86a0f253f80f7b79fd065"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "63a37273dd896ed7b1e63e93da91e07e32afd4c5b5eff679c2522112b8683695"
+          },
+          "path": "tests/saas/test_runtime_security_overlays.py"
         },
         {
           "after": {
@@ -1396,13 +1473,13 @@
     "Gateway": {
       "application_version": "0.18.0.dev20261006",
       "baseline_revision": "3319b59a5d75a411f339b294cbe6b4133bfb851a",
-      "budget_file_cap": 167,
+      "budget_file_cap": 168,
       "component": "Gateway",
-      "product_revision": "b6363d1b99fa9f190589471a21c89f89057e6b88",
-      "product_tree": "e4db6f65c725d5cb7131e4774da3c39082553043",
+      "product_revision": "8756f81d699a9b1cd64bc93702b0c06cc38c3fdc",
+      "product_tree": "e18f179a8891ce28d804d7d28344e1a2f9a2292b",
       "repository": "Dream1216/omnigent",
       "schema_version": 1,
-      "source_date_epoch": 1793183387,
+      "source_date_epoch": 1793721730,
       "source_delta": [
         {
           "after": {
@@ -1572,7 +1649,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "1f3cf6f3783238b381d9ea006e4130b3535019dea08d1bfca48c5cd4beb6dd71"
+            "sha256": "e93be9cba91af7923fc1532ccf007823021efaff6061b49c0242bdb2019c8b41"
           },
           "before": {
             "mode": "100644",
@@ -1605,7 +1682,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "2ba12c093074d22eaffbc5fcde380b017574edaa7f5621522d9e7a848ff228a1"
+            "sha256": "895987f85ebe3dcd3dfe67646479cc1ece028693232782b0feb58a54d694e58f"
           },
           "before": {
             "mode": "100644",
@@ -1660,6 +1737,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "a0c182b0dd78b1350230d95308c9abdd61b501d4283fc063c3277f0602f1e630"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "df160efc6753f62a9dfff0bc70e9aad07ea5ebff5a00144e5ce24be681b010ed"
+          },
+          "path": "saas/login_web/components/verification-flow.tsx"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "6abffaeef7fab5b1395af1fef49adb25477d3f9546a3a636e20ba42732650f28"
           },
           "before": {
@@ -1682,7 +1770,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23"
+            "sha256": "9e34e3c6dcb1662f986c6411d71d71a778a9f6f0e1f645d0ffb42f55df03a507"
           },
           "before": {
             "mode": "100644",
@@ -1704,7 +1792,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "6b26a791b7b114ac2a4321fe425d1ce922bdb228602df08cf683824c2a5d1ce0"
+            "sha256": "2390a404cfa8b662435f6e6d2a645b4213a859a76f4f912fe1cf080417632ce5"
           },
           "before": {
             "mode": "100644",
@@ -1715,13 +1803,24 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "d27595f62ff6d2b0e9cf4f2b50d3e129b95485f9d302a85d78c49044b5472166"
+            "sha256": "5d1126ed3e7933d03bbf87c7e0e14ea861ab08e4abf49be88ba959c003d45385"
           },
           "before": {
             "mode": "100644",
             "sha256": "d7441414a7e400e4e2d1d3c61f18351e0f75ae41c2d4c2b8f6e30de4f1ae87ec"
           },
           "path": "saas/upstream-baseline.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "7716e2f078d46644f6eeb9a423c46a3871ffbc972a13af852f9080cdd46e0285"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "c7c1f74823e5045d80918e0a18882a4c600ba412cf48bb657a7e3d9ac24710e5"
+          },
+          "path": "tests/e2e/omnigent/test_run_omnigent_joins_callers_trace.py"
         },
         {
           "after": {
@@ -1737,6 +1836,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "abe655cbb518136ab60ff22732200574bc23a6a8be0758ee3b4ddd82a9784e2e"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "46dbf70e788bcee21bf1ef5ee60f538f54311eb8af6aca11a2c114ef3f3c8d26"
+          },
+          "path": "tests/saas/test_onboarding_ui_browser.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "c6309057403c54150f38efd7d04a96b2c375ec19ee93400efae687df9f3d4f0b"
           },
           "before": {
@@ -1748,7 +1858,18 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "cb397fd134fc8049b4d2cb3c636e735fc6018ac2b4e153ff9fcd35bff268dcbc"
+            "sha256": "a00b156d919b82e64b160e3f19749f37567ed45ed0e86a0f253f80f7b79fd065"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "63a37273dd896ed7b1e63e93da91e07e32afd4c5b5eff679c2522112b8683695"
+          },
+          "path": "tests/saas/test_runtime_security_overlays.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "27e04ecff20763ac4344fcc6b4487fb4a24d65bcaa8f1685613f658b5dc41f0a"
           },
           "before": {
             "mode": "100644",
@@ -1818,11 +1939,11 @@
       "baseline_revision": "7cea09404d49fc965ce053e51803688a5be5fe53",
       "budget_file_cap": 169,
       "component": "Model",
-      "product_revision": "538eacfab39402307d0b477ba5efc0eddc8007b1",
-      "product_tree": "931eded80ed4a253f6e43311479567109568430a",
+      "product_revision": "f16e62a63cdb1802076b7712af630342daa56586",
+      "product_tree": "e060f1b58671afdd129cbd52dd2155471decb675",
       "repository": "Dream1216/omnigent",
       "schema_version": 1,
-      "source_date_epoch": 1793183433,
+      "source_date_epoch": 1793710649,
       "source_delta": [
         {
           "after": {
@@ -1992,7 +2113,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "dcd81293bd9ea6519cb2203cc3bf4d922d91e2d9d4c0f6860bfb67eca4901de8"
+            "sha256": "b25d2c8740661207dbedeb45660eba840fe3248d92b870502dfda0a3406a0105"
           },
           "before": {
             "mode": "100644",
@@ -2025,7 +2146,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "2ba12c093074d22eaffbc5fcde380b017574edaa7f5621522d9e7a848ff228a1"
+            "sha256": "895987f85ebe3dcd3dfe67646479cc1ece028693232782b0feb58a54d694e58f"
           },
           "before": {
             "mode": "100644",
@@ -2113,7 +2234,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "8746c9f819b089582f4aac73495123d91d734321793787c8d1c47db86f7dbe23"
+            "sha256": "9e34e3c6dcb1662f986c6411d71d71a778a9f6f0e1f645d0ffb42f55df03a507"
           },
           "before": {
             "mode": "100644",
@@ -2135,7 +2256,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "6b26a791b7b114ac2a4321fe425d1ce922bdb228602df08cf683824c2a5d1ce0"
+            "sha256": "2390a404cfa8b662435f6e6d2a645b4213a859a76f4f912fe1cf080417632ce5"
           },
           "before": {
             "mode": "100644",
@@ -2186,6 +2307,17 @@
             "sha256": "7db4ce663a00c0c28e95ab90239d37840a7b1b222f7b71ce9d86359d97e858fa"
           },
           "path": "tests/saas/test_production_runner_executor.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "a00b156d919b82e64b160e3f19749f37567ed45ed0e86a0f253f80f7b79fd065"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "63a37273dd896ed7b1e63e93da91e07e32afd4c5b5eff679c2522112b8683695"
+          },
+          "path": "tests/saas/test_runtime_security_overlays.py"
         },
         {
           "after": {

@@ -53,7 +53,7 @@ _INFRASTRUCTURE_STEPS = (
     (13, "Complete job", "success"),
 )
 _EMPTY_ZIP = b"PK\x05\x06" + b"\x00" * 18
-_COMPATIBILITY_INFRASTRUCTURE_CONTRACTS = {
+_COMPATIBILITY_INFRASTRUCTURE_CONTRACTS: dict[str, dict[str, Any]] = {
     "b6ec90023226590ac6278106f5dd4d0104ce196283e708f6b0eb242365ebcd02": {
         "archive_bytes": 1436,
         "archive_sha256": "61cccff0cd7dde473c55126ddf8b9584297885dc729a21e21a29fc72b0675b8b",
@@ -114,6 +114,35 @@ _COMPATIBILITY_INFRASTRUCTURE_CONTRACTS = {
         "steps": (),
     },
 }
+# Exact current C2 cancellations: assigned runner plus empty archive is UNKNOWN,
+# never zero execution or source proof. Every metadata, annotation and ZIP hash
+# remains mandatory; no other label/source gains a compatibility alias.
+_CURRENT_C2_EMPTY_ARCHIVE_CASES = {
+    "7a8a6dfc62f7df30b8d04175c009bab42cfd5dda45c43b56d8fdb6f1de7bec22": {
+        "archive_bytes": 22,
+        "archive_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+        "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
+        "git_executed": None,
+        "members": (),
+        "operation_line": None,
+        "runner": (0, "", 0, ""),
+        "steps": (),
+        "labels": ["ubuntu-24.04"],
+    },
+    "0177df8b266a458d8773e6a25288e3ca63ef6837af9a688945c5e7da75b06626": {
+        "archive_bytes": 22,
+        "archive_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+        "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
+        "git_executed": None,
+        "members": (),
+        "operation_line": None,
+        "runner": (0, "", 0, ""),
+        "steps": (),
+        "labels": ["ubuntu-24.04"],
+    },
+}
+_COMPATIBILITY_INFRASTRUCTURE_CONTRACTS.update(_CURRENT_C2_EMPTY_ARCHIVE_CASES)
+
 _FIELDS = {
     "kind",
     "workflow_sha256",
@@ -290,14 +319,56 @@ def _verify_native_zero_execution(
     require(logs == _EMPTY_ZIP, "zero-execution original run log ZIP is not exactly empty")
 
 
-def verify_zero_execution(profile, identity, rule, run, job, check, annotations, logs):
+def _registered_snapshot_matches(value, expected, profile, identity, rule, reference_heads=()):
+    """Match the historical object while allowing its live PR head reference to advance."""
+    if native.native_digest(value) == expected:
+        return True
+    associations = value.get("pull_requests")
+    if (
+        value.get("head_sha") != rule["attachment_revision"]
+        or not isinstance(associations, list)
+        or len(associations) != 1
+        or not isinstance(associations[0], dict)
+        or associations[0].get("number") != identity["validation_pr"]
+    ):
+        return False
+    association = associations[0]
+    head = association.get("head")
+    if (
+        not isinstance(head, dict)
+        or head.get("sha") != profile["product_revision"]
+        or head["sha"] == rule["attachment_revision"]
+    ):
+        return False
+    for historical_head in (rule["attachment_revision"], *reference_heads):
+        if (
+            not isinstance(historical_head, str)
+            or re.fullmatch(r"[0-9a-f]{40}", historical_head) is None
+        ):
+            continue
+        historical = {
+            **value,
+            "pull_requests": [{**association, "head": {**head, "sha": historical_head}}],
+        }
+        if native.native_digest(historical) == expected:
+            return True
+    return False
+
+
+def verify_zero_execution(
+    profile, identity, rule, run, job, check, annotations, logs, *, reference_heads=()
+):
     """Authenticate execution absence without assigning an original event source."""
     validate_rules([rule], profile, identity)
     _verify_native_zero_execution(identity, rule, run, job, check, annotations, logs)
     require(
-        native.native_digest(run) == rule["run_sha256"]
+        _registered_snapshot_matches(
+            run, rule["run_sha256"], profile, identity, rule, reference_heads
+        )
         and native.native_digest(job) == rule["job_sha256"]
-        and native.native_digest(check) == rule["check_sha256"]
+        and _registered_snapshot_matches(
+            check, rule["check_sha256"], profile, identity, rule, reference_heads
+        )
         and native.native_digest(annotations) == rule["annotations_sha256"]
         and hashlib.sha256(logs).hexdigest() == rule["run_logs_sha256"],
         "zero-execution native tuple differs from exact reviewed registration",
@@ -396,7 +467,7 @@ def annotations_for(check_id):
     raise ValueError("zero-execution native annotation pagination is incomplete")
 
 
-def collect_zero_execution(profile, identity, rule, run, jobs, destination):
+def collect_zero_execution(profile, identity, rule, run, jobs, destination, *, reference_heads=()):
     require(len(jobs) == 1, "zero-execution native job set differs")
     job = jobs[0]
     check = api(f"{native._ROOT}/check-runs/{rule['check_id']}")
@@ -409,7 +480,15 @@ def collect_zero_execution(profile, identity, rule, run, jobs, destination):
         "zero-execution workflow bytes differ from the reviewed original",
     )
     return verify_zero_execution(
-        profile, identity, rule, run, job, check, annotations, path.read_bytes()
+        profile,
+        identity,
+        rule,
+        run,
+        job,
+        check,
+        annotations,
+        path.read_bytes(),
+        reference_heads=reference_heads,
     )
 
 
@@ -554,7 +633,12 @@ def verify_infrastructure_cancellation(
         and job.get("run_attempt") == rule["attempt"]
         and job.get("head_sha") == check.get("head_sha") == run["head_sha"]
         and job.get("name") == check.get("name") == "evaluate"
-        and job.get("labels") == ["ubuntu-latest"]
+        and job.get("labels")
+        == (
+            contract.get("labels", ["ubuntu-latest"])
+            if contract is not None
+            else ["ubuntu-latest"]
+        )
         and job.get("check_run_url") == f"{native._REPO_URL}/check-runs/{rule['check_id']}"
         and check.get("id") == rule["check_id"]
         and check.get("app", {}).get("id") == 15368
@@ -601,9 +685,9 @@ def verify_infrastructure_cancellation(
     )
     _infrastructure_logs(logs, contract)
     require(
-        native.native_digest(run) == rule["run_sha256"]
+        _registered_snapshot_matches(run, rule["run_sha256"], profile, identity, rule)
         and native.native_digest(job) == rule["job_sha256"]
-        and native.native_digest(check) == rule["check_sha256"]
+        and _registered_snapshot_matches(check, rule["check_sha256"], profile, identity, rule)
         and native.native_digest(annotations) == rule["annotations_sha256"]
         and hashlib.sha256(logs).hexdigest() == rule["run_logs_sha256"],
         "infrastructure cancellation native tuple differs from reviewed registration",
@@ -658,9 +742,10 @@ def collect_infrastructure_cancellation(profile, identity, rule, run, jobs, dest
     )
 
 
-def collect_observation(profile, identity, rule, run, jobs, destination):
+def collect_observation(profile, identity, rule, run, jobs, destination, *, reference_heads=()):
     if rule["kind"] == KIND:
-        return collect_zero_execution(profile, identity, rule, run, jobs, destination)
+        options = {"reference_heads": reference_heads} if reference_heads else {}
+        return collect_zero_execution(profile, identity, rule, run, jobs, destination, **options)
     if rule["kind"] == REFUSAL_CANCELLATION_KIND:
         return collect_refusal_cancellation(profile, identity, rule, run, jobs, destination)
     require(rule["kind"] == INFRASTRUCTURE_KIND, "unknown domain observation kind")
@@ -960,7 +1045,7 @@ def _unattributed_run(run):
     )
 
 
-def cancelled_job_coordinates(run, job, check):
+def cancelled_job_coordinates(run, job, check, *, expected_runner_label="ubuntu-latest"):
     """Strict native assigned-job identity; it gives no source or eligibility credit."""
     _unattributed_run(run)
     require(
@@ -977,7 +1062,8 @@ def cancelled_job_coordinates(run, job, check):
         and job.get("runner_name") == f"GitHub Actions {job['runner_id']}"
         and job.get("runner_group_id") == 0
         and job.get("runner_group_name") == "GitHub Actions"
-        and job.get("labels") == ["ubuntu-latest"]
+        and expected_runner_label in {"ubuntu-latest", "ubuntu-24.04"}
+        and job.get("labels") == [expected_runner_label]
         and type(check.get("id")) is int
         and check["id"] > 0
         and job.get("check_run_url") == f"{native._REPO_URL}/check-runs/{check['id']}"
@@ -1229,17 +1315,38 @@ def verify_bootstrap_cancellation(profile, identity, policy, run, job, check, an
 
 
 def _verify_compatibility_unobserved_job(
-    profile, identity, policy, run, job, check, annotations, logs
+    profile,
+    identity,
+    policy,
+    run,
+    job,
+    check,
+    annotations,
+    logs,
+    *,
+    attachment_workflow_sha256=native.MAIN_WORKFLOW_SHA256,
 ):
     validate_bootstrap_policy(policy, profile, identity)
     validate_profile(profile, COMPATIBILITY_COMPONENT)
+    require(
+        attachment_workflow_sha256
+        in {native.MAIN_WORKFLOW_SHA256, native.FIXED_RUNNER_WORKFLOW_SHA256},
+        "unobserved compatibility attachment workflow differs",
+    )
+    expected_runner_label = (
+        "ubuntu-24.04"
+        if attachment_workflow_sha256 == native.FIXED_RUNNER_WORKFLOW_SHA256
+        else "ubuntu-latest"
+    )
     _unattributed_run(run)
     require(
         job.get("steps") == [] and logs == _EMPTY_ZIP,
         "unobserved compatibility audit contains steps or command output",
     )
     if job.get("conclusion") == "cancelled":
-        coordinates = cancelled_job_coordinates(run, job, check)
+        coordinates = cancelled_job_coordinates(
+            run, job, check, expected_runner_label=expected_runner_label
+        )
         _cancelled_annotations(run, check, annotations, infrastructure=False)
     else:
         require(
@@ -1251,7 +1358,7 @@ def _verify_compatibility_unobserved_job(
             and job.get("name") == check.get("name") == "evaluate"
             and job.get("status") == check.get("status") == "completed"
             and job.get("conclusion") == check.get("conclusion") == "skipped"
-            and job.get("labels") in ([], ["ubuntu-latest"])
+            and job.get("labels") in ([], [expected_runner_label])
             and all(
                 job.get(key) is None
                 for key in ("runner_id", "runner_name", "runner_group_id", "runner_group_name")
@@ -1281,6 +1388,11 @@ def _verify_compatibility_unobserved_job(
     return UnattributedBootstrapCancellationObservation(
         {
             **_audit_receipt(BOOTSTRAP_KIND, policy, run),
+            **(
+                {"attachment_workflow_sha256": attachment_workflow_sha256}
+                if attachment_workflow_sha256 != native.MAIN_WORKFLOW_SHA256
+                else {}
+            ),
             **coordinates,
             "execution": "native-cancelled-run-unobserved-job-execution-UNKNOWN",
             "original_job_conclusion": job["conclusion"],
@@ -1309,13 +1421,7 @@ def collect_unattributed_audit(
         "unattributed native audit workflow bytes differ",
     )
     if fixed_runner_absence:
-        require(
-            zero_policy is not None and len(jobs) == 1 and jobs[0].get("steps") == [],
-            "fixed-runner attachment requires one native zero-execution job",
-        )
-        return collect_unattributed_zero_execution(
-            profile, identity, zero_policy, run, jobs, destination
-        )
+        validate_profile(profile, COMPATIBILITY_COMPONENT)
     if not jobs:
         require(zero_policy is not None, "no-job native audit policy is disabled")
         prefix = f"{native._ROOT}/actions/runs/{run['id']}/attempts/{run['run_attempt']}"
@@ -1326,8 +1432,15 @@ def collect_unattributed_audit(
         )
         path = destination / f"no-job-run-{run['id']}-attempt-{run['run_attempt']}.zip"
         download_run_logs(run["id"], run["run_attempt"], path)
-        return verify_no_job_execution(
+        proof = verify_no_job_execution(
             profile, identity, zero_policy, run, raw_jobs, suite, checks, path.read_bytes()
+        )
+        return (
+            UnattributedNoJobExecutionObservation(
+                {**proof.receipt, "attachment_workflow_sha256": attachment_workflow_sha256}
+            )
+            if fixed_runner_absence
+            else proof
         )
     require(len(jobs) == 1, "unattributed native audit job set differs")
     unobserved_compatibility = (
@@ -1359,8 +1472,17 @@ def collect_unattributed_audit(
     download_infrastructure_run_logs(run["id"], run["run_attempt"], path)
     if unobserved_compatibility:
         return _verify_compatibility_unobserved_job(
-            profile, identity, bootstrap_policy, run, job, check, annotations, path.read_bytes()
+            profile,
+            identity,
+            bootstrap_policy,
+            run,
+            job,
+            check,
+            annotations,
+            path.read_bytes(),
+            attachment_workflow_sha256=attachment_workflow_sha256,
         )
+    require(not fixed_runner_absence, "fixed-runner bootstrap execution is not reviewed")
     return verify_bootstrap_cancellation(
         profile, identity, bootstrap_policy, run, job, check, annotations, path.read_bytes()
     )

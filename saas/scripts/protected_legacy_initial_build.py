@@ -23,7 +23,7 @@ from saas.scripts.resume_oci_promotion import (
 REPOSITORY = "Dream1216/omnigent"
 WORKFLOW = ".github/workflows/saas-legacy-security-build.yml"
 COMPATIBILITY_COMPONENT = "Compatibility018"
-_COMPATIBILITY_PROFILE_SHA256 = "e8f9cc6b319ddedeff5583968ea3bd248de98d20ac6bce1c9dfaf9426a8f3d97"
+_COMPATIBILITY_PROFILE_SHA256 = "2f8ca5541a1521488a5db3182021ec21c130d6f8e28ff2f301ebc98a302c9b56"
 BASELINES = {
     "Core": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
     "Gateway": "3319b59a5d75a411f339b294cbe6b4133bfb851a",
@@ -75,6 +75,22 @@ _MODEL_REVIEWED_BLOB_PAIRS = {
     "tests/benchmarks/test_benchmark_smoke.py": (
         "075ef6f5f291732fd6c27a54aeb2c5fc31079f331a498cbb3dcaeab9f0c108d3",
         "df62611701eb78c9b143213f1e2d826418c3bc3a48b6bda8d429a5169b481c65",
+    ),
+}
+
+
+_GATEWAY_REVIEWED_BUDGET_PAIR = (
+    "d7441414a7e400e4e2d1d3c61f18351e0f75ae41c2d4c2b8f6e30de4f1ae87ec",
+    "5d1126ed3e7933d03bbf87c7e0e14ea861ab08e4abf49be88ba959c003d45385",
+)
+_GATEWAY_REVIEWED_BLOB_PAIRS = {
+    "saas/login_web/components/verification-flow.tsx": (
+        "df160efc6753f62a9dfff0bc70e9aad07ea5ebff5a00144e5ce24be681b010ed",
+        "a0c182b0dd78b1350230d95308c9abdd61b501d4283fc063c3277f0602f1e630",
+    ),
+    "tests/saas/test_onboarding_ui_browser.py": (
+        "46dbf70e788bcee21bf1ef5ee60f538f54311eb8af6aca11a2c114ef3f3c8d26",
+        "abe655cbb518136ab60ff22732200574bc23a6a8be0758ee3b4ddd82a9784e2e",
     ),
 }
 
@@ -146,15 +162,21 @@ def validate_profile(profile: dict[str, Any], component: str) -> None:
         has_budget == ("budget_file_cap" in profile),
         "budget change lacks exact control approval",
     )
+    gateway_fragment_repair = component == "Gateway" and any(
+        isinstance(row, dict) and row.get("path") in _GATEWAY_REVIEWED_BLOB_PAIRS for row in delta
+    )
     if has_budget:
         require(
             type(profile["budget_file_cap"]) is int
-            and profile["budget_file_cap"] == (169 if component == "Model" else 167),
+            and profile["budget_file_cap"]
+            == (168 if gateway_fragment_repair else 169 if component == "Model" else 167),
             "legacy budget differs from reviewed file cap",
         )
     reviewed_blob_pairs = {
         **_REVIEWED_BLOB_PAIRS,
         **(_MODEL_REVIEWED_BLOB_PAIRS if component == "Model" else {}),
+        **(_GATEWAY_REVIEWED_BLOB_PAIRS if gateway_fragment_repair else {}),
+        **({_BUDGET_PATH: _GATEWAY_REVIEWED_BUDGET_PAIR} if gateway_fragment_repair else {}),
     }
     paths: set[str] = set()
     for row in delta:
@@ -204,6 +226,12 @@ def validate_profile(profile: dict[str, Any], component: str) -> None:
                 == reviewed_blob_pairs[path],
                 "source metadata differs from the exact reviewed byte transition",
             )
+
+    if gateway_fragment_repair:
+        require(
+            has_budget and set(_GATEWAY_REVIEWED_BLOB_PAIRS) <= paths,
+            "Gateway fragment repair requires its exact paired source and regression",
+        )
 
     if has_budget and component == "Model":
         require(
@@ -319,6 +347,19 @@ def verify_metadata_delta(path: str, before: bytes, after: bytes, profile: dict[
             and hashlib.sha256(before).hexdigest() == row["before"]["sha256"]
             and hashlib.sha256(after).hexdigest() == row["after"]["sha256"],
             "compatibility metadata differs from its exact reviewed byte transition",
+        )
+        return
+
+    if (
+        path == _BUDGET_PATH
+        and profile.get("component") == "Gateway"
+        and profile.get("budget_file_cap") == 168
+    ):
+        validate_profile(profile, "Gateway")
+        require(
+            (hashlib.sha256(before).hexdigest(), hashlib.sha256(after).hexdigest())
+            == _GATEWAY_REVIEWED_BUDGET_PAIR,
+            "Gateway budget differs from its exact reviewed byte transition",
         )
         return
 

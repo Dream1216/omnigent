@@ -756,7 +756,7 @@ def compatibility_path_scope(scenario, monkeypatch):
     profile["component"] = "Compatibility018"
     data["policy"]["component"] = data["identity"]["component"] = profile["component"]
     data["identity"].update(
-        validation_pr=214, validation_base_ref="codex/p18-a7-validation-base-20261102"
+        validation_pr=223, validation_base_ref="codex/p18-a7-validation-base-20261102"
     )
     omitted = set(qualifier._COMPATIBILITY_PATH_FILTERS)
     # Reuse the real two-commit product fixture; substitute only its reviewed hashes.
@@ -886,7 +886,7 @@ def test_registered_compatibility_profile_has_no_original_path_filter_matches():
     }
     identity = {
         **policy,
-        "validation_pr": 214,
+        "validation_pr": 223,
         "validation_base_ref": "codex/p18-a7-validation-base-20261102",
     }
     catalog = {path: row[0] for path, row in qualifier._COMPATIBILITY_PATH_FILTERS.items()}
@@ -894,4 +894,4 @@ def test_registered_compatibility_profile_has_no_original_path_filter_matches():
         qualifier._required_technical_workflows(policy, identity, catalog, profile)
         == qualifier._MANDATORY_TECHNICAL - catalog.keys()
     )
-    assert len(profile["source_delta"]) == 94
+    assert len(profile["source_delta"]) == 100
