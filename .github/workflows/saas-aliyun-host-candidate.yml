@@ -28,6 +28,14 @@ on:
         type: choice
         options: [build, promote-reviewed-gen2, qualify-poc-alias]
         default: build
+      source_revision:
+        description: Exact source SHA of the successful Gen2 build to promote
+        type: string
+        required: false
+      source_run:
+        description: Successful Gen2 build run ID (required for promotion)
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -221,8 +229,8 @@ jobs:
       attestations: write
       artifact-metadata: write
     env:
-      ORIGINAL_REVISION: 623f0c8f92ed923a5bba442b566a4f1ae228d175
-      ORIGINAL_RUN: '41311645786'
+      ORIGINAL_REVISION: ${{ inputs.source_revision }}
+      ORIGINAL_RUN: ${{ inputs.source_run }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -240,51 +248,33 @@ jobs:
       - name: Verify original source run and successful complete runtime jobs
         run: |
           set -euo pipefail
+          [[ "$ORIGINAL_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ORIGINAL_RUN" =~ ^[1-9][0-9]*$ ]]
           mkdir -p artifacts/original
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN" > artifacts/original/run.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/jobs?per_page=100" > artifacts/original/jobs.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/artifacts?per_page=100" > artifacts/original/artifacts.json
-          python - <<'PY'
-          import json, os
-          from pathlib import Path
-          root = Path('artifacts/original')
-          run = json.loads((root / 'run.json').read_text())
-          assert run['head_sha'] == os.environ['ORIGINAL_REVISION']
-          assert run['repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
-          assert run['path'] == '.github/workflows/saas-aliyun-host-candidate.yml'
-          assert run['status'] == 'completed'
-          jobs = json.loads((root / 'jobs.json').read_text())['jobs']
-          for name in ('verify', 'build (1)', 'build (2)'):
-              selected = [job for job in jobs if job['name'] == name]
-              assert len(selected) == 1 and selected[0]['conclusion'] == 'success', name
-          artifacts = json.loads((root / 'artifacts.json').read_text())['artifacts']
-          expected = {
-              13085796213: ('1', 'sha256:5c9d337db599e4c030540a67c8c4ddc94b5023e27a21814cb6ec35c96958d082'),
-              13084864710: ('2', 'sha256:bb325f6185814725178368ca75f6397416f50fc2e8e30f9da07e18aa5e24a7ab'),
-          }
-          for artifact_id, (attempt, digest) in expected.items():
-              selected = [item for item in artifacts if item['id'] == artifact_id]
-              assert len(selected) == 1
-              item = selected[0]
-              assert not item['expired'] and item['digest'] == digest
-              assert item['name'] == f"aliyun-host-{os.environ['ORIGINAL_REVISION']}-1-{attempt}"
-          PY
+          python -m saas.scripts.aliyun_host_promotion select \
+            --evidence artifacts/original --revision "$ORIGINAL_REVISION" \
+            --run-id "$ORIGINAL_RUN" --receipt artifacts/original/transfer.json
       - name: Transfer the two exact original OCI archives without rebuilding
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/13085796213/zip" > "$RUNNER_TEMP/first.zip"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/13084864710/zip" > "$RUNNER_TEMP/second.zip"
           python - <<'PY'
-          import os
+          import json, os, subprocess
           from pathlib import Path
           from saas.scripts.oci_promotion import extract_artifact
           root = Path(os.environ['RUNNER_TEMP'])
-          for name, digest in (
-              ('first', '5c9d337db599e4c030540a67c8c4ddc94b5023e27a21814cb6ec35c96958d082'),
-              ('second', 'bb325f6185814725178368ca75f6397416f50fc2e8e30f9da07e18aa5e24a7ab'),
-          ):
-              extract_artifact(root / f'{name}.zip', root / name, zip_sha256=digest)
-              (root / f'{name}.zip').unlink()
+          selected = json.loads(Path('artifacts/original/transfer.json').read_text())
+          for item in selected:
+              name = item['destination']
+              archive = root / f'{name}.zip'
+              path = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{item['artifact_id']}/zip"
+              with archive.open('wb') as output:
+                  result = subprocess.run(['gh', 'api', path], stdout=output, stderr=subprocess.PIPE, timeout=300)
+              assert result.returncode == 0, 'original artifact download failed'
+              extract_artifact(archive, root / name, zip_sha256=item['digest'][7:])
+              archive.unlink()
           PY
           python -m saas.scripts.compare_oci_rebuilds --label-profile aliyun-host-minimal \
             --image "host=$RUNNER_TEMP/first/host.oci.tar,$RUNNER_TEMP/second/host.oci.tar" \

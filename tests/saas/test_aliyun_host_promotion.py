@@ -13,12 +13,99 @@ import pytest
 import yaml
 from packaging.specifiers import SpecifierSet
 
-from saas.scripts.aliyun_host_promotion import prepare, verify_readback
+from saas.scripts.aliyun_host_promotion import prepare, select_candidate_artifacts, verify_readback
 from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
 from saas.scripts.scan_oci_candidates import GRYPE_VERSION, file_sha256, scan_report
 from tests.saas.test_image_supply_chain import _write_oci
 
 REVISION = "a" * 40
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "source",
+        "repository",
+        "branch",
+        "workflow",
+        "run",
+        "job",
+        "attempt",
+        "expired",
+        "digest",
+        "artifact_source",
+        "duplicate",
+        "truncated",
+    ],
+)
+def test_promotion_only_selects_both_archives_from_a_successful_native_run(failure):
+    run = {
+        "id": 123,
+        "head_sha": REVISION,
+        "repository": {"full_name": "Dream1216/omnigent"},
+        "head_repository": {"full_name": "Dream1216/omnigent"},
+        "head_branch": "codex/aliyun-sandbox-p1-p5-20261031",
+        "path": ".github/workflows/saas-aliyun-host-candidate.yml",
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "run_attempt": 2,
+    }
+    jobs = {
+        "total_count": 4,
+        "jobs": [
+            {"name": name, "status": "completed", "conclusion": "success"}
+            for name in ("verify", "build (1)", "build (2)", "compare-and-scan")
+        ],
+    }
+    artifacts = {
+        "total_count": 2,
+        "artifacts": [
+            {
+                "id": number,
+                "name": f"aliyun-host-{REVISION}-2-{number}",
+                "digest": "sha256:" + str(number) * 64,
+                "expired": False,
+                "workflow_run": {"id": 123, "head_sha": REVISION},
+            }
+            for number in (1, 2)
+        ],
+    }
+    first = artifacts["artifacts"][0]
+    if failure == "source":
+        run["head_sha"] = "b" * 40
+    elif failure == "repository":
+        run["head_repository"] = {"full_name": "untrusted/omnigent"}
+    elif failure == "branch":
+        run["head_branch"] = "other-branch"
+    elif failure == "workflow":
+        run["path"] = ".github/workflows/other.yml"
+    elif failure == "run":
+        run["conclusion"] = "failure"
+    elif failure == "job":
+        jobs["jobs"][-1]["conclusion"] = "skipped"
+    elif failure == "attempt":
+        run["run_attempt"] = 1
+    elif failure == "expired":
+        first["expired"] = True
+    elif failure == "digest":
+        first["digest"] = "not-a-digest"
+    elif failure == "artifact_source":
+        first["workflow_run"]["head_sha"] = "b" * 40
+    elif failure == "duplicate":
+        artifacts["artifacts"][1]["id"] = first["id"]
+    elif failure == "truncated":
+        artifacts["total_count"] = 3
+    if failure is not None:
+        with pytest.raises(ValueError):
+            select_candidate_artifacts(run, jobs, artifacts, revision=REVISION, run_id=123)
+    else:
+        selected = select_candidate_artifacts(run, jobs, artifacts, revision=REVISION, run_id=123)
+        assert selected == [
+            {"destination": name, "artifact_id": number, "digest": "sha256:" + str(number) * 64}
+            for number, name in ((1, "first"), (2, "second"))
+        ]
 
 
 def test_gen2_builder_meets_the_repository_uv_requirement():
@@ -171,6 +258,9 @@ def test_private_promotion_transfers_original_bytes_and_signs_after_readback():
     commands = "\n".join(step.get("run", "") for step in steps)
     assert "docker build" not in commands and "buildx build" not in commands
     assert "extract_artifact" in commands and "compare_oci_rebuilds" in commands
+    assert "aliyun_host_promotion select" in commands
+    assert job["env"]["ORIGINAL_REVISION"] == "${{ inputs.source_revision }}"
+    assert job["env"]["ORIGINAL_RUN"] == "${{ inputs.source_run }}"
     assert "--scope aliyun-host" in commands
     assert "--source-digest" in commands and "--deny-self-hosted-runners" in commands
     publish = next(step["run"] for step in steps if "crane push" in step.get("run", ""))

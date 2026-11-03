@@ -146,8 +146,11 @@ archive with a fresh vulnerability database. The Aliyun profile is separate
 from the existing dual-architecture Server/Host profiles. The minimal profile
 requires exactly three first-party labels and Linux amd64; it does not accept
 the vendor base's inherited labels. Normal builds have read-only permissions.
-The explicit `promote-reviewed-gen2` dispatch transfers the two pinned original
-623f0c8f9 OCI artifacts, checks successful original runtime jobs and ZIP digests,
+The explicit `promote-reviewed-gen2` dispatch takes an exact `source_revision`
+and `source_run`. It requires a successful Gen2 build from this repository and
+candidate branch, including both runtime jobs and the comparison/scan job.
+It transfers the two original OCI artifacts selected from that native run,
+verifies their source/run/attempt identities and native ZIP digests,
 repeats the exact rebuild comparison, scans with a fresh database, and binds raw
 scan/image identities before publishing to the private `omnigent-aliyun-host`
 GHCR package. It verifies full registry readback and signs a promotion receipt
