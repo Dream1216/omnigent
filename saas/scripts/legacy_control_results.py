@@ -23,7 +23,12 @@ from saas.scripts.legacy_pytest_results import (
     verify_job_artifact_identity,
     verify_test_results,
 )
-from saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log
+from saas.scripts.legacy_source_ci import (
+    _job_pages,
+    checkout_commit,
+    completed_step_lines,
+    download_job_log,
+)
 from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import (
     BASELINES,
@@ -142,6 +147,27 @@ def verify_pg_archive(archive: Path, *, source: dict[str, Any], major: int) -> d
     return result
 
 
+def _pg_step_logs(log: str, steps: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Bind ordered native Run headers when adjacent steps share an API second."""
+    lines = log.splitlines(keepends=True)
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if line.partition(" ")[2].startswith("##[group]Run ")
+    ]
+    require(len(starts) == len(_PG_STEPS), "native PG Run header inventory differs")
+    result = {}
+    for name, start, end in zip(_PG_STEPS, starts, [*starts[1:], len(lines)], strict=True):
+        frame = "".join(lines[start:end])
+        selected = completed_step_lines(frame, steps[name])
+        require(
+            bool(selected) and selected[0] == lines[start].partition(" ")[2].rstrip("\r\n"),
+            "native PG Run header falls outside its authenticated step window",
+        )
+        result[name] = frame
+    return result
+
+
 def collect_pg_receipts(
     control: Path,
     product: Path,
@@ -220,11 +246,21 @@ def _collect_pg_receipts(
                 job, major=major, run_id=run_id, attempt=attempt, control_revision=control_revision
             )
             log_path = destination / f"job-{job['id']}.log"
-            download_job_log(job["id"], log_path)
+            if run["status"] == "in_progress":
+                download_job_log(job["id"], log_path, active_job=job)
+            else:
+                download_job_log(job["id"], log_path)
             log = log_path.read_text()
+            step_logs = _pg_step_logs(log, steps)
             require(
-                checkout_commit(log, steps["Checkout exact main PG verifier"]) == control_revision
-                and checkout_commit(log, steps["Checkout exact PG product"])
+                checkout_commit(
+                    step_logs["Checkout exact main PG verifier"],
+                    steps["Checkout exact main PG verifier"],
+                )
+                == control_revision
+                and checkout_commit(
+                    step_logs["Checkout exact PG product"], steps["Checkout exact PG product"]
+                )
                 == profile["product_revision"],
                 "actual PG control/product checkout differs",
             )
@@ -261,7 +297,8 @@ def _collect_pg_receipts(
                 archive=archive,
             )
             native_tests = pytest_log_inventory(
-                log, steps["Execute original exact-source PostgreSQL contracts"]
+                step_logs["Execute original exact-source PostgreSQL contracts"],
+                steps["Execute original exact-source PostgreSQL contracts"],
             )
             parsed = verify_test_results(
                 read_junit_member(archive, "legacy-pg.xml"),

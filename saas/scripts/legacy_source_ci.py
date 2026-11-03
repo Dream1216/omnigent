@@ -208,18 +208,25 @@ def _write_log_diagnostic(destination: Path, diagnostic: dict[str, Any]) -> None
         pass
 
 
-def _download_job_log_direct(job_id: int, destination: Path) -> None:
+def _download_job_log_direct(job_id: int, destination: Path, *, http1: bool = False) -> None:
     """Fetch a bounded native log directly; never follow an artifact-provided URL."""
     require(type(job_id) is int and job_id > 0, "invalid native job ID")
     reserve_native_download(f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs")
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     argv = ["gh", "api", f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs"]
     started = time.monotonic()
+    environment = None
+    if http1:
+        environment = os.environ.copy()
+        environment["GODEBUG"] = ",".join(
+            part for part in (environment.get("GODEBUG", ""), "http2client=0") if part
+        )
     try:
         process = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=environment,
         )
     except OSError as error:
         os.close(descriptor)
@@ -326,7 +333,60 @@ def _download_job_log_direct(job_id: int, destination: Path) -> None:
         )
 
 
-def download_job_log(job_id: int, destination: Path) -> None:
+def _recover_active_job_log(job_id: int, destination: Path, expected_job: dict[str, Any]) -> None:
+    """Read the same completed job once over HTTP/1 while its parent is active."""
+    endpoint = f"repos/{REPOSITORY}/actions/jobs/{job_id}"
+    require(
+        expected_job.get("id") == job_id
+        and expected_job.get("status") == "completed"
+        and expected_job.get("conclusion") == "success"
+        and api(endpoint) == expected_job,
+        "active-run native job identity differs before log recovery",
+    )
+    recovered = destination.with_name(destination.name + ".active-job-http1")
+    _download_job_log_direct(job_id, recovered, http1=True)
+    data = recovered.read_bytes()
+    require(bool(data), "active-run native job log is empty")
+    data.decode("utf-8")
+    require(api(endpoint) == expected_job, "active-run native job changed during log recovery")
+    failed = destination.with_name(destination.name + ".direct-failed")
+    require(destination.is_file() and not failed.exists(), "failed native read custody differs")
+    original = destination.read_bytes()
+    destination.rename(failed)
+    with os.fdopen(
+        os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+    ) as output:
+        output.write(data)
+    receipt = {
+        "kind": "native_active_run_completed_job_log_http1_recovery/v1",
+        "job_id": job_id,
+        "run_id": expected_job["run_id"],
+        "attempt": expected_job["run_attempt"],
+        "head_sha": expected_job["head_sha"],
+        "endpoint": endpoint + "/logs",
+        "job_sha256": hashlib.sha256(
+            json.dumps(expected_job, sort_keys=True).encode()
+        ).hexdigest(),
+        "log_bytes": len(data),
+        "log_sha256": hashlib.sha256(data).hexdigest(),
+        "failed_direct_read_path": str(failed),
+        "failed_direct_read_bytes": len(original),
+        "failed_direct_read_sha256": hashlib.sha256(original).hexdigest(),
+        "recovery_diagnostic_path": str(recovered) + ".native-download.json",
+        "maximum_direct_reads": 2,
+        "each_read_seconds": 45,
+        "each_log_size_bound": 32 * 1024 * 1024,
+        "existing_source_checkout_test_and_refusal_assertions_unchanged": True,
+    }
+    path = destination.with_name(destination.name + ".native-log-recovery.json")
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+        json.dump(receipt, output, sort_keys=True)
+        output.write("\n")
+
+
+def download_job_log(
+    job_id: int, destination: Path, *, active_job: dict[str, Any] | None = None
+) -> None:
     try:
         _download_job_log_direct(job_id, destination)
     except ValueError as error:
@@ -340,6 +400,11 @@ def download_job_log(job_id: int, destination: Path) -> None:
             raise error from None
         if diagnostic["deadline_expired"] or diagnostic["returncode"] in {None, 0}:
             raise
+        if active_job is not None:
+            if any(400 <= status < 500 for status in diagnostic.get("http_statuses", [])):
+                raise
+            _recover_active_job_log(job_id, destination, active_job)
+            return
         from saas.scripts.legacy_job_log_archive import recover_job_log
 
         recover_job_log(job_id, destination)

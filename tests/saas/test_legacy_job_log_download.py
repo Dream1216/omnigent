@@ -6,6 +6,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -33,9 +34,11 @@ def child(monkeypatch):
     monkeypatch.setattr(archive_reader, "recover_job_log", direct_failure)
 
     def run(script):
+        scripts = iter([script] if isinstance(script, str) else script)
+
         def popen(argv, **kwargs):
             commands.append(argv)
-            process = original([sys.executable, "-c", script], **kwargs)
+            process = original([sys.executable, "-c", next(scripts)], **kwargs)
             processes.append(process)
             return process
 
@@ -43,6 +46,108 @@ def child(monkeypatch):
         return processes, commands
 
     return run
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "changed_before",
+        "changed_after",
+        "second_failure",
+        "empty",
+        "encoding",
+        "size",
+        "deadline",
+    ],
+)
+def test_active_parent_uses_one_bounded_same_job_http1_read(child, monkeypatch, tmp_path, fault):
+    job = {
+        "id": 123,
+        "run_id": 456,
+        "run_attempt": 1,
+        "head_sha": "a" * 40,
+        "status": "completed",
+        "conclusion": "success",
+    }
+    calls = []
+
+    def api(endpoint):
+        assert endpoint == f"repos/{reader.REPOSITORY}/actions/jobs/123"
+        calls.append(endpoint)
+        value = copy.deepcopy(job)
+        if fault == "changed_before" or (fault == "changed_after" and len(calls) == 2):
+            value["head_sha"] = "b" * 40
+        return value
+
+    monkeypatch.setattr(reader, "api", api)
+    monkeypatch.setenv("GODEBUG", "http2client=1,netdns=go")
+    second = (
+        "import os,sys; assert os.environ['GODEBUG']=='http2client=1,netdns=go,http2client=0'; "
+        + (
+            "sys.exit(19)"
+            if fault == "second_failure"
+            else "sys.stdout.write('')"
+            if fault == "empty"
+            else "sys.stdout.buffer.write(b'\\xff')"
+            if fault == "encoding"
+            else "sys.stdout.buffer.write(b'x' * (33 * 1024 * 1024))"
+            if fault == "size"
+            else "import time; time.sleep(60)"
+            if fault == "deadline"
+            else "sys.stdout.write('original complete native job log\\n')"
+        )
+    )
+    processes, commands = child(
+        [
+            "import sys; sys.stdout.write('retained partial failure'); "
+            "sys.stderr.write('unclassified original transport failure'); sys.exit(1)",
+            second,
+        ]
+    )
+    if fault == "deadline":
+        timer = threading.Timer
+        deadlines = []
+
+        def bounded(seconds, callback):
+            deadlines.append(seconds)
+            return timer(0.1 if len(deadlines) == 2 else seconds, callback)
+
+        monkeypatch.setattr(reader.threading, "Timer", bounded)
+    path = tmp_path / "active.log"
+    if fault:
+        with pytest.raises(ValueError):
+            reader.download_job_log(123, path, active_job=job)
+        assert path.read_bytes() == b"retained partial failure"
+        assert not path.with_name(path.name + ".native-log-recovery.json").exists()
+    else:
+        reader.download_job_log(123, path, active_job=job)
+        assert path.read_bytes() == b"original complete native job log\n"
+        assert (
+            path.with_name(path.name + ".direct-failed").read_bytes()
+            == b"retained partial failure"
+        )
+        receipt = json.loads(path.with_name(path.name + ".native-log-recovery.json").read_text())
+        assert receipt["head_sha"] == job["head_sha"]
+        assert receipt["maximum_direct_reads"] == 2
+        assert receipt["log_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert diagnostic(path)["returncode"] == 1
+        assert diagnostic(path.with_name(path.name + ".active-job-http1"))["returncode"] == 0
+    assert len(processes) == (1 if fault == "changed_before" else 2)
+    assert all(process.poll() is not None for process in processes)
+    assert len({tuple(command) for command in commands}) == 1
+    assert os.environ["GODEBUG"] == "http2client=1,netdns=go"
+    if fault == "deadline":
+        assert deadlines == [45, 45]
+        assert diagnostic(path.with_name(path.name + ".active-job-http1"))["deadline_expired"]
+
+
+@pytest.mark.parametrize("message", ["gh: Forbidden (HTTP 403)", "gh: Not Found (HTTP 404)"])
+def test_active_job_recovery_never_retries_an_explicit_HTTP_refusal(child, tmp_path, message):
+    processes, _ = child(f"import sys; sys.stderr.write({message!r}); sys.exit(1)")
+    with pytest.raises(ValueError, match="native job log download failed or timed out"):
+        reader.download_job_log(123, tmp_path / "refused.log", active_job={"id": 123})
+    assert len(processes) == 1
 
 
 def diagnostic(path):

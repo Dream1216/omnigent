@@ -79,7 +79,7 @@ def pg_native(scenario, tmp_path, monkeypatch):
                 "completed_at": (start + timedelta(seconds=1)).isoformat(),
             }
             job["steps"].append(step)
-            payload = []
+            payload = ["##[group]Run fixture-owned command"]
             if name in {"Checkout exact main PG verifier", "Checkout exact PG product"}:
                 checkout = (
                     control_sha
@@ -93,7 +93,7 @@ def pg_native(scenario, tmp_path, monkeypatch):
                 ]
             if name == "Execute original exact-source PostgreSQL contracts":
                 cases = sorted(pg.expected_cases(major))
-                payload = [f"collecting ... collected {len(cases)} items"] + [
+                payload += [f"collecting ... collected {len(cases)} items"] + [
                     f"{classname.replace('.', '/')}.py::{test} PASSED [100%]"
                     for classname, test in cases
                 ]
@@ -186,9 +186,13 @@ def pg_native(scenario, tmp_path, monkeypatch):
         state["downloads"] += 1
 
     monkeypatch.setattr(capture, "_native_api", api)
-    monkeypatch.setattr(
-        consumer, "download_job_log", lambda identifier, path: path.write_text(logs[identifier])
-    )
+
+    def download_log(identifier, path, *, active_job=None):
+        expected = next(job for job in jobs if job["id"] == identifier)
+        assert active_job == (expected if run["status"] == "in_progress" else None)
+        path.write_text(logs[identifier])
+
+    monkeypatch.setattr(consumer, "download_job_log", download_log)
     monkeypatch.setattr(consumer, "download_artifact_bytes", download)
     state["invoke"] = lambda: consumer.collect_pg_receipts(
         control,
@@ -206,7 +210,24 @@ def pg_native(scenario, tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "scenario", [{"pg_inputs": True, "control_workflow": True}], indirect=True
 )
-def test_exact_PG16_and_PG18_jobs_bind_active_control_and_different_product(pg_native, tmp_path):
+@pytest.mark.parametrize("shared_second", [False, True])
+def test_exact_PG16_and_PG18_jobs_bind_active_control_and_different_product(
+    pg_native, tmp_path, shared_second
+):
+    if shared_second:
+        stamp = pg_native["jobs"][0]["steps"][0]["started_at"]
+        for job in pg_native["jobs"]:
+            for step in job["steps"]:
+                step.update(started_at=stamp, completed_at=stamp)
+            pg_native["logs"][job["id"]] = "\n".join(
+                stamp + " " + line.partition(" ")[2]
+                for line in pg_native["logs"][job["id"]].splitlines()
+            )
+        for artifact in pg_native["artifacts"]:
+            artifact["created_at"] = stamp
+        job = pg_native["jobs"][0]
+        with pytest.raises(ValueError, match="ambiguous"):
+            consumer.checkout_commit(pg_native["logs"][job["id"]], job["steps"][0])
     result = pg_native["invoke"]()
     assert result["native_PG_receipts_pass"] is True
     assert result["complete_source_image_signature_production_admission"] is False
@@ -239,6 +260,9 @@ def test_exact_PG16_and_PG18_jobs_bind_active_control_and_different_product(pg_n
         "wrong_runner_group",
         "skipped_step",
         "checkout",
+        "missing_log_step",
+        "extra_log_step",
+        "shifted_log_step",
         "artifact_attempt",
         "expired_artifact",
         "wrong_artifact_head",
@@ -278,6 +302,16 @@ def test_native_PG_denies_source_attempt_job_artifact_and_result_faults(
         state["logs"][jobs[0]["id"]] = state["logs"][jobs[0]["id"]].replace(
             scenario["profile"]["product_revision"], scenario["control_sha"]
         )
+    elif fault in {"missing_log_step", "extra_log_step", "shifted_log_step"}:
+        identifier = jobs[0]["id"]
+        lines = state["logs"][identifier].splitlines()
+        if fault == "missing_log_step":
+            lines.pop(0)
+        elif fault == "extra_log_step":
+            lines.append(lines[0])
+        else:
+            lines[0] = "2000-01-01T00:00:00+00:00 " + lines[0].partition(" ")[2]
+        state["logs"][identifier] = "\n".join(lines)
     elif fault == "artifact_attempt":
         artifacts[0]["name"] += "-old-attempt"
     elif fault == "expired_artifact":
