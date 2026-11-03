@@ -11,6 +11,7 @@ is covered without paying the server-boot cost.
 from __future__ import annotations
 
 import argparse
+import asyncio
 from pathlib import Path
 from typing import cast
 
@@ -18,7 +19,11 @@ import httpx
 import pytest
 
 from dev.benchmarks.omnigent import run as bench_run
-from dev.benchmarks.omnigent.environment import BenchEnvironment, _sse_session_status
+from dev.benchmarks.omnigent.environment import (
+    BenchEnvironment,
+    _close_reader,
+    _sse_session_status,
+)
 from dev.benchmarks.omnigent.journeys import ALL_JOURNEYS, Journey, run_latency, run_throughput
 from dev.benchmarks.omnigent.measure import RunResult, aggregate, check_thresholds
 from dev.benchmarks.omnigent.schema import SCHEMA_VERSION, build_report
@@ -173,6 +178,35 @@ def test_sse_session_status_parses_both_shapes_and_ignores_noise() -> None:
     assert _sse_session_status("not json") is None
     # A session.status without a usable status field → None (not a crash).
     assert _sse_session_status('{"type":"session.status","data":{}}') is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finished", [True, False])
+async def test_close_reader_lets_a_finished_reader_close_its_stream(finished: bool) -> None:
+    """Cancelling a reader mid-close leaked a pooled connection per turn."""
+    saw_terminal = asyncio.Event()
+    closed: list[bool] = []
+
+    async def _reader() -> None:
+        try:
+            if not finished:
+                await asyncio.Event().wait()  # still waiting on the stream
+            saw_terminal.set()
+            await asyncio.sleep(0.01)  # stands in for ``response.aclose()``
+            closed.append(True)
+        except asyncio.CancelledError:
+            closed.append(False)
+            raise
+
+    reader = asyncio.create_task(_reader())
+    if finished:
+        await saw_terminal.wait()
+    else:
+        await asyncio.sleep(0)
+    await _close_reader(reader, finished=finished)
+
+    assert reader.done()
+    assert closed == [finished]
 
 
 def test_aggregate_excludes_fully_failed_run_from_summary() -> None:

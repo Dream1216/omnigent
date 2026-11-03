@@ -937,7 +937,7 @@ class BenchEnvironment:
                 last_error = snap.json().get("last_task_error") if snap.is_success else None
                 raise RuntimeError(f"turn failed: {last_error}")
         finally:
-            reader.cancel()
+            await _close_reader(reader, finished=settled.is_set())
 
     async def _wait_idle(self, session_id: str, *, timeout: float = _TURN_TIMEOUT_S) -> None:
         """Poll until the session is ``idle`` (a prior turn has settled)."""
@@ -1062,7 +1062,7 @@ class BenchEnvironment:
                     f"(session {session_id})"
                 )
         finally:
-            reader.cancel()
+            await _close_reader(reader, finished=first_delta.is_set() or first_response.is_set())
 
     async def time_to_first_delta(
         self, session_id: str, text: str, *, timeout: float = _TURN_TIMEOUT_S
@@ -1164,6 +1164,19 @@ class BenchEnvironment:
             # teardown doesn't hang, even if the interrupt path errored above.
             with contextlib.suppress(httpx.HTTPError):
                 await self._mock_post("/gate/release", {})
+
+
+async def _close_reader(reader: asyncio.Task[None], *, finished: bool) -> None:
+    """Await an SSE reader task, cancelling it only if it is still waiting.
+
+    A reader that already saw its terminal event is closing its response;
+    cancelling it then interrupts the close and leaks the pooled connection,
+    which exhausts the client's pool after ~100 turns.
+    """
+    if not finished:
+        reader.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await reader
 
 
 def _has_cancellation_marker(items: list[dict[str, object]]) -> bool:
