@@ -918,7 +918,11 @@ def test_registered_source_policy_validates_exact_source_or_rejects_pending(comp
     qualifier.validate_qualification_policy(policy, identity, catalog, profile=profile)
     refusals = [row for row in policy["other_checks"] if row["name"] == "evaluate"]
     assert len(refusals) == 1
-    assert refusals[0]["scope"] == "original-domain-not-applicable"
+    assert refusals[0]["scope"] == (
+        "original-domain-infrastructure-cancellation"
+        if component == "Compatibility018"
+        else "original-domain-not-applicable"
+    )
     assert refusals[0]["expected_conclusion"] is None
     if component == "Gateway":
         original = next(

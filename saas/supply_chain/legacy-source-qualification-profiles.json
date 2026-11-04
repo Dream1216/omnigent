@@ -17757,9 +17757,9 @@
     },
     "Compatibility018": {
       "component": "Compatibility018",
-      "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-      "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
-      "identity_contract_sha256": "be96870257028c9d33f6b5e8e9b4f11353ee30038faecdf0fa871616a2873373",
+      "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+      "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+      "identity_contract_sha256": "76acbf997414e00d82c89f061ad23faad45edfd156a435860c442ddf96424093",
       "workflow_catalog": {
         ".github/workflows/android-bundle.yml": {
           "sha256": "dc641253451ee35e9d8464efdd3c5fb50e1f72288b184cb23c98290d8d203098",
@@ -18102,7 +18102,7 @@
           "reason": "PROPOSED_NOT_APPROVED: only declared workflow_dispatch; no declared PR/push/workflow/check/status event for this frozen branch. This is the proposed trigger-domain expectation; any native same-source context discovered by the complete runtime inventory contradicts it and rejects, rather than being ignored."
         },
         ".github/workflows/saas-image-candidate.yml": {
-          "sha256": "5ce3127d68feca0492dac1273fbff81baeed8f045135b1cd2864ba1a65dadeb8",
+          "sha256": "9a42ad4fff59764287f673a5798b742b7be63afd41c3edf53b97dff84aba3707",
           "disposition": "required-technical",
           "reason": "Exact C2 source workflow and actual own-source native run/matrix are mandatory. Complete original successful execution and artifact evidence required; skipped jobs contribute no technical PASS."
         },
@@ -18122,17 +18122,17 @@
           "reason": "Original main-only refusal requires three exact current C2/PR214/base/tree guard proofs and complete unfiltered discovery. Cancellations remain typed observations with UNKNOWN source and no waiver."
         },
         ".github/workflows/saas-oci-promotion-model-renewal.yml": {
-          "sha256": "f06e305856bf5fae56be816e9ecfecadcc7856858bc89cf1e589037aa6ca918e",
+          "sha256": "bd3c3628a3ef30502fa3e515352ae328eaa892bb7902e2ca7dfec650f357b0df",
           "disposition": "original-governance",
           "reason": "PROPOSED_NOT_APPROVED: source declares a potentially relevant PR/push/workflow/check/status event; keep conservative original all-App success/governance gating pending exact native contexts and review. Missing observation is not no-trigger/N/A; unexpected technical failure is not waived."
         },
         ".github/workflows/saas-oci-promotion-resume.yml": {
-          "sha256": "c9de3773f27d307ab06c955ed543e06c23478e3243657d1de2d6ae325b37ef4b",
+          "sha256": "99a1bc0a134e6a1e984d493001dc58d41e5634390532e6f0035f917e67f6b91d",
           "disposition": "original-governance",
           "reason": "PROPOSED_NOT_APPROVED: source declares a potentially relevant PR/push/workflow/check/status event; keep conservative original all-App success/governance gating pending exact native contexts and review. Missing observation is not no-trigger/N/A; unexpected technical failure is not waived."
         },
         ".github/workflows/saas-oci-promotion-token-renewal.yml": {
-          "sha256": "6ca07b631453e2a33a07fcf88ec3af23a86ea0e084b91f6e286822d256e4c4d9",
+          "sha256": "527961760f721f7beecf9069e325c153bb1d747823be69ea43b9ae50173a70d3",
           "disposition": "original-governance",
           "reason": "PROPOSED_NOT_APPROVED: source declares a potentially relevant PR/push/workflow/check/status event; keep conservative original all-App success/governance gating pending exact native contexts and review. Missing observation is not no-trigger/N/A; unexpected technical failure is not waived."
         },
@@ -18202,7 +18202,7 @@
           "reason": "PROPOSED_NOT_APPROVED: The source synchronizes PR priority metadata; no product test evidence is credited. Original native outcomes must remain explicit in complete all-App policy; this is a proposed scope, not an observed success."
         },
         ".github/workflows/trivy.yml": {
-          "sha256": "57c10d4b3df5054344c5780d75c12000ed15085600d57b18a09d743fc6e2f768",
+          "sha256": "882f5238d8e7147eb095b37c838e9f1ad707ae81c0d8314f49460627bb29f6f3",
           "disposition": "required-technical",
           "reason": "Exact C2 source workflow and actual own-source native run/matrix are mandatory. Complete original successful execution and artifact evidence required; skipped jobs contribute no technical PASS."
         },
@@ -18347,8 +18347,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13235637199,
-              "artifact_name": "pytest-codex-parity-41640936962",
+              "artifact_id": 13334215597,
+              "artifact_name": "pytest-codex-parity-41849014094",
               "test_step": {
                 "number": 13,
                 "name": "Run codex parity tests"
@@ -18416,8 +18416,8 @@
                   "reason_sha256": "e9a23d49f16bb051d22210482dc73dbe0b9ae73797efb7aee724d1cda357f5cd"
                 }
               ],
-              "artifact_id": 13236792414,
-              "artifact_name": "pytest-databricks-41640936962",
+              "artifact_id": 13334285482,
+              "artifact_name": "pytest-databricks-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -18895,8 +18895,8 @@
                   "reason_sha256": "0d3c55bdc8a80e4c1f62eb1ba6936270adabb34815d64b473c4c7840f8782387"
                 }
               ],
-              "artifact_id": 13237530068,
-              "artifact_name": "pytest-inner-rest-41640936962",
+              "artifact_id": 13333460651,
+              "artifact_name": "pytest-inner-rest-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -18948,8 +18948,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13236023765,
-              "artifact_name": "pytest-integration-mock-41640936962",
+              "artifact_id": 13333181754,
+              "artifact_name": "pytest-integration-mock-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20292,8 +20292,8 @@
                   "reason_sha256": "bceda63d75f84e96381add3f43b2e361f15c3c8131a857878c285624facd739c"
                 }
               ],
-              "artifact_id": 13237961154,
-              "artifact_name": "pytest-misc-41640936962",
+              "artifact_id": 13336076897,
+              "artifact_name": "pytest-misc-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20356,8 +20356,8 @@
                   "reason_sha256": "05e94a74368406a60224194a2f5984e5cd62b063b032498d0c0db758773b548e"
                 }
               ],
-              "artifact_id": 13236522852,
-              "artifact_name": "pytest-repl-sdk-41640936962",
+              "artifact_id": 13334730358,
+              "artifact_name": "pytest-repl-sdk-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20440,8 +20440,8 @@
                   "reason_sha256": "e24e9849ff8dd44438dd289a28671e8585d2c02364cbef1c6e539bd011f2254d"
                 }
               ],
-              "artifact_id": 13237366073,
-              "artifact_name": "pytest-runner-app-41640936962",
+              "artifact_id": 13331544183,
+              "artifact_name": "pytest-runner-app-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20493,8 +20493,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13235849377,
-              "artifact_name": "pytest-runtime-core-41640936962",
+              "artifact_id": 13334050707,
+              "artifact_name": "pytest-runtime-core-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20546,8 +20546,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13235959750,
-              "artifact_name": "pytest-runtime-harnesses-41640936962",
+              "artifact_id": 13334520632,
+              "artifact_name": "pytest-runtime-harnesses-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20599,8 +20599,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13237451217,
-              "artifact_name": "pytest-runtime-policies-41640936962",
+              "artifact_id": 13333315643,
+              "artifact_name": "pytest-runtime-policies-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20652,8 +20652,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13237241344,
-              "artifact_name": "pytest-server-approvals-41640936962",
+              "artifact_id": 13331159997,
+              "artifact_name": "pytest-server-approvals-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20705,8 +20705,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13236717220,
-              "artifact_name": "pytest-server-integration-41640936962",
+              "artifact_id": 13332004732,
+              "artifact_name": "pytest-server-integration-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20799,8 +20799,8 @@
                   "reason_sha256": "06b054a630e7e464a7ac61eca3dfb076d887e60b12ae00cb4c7497d0755a8115"
                 }
               ],
-              "artifact_id": 13237411389,
-              "artifact_name": "pytest-server-rest-41640936962",
+              "artifact_id": 13335365029,
+              "artifact_name": "pytest-server-rest-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20852,8 +20852,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13236277855,
-              "artifact_name": "pytest-slack-41640936962",
+              "artifact_id": 13331839564,
+              "artifact_name": "pytest-slack-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20905,8 +20905,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13235489056,
-              "artifact_name": "pytest-spec-llms-41640936962",
+              "artifact_id": 13333295107,
+              "artifact_name": "pytest-spec-llms-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -20994,8 +20994,8 @@
                   "reason_sha256": "391399148e2ca2dd5f95bf85ea64bae61298093faea3c1bc4a50668885dcfa27"
                 }
               ],
-              "artifact_id": 13235643195,
-              "artifact_name": "pytest-stores-41640936962",
+              "artifact_id": 13335440430,
+              "artifact_name": "pytest-stores-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -21038,11 +21038,11 @@
             "kind": "pytest",
             "native_log_contract": {
               "kind": "legacy_native_pytest_compact_summary/v1",
-              "source_revision": "7e774d673980729f591304d8d7b991af36a06920",
+              "source_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
               "workflow_path": ".github/workflows/ci.yml",
-              "run_id": 41640936962,
+              "run_id": 41849014094,
               "attempt": 1,
-              "job_id": 125944537918,
+              "job_id": 126640075178,
               "job_name": "Pytest (stores-crdb-23.2.28)",
               "test_step": {
                 "number": 7,
@@ -21052,10 +21052,10 @@
                 "number": 8,
                 "name": "Run actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
               },
-              "artifact_id": 13237326439,
-              "artifact_sha256": "77deaa40f8f7628c22098959072a1f2fe5623b8c8bad4188cd39b7d556c213ed",
+              "artifact_id": 13334531441,
+              "artifact_sha256": "2b2ab88d1f5b23848674dbd1a790f712623620a33022099031c10cb4f346abe2",
               "xml_member": "pytest-stores-crdb.xml",
-              "native_log_text_sha256": "0334b24651d949204c54230acbc7d1f7f7a40e3c3b82fa95e23e58a3b54250ae"
+              "native_log_text_sha256": "d79887849969e80c8883bcf4e63e293a02e3192f82f172d979cdd4c908339b05"
             },
             "pytest": {
               "approved_reruns": [],
@@ -21136,8 +21136,8 @@
                   "reason_sha256": "abaf05028dc535333368394aa87957edad09007ecc84ecd4b05b9b15a1736c43"
                 }
               ],
-              "artifact_id": 13237326439,
-              "artifact_name": "pytest-stores-crdb-23.2.28-41640936962",
+              "artifact_id": 13334531441,
+              "artifact_name": "pytest-stores-crdb-23.2.28-41849014094",
               "test_step": {
                 "number": 7,
                 "name": "Run store + DB tests against CockroachDB"
@@ -21184,11 +21184,11 @@
             "kind": "pytest",
             "native_log_contract": {
               "kind": "legacy_native_pytest_compact_summary/v1",
-              "source_revision": "7e774d673980729f591304d8d7b991af36a06920",
+              "source_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
               "workflow_path": ".github/workflows/ci.yml",
-              "run_id": 41640936962,
+              "run_id": 41849014094,
               "attempt": 1,
-              "job_id": 125944537857,
+              "job_id": 126640075243,
               "job_name": "Pytest (stores-mysql)",
               "test_step": {
                 "number": 8,
@@ -21198,10 +21198,10 @@
                 "number": 9,
                 "name": "Run actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
               },
-              "artifact_id": 13235128421,
-              "artifact_sha256": "2d113351ac2cb41f26910b6f56390dab1b37b276c7ef6d84606092c49458df7e",
+              "artifact_id": 13334865776,
+              "artifact_sha256": "62e223d39b1f6a6c8208c7fde98a0093ef3ea689f649f90fe68b5891fe26702e",
               "xml_member": "pytest-stores-mysql.xml",
-              "native_log_text_sha256": "40c45c53a8a496961ed105582f8bd02c6c910c66e25edaecf77fba84c38dceee"
+              "native_log_text_sha256": "24fa14c938c429879803a80818b6eba8adff358b1eaef85550c7d018a5e86485"
             },
             "pytest": {
               "approved_reruns": [],
@@ -21302,8 +21302,8 @@
                   "reason_sha256": "abaf05028dc535333368394aa87957edad09007ecc84ecd4b05b9b15a1736c43"
                 }
               ],
-              "artifact_id": 13235128421,
-              "artifact_name": "pytest-stores-mysql-41640936962",
+              "artifact_id": 13334865776,
+              "artifact_name": "pytest-stores-mysql-41849014094",
               "test_step": {
                 "number": 8,
                 "name": "Run store + DB tests against MySQL"
@@ -21346,11 +21346,11 @@
             "kind": "pytest",
             "native_log_contract": {
               "kind": "legacy_native_pytest_compact_summary/v1",
-              "source_revision": "7e774d673980729f591304d8d7b991af36a06920",
+              "source_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
               "workflow_path": ".github/workflows/ci.yml",
-              "run_id": 41640936962,
+              "run_id": 41849014094,
               "attempt": 1,
-              "job_id": 125944537962,
+              "job_id": 126640074919,
               "job_name": "Pytest (stores-postgres)",
               "test_step": {
                 "number": 7,
@@ -21360,10 +21360,10 @@
                 "number": 8,
                 "name": "Run actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
               },
-              "artifact_id": 13236557104,
-              "artifact_sha256": "95ccdbcf86700ecc8421bf6e4a3ff2b316143cd3a4a3c2b98f9be852ef2b08e4",
+              "artifact_id": 13334565703,
+              "artifact_sha256": "929f0919f55218065a67ff54edfaaee269519289dc194e1d6393c638758977a7",
               "xml_member": "pytest-stores-postgres.xml",
-              "native_log_text_sha256": "204a0e939b3ae08a92ddf562f692f0bbee7b127492ae155f474f11276733917a"
+              "native_log_text_sha256": "e510d87a57cc4fb565dbccf1c508a7a5c761abeb392dbbd2cfaad08445953757"
             },
             "pytest": {
               "approved_reruns": [],
@@ -21464,8 +21464,8 @@
                   "reason_sha256": "7c0ae87178a13e9633fabf6c2f53283bd57c9a1f199f82c14befa084a8afb6b3"
                 }
               ],
-              "artifact_id": 13236557104,
-              "artifact_name": "pytest-stores-postgres-41640936962",
+              "artifact_id": 13334565703,
+              "artifact_name": "pytest-stores-postgres-41849014094",
               "test_step": {
                 "number": 7,
                 "name": "Run store + DB tests against PostgreSQL"
@@ -21517,8 +21517,8 @@
             "pytest": {
               "approved_reruns": [],
               "approved_skips": [],
-              "artifact_id": 13236104739,
-              "artifact_name": "pytest-tools-41640936962",
+              "artifact_id": 13334535537,
+              "artifact_name": "pytest-tools-41849014094",
               "test_step": {
                 "number": 9,
                 "name": "Run pytest"
@@ -23063,19 +23063,19 @@
           "Trivy CVE Scan (dev-tools)": {
             "execution_steps": [
               {
-                "number": 3,
+                "number": 4,
                 "name": "Scan locked dependencies"
               },
               {
-                "number": 4,
+                "number": 5,
                 "name": "Render vulnerability reports"
               },
               {
-                "number": 5,
+                "number": 6,
                 "name": "Upload vulnerability reports"
               },
               {
-                "number": 6,
+                "number": 7,
                 "name": "Upload SARIF to code scanning"
               }
             ],
@@ -23086,19 +23086,19 @@
           "Trivy CVE Scan (repository)": {
             "execution_steps": [
               {
-                "number": 3,
+                "number": 4,
                 "name": "Scan locked dependencies"
               },
               {
-                "number": 4,
+                "number": 5,
                 "name": "Render vulnerability reports"
               },
               {
-                "number": 5,
+                "number": 6,
                 "name": "Upload vulnerability reports"
               },
               {
-                "number": 6,
+                "number": 7,
                 "name": "Upload SARIF to code scanning"
               }
             ],
@@ -23307,164 +23307,281 @@
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837193457,
-          "name": "verify-postgresql-n1",
-          "scope": "required-technical",
-          "expected_conclusion": "success",
-          "reason": "Exact current native .github/workflows/saas-n1-compat-image.yml event=push; scope=required-technical. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
-        },
-        {
-          "role": "head",
-          "app_id": 15368,
-          "suite_id": 112837193457,
+          "suite_id": 113399205973,
           "name": "verify-postgresql-current",
           "scope": "required-technical",
           "expected_conclusion": "success",
-          "reason": "Exact current native .github/workflows/saas-n1-compat-image.yml event=push; scope=required-technical. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/saas-n1-compat-image.yml event=push; source workflow SHA256=2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837193457,
+          "suite_id": 113399205973,
+          "name": "verify-postgresql-n1",
+          "scope": "required-technical",
+          "expected_conclusion": "success",
+          "reason": "Exact current original .github/workflows/saas-n1-compat-image.yml event=push; source workflow SHA256=2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "suite_id": 113399205973,
           "name": "verify-candidate",
           "scope": "required-technical",
           "expected_conclusion": "success",
-          "reason": "Exact current native .github/workflows/saas-n1-compat-image.yml event=push; scope=required-technical. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/saas-n1-compat-image.yml event=push; source workflow SHA256=2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837205663,
+          "suite_id": 113399218355,
+          "name": "evaluate",
+          "scope": "original-domain-infrastructure-cancellation",
+          "expected_conclusion": null,
+          "reason": "Exact current C2 cancelled run41849009890/a1 and check126639966591: complete native metadata, annotations and22byte empty ZIP bound by immutable registration. Execution and source remain UNKNOWN, original cancelled retained, no zero-execution/source/technical/production credit; independent current guard refusal remains mandatory."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "suite_id": 113399219619,
           "name": "PR Size Labeling",
           "scope": "original-governance",
           "expected_conclusion": null,
-          "reason": "Exact current native .github/workflows/pr-size.yml event=pull_request_target; scope=original-governance. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/pr-size.yml event=pull_request_target; source workflow SHA256=b8a19ac8bbc1a43aca51c6b4fe3cb213783418be23d4149f3bc782b6a26e6bf2. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837205959,
+          "suite_id": 113399218820,
           "name": "Maintainer Approval",
           "scope": "original-governance",
           "expected_conclusion": null,
-          "reason": "Exact current native .github/workflows/maintainer-approval.yml event=pull_request_target; scope=original-governance. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/maintainer-approval.yml event=pull_request_target; source workflow SHA256=d349125622fdd6d6dfabd230e1ecaabe3fd3975a7adaecc489f8302a06c66761. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837205769,
+          "suite_id": 113399217835,
+          "name": "hygiene",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "reason": "Exact current original .github/workflows/pr-hygiene-live.yml event=pull_request_target; source workflow SHA256=40e1283ed0fe9b6d0b71d9b99904c2977efb069ade69b8354a09327323d510e1. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "suite_id": 113399218436,
           "name": "Check preview deployment configuration",
           "scope": "original-conditional",
           "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/ui-preview.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/ui-preview.yml event=pull_request_target; source workflow SHA256=1a0066232add89e5815ab690aaddc244387c62eb0fba92f8bcd1ad49ebaf39ff. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837205769,
-          "name": "deploy",
-          "scope": "original-conditional",
-          "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/ui-preview.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
-        },
-        {
-          "role": "head",
-          "app_id": 15368,
-          "suite_id": 112837205769,
-          "name": "build",
-          "scope": "original-conditional",
-          "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/ui-preview.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
-        },
-        {
-          "role": "head",
-          "app_id": 15368,
-          "suite_id": 112837205769,
-          "name": "notify",
-          "scope": "original-conditional",
-          "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/ui-preview.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
-        },
-        {
-          "role": "head",
-          "app_id": 15368,
-          "suite_id": 112837205833,
+          "suite_id": 113399218756,
           "name": "hygiene",
           "scope": "original-conditional",
           "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/waiting-on-author.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/waiting-on-author.yml event=pull_request_target; source workflow SHA256=351b45098949ea4855bba23f3bc295a4f322278a759201f6f3796a9b99c026f8. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837218475,
-          "name": "Benchmark regression check (sqlite)",
-          "scope": "original-conditional",
-          "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/benchmark-pr.yml event=pull_request; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
-        },
-        {
-          "role": "head",
-          "app_id": 15368,
-          "suite_id": 112837205769,
+          "suite_id": 113399218436,
           "name": "cleanup",
           "scope": "original-conditional",
           "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/ui-preview.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/ui-preview.yml event=pull_request_target; source workflow SHA256=1a0066232add89e5815ab690aaddc244387c62eb0fba92f8bcd1ad49ebaf39ff. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112838522019,
-          "name": "sync",
+          "suite_id": 113399218436,
+          "name": "build",
           "scope": "original-conditional",
           "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/sync-pr-priority.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/ui-preview.yml event=pull_request_target; source workflow SHA256=1a0066232add89e5815ab690aaddc244387c62eb0fba92f8bcd1ad49ebaf39ff. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112838522740,
-          "name": "hygiene",
+          "suite_id": 113399218436,
+          "name": "notify",
           "scope": "original-conditional",
           "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/pr-hygiene-live.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/ui-preview.yml event=pull_request_target; source workflow SHA256=1a0066232add89e5815ab690aaddc244387c62eb0fba92f8bcd1ad49ebaf39ff. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112838522348,
-          "name": "assign",
+          "suite_id": 113399218436,
+          "name": "deploy",
           "scope": "original-conditional",
           "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/auto-assign-reviewer.yml event=pull_request_target; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current original .github/workflows/ui-preview.yml event=pull_request_target; source workflow SHA256=1a0066232add89e5815ab690aaddc244387c62eb0fba92f8bcd1ad49ebaf39ff. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "suite_id": 113399228929,
+          "name": "Benchmark regression check (sqlite)",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "reason": "Exact current original .github/workflows/benchmark-pr.yml event=pull_request; source workflow SHA256=8d3dcea5a19b2689bc475474e9449a86d15c5bbc8918cc810e8e006ba3bb5a33. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "verify-resume-contract",
+          "scope": "original-governance",
+          "expected_conclusion": null,
+          "suite_id": 113399229019,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-resume.yml event=pull_request; source workflow SHA256=99a1bc0a134e6a1e984d493001dc58d41e5634390532e6f0035f917e67f6b91d. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "verify-resume-contract",
+          "scope": "original-governance",
+          "expected_conclusion": null,
+          "suite_id": 113399228830,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-token-renewal.yml event=pull_request; source workflow SHA256=527961760f721f7beecf9069e325c153bb1d747823be69ea43b9ae50173a70d3. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "verify-resume-contract",
+          "scope": "original-governance",
+          "expected_conclusion": null,
+          "suite_id": 113399229346,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-model-renewal.yml event=pull_request; source workflow SHA256=bd3c3628a3ef30502fa3e515352ae328eaa892bb7902e2ca7dfec650f357b0df. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "verify-contract",
+          "scope": "original-governance",
+          "expected_conclusion": null,
+          "suite_id": 113399228942,
+          "reason": "Exact current original .github/workflows/saas-core-f440-compat.yml event=pull_request; source workflow SHA256=7d269b5bf640e4c86bdc20529914f3c6ea886251817d6408c84dae82420b14d6. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         },
         {
           "role": "head",
           "app_id": 57789,
-          "suite_id": 112840419809,
+          "suite_id": 113399473968,
           "name": "Trivy",
           "scope": "required-technical",
           "expected_conclusion": "success",
-          "reason": "Exact current native external provider; scope=required-technical. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
+          "reason": "Exact current external App and native suite; original successful technical outcome remains mandatory."
         },
         {
           "role": "head",
           "app_id": 15368,
-          "suite_id": 112837193457,
+          "name": "admit-original",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399229346,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-model-renewal.yml event=pull_request; source workflow SHA256=bd3c3628a3ef30502fa3e515352ae328eaa892bb7902e2ca7dfec650f357b0df. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "publish-signed",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399229346,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-model-renewal.yml event=pull_request; source workflow SHA256=bd3c3628a3ef30502fa3e515352ae328eaa892bb7902e2ca7dfec650f357b0df. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "verify-published-source",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399229346,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-model-renewal.yml event=pull_request; source workflow SHA256=bd3c3628a3ef30502fa3e515352ae328eaa892bb7902e2ca7dfec650f357b0df. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "admit-original",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399228830,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-token-renewal.yml event=pull_request; source workflow SHA256=527961760f721f7beecf9069e325c153bb1d747823be69ea43b9ae50173a70d3. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "publish-signed",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399228830,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-token-renewal.yml event=pull_request; source workflow SHA256=527961760f721f7beecf9069e325c153bb1d747823be69ea43b9ae50173a70d3. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "verify-published-source",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399228830,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-token-renewal.yml event=pull_request; source workflow SHA256=527961760f721f7beecf9069e325c153bb1d747823be69ea43b9ae50173a70d3. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "admit-original",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399229019,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-resume.yml event=pull_request; source workflow SHA256=99a1bc0a134e6a1e984d493001dc58d41e5634390532e6f0035f917e67f6b91d. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "publish-signed",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399229019,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-resume.yml event=pull_request; source workflow SHA256=99a1bc0a134e6a1e984d493001dc58d41e5634390532e6f0035f917e67f6b91d. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "verify-published-source",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399229019,
+          "reason": "Exact current original .github/workflows/saas-oci-promotion-resume.yml event=pull_request; source workflow SHA256=99a1bc0a134e6a1e984d493001dc58d41e5634390532e6f0035f917e67f6b91d. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "publish-core",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399228942,
+          "reason": "Exact current original .github/workflows/saas-core-f440-compat.yml event=pull_request; source workflow SHA256=7d269b5bf640e4c86bdc20529914f3c6ea886251817d6408c84dae82420b14d6. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "name": "independent-readback",
+          "scope": "original-conditional",
+          "expected_conclusion": "skipped",
+          "suite_id": 113399228942,
+          "reason": "Exact current original .github/workflows/saas-core-f440-compat.yml event=pull_request; source workflow SHA256=7d269b5bf640e4c86bdc20529914f3c6ea886251817d6408c84dae82420b14d6. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+        },
+        {
+          "role": "head",
+          "app_id": 15368,
+          "suite_id": 113399205973,
           "name": "publish-candidate",
           "scope": "original-conditional",
           "expected_conclusion": "skipped",
-          "reason": "Exact current native .github/workflows/saas-n1-compat-image.yml event=push; scope=original-conditional. Original outcome and full provider/suite/name inventory retained. No skipped or informational context supplies product test credit; required technical success remains mandatory."
-        },
-        {
-          "role": "head",
-          "app_id": 15368,
-          "suite_id": 112837206500,
-          "name": "evaluate",
-          "scope": "original-domain-not-applicable",
-          "expected_conclusion": null,
-          "reason": "Exact latest attempt2 refused this frozen non-main PR; bind its authenticated original guard refusal, retain failure and all source/technical/production authority limits."
+          "reason": "Exact current original .github/workflows/saas-n1-compat-image.yml event=push; source workflow SHA256=2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710. Original outcome retained; no skipped job supplies technical or runtime admission credit."
         }
       ],
       "statuses": [
@@ -23483,18 +23600,18 @@
             "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
             "validation_pr": 223,
             "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-            "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-            "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
-            "attachment_revision": "7e774d673980729f591304d8d7b991af36a06920",
-            "run_id": 41640932704,
-            "attempt": 2,
-            "job_id": 126079504019,
-            "check_id": 126079504019,
-            "run_sha256": "f7d2bcebf9c9e3827c9981ba5055c83ab6eb664a7e1d0582ea852e6b975b317a",
-            "job_sha256": "4b7937280ef30aba18adfa7debd7bc863cec691e20dcdec73de50a8953611cb8",
-            "check_sha256": "81eb7670db457de342bd3ba45f6ad5898d77a3dc588f3c077ad0769a098b10b6",
-            "job_log_sha256": "cc1ff4262a643f11f43d87953b0814134e05687cb431fb7e72545fe2aee15919",
-            "trusted_checkout_revision": "796b5da14fed424f9eec11170db05a3316da3a12",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+            "attachment_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
+            "run_id": 41850549942,
+            "attempt": 1,
+            "job_id": 126645369962,
+            "check_id": 126645369962,
+            "run_sha256": "a99fa18d2c888c3711ecba1fabdd0a47f50d9884895ebdca405114a54f11a9ac",
+            "job_sha256": "5ddc14e54cfb5f4ace3525904c5aa1c46de25abf86df3783cbaeecc7c4eb547b",
+            "check_sha256": "888364c9a74d305c1e022d8f730fcc4b2e6af3e73b5eac59764b356a33a2cc54",
+            "job_log_sha256": "d201035bdb6e30e71b661be331834012471305056a9c03600fa07c306a756e56",
+            "trusted_checkout_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
             "trusted_gate_sha256": "f8745b96d08de0704ba2cffbee4f437b5bba429ee55d2b84d66c071ff0a81648"
           }
         ]
@@ -23505,8 +23622,8 @@
           "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
           "validation_pr": 223,
           "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-          "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-          "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+          "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+          "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820"
         }
       },
       "domain_unattributed_bootstrap_cancellation": {
@@ -23515,8 +23632,8 @@
           "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
           "validation_pr": 223,
           "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-          "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-          "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+          "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+          "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820"
         }
       },
       "domain_infrastructure_cancellation": {
@@ -23526,37 +23643,18 @@
             "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
             "validation_pr": 223,
             "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-            "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-            "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
             "event": "pull_request_target",
-            "attachment_revision": "3c28c1814161368e37b46f3cf0e1259b35e1ef6d",
-            "run_id": 41631986434,
+            "attachment_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "run_id": 41849009890,
             "attempt": 1,
-            "job_id": 125903611634,
-            "check_id": 125903611634,
-            "run_sha256": "5cb41fd2597905f5e587ece57eb3fcb978aa32203ba59d7f6a0f90d91f42991a",
-            "job_sha256": "fcdfbf7517298acbf19bccc8fa9c59bb9ae3f09d087b74cc85def8f47c32dbcf",
-            "check_sha256": "ddb41cf72dfc30d253cd156f61701ffd6fca30d382423d8b0619491ebd28da17",
-            "annotations_sha256": "7dbb5102577bd3a173242624d96e8be0c9a4ad76909d9d90ed94ba4ceaae17cb",
-            "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
-          },
-          {
-            "kind": "legacy_original_main_domain_infrastructure_cancellation/v1",
-            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
-            "validation_pr": 223,
-            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-            "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-            "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
-            "event": "pull_request_target",
-            "attachment_revision": "7e774d673980729f591304d8d7b991af36a06920",
-            "run_id": 41640932704,
-            "attempt": 1,
-            "job_id": 125933963558,
-            "check_id": 125933963558,
-            "run_sha256": "874d067da550e4a9f15e12e4f9e4dcd0d3afed5494e6a7bdc97e5648cbfe4afb",
-            "job_sha256": "335328fed47429bae67a450f7d3f74647a049b076d6f66dfb3b4e6ebd4e98eed",
-            "check_sha256": "7881cc3c49359c9a60083e9ab4b024a071950ce41f39e64976bafaf96a56d001",
-            "annotations_sha256": "a71d35200dd26120af58152c08e5f519982bcece5f8785dddffc4c38e5b02fd5",
+            "job_id": 126639966591,
+            "check_id": 126639966591,
+            "run_sha256": "28d15e51753e3000a83e79d8a6a0449bc5b715c1c460f1c95b74847086c10bcf",
+            "job_sha256": "2293a79bd5104a4f0c41b2c32ce65fa4e91e0086f4a0e67670f97206e3012f9c",
+            "check_sha256": "507c8dc544a366b3c73de9c16078ad90b76f695c6588ee49f4b5a72ec75cf140",
+            "annotations_sha256": "fb8e1427270aa79d0c909aadc4d72e2f1c37a28d0d9ca062fad07f35c5063d49",
             "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
           }
         ]

@@ -1358,9 +1358,24 @@ def test_compatibility_exact_pre_guard_audit_retains_unknown_and_strict_native_g
 
 
 @pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
-@pytest.mark.parametrize("extra_step", [False, True])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "steps",
+        "missing-refusal",
+        "wrong-refusal",
+        "json-proof",
+        "authority",
+        "changed-check",
+        "changed-run",
+        "unknown-registration",
+        "wrong-scope",
+        "made-up-execution",
+    ],
+)
 def test_compatibility_assigned_runner_with_no_records_keeps_execution_unknown(
-    compatibility_infrastructure, monkeypatch, extra_step
+    compatibility_infrastructure, monkeypatch, fault
 ):
     profile, identity, rule, observed, original_contract = compatibility_infrastructure
     observed["job"]["steps"] = []
@@ -1377,7 +1392,7 @@ def test_compatibility_assigned_runner_with_no_records_keeps_execution_unknown(
         "git_executed": None,
         "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
     }
-    if extra_step:
+    if fault == "steps":
         observed["job"]["steps"].append(copy.deepcopy(_INFRASTRUCTURE_NATIVE_STEPS[3]))
     rule.update(
         job_sha256=domain.native_digest(observed["job"]),
@@ -1398,7 +1413,7 @@ def test_compatibility_assigned_runner_with_no_records_keeps_execution_unknown(
         observed["annotations"],
         observed["logs"],
     )
-    if extra_step:
+    if fault == "steps":
         with pytest.raises(ValueError, match="native step"):
             audit.verify_infrastructure_cancellation(*args)
     else:
@@ -1419,6 +1434,73 @@ def test_compatibility_assigned_runner_with_no_records_keeps_execution_unknown(
             {**proof.receipt, "source_proof": True}
         )
         assert not audit.typed_observation(forged)
+
+        snapshots = {
+            "head": {
+                "revision": observed["run"]["head_sha"],
+                "runs": [observed["run"]],
+                "checks": [observed["check"]],
+                "statuses": [],
+            }
+        }
+        policy = {
+            "other_checks": [
+                {
+                    "role": "head",
+                    "app_id": 15368,
+                    "suite_id": observed["run"]["check_suite_id"],
+                    "name": "evaluate",
+                    "scope": "original-domain-infrastructure-cancellation",
+                    "expected_conclusion": None,
+                    "reason": "Exact registered cancellation retains UNKNOWN and no authority",
+                }
+            ],
+            "statuses": [],
+            "workflow_catalog": {
+                domain.MAIN_WORKFLOW: {"disposition": "original-domain-not-applicable"}
+            },
+        }
+        refusal = {
+            "kind": "legacy_main_domain_not_applicable/v2",
+            "check_id": 9999,
+            **{
+                key: identity[key]
+                for key in ("validation_pr", "validation_base_ref", "product_tree")
+            },
+            "source_head": profile["product_revision"],
+            "original_event_source_revision": profile["product_revision"],
+            "original_conclusion": "failure",
+            "technical_gate_waiver": False,
+            "production_admission": False,
+        }
+        refusals, proofs = [refusal], (proof,)
+        if fault == "missing-refusal":
+            refusals = []
+        elif fault == "wrong-refusal":
+            refusal["source_head"] = "a" * 40
+        elif fault == "json-proof":
+            proofs = (dict(proof.receipt),)
+        elif fault == "authority":
+            proof.receipt["source_proof"] = True
+        elif fault == "changed-check":
+            observed["check"]["extra"] = "changed native bytes"
+        elif fault == "changed-run":
+            observed["run"]["extra"] = "changed native bytes"
+        elif fault == "unknown-registration":
+            proof.receipt["registration_sha256"] = "f" * 64
+        elif fault == "wrong-scope":
+            policy["other_checks"][0]["scope"] = "original-domain-zero-execution"
+        elif fault == "made-up-execution":
+            proof.receipt["execution"] = "UNKNOWN"
+        if fault is not None:
+            with pytest.raises(ValueError):
+                qualifier.assess_all_app_policy(snapshots, [], policy, refusals, proofs)
+        else:
+            result = qualifier.assess_all_app_policy(snapshots, [], policy, refusals, proofs)
+            assert result["verified_main_domain_infrastructure_cancellations"] == [proof.receipt]
+            assert result["verified_main_domain_zero_execution"] == []
+            assert result["original_informational_checks"] == []
+            assert result["original_infrastructure_cancellations"][0]["conclusion"] == "cancelled"
 
 
 @pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)

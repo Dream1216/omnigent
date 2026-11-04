@@ -713,7 +713,7 @@
           "source_sha256": "ad768fcf2f8891d090c5a8334572d151c9afc919e14d8c647c48807200e963ce"
         },
         {
-          "attempt": 1,
+          "attempt": 2,
           "jobs": {
             "build-candidate": {
               "checkouts": [
@@ -932,7 +932,7 @@
                 "ubuntu-latest"
               ]
             },
-            "Compat smoke – Config 1 (new server / old runner v0.20.0)": {
+            "Compat smoke \u2013 Config 1 (new server / old runner v0.20.0)": {
               "checkouts": [
                 {
                   "name": "Checkout",
@@ -945,7 +945,7 @@
                 "ubuntu-latest"
               ]
             },
-            "Compat smoke – Config 2 (new runner / old server v0.20.0)": {
+            "Compat smoke \u2013 Config 2 (new runner / old server v0.20.0)": {
               "checkouts": [
                 {
                   "name": "Checkout",
@@ -958,7 +958,7 @@
                 "ubuntu-latest"
               ]
             },
-            "Compat smoke – UI Config A (new SPA / old server v0.20.0)": {
+            "Compat smoke \u2013 UI Config A (new SPA / old server v0.20.0)": {
               "checkouts": [
                 {
                   "name": "Checkout",
@@ -971,7 +971,7 @@
                 "ubuntu-latest"
               ]
             },
-            "Compat smoke – UI Config B (old SPA v0.20.0 / new server)": {
+            "Compat smoke \u2013 UI Config B (old SPA v0.20.0 / new server)": {
               "checkouts": [
                 {
                   "name": "Checkout",
