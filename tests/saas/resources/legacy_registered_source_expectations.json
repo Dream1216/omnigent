@@ -31,7 +31,7 @@
       "key": "profiles",
       "record_sha256": {
         "Core": "6c4ea81a8470c5ac0e9121dab8977f39c525f2fad85f3cace5770d6f5a44fd21",
-        "Gateway": "9f9287701ae6c4f41970a0994792fec306f0b875563e451f515040eb46d007a7",
+        "Gateway": "602f8f3ed185556e760e039b4c8f0831ba7ac39a7122ff579eb4f2c74c354921",
         "Model": "f81625d11a6c2e85ed09aaf83293dd033c5df888839f1add44a856ce08952df3"
       }
     },
@@ -62,9 +62,9 @@
     "legacy-source-qualification-profiles.json": {
       "key": "profiles",
       "record_sha256": {
-        "Core": "f73f6c9c88cfd43e2d8490fd3bc3a418472885f888f21c942550fa3d093ab8d2",
-        "Gateway": "97892295b9bf2def4541523bdcbfc3d38c4d1e3fe9c0e9876bcb3d368a5518bd",
-        "Model": "1d43ad4227af219ad9410a173ab5c108a60b00fcbfb7165a26d3efaca3e4d951"
+        "Core": "f4f2c612ecd51030541047e2c817363b6f8572e42f0d3a9a3239cf2508021381",
+        "Gateway": "0dab78ee874b50315c6eeb3e503c2d52ce1a1701ba1047017b5809962b0ed711",
+        "Model": "ce4c8bcdecabe16d2102068067ddb2b60b4c6155bc3c71635935270f9a50f9ca"
       }
     }
   }

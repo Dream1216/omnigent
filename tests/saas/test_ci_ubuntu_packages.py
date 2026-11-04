@@ -88,6 +88,7 @@ def test_signed_package_setup_stops_on_failed_update(
     timeout.chmod(0o755)
     sudo.chmod(0o755)
     sleep.chmod(0o755)
+    selection_started = datetime.now(UTC)
     result = subprocess.run(
         [
             "bash",
@@ -111,13 +112,20 @@ def test_signed_package_setup_stops_on_failed_update(
         text=True,
         check=False,
     )
+    selection_completed = datetime.now(UTC)
     assert result.returncode == status, result.stdout + result.stderr
     snapshot = snapshot_path.read_text()
     selected = datetime.strptime(snapshot, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     if reuse:
         assert snapshot == cached
     else:
-        assert timedelta(hours=1) <= datetime.now(UTC) - selected < timedelta(hours=2)
+        earliest = selection_started.replace(minute=0, second=0, microsecond=0) - timedelta(
+            hours=1
+        )
+        latest = selection_completed.replace(minute=0, second=0, microsecond=0) - timedelta(
+            hours=1
+        )
+        assert earliest <= selected <= latest
     uri = f"https://snapshot.ubuntu.com/ubuntu/{snapshot}/"
     assert f"Ubuntu CI snapshot: {uri}" in result.stdout
     commands = [json.loads(line) for line in log.read_text().splitlines()]

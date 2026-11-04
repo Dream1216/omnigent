@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 200,
-    "max_upstream_net_added_loc": 5386,
+    "max_direct_upstream_files": 201,
+    "max_upstream_net_added_loc": 5391,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -922,6 +922,29 @@
         "tests/e2e/omnigent/test_run_omnigent_joins_callers_trace.py": 3
       },
       "reason": "Reconcile the existing complete Aliyun adapter with accepted main security and CI fixes. The only newly divergent official files are the accepted coverage workflow and caller trace test; together they add 34 net lines. The existing Dockerfile inherits the exact Expat 2.10 correction without net added lines. Preserve nine patches, the 0.85 isolation floor, original source guards and release conditions. This budget record is not image, cloud or production acceptance."
+    },
+    "aliyun_main29bf_test_readiness_followup": {
+      "governance_mode": "existing directly verified user-wide project and budget authorization; no new exact-patch approval asserted",
+      "previous_max_direct_upstream_files": 200,
+      "previous_max_upstream_net_added_loc": 5386,
+      "max_direct_upstream_files": 201,
+      "max_upstream_net_added_loc": 5391,
+      "measured_direct_upstream_files": 201,
+      "measured_upstream_net_added_loc": 5391,
+      "accepted_main": "29bf65453388d2516ff9a1ffeafe9b00fbe09abd",
+      "new_official_path": "tests/runner/test_resource_registry.py",
+      "reason": "Integrate accepted Main OSC readiness and scheduler test fixes into the complete Aliyun candidate. Together they add five net official test lines and one divergent path. Aliyun Project admission changes remain downstream-owned. Preserve nine patches, the 0.85 isolation floor, existing policy approvals and all release conditions; this record is not CI, image or production acceptance."
+    },
+    "upstream_021_osc_test_readiness_followup": {
+      "authority": "Existing direct standing human all-approval and budget authority; no new approval inferred from a cache exception.",
+      "authority_receipt": "/Users/dream/BuildArtifacts/omniagent-021-20261031-fast-execution-20261101/runtime-security-completion-Gateway-original-Pi-failure/native-human-standing-authority-verified.PUBLIC.json",
+      "previous_max_direct_upstream_files": 189,
+      "max_direct_upstream_files": 190,
+      "new_official_path": "tests/runner/test_resource_registry.py",
+      "reason": "Synchronize existing OSC handshake before test-owned resize input; original native job126245320294 proves input arrived during negotiation. Test assertions and production behavior retained.",
+      "max_upstream_net_added_loc": 4576,
+      "max_active_patches": 9,
+      "min_isolated_custom_code_ratio": 0.85
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

@@ -121,6 +121,51 @@ def checkout_commit(log: str, step: dict[str, Any]) -> str:
     return commit
 
 
+def checkout_step_log(
+    log: str, step: dict[str, Any], job_steps: list[dict[str, Any]], workflow: bytes
+) -> str:
+    """Exclude a declared following action from the completion-second overlap."""
+    following = sorted(
+        (
+            row
+            for row in job_steps
+            if row["number"] > step["number"]
+            and row.get("conclusion") != "skipped"
+            and row.get("started_at") is not None
+        ),
+        key=lambda row: row["number"],
+    )
+    if not following:
+        return log
+    next_step = following[0]
+    ended = _instant(step["completed_at"])
+    if _instant(next_step["started_at"]) != ended:
+        return log
+    source = workflow.decode("utf-8")
+    offset = 0
+    for line in log.splitlines(keepends=True):
+        timestamp, separator, body = line.removeprefix("\ufeff").partition(" ")
+        boundary = re.fullmatch(
+            r"##\[group\]Run ([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+@[0-9a-f]{40})",
+            body.rstrip("\r\n"),
+        )
+        if separator and boundary:
+            observed = _instant(timestamp)
+            action = boundary[1]
+            declared = re.search(
+                r"(?m)^[ \t]*-[ \t]*name:[ \t]*"
+                + re.escape(next_step["name"])
+                + r"[ \t]*\r?\n[ \t]*uses:[ \t]*"
+                + re.escape(action)
+                + r"[ \t]*(?:#.*)?$",
+                source,
+            )
+            if ended <= observed < ended + timedelta(seconds=1) and declared:
+                return log[:offset]
+        offset += len(line)
+    return log
+
+
 def verify_job_set(
     run: dict[str, Any],
     jobs: list[dict[str, Any]],
@@ -624,7 +669,9 @@ def collect_source_ci_bindings(control: Path, component: str, destination: Path)
                     and row.get("name") == required["name"]
                 ]
                 require(len(actual) == 1, "native checkout step identity differs")
-                observed = checkout_commit(log, actual[0])
+                observed = checkout_commit(
+                    checkout_step_log(log, actual[0], job["steps"], body), actual[0]
+                )
                 expected = {
                     "product": profile["product_revision"],
                     "product-merge": merge,

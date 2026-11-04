@@ -895,3 +895,32 @@ def test_registered_compatibility_profile_has_no_original_path_filter_matches():
         == qualifier._MANDATORY_TECHNICAL - catalog.keys()
     )
     assert len(profile["source_delta"]) == 100
+
+
+@pytest.mark.parametrize("component", ["Core", "Gateway", "Model", "Compatibility018"])
+def test_actual_registered_source_policy_reaches_production_validation(component):
+    profile = core.load_profile(ROOT, component)
+    identity = qualifier._load_contract(ROOT, profile)
+    policy = qualifier.load_qualification_policy(ROOT, profile)
+    catalog = {path: row["sha256"] for path, row in policy["workflow_catalog"].items()}
+    qualifier.validate_qualification_policy(policy, identity, catalog, profile=profile)
+    refusals = [row for row in policy["other_checks"] if row["name"] == "evaluate"]
+    assert len(refusals) == 1
+    assert refusals[0]["scope"] == "original-domain-not-applicable"
+    assert refusals[0]["expected_conclusion"] is None
+    if component == "Gateway":
+        original = next(
+            row
+            for row in identity["workflows"]
+            if row["path"] == ".github/workflows/saas-n1-compat-image.yml"
+        )
+        assert original["name"].endswith("head=" + profile["product_revision"])
+    if component == "Compatibility018":
+        assert "bootstrap_positive_origin" not in policy
+        for field in (
+            "domain_unattributed_zero_execution",
+            "domain_unattributed_bootstrap_cancellation",
+        ):
+            assert set(policy[field]) == {GOV}
+    else:
+        qualifier.bootstrap_registration(ROOT, profile, policy)
