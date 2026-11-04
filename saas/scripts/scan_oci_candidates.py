@@ -169,7 +169,17 @@ def main() -> int:
                     raise RuntimeError(f"Grype failed to scan {name} {platform}")
                 parsed = scan_report(json.loads(output.read_text()))
                 counts = parsed["counts"]
-                blocked |= result.returncode == 2 or any(counts.values())
+                disposition = None
+                if any(counts.values()) and result.returncode == 2:
+                    from saas.scripts.sqlite_component_disposition import inspect_disposition
+
+                    try:
+                        disposition = inspect_disposition(
+                            archive, output, platform=platform, now=datetime.now(UTC)
+                        )
+                    except ValueError as error:
+                        print(f"Component disposition rejected: {error}")
+                blocked |= (result.returncode == 2 or any(counts.values())) and disposition is None
                 summaries.append(
                     {
                         "image": name,
@@ -179,6 +189,14 @@ def main() -> int:
                         "critical": counts["Critical"],
                         "high": counts["High"],
                         "findings": parsed["findings"],
+                        **(
+                            {
+                                "component_disposition": disposition,
+                                "scanner_exit": result.returncode,
+                            }
+                            if disposition is not None
+                            else {}
+                        ),
                     }
                 )
     receipt = {

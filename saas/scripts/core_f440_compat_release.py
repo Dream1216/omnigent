@@ -129,9 +129,17 @@ def validate_component_scans(
             "raw findings must not be filtered",
         )
         parsed = scans.scan_report(raw)
-        require(
-            not any(parsed["counts"].values()), "Critical or High finding blocks this component"
-        )
+        if any(parsed["counts"].values()):
+            from saas.scripts.sqlite_component_disposition import validate_disposition
+
+            require(
+                row.get("component_disposition") is not None,
+                "Critical or High finding blocks this component",
+            )
+            validate_disposition(path, row.get("component_disposition"), now=datetime.now(UTC))
+            require(row.get("scanner_exit") == 2, "original High scanner exit is required")
+        else:
+            require(row.get("component_disposition") is None, "unexpected component disposition")
         target = raw.get("source", {}).get("target", {})
         expected = manifest["facts"]["platforms"][platform]
         require(
@@ -146,8 +154,9 @@ def validate_component_scans(
         require(
             row.get("archive_sha256") == archive_sha
             and row.get("report_sha256") == digest
-            and row.get("critical") == row.get("high") == 0
-            and row.get("findings") == [],
+            and row.get("critical") == parsed["counts"]["Critical"]
+            and row.get("high") == parsed["counts"]["High"]
+            and row.get("findings") == parsed["findings"],
             "scan receipt differs from raw findings",
         )
         reports[path.name] = digest

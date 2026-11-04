@@ -117,7 +117,13 @@ def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict
             "raw scan must not filter findings",
         )
         parsed = scan_report(report)
-        require(not any(parsed["counts"].values()), "Critical or High finding blocks promotion")
+        if any(parsed["counts"].values()):
+            from saas.scripts.sqlite_component_disposition import validate_disposition
+
+            validate_disposition(report_path, row.get("component_disposition"), now=now)
+            require(row.get("scanner_exit") == 2, "original High scanner exit is required")
+        else:
+            require(row.get("component_disposition") is None, "unexpected component disposition")
         facts = images[name]["facts"]["platforms"][platform]
         target = report.get("source", {}).get("target", {})
         require(
@@ -132,9 +138,9 @@ def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict
         require(
             row.get("archive_sha256") == images[name]["archive_sha256"]
             and row.get("report_sha256") == sha
-            and row.get("critical") == 0
-            and row.get("high") == 0
-            and row.get("findings") == [],
+            and row.get("critical") == parsed["counts"]["Critical"]
+            and row.get("high") == parsed["counts"]["High"]
+            and row.get("findings") == parsed["findings"],
             "scan summary does not bind original archive and report",
         )
         reports[relative] = sha

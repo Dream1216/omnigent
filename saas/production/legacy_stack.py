@@ -27,6 +27,66 @@ from saas.scripts.oci_promotion import require
 VARIANT = "production_release_with_legacy_fallback/v2"
 STACK_REGISTRY = "saas/supply_chain/legacy-production-stacks.json"
 COMPONENTS = {"Core", "Gateway", "Model"}
+RUNTIME_PAIR_VARIANT = "production_release_with_runtime_pair/v1"
+RUNTIME_PAIR_KIND = "protected_runtime_pair/v1"
+RUNTIME_PAIR_ROLLBACK_KIND = "production_runtime_pair_rollback/v1"
+
+
+def stack_components(row: dict[str, Any]) -> set[str]:
+    require(
+        row.get("kind") in {"protected_legacy_full_stack/v1", RUNTIME_PAIR_KIND},
+        "unknown typed runtime stack",
+    )
+    return {"Compatibility018"} if row["kind"] == RUNTIME_PAIR_KIND else COMPONENTS
+
+
+def rollback_kind(row: dict[str, Any]) -> str:
+    return (
+        RUNTIME_PAIR_ROLLBACK_KIND
+        if row.get("kind") == RUNTIME_PAIR_KIND
+        else "production_legacy_full_stack_rollback/v2"
+    )
+
+
+def validate_historical_sources(repo: Path, row: dict[str, Any]) -> None:
+    from saas.scripts.legacy_domain_eligibility import require_publication_source_origin
+    from saas.scripts.legacy_publication_reader import trusted_entries
+
+    histories = row["historical_source_qualification"]
+    require(
+        isinstance(histories, dict) and set(histories) == COMPONENTS,
+        "historical source qualification set differs",
+    )
+    for component, record in histories.items():
+        entries = trusted_entries(repo, component)
+        profile = entries["legacy-security-build-profiles.json"]
+        require(
+            isinstance(record, dict)
+            and set(record)
+            == {
+                "source_only",
+                "runtime_admission",
+                "control_revision",
+                "profile_sha256",
+                "qualification",
+                "qualification_sha256",
+            }
+            and record["source_only"] is True
+            and record["runtime_admission"] is False
+            and re.fullmatch(r"[0-9a-f]{40}", str(record["control_revision"])) is not None,
+            "historical source record cannot authorize runtime",
+        )
+        require(
+            record["profile_sha256"] == publisher.digest(profile)
+            and record["qualification_sha256"] == publisher.digest(record["qualification"]),
+            "historical source qualification digest differs",
+        )
+        publisher.strict_qualification(
+            record["qualification"], profile, record["control_revision"]
+        )
+        require_publication_source_origin(repo, profile, record["qualification"], entries=entries)
+
+
 PAIR_CHECKS = {"final_server_old_host", "old_server_final_host", "old_pair_recovery"}
 
 
@@ -34,15 +94,16 @@ def _hex(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
-def _identifiers(value: Any) -> bool:
+def _identifiers(value: Any, components: set[str] | None = None) -> bool:
+    components = COMPONENTS if components is None else components
     return (
         isinstance(value, dict)
-        and set(value) == COMPONENTS
+        and set(value) == components
         and all(
             isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", item)
             for item in value.values()
         )
-        and len(set(value.values())) == len(COMPONENTS)
+        and len(set(value.values())) == len(components)
     )
 
 
@@ -68,6 +129,7 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
     store = cast(dict[str, Any], store)
     row = store["stacks"].get(identifier)
     require(isinstance(row, dict), "complete legacy stack is not registered")
+    components = stack_components(row)
     require(
         set(row)
         == {
@@ -81,16 +143,23 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
             "rollback_sha256",
             "protocol_database_contract_sha256",
         }
-        and row["kind"] == "protected_legacy_full_stack/v1"
-        and _identifiers(row["publication_ids"])
-        and _identifiers(row["original_publication_ids"])
+        | ({"historical_source_qualification"} if row["kind"] == RUNTIME_PAIR_KIND else set())
+        and _identifiers(row["publication_ids"], components)
+        and _identifiers(row["original_publication_ids"], components)
         and isinstance(row["source_contracts"], dict)
-        and set(row["source_contracts"]) == COMPONENTS
+        and set(row["source_contracts"]) == components
         and all(isinstance(value, dict) and value for value in row["source_contracts"].values())
         and _hex(row["rollback_sha256"])
         and _hex(row["protocol_database_contract_sha256"]),
         "complete legacy stack registration fields differ",
     )
+    if row["kind"] == RUNTIME_PAIR_KIND:
+        require(
+            row["source_contracts"]["Compatibility018"].get("control_plane_schema_revision")
+            == "p0s000000018",
+            "selected runtime pair must retain the actual P18 contract",
+        )
+        validate_historical_sources(repo, row)
     inventory = row["physical_inventory"]
     require(
         bool(
@@ -123,7 +192,7 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
                 and _hex(workload["workload_uid_hash"])
                 and isinstance(workload["container_name"], str)
                 and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", workload["container_name"])
-                and workload["component"] in COMPONENTS
+                and workload["component"] in components
                 and workload["image_role"] in publisher.IMAGES
             ),
             "legacy physical workload identity differs",
@@ -136,7 +205,7 @@ def registered_stack(repo: Path, identifier: Any, policy: dict[str, Any]) -> dic
         require(coordinate not in seen, "legacy physical workload identity is duplicated")
         seen.add(coordinate)
     require(
-        {workload["component"] for workload in inventory["workloads"].values()} == COMPONENTS,
+        {workload["component"] for workload in inventory["workloads"].values()} == components,
         "legacy physical inventory omits a Core/Gateway/Model service",
     )
     require(
@@ -241,7 +310,7 @@ def validate_stack_fallback(
 ) -> dict[str, Any]:
     require(
         set(envelope) == {"kind", "product_revision", "release_evidence", "legacy_fallback"}
-        and envelope["kind"] == VARIANT,
+        and envelope["kind"] in {VARIANT, RUNTIME_PAIR_VARIANT},
         "legacy complete-set envelope fields differ",
     )
     evidence = envelope["release_evidence"]
@@ -263,13 +332,20 @@ def validate_stack_fallback(
     )
     policy = json.loads((repo / "saas/production/deployment-policy.json").read_text())
     stack = registered_stack(repo, fallback["stack_id"], policy)
+    expected_kind = (
+        RUNTIME_PAIR_KIND
+        if envelope["kind"] == RUNTIME_PAIR_VARIANT
+        else "protected_legacy_full_stack/v1"
+    )
+    require(stack["kind"] == expected_kind, "release envelope and typed runtime scope differ")
+    components = stack_components(stack)
     require(
         fallback["publication_ids"] == stack["publication_ids"]
         and fallback["original_publication_ids"] == stack["original_publication_ids"],
         "legacy publication set differs from the complete trusted set",
     )
     current, original = {}, {}
-    for component in sorted(COMPONENTS):
+    for component in sorted(components):
         current[component] = registered_publication(repo, stack["publication_ids"][component])
         original[component] = registered_publication(
             repo, stack["original_publication_ids"][component]
@@ -288,12 +364,12 @@ def validate_stack_fallback(
             verify_renewal_identity(original[component], current[component])
     for field in ("product_revision", "product_tree"):
         require(
-            len({row["profile"][field] for row in current.values()}) == len(COMPONENTS),
+            len({row["profile"][field] for row in current.values()}) == len(components),
             "one legacy source/tree cannot impersonate three services",
         )
     facts = {}
     with tempfile.TemporaryDirectory(prefix="omnigent-legacy-stack-") as temporary:
-        for component in sorted(COMPONENTS):
+        for component in sorted(components):
             root = Path(temporary) / component
             facts[component] = read_registered_publication(
                 repo, current[component], root / "current"
@@ -334,7 +410,7 @@ def validate_stack_fallback(
             "original_producer": original[component]["producer"],
             "current_producer": current[component]["producer"],
         }
-        for component in sorted(COMPONENTS)
+        for component in sorted(components)
     }
     body = fallback["full_stack_rollback"]
     require(
@@ -354,7 +430,7 @@ def validate_stack_fallback(
                 "pair_checks",
                 "protocol_database_contract_sha256",
             }
-            and body["kind"] == "production_legacy_full_stack_rollback/v2"
+            and body["kind"] == rollback_kind(stack)
             and body["product_revision"] == envelope["product_revision"]
             and body["result"] == "passed"
             and isinstance(body["drill_id"], str)
@@ -460,7 +536,7 @@ def validate_stack_fallback(
         registered_stack(repo, fallback["stack_id"], policy) == stack,
         "complete legacy stack registration changed during native verification",
     )
-    for component in COMPONENTS:
+    for component in components:
         require(
             registered_publication(repo, stack["publication_ids"][component]) == current[component]
             and registered_publication(repo, stack["original_publication_ids"][component])

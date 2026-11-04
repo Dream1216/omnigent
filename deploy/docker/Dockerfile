@@ -310,7 +310,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       python-3.12=3.12.16-r0 \
       python-3.12-base=3.12.16-r0 \
       readline=8.3-r3 \
-      sqlite-libs=3.53.4-r2 \
+      sqlite-libs=3.54.1-r0 \
       xz=5.8.4-r0 \
       zlib=1.3.2.1_rc20260917-r0 \
  && ln -s /usr/bin/python3.12 /usr/local/bin/python \

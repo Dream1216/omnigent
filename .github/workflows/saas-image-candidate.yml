@@ -674,10 +674,12 @@ jobs:
               "${RUNNER_TEMP}/supply-chain-tools/grype" "$child_image" \
                 --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
               jq -e '
-                ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
-                ([.matches[] | select(.vulnerability.severity == "High")] | length) == 0 and
                 (.ignoredMatches // []) == []
               ' "${prefix}.raw.grype.json" >/dev/null
+              python -m saas.scripts.sqlite_component_disposition \
+                --image "${RUNNER_TEMP}/admitted-layouts/${artifact}" \
+                --report "${prefix}.raw.grype.json" --platform "linux/${arch}" \
+                --output "${prefix}.component-disposition.json"
             done
           done
           "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
