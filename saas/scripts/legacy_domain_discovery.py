@@ -98,8 +98,8 @@ def _exact_audit(row, registry):
 def _exact_current_C2(profile, identity):
     return (
         profile.get("component") == "Compatibility018"
-        and profile.get("product_revision") == "7e774d673980729f591304d8d7b991af36a06920"
-        and profile.get("product_tree") == "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
+        and profile.get("product_revision") == "4e11681dd3809febeb42cb5d752d423b5f751f82"
+        and profile.get("product_tree") == "cd9cbd2f918df17a44dc63423ac29a5ddd887820"
         and isinstance(identity, dict)
         and identity.get("validation_pr") == 223
         and identity.get("validation_base_ref") == "codex/p18-a7-validation-base-20261102"

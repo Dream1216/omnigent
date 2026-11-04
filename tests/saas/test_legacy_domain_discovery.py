@@ -997,13 +997,13 @@ def test_exact_fixed_attachment_audit_cannot_become_legacy_source_proof(fault):
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "component", "revision", "tree", "PR", "ref", "no-identity"]
+    "fault", [None, "component", "revision", "tree", "PR", "ref", "no-identity", "prior-source"]
 )
 def test_exact_current_C2_audit_scope_does_not_cover_other_products_or_main(fault):
     profile = {
         "component": "Compatibility018",
-        "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-        "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
+        "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+        "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
     }
     identity = {
         "validation_pr": 223,
@@ -1021,4 +1021,7 @@ def test_exact_current_C2_audit_scope_does_not_cover_other_products_or_main(faul
         identity["validation_base_ref"] = "main"
     elif fault == "no-identity":
         identity = None
+    elif fault == "prior-source":
+        profile["product_revision"] = "7e774d673980729f591304d8d7b991af36a06920"
+        profile["product_tree"] = "3c8cfe54ce03854388b4a0007388adbe4080fc0a"
     assert discovery._exact_current_C2(profile, identity) is (fault is None)
