@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from typing import Any
 
 import pytest
 
@@ -17,7 +18,7 @@ from tests.saas import test_legacy_stack as base
 from tests.saas.test_legacy_stack import complete_stack as complete_stack
 
 
-def substitute(value, replacements):
+def substitute(value: Any, replacements: list[tuple[str, str]]) -> Any:
     if isinstance(value, dict):
         return {key: substitute(item, replacements) for key, item in value.items()}
     if isinstance(value, list):
