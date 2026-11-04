@@ -135,16 +135,20 @@ def test_native_codex_side_chat_inherits_context_and_closes_independently(
             for effort in model["supportedReasoningEfforts"]
         )
     ]
-    assert alternate_models, "Native catalog must offer an alternate model with higher effort"
+    assert alternate_models, (
+        "Native catalog must offer an alternate model with nondefault high effort"
+    )
     model_option = alternate_models[0]
     selected_effort = next(
         effort
         for effort in ("max", "xhigh")
-        if any(
+        if effort != model_option["defaultReasoningEffort"]
+        and any(
             option["reasoningEffort"] == effort
             for option in model_option["supportedReasoningEfforts"]
         )
     )
+    assert selected_effort != model_option["defaultReasoningEffort"]
     option = page.locator(f'[data-model-id="{model_option["id"]}"]')
     selected_model = option.get_attribute("data-model-id")
     assert selected_model and selected_model != first_requests[0]["model"]
