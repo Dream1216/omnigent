@@ -114,7 +114,7 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 190,
+    "max_direct_upstream_files": 193,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -843,6 +843,21 @@
       "max_direct_upstream_files": 190,
       "new_official_path": "tests/runner/test_resource_registry.py",
       "reason": "Synchronize existing OSC handshake before test-owned resize input; original native job126245320294 proves input arrived during negotiation. Test assertions and production behavior retained.",
+      "max_upstream_net_added_loc": 4576,
+      "max_active_patches": 9,
+      "min_isolated_custom_code_ratio": 0.85
+    },
+    "upstream_021_ui_native_contract_followup": {
+      "authority": "Existing direct standing human all-approval and budget authority; cache exception is not source-change authority.",
+      "authority_receipt": "/Users/dream/BuildArtifacts/omniagent-021-20261031-fast-execution-20261101/runtime-security-completion-Gateway-original-Pi-failure/native-human-standing-authority-verified.PUBLIC.json",
+      "previous_max_direct_upstream_files": 190,
+      "max_direct_upstream_files": 193,
+      "new_official_paths": [
+        "tests/e2e_ui/messages/test_message_render_parity.py",
+        "tests/e2e_ui/chat/test_native_codex_side_chat.py",
+        "tests/e2e_ui/chat/test_native_claude_login_slash_dead_end.py"
+      ],
+      "reason": "Use the existing accessible composer name across idle/queued states, explicitly send the reconnect follow-up through the existing queue action, and select an alternate model plus a nondefault highest advertised reasoning tier from the real pinned native catalog. Preserve real UI sends, inherited context, request model/effort checks, default reset, parent isolation and original business assertions. Require the existing web auth-command400 boundary and visible sign-in remedy, rather than a rejected optimistic user bubble. Preserve the90s transcript/model negative watch. No production/workflow/timeout increase; exact incremental review and final-source own CI remain required.",
       "max_upstream_net_added_loc": 4576,
       "max_active_patches": 9,
       "min_isolated_custom_code_ratio": 0.85
