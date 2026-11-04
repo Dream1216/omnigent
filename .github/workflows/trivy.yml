@@ -36,7 +36,7 @@ jobs:
             if command -v sqlite3; then exit 1; fi
             if apk info -e sqlite; then exit 1; fi
           ' | tee "$RUNNER_TEMP/sqlite-package-probe/actual-apk-install.txt"
-          docker export "$container_name" | tar --no-same-owner --no-same-permissions -xf - -C "$RUNNER_TEMP/sqlite-apk-root"
+          docker export "$container_name" | tar --exclude=dev/null --exclude=dev/random --exclude=dev/urandom --exclude=dev/zero --no-same-owner --no-same-permissions -xf - -C "$RUNNER_TEMP/sqlite-apk-root"
           find "$RUNNER_TEMP/sqlite-apk-root" -type f \( -name sqlite3 -o -name sqlite3.exe \) > "$RUNNER_TEMP/sqlite-package-probe/sqlite-shell-files.txt"
           test ! -s "$RUNNER_TEMP/sqlite-package-probe/sqlite-shell-files.txt"
       - name: Collect actual pinned scanner results
