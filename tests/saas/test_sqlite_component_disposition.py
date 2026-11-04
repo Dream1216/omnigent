@@ -388,6 +388,7 @@ def test_deleting_cli_from_self_reported_inventory_never_authenticates_it(tmp_pa
         "extended-expiry",
         "self-rehashed-inventory",
         "missing-admission",
+        "document-swapped-after-verification",
     ],
 )
 def test_existing_release_image_validator_keeps_finite_raw_evidence(tmp_path, monkeypatch, fault):
@@ -478,6 +479,41 @@ def test_existing_release_image_validator_keeps_finite_raw_evidence(tmp_path, mo
         receipt_path.write_text(json.dumps(receipt))
     elif fault == "missing-admission":
         receipt_path.unlink()
+    elif fault == "document-swapped-after-verification":
+        from saas.production import admission
+
+        forged = copy.deepcopy(evidence)
+        forged_scan = forged["images"][0]["vulnerabilities"]
+        forged_bundle = forged_scan["component_dispositions"]
+        inventory = [
+            *forged_bundle[0]["proof"]["inventory"],
+            {
+                "path": "docs/sqlite-false-inventory.txt",
+                "type": "0",
+                "link": "",
+                "mode": 0o644,
+                "sha256": "f" * 64,
+                "shell": False,
+                "recover": False,
+            },
+        ]
+        forged_bundle[0]["proof"] = component.disposition_receipt(
+            forged_bundle[0]["raw_report"].encode(), inventory, platform="linux/amd64", now=_NOW
+        )
+        forged_scan["report_sha256"] = hashlib.sha256(
+            json.dumps(forged_bundle, sort_keys=True).encode()
+        ).hexdigest()
+        real_verify = admission.validate_evidence_admission
+
+        def verify_then_replace(*args, **kwargs):
+            result = real_verify(*args, **kwargs)
+            assert result["kinds"]["image"]["production_readiness"] == "ready"
+            image_document.write_text(json.dumps(forged))
+            return result
+
+        monkeypatch.setattr(admission, "validate_evidence_admission", verify_then_replace)
+        evidence = forged
+        value = forged["images"][0]
     violations, _ = _validate_image(
         policy,
         value,

@@ -614,6 +614,7 @@ def validate_evidence_admission(
     *,
     expected_product_revision: str | None = None,
     now: datetime | None = None,
+    include_authenticated_documents: bool = False,
 ) -> dict[str, Any]:
     """Verify trusted-key admission of every production evidence document."""
 
@@ -633,6 +634,7 @@ def validate_evidence_admission(
     receipt_ids: set[str] = set()
     receipt_claims: set[tuple[str, Path]] = set()
     admitted: dict[str, set[Path]] = {kind: set() for kind in _REQUIRED_KINDS}
+    authenticated_documents: dict[str, dict[str, str]] = {kind: {} for kind in _REQUIRED_KINDS}
     kind_violations: dict[str, list[str]] = {kind: [] for kind in _REQUIRED_KINDS}
     kind_blockers: dict[str, list[str]] = {kind: list(key_blockers) for kind in _REQUIRED_KINDS}
     for receipt in receipts:
@@ -665,6 +667,9 @@ def validate_evidence_admission(
         violations.extend(item_violations)
         if admitted_item is not None and not item_violations and not item_blockers:
             admitted[admitted_item[0]].add(admitted_item[1])
+            authenticated_documents[admitted_item[0]][admitted_item[1].as_posix()] = str(
+                receipt["evidence_sha256"]
+            )
     kinds: dict[str, dict[str, Any]] = {}
     for kind in sorted(_REQUIRED_KINDS):
         files = set(declared_files[kind])
@@ -689,7 +694,7 @@ def validate_evidence_admission(
         }
     unique_violations = sorted(set(violations))
     all_ready = all(item["production_readiness"] == "ready" for item in kinds.values())
-    return {
+    report = {
         "status": "pass" if not unique_violations else "fail",
         "production_readiness": ("ready" if not unique_violations and all_ready else "blocked"),
         "violations": unique_violations,
@@ -713,3 +718,7 @@ def validate_evidence_admission(
             "receipt_count": len(receipts),
         },
     }
+
+    if include_authenticated_documents:
+        report["authenticated_documents"] = authenticated_documents
+    return report
