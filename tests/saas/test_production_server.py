@@ -65,6 +65,7 @@ from saas.production.service_bindings import (
     ProductionServiceRoleBindings,
 )
 from saas.runner_adapter.platform_models import render_platform_model_gateway_config
+from tests._helpers.polling import poll_until
 
 
 def _config(tmp_path: Path, *, capabilities: frozenset[str] | None = None):
@@ -197,8 +198,9 @@ def _sessions(*, billing: bool = False) -> RoleSessionFactories:
     )
 
 
+@pytest.mark.parametrize("pending_reconnect", [False, True])
 def test_actual_server_ready_endpoint_requires_epoch_grace_and_resets_on_disconnect(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pending_reconnect: bool
 ) -> None:
     import yaml
 
@@ -259,6 +261,24 @@ def test_actual_server_ready_endpoint_requires_epoch_grace_and_resets_on_disconn
         business_delivery_service_role_bindings=profile,
     )
     closed = []
+    reconnecting = threading.Event()
+    pending_check = threading.Event()
+    release_check = threading.Event()
+    original_evaluate = ProductionReadiness._evaluate
+
+    def evaluate(check):
+        result = original_evaluate(check)
+        if (
+            pending_reconnect
+            and reconnecting.is_set()
+            and not pending_check.is_set()
+            and getattr(check, "__name__", "") == "invalidation_ready"
+        ):
+            pending_check.set()
+            release_check.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(ProductionReadiness, "_evaluate", staticmethod(evaluate))
 
     class FollowerPort:
         def close(self):
@@ -288,18 +308,44 @@ def test_actual_server_ready_endpoint_requires_epoch_grace_and_resets_on_disconn
                 assert denied.status_code == 503
                 assert "authorization_invalidation" in denied.json()["failed_dependencies"]
             monotonic[0] = 165.0
+            poll_until(
+                lambda: client.get("/saas/readyz").status_code == 200,
+                timeout_s=3,
+                interval_s=0.01,
+            )
             assert client.get("/saas/readyz").status_code == 200
             cache.unavailable()
             assert client.get("/saas/readyz").status_code == 503
+            reconnecting.set()
             cache.begin_listener_epoch()
             cache.caught_up()
             assert client.get("/saas/readyz").status_code == 503
+            if pending_reconnect:
+                assert pending_check.wait(timeout=1)
             monotonic[0] = 230.0
+            if pending_reconnect:
+                release_check.set()
+
+            statuses = []
+
+            def reconnected_ready():
+                status = client.get("/saas/readyz").status_code
+                statuses.append(status)
+                return status == 200
+
+            poll_until(
+                reconnected_ready,
+                timeout_s=3,
+                interval_s=0.01,
+            )
+            if pending_reconnect:
+                assert statuses[0] == 503
             assert client.get("/saas/readyz").status_code == 200
         services.close()
         services.close()
         assert closed == [1]
     finally:
+        release_check.set()
         if services is not None:
             services.close()
         sessions.close()
