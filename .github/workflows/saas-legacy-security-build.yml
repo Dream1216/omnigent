@@ -179,6 +179,23 @@ jobs:
             --control "$PWD" --product "$GITHUB_WORKSPACE/product" \
             --component "$LEGACY_COMPONENT" --control-revision "$CONTROL_REVISION" \
             --destination "$RUNNER_TEMP/legacy-source-qualification"
+      - name: Retain native API quota after qualification
+        if: always()
+        continue-on-error: true
+        working-directory: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --include rate_limit \
+            > "$RUNNER_TEMP/legacy-native-api-quota.txt"
+      - name: Retain native API quota observation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-native-api-quota-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/legacy-native-api-quota.txt
+          if-no-files-found: warn
+          retention-days: 90
       - name: Retain original source CI bytes and refusal evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
