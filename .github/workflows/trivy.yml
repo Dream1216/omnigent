@@ -1,110 +1,75 @@
-name: SQLite package diagnostic (temporary branch only)
-
+name: SQLite finite classifier native implementation diagnostic (temporary only)
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   diagnose:
-    name: Collect fixed-DB CPE results (not image admission)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
-      - name: Checkout exact diagnostic source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
-      - name: Prepare actual APK root filesystem without an application image build
-        env:
-          PINNED_BASE: cgr.dev/chainguard/wolfi-base@sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+      - name: Build only the small exact package and checker fixture
         run: |
           set -euo pipefail
-          container_name="sqlite-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
-          mkdir -p "$RUNNER_TEMP/sqlite-apk-root" "$RUNNER_TEMP/sqlite-package-probe"
-          docker run --name "$container_name" --entrypoint /bin/sh "$PINNED_BASE" -ec '
-            apk add --no-cache sqlite-libs=3.54.1-r0
-            apk info -v sqlite-libs glibc-2.44
-            apk info -L sqlite-libs
-            if command -v sqlite3; then exit 1; fi
-            if apk info -e sqlite; then exit 1; fi
-          ' | tee "$RUNNER_TEMP/sqlite-package-probe/actual-apk-install.txt"
-          docker export "$container_name" | tar --exclude=dev/null --exclude=dev/random --exclude=dev/urandom --exclude=dev/zero --no-same-owner --no-same-permissions -xf - -C "$RUNNER_TEMP/sqlite-apk-root"
-          find "$RUNNER_TEMP/sqlite-apk-root" -type f \( -name sqlite3 -o -name sqlite3.exe \) > "$RUNNER_TEMP/sqlite-package-probe/sqlite-shell-files.txt"
-          test ! -s "$RUNNER_TEMP/sqlite-package-probe/sqlite-shell-files.txt"
-      - name: Collect actual pinned scanner results
+          mkdir -p "$RUNNER_TEMP/fixture" "$RUNNER_TEMP/implementation-originals"
+          cp saas/scripts/sqlite_component_disposition.py "$RUNNER_TEMP/fixture/checker.py"
+          cat > "$RUNNER_TEMP/fixture/Dockerfile" <<'DOCKERFILE'
+          FROM cgr.dev/chainguard/wolfi-base@sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e
+          RUN apk add --no-cache sqlite-libs=3.54.1-r0 libbrotlicommon1=1.2.0-r7 libbrotlidec1=1.2.0-r7 libbrotlienc1=1.2.0-r7 ca-certificates-bundle=20260909-r3
+          ARG SOURCE_REVISION
+          LABEL org.opencontainers.image.revision=$SOURCE_REVISION
+          COPY checker.py /opt/saas/scripts/sqlite_component_disposition.py
+          DOCKERFILE
+          docker buildx build --platform linux/amd64 --provenance=false --build-arg "SOURCE_REVISION=$GITHUB_SHA" --output "type=oci,dest=$RUNNER_TEMP/fixture.tar" "$RUNNER_TEMP/fixture"
+      - name: Verify actual fresh raw result and exact implementation against real OCI
         run: |
           python -B - <<'PYTHON'
-          import hashlib
-          import json
-          import os
-          import subprocess
-          from datetime import UTC, datetime
+          import hashlib, json, os, subprocess
+          from datetime import UTC, datetime, timedelta
           from pathlib import Path
-
-          from saas.scripts.scan_oci_candidates import install_grype, parse_database_status
-
-          root = Path(os.environ["RUNNER_TEMP"]) / "sqlite-package-probe"
-          root.mkdir(exist_ok=True)
-          binary = install_grype(root)
-          config = root / "grype.yaml"
-          config.write_text(
-              "ignore: []\nvex-documents: []\ncheck-for-app-update: false\ndb:\n"
-              f"  cache-dir: {root / 'db'}\n"
-              "  auto-update: true\n  validate-age: true\n"
-              "  max-allowed-built-age: 24h\n"
-          )
-          subprocess.run([str(binary), "-c", str(config), "db", "update"], check=True)
-          status = json.loads(subprocess.check_output(
-              [str(binary), "-c", str(config), "db", "status", "-o", "json"], text=True
-          ))
-          parse_database_status(status, now=datetime.now(UTC))
-          rows = []
-          targets = [
-              ("CPE-3.53.4", "cpe:2.3:a:sqlite:sqlite:3.53.4:*:*:*:*:*:*:*"),
-              ("CPE-3.54.1", "cpe:2.3:a:sqlite:sqlite:3.54.1:*:*:*:*:*:*:*"),
-              ("actual-APK-root", f"dir:{Path(os.environ['RUNNER_TEMP']) / 'sqlite-apk-root'}"),
-          ]
-          for label, target in targets:
-              report = root / f"sqlite-{label}.json"
-              result = subprocess.run([
-                  str(binary), "-c", str(config), target, "--fail-on", "high",
-                  "-o", "json", "--file", str(report),
-              ], check=False)
-              if result.returncode not in (0, 2):
-                  raise RuntimeError(f"Scanner execution failed: {result.returncode}")
-              original = json.loads(report.read_text())
-              findings = [
-                  {"id": item["vulnerability"]["id"], "severity": item["vulnerability"]["severity"],
-                   "package": item["artifact"]["name"], "version": item["artifact"]["version"]}
-                  for item in original["matches"]
-                  if item["vulnerability"]["severity"] in ("Critical", "High")
-              ]
-              rows.append({
-                  "target": target, "scanner_exit": result.returncode,
-                  "findings": findings,
-                  "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
-              })
-          (root / "diagnostic-summary.json").write_text(json.dumps({
-              "source": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
-              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "database": status,
-              "results": rows, "image_or_release_admission": False,
-              "purpose": "Actual CPE version comparison only; job completion does not mean zero High.",
-          }, indent=2) + "\n")
-          print(json.dumps(rows))
+          from saas.scripts.scan_oci_candidates import install_grype, parse_database_status, scan_report
+          from saas.scripts.sqlite_component_disposition import inspect_disposition, validate_disposition
+          temporary=Path(os.environ['RUNNER_TEMP'])
+          out=temporary/'implementation-originals'
+          tools=temporary/'scanner-tools'; tools.mkdir()
+          binary=install_grype(tools)
+          config=tools/'grype.yaml'
+          config.write_text(f'ignore: []\nvex-documents: []\ncheck-for-app-update: false\ndb:\n  cache-dir: {tools / "db"}\n  auto-update: true\n  validate-age: true\n  max-allowed-built-age: 24h\n')
+          subprocess.run([str(binary),'-c',str(config),'db','update'],check=True)
+          status=json.loads(subprocess.check_output([str(binary),'-c',str(config),'db','status','-o','json'],text=True))
+          now=datetime.now(UTC); parse_database_status(status,now=now)
+          report=out/'actual-fixture.raw.grype.json'
+          result=subprocess.run([str(binary),'-c',str(config),f'oci-archive:{temporary / "fixture.tar"}','--platform','linux/amd64','--fail-on','high','-o','json','--file',str(report)],check=False)
+          original=report.read_bytes(); raw=json.loads(original); parsed=scan_report(raw)
+          if result.returncode != 2 or parsed['counts'] != {'Critical':0,'High':1}:
+              raise RuntimeError(f'Unexpected actual fixture result: exit={result.returncode}, counts={parsed["counts"]}, findings={parsed["findings"]}')
+          proof=inspect_disposition(temporary/'fixture.tar',report,platform='linux/amd64',now=now)
+          assert validate_disposition(report,proof,image=temporary/'fixture.tar',now=now)==proof
+          assert report.read_bytes()==original
+          try:
+              validate_disposition(report,proof,image=temporary/'fixture.tar',now=now+timedelta(days=8))
+          except ValueError:
+              expired_rejected=True
+          else:
+              raise RuntimeError('Expired disposition was accepted')
+          (out/'actual-component-disposition.json').write_text(json.dumps(proof,indent=2)+'\n')
+          summary={'source':os.environ['GITHUB_SHA'],'implementation_source':'cca6806a9fd6447e35dfec3bd8e94bc0ecfb3516','run':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTEMPT'],'scanner_exit':result.returncode,'raw_counts':parsed['counts'],'database':status,'raw_sha256':hashlib.sha256(original).hexdigest(),'actual_OCI_inspection_and_consumer_reinspection':True,'real_checker_Python_source_shipped_in_fixture':True,'expired_rejected':expired_rejected,'application_image_or_release_admission':False}
+          (out/'native-implementation-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          print(json.dumps(summary))
           PYTHON
-      - name: Retain original diagnostic reports
+      - name: Retain only small original implementation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: sqlite-package-diagnostic-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sqlite-package-probe/
-          if-no-files-found: error
+          name: sqlite-implementation-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/implementation-originals/
+          if-no-files-found: warn
           retention-days: 3

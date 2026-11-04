@@ -11,14 +11,32 @@
     {
       "name": "omnigent-saas-server",
       "target": "runtime",
-      "platforms": ["linux/amd64", "linux/arm64"],
-      "required_smoke": ["cli-help", "health", "migration", "auth-context", "dual-rls"]
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "required_smoke": [
+        "cli-help",
+        "health",
+        "migration",
+        "auth-context",
+        "dual-rls"
+      ]
     },
     {
       "name": "omnigent-saas-host",
       "target": "host",
-      "platforms": ["linux/amd64", "linux/arm64"],
-      "required_smoke": ["cli-help", "git", "tmux", "bubblewrap", "runner-connect"]
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "required_smoke": [
+        "cli-help",
+        "git",
+        "tmux",
+        "bubblewrap",
+        "runner-connect"
+      ]
     }
   ],
   "reproducibility": {
@@ -58,7 +76,10 @@
   "attestations": {
     "provenance_predicate": "https://slsa.dev/provenance/v1",
     "provenance_mode": "max",
-    "sbom_formats": ["spdx-json", "cyclonedx-json"],
+    "sbom_formats": [
+      "spdx-json",
+      "cyclonedx-json"
+    ],
     "keyless_signature_required": true,
     "signature_issuer": "https://token.actions.githubusercontent.com",
     "signature_subject_digest_required": true,
@@ -90,7 +111,20 @@
     "critical_allowed": 0,
     "high_allowed": 0,
     "exceptions_require_owner_expiry_and_compensating_control": true,
-    "maximum_scanner_database_age_hours": 24
+    "maximum_scanner_database_age_hours": 24,
+    "component_not_applicable": {
+      "id": "CVE-2026-119586",
+      "package": "sqlite-libs",
+      "version": "3.54.1-r0",
+      "justification": "vulnerable_component_not_present",
+      "owner": "OmniAgent release-engineering and independent security acceptance",
+      "expires_at": "2026-11-11T10:40:00Z",
+      "compensating_control": "Verify exact library bytes and absence of the SQLite C shell/recover component in every final image; retain complete original raw findings.",
+      "library_sha256": {
+        "linux/amd64": "7c8f466fe08716da0c3ce29ef451e8443313b296717fd8ef98b020030fb282f7",
+        "linux/arm64": "8f68e1e2567a00b7a986468884f2b166a9feff1e3e77ece7b63358fe6d3cb373"
+      }
+    }
   },
   "license_policy": {
     "policy_id": "omnigent-saas-license-admission-v1",
@@ -103,7 +137,9 @@
     "n_minus_one_digest_required": true,
     "canary_required": true,
     "floating_tag_may_authorize_deployment": false,
-    "allowed_registry_hosts": ["ghcr.io"],
+    "allowed_registry_hosts": [
+      "ghcr.io"
+    ],
     "canary_environment": "production-canary",
     "minimum_canary_observation_seconds": 3600,
     "maximum_n_minus_one_rollback_seconds": 900,
