@@ -150,6 +150,12 @@ def _legacy_stack_evidence_only(
             fallback["publication_ids"] != row["publication_ids"]
             or fallback["original_publication_ids"] != row["original_publication_ids"]
             or not isinstance(body, dict)
+            or row["kind"]
+            != (
+                legacy_stack.RUNTIME_PAIR_KIND
+                if envelope["kind"] == legacy_stack.RUNTIME_PAIR_VARIANT
+                else "protected_legacy_full_stack/v1"
+            )
             or body.get("kind") != legacy_stack.rollback_kind(row)
             or body.get("product_revision") != product_revision
             or body.get("result") != "passed"
