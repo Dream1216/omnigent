@@ -79,8 +79,25 @@ def candidate(
     }
 
 
-def validate_scans(root: Path, manifest: dict[str, Any], archive_sha: str) -> dict[str, Any]:
-    summary_path = root / "server-preflight-scan-summary.json"
+def validate_scans(
+    root: Path, manifest: dict[str, Any], archive_sha: str, archive: Path | None = None
+) -> dict[str, Any]:
+    return validate_component_scans(
+        root,
+        {"server": {**manifest, "archive_sha256": archive_sha}},
+        summary_name="server-preflight-scan-summary.json",
+        archives={"server": archive} if archive is not None else None,
+    )
+
+
+def validate_component_scans(
+    root: Path,
+    components: dict[str, dict[str, Any]],
+    *,
+    summary_name: str,
+    archives: dict[str, Path] | None = None,
+) -> dict[str, Any]:
+    summary_path = root / summary_name
     summary = read(summary_path)
     require(
         summary.get("scanner") == "grype " + scans.GRYPE_VERSION
@@ -89,15 +106,22 @@ def validate_scans(root: Path, manifest: dict[str, Any], archive_sha: str) -> di
     )
     rows = summary.get("images", [])
     require(
-        len(rows) == 2
+        bool(components)
+        and set(components) <= {"server", "host"}
+        and len(rows) == len(components) * len(scans.PLATFORMS)
         and {(row.get("image"), row.get("platform")) for row in rows}
-        == {("server", p) for p in scans.PLATFORMS},
-        "two exact compatibility platform scans required",
+        == {(role, platform) for role in components for platform in scans.PLATFORMS},
+        "two exact compatibility platform scans required"
+        if set(components) == {"server"}
+        else "exact compatibility platform scans required",
     )
     reports = {}
+    verified_archives = {}
     for row in rows:
         platform = row["platform"]
-        path = root / ("server-" + platform.split("/")[1] + "-grype.json")
+        manifest = components[row["image"]]
+        archive_sha = manifest["archive_sha256"]
+        path = root / (row["image"] + "-" + platform.split("/")[1] + "-grype.json")
         raw = read(path)
         descriptor = raw.get("descriptor", {})
         require(
@@ -115,9 +139,32 @@ def validate_scans(root: Path, manifest: dict[str, Any], archive_sha: str) -> di
             "raw findings must not be filtered",
         )
         parsed = scans.scan_report(raw)
-        require(
-            not any(parsed["counts"].values()), "Critical or High finding blocks this component"
-        )
+        if any(parsed["counts"].values()):
+            from saas.scripts.sqlite_component_disposition import validate_disposition
+
+            require(
+                row.get("component_disposition") is not None,
+                "Critical or High finding blocks this component",
+            )
+            role = row["image"]
+            if archives is None or role not in archives:
+                raise ValueError("actual component OCI input is required")
+            if role not in verified_archives:
+                actual_archive = archives[role]
+                require(
+                    scans.file_sha256(actual_archive) == archive_sha,
+                    "actual component OCI archive differs",
+                )
+                verified_archives[role] = actual_archive
+            validate_disposition(
+                path,
+                row.get("component_disposition"),
+                image=verified_archives[role],
+                now=datetime.now(UTC),
+            )
+            require(row.get("scanner_exit") == 2, "original High scanner exit is required")
+        else:
+            require(row.get("component_disposition") is None, "unexpected component disposition")
         target = raw.get("source", {}).get("target", {})
         expected = manifest["facts"]["platforms"][platform]
         require(
@@ -132,8 +179,9 @@ def validate_scans(root: Path, manifest: dict[str, Any], archive_sha: str) -> di
         require(
             row.get("archive_sha256") == archive_sha
             and row.get("report_sha256") == digest
-            and row.get("critical") == row.get("high") == 0
-            and row.get("findings") == [],
+            and row.get("critical") == parsed["counts"]["Critical"]
+            and row.get("high") == parsed["counts"]["High"]
+            and row.get("findings") == parsed["findings"],
             "scan receipt differs from raw findings",
         )
         reports[path.name] = digest
