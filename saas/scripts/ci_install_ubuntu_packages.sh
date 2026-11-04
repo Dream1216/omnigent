@@ -98,6 +98,20 @@ run_ci_ubuntu_apt() {
   done
 }
 export -f run_ci_ubuntu_apt
+OMNIGENT_CI_PACKAGE_MATERIALIZER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/materialize_debian_snapshot_packages.py"
+export OMNIGENT_CI_PACKAGE_MATERIALIZER
+install_ci_ubuntu_packages() {
+  set -euo pipefail
+  local inputs
+  inputs=$(mktemp "${RUNNER_TEMP:?}/omnigent-ubuntu-package-inputs.XXXXXX")
+  "$@" -o Acquire::ForceHash=SHA256 --print-uris > "$inputs" || return "$?"
+  if grep -q "^'" "$inputs"; then
+    sudo python3 "$OMNIGENT_CI_PACKAGE_MATERIALIZER" --distribution ubuntu \
+      --inputs "$inputs" --output /var/cache/apt/archives || return "$?"
+  fi
+  "$@" --no-download
+}
+export -f install_ci_ubuntu_packages
 if [[ "$1" == --playwright-chromium ]]; then
   # The locked Playwright release owns its complete dependency list.
   timeout --kill-after=10s 360s bash -c 'run_ci_ubuntu_apt "$@"' -- uv run --no-sync playwright install-deps chromium
@@ -105,4 +119,4 @@ if [[ "$1" == --playwright-chromium ]]; then
 fi
 # One deadline covers all transport attempts; neither operation gains extra time.
 timeout --kill-after=10s 180s bash -c 'run_ci_ubuntu_apt "$@"' -- sudo apt-get "${options[@]}" update
-timeout --kill-after=10s 180s bash -c 'run_ci_ubuntu_apt "$@"' -- sudo apt-get "${options[@]}" install -y --no-install-recommends "$@"
+timeout --kill-after=10s 180s bash -c 'run_ci_ubuntu_apt install_ci_ubuntu_packages "$@"' -- sudo apt-get "${options[@]}" install -y --no-install-recommends "$@"

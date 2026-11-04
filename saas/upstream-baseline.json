@@ -115,7 +115,7 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 205,
-    "max_upstream_net_added_loc": 5430,
+    "max_upstream_net_added_loc": 5439,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -982,6 +982,18 @@
       "recorded_at": "2026-11-05",
       "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
       "reason": "Reconcile the measured existing Aliyun integration with the accepted Main UI, scanner and runtime-pair changes under the verified blanket project authorization. Preserve nine patches, .85 isolation, all prior trusted registrations and technical/signing/production requirements."
+    },
+    "aliyun_accepted_ed172_snapshot_transport": {
+      "accepted_main": "ed172f209a7de8a567562ea708c5ccaa3e77c092",
+      "Cloud_parent": "7caf3e6fffdac5a81dd755f9b92c33d313e6708c",
+      "previous_max_direct_upstream_files": 205,
+      "previous_max_upstream_net_added_loc": 5430,
+      "max_direct_upstream_files": 205,
+      "max_upstream_net_added_loc": 5439,
+      "recorded_at": "2026-11-05",
+      "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
+      "changed_official_path": "deploy/docker/Dockerfile",
+      "reason": "Account for the accepted Main Docker consumer's nine net lines connecting signed-index package materialization before the existing offline install. The issuer correction has zero net lines. Preserve nine patches, .85 isolation, all trusted registrations and technical/signing/production requirements."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

@@ -1462,7 +1462,7 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
                         records["Compatibility018"], sort_keys=True, separators=(",", ":")
                     ).encode()
                 ).hexdigest()
-                == "1ed590b809792b3d87dfb6005d87ceccb257293d5d1d54e7d45f0630ca12bafc"
+                == "76acbf997414e00d82c89f061ad23faad45edfd156a435860c442ddf96424093"
             )
         else:
             reviewed_compatibility = {
@@ -1470,10 +1470,10 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
                     "d277ce27d22f072443a77a9f59eec4adb09e9c3a60364a27cd417a4115408919"
                 ),
                 "legacy-security-original-inputs.json": (
-                    "0ca1216882e1acb602d97252a9aec49430c9f7200ee5c75b3b8b4c663b206bb3"
+                    "7fcc22a64abd185216416cdfddafc37a062f3d51386f7093f3940e56de518a61"
                 ),
                 "legacy-source-qualification-profiles.json": (
-                    "59bbbf48d5754235ff162db5ec352fcaec05a9c26481fa8881047e2df7de93ef"
+                    "19062bbe7ec4794622f73c323afc37c44e46888670e3eddb0dba10b0144baa09"
                 ),
             }
             assert (

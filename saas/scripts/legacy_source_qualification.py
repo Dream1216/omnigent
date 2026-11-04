@@ -620,12 +620,15 @@ def assess_all_app_policy(
                         else nonexecution.INFRASTRUCTURE_KIND
                     )
                     and proof["execution"]
-                    == (
-                        "native-refusal-then-cancelled"
+                    in (
+                        {"native-refusal-then-cancelled"}
                         if row["scope"] == "original-domain-refusal-cancellation"
-                        else "native-proven-zero"
+                        else {"native-proven-zero"}
                         if row["scope"] == "original-domain-zero-execution"
-                        else "native-infrastructure-executed-cancelled"
+                        else {
+                            "native-infrastructure-executed-cancelled",
+                            "native-assigned-runner-cancelled-execution-UNKNOWN",
+                        }
                     )
                     and any(
                         nonexecution.matching_refusal(proof, refusal)

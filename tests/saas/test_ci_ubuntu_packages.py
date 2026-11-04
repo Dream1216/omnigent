@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -60,21 +61,39 @@ def test_signed_package_setup_stops_on_failed_update(
     )
     sudo = commands / "sudo"
     sudo.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json,os,sys\nfrom pathlib import Path\n"
+        f"#!{sys.executable}\n"
+        "import hashlib,io,json,os,runpy,sys,urllib.request\nfrom pathlib import Path\n"
         "args=sys.argv[1:]\n"
         "if args[0]=='tee':\n"
         " row={'args':args,'content':sys.stdin.read()}\n"
         " with open(os.environ['TEST_APT_LOG'],'a') as f: f.write(json.dumps(row)+'\\n')\n"
         " sys.exit(0)\n"
+        "if args[0]=='python3':\n"
+        " with open(os.environ['TEST_APT_LOG'],'a') as f: "
+        "f.write(json.dumps({'args':args})+'\\n')\n"
+        " args[args.index('--output')+1]=os.environ['TEST_APT_CACHE']\n"
+        " urllib.request.urlopen=lambda *a,**k: io.BytesIO(b'locked Ubuntu package')\n"
+        " sys.argv=args[1:]\n runpy.run_path(args[1],run_name='__main__')\n sys.exit(0)\n"
         "source=next(x.split('=',1)[1] for x in args if x.startswith('Dir::Etc::sourcelist='))\n"
         "row={'args':args,'sources':Path(source).read_text()}\n"
         "op='update' if args[-1]=='update' else 'install'\n"
         "prior=[json.loads(line) for line in "
         "Path(os.environ['TEST_APT_LOG']).read_text().splitlines()]\n"
         "calls=sum(x['args'][0]=='apt-get' and "
+        "'--print-uris' not in x['args'] and "
         "(x['args'][-1]=='update')==(op=='update') for x in prior)\n"
         "with open(os.environ['TEST_APT_LOG'],'a') as f: f.write(json.dumps(row)+'\\n')\n"
+        "if '--print-uris' in args:\n"
+        " root=next(x for x in row['sources'].split() "
+        "if x.startswith('https://snapshot.ubuntu.com/'))\n"
+        " payload=b'locked Ubuntu package'\n"
+        ' print("\'"+root+"pool/main/t/tool/tool_1.0_amd64.deb\' '
+        'tool_1.0_amd64.deb "+str(len(payload))+" SHA256:"+'
+        "hashlib.sha256(payload).hexdigest())\n sys.exit(0)\n"
+        "if op=='install':\n"
+        " assert '--no-download' in args\n"
+        " assert (Path(os.environ['TEST_APT_CACHE'])/'tool_1.0_amd64.deb').read_bytes() "
+        "==b'locked Ubuntu package'\n"
         "errors=json.loads(os.environ['TEST_APT_'+op.upper()+'_ERRORS'])\n"
         "if calls<len(errors):\n print(errors[calls],file=sys.stderr)\n sys.exit(100)\n"
         "sys.exit(int(os.environ['TEST_APT_UPDATE_STATUS']) if args[-1]=='update' else 0)\n"
@@ -107,6 +126,7 @@ def test_signed_package_setup_stops_on_failed_update(
             "TEST_APT_UPDATE_STATUS": str(update_status),
             "TEST_APT_UPDATE_ERRORS": json.dumps(update_errors),
             "TEST_APT_INSTALL_ERRORS": json.dumps(install_errors),
+            "TEST_APT_CACHE": str(tmp_path / "prefetched-packages"),
         },
         capture_output=True,
         text=True,
@@ -153,7 +173,19 @@ def test_signed_package_setup_stops_on_failed_update(
         }
         for row in configs
     )
-    rows = [row for row in commands if row["args"][0] == "apt-get"]
+    rows = [
+        row
+        for row in commands
+        if row["args"][0] == "apt-get" and "--print-uris" not in row["args"]
+    ]
+    plans = [row for row in commands if "--print-uris" in row["args"]]
+    materializations = [row for row in commands if row["args"][0] == "python3"]
+    assert len(plans) == len(materializations) == installs
+    assert all("Acquire::ForceHash=SHA256" in row["args"] for row in plans)
+    assert all(
+        row["args"][2:] and row["args"][2:4] == ["--distribution", "ubuntu"]
+        for row in materializations
+    )
     assert len(rows) == updates + installs
     assert sum(row["args"][-1] == "update" for row in rows) == updates
     assert sum("install" in row["args"] for row in rows) == installs
@@ -183,13 +215,14 @@ def test_signed_package_setup_stops_on_failed_update(
     for row in rows:
         if "install" not in row["args"]:
             continue
-        assert row["args"][-6:] == [
+        assert row["args"][-7:] == [
             "install",
             "-y",
             "--no-install-recommends",
             "ripgrep",
             "bubblewrap",
             "tmux",
+            "--no-download",
         ]
     assert not list(tmp_path.glob("omnigent-ubuntu-sources.*"))
 
