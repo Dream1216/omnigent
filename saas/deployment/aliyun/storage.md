@@ -131,9 +131,13 @@ The Server read role needs only OSS listing under admitted output prefixes and
 deletes, Bucket administration or sandbox control. Its trust must authorize the
 Server's actual workload identity. The FC service trust used by mounted Volumes
 does not automatically authorize a Server to assume this role. The current
-Volume-control issuer grants no OSS reads and cannot supply this credential.
-A dedicated read-role policy, issuer, deployment and unattended rotation still
-need real IAM and lifecycle acceptance before production activation.
+Volume-control configuration grants no OSS reads and cannot supply this credential.
+The [STS issuer](sts-issuer.md) has a separate schema-2 `output_read` configuration
+for canonical admitted Session output prefixes, with its own role and private
+file. It reuses the bounded IMDSv2/STS transport and atomic renewal without
+combining the control and read permissions. A dedicated read-role policy,
+normal source identity, deployment and unattended rotation still need real IAM
+and lifecycle acceptance before production activation.
 
 Version 3 namespaces include the effective logical Project:
 

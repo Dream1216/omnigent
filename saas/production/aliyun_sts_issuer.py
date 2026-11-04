@@ -1,4 +1,4 @@
-"""Issue Team-scoped Volume credentials outside the Server's request process."""
+"""Renew scoped storage credentials outside the Server's request process."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -25,7 +25,7 @@ from uuid import UUID
 
 import httpx
 
-from saas.production.aliyun_storage import AliyunStorageError
+from saas.production.aliyun_storage import AliyunStorageError, _compact_scope
 from saas.production.aliyun_sts import (
     encode_sts_document,
     read_sts_document,
@@ -36,6 +36,7 @@ from saas.production.tenant_model_keys import _read_file
 
 _IMDS = "http://100.100.100.200/latest/"
 _STS_HOST = "sts.cn-hangzhou.aliyuncs.com"
+_STS_VPC_HOST = "sts-vpc.cn-hangzhou.aliyuncs.com"
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class AliyunStsIssuerConfig:
     role_arn: str
     team_id: UUID
     credential_file: Path
+    sts_vpc: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if (
@@ -59,8 +61,17 @@ class AliyunStsIssuerConfig:
             or not self.credential_file.is_absolute()
             or ".." in self.credential_file.parts
             or re.fullmatch(r"[a-z][a-z0-9-]{0,63}\.json", self.credential_file.name) is None
+            or type(self.sts_vpc) is not bool
         ):
             raise AliyunStorageError("Aliyun STS issuer configuration is invalid")
+
+    @property
+    def sts_host(self) -> str:
+        return _STS_VPC_HOST if self.sts_vpc else _STS_HOST
+
+    @property
+    def session_name_prefix(self) -> str:
+        return "omnigent-volume-"
 
     @property
     def policy(self) -> str:
@@ -87,6 +98,60 @@ class AliyunStsIssuerConfig:
         )
 
 
+@dataclass(frozen=True)
+class AliyunOutputReadStsIssuerConfig(AliyunStsIssuerConfig):
+    bucket: str
+    output_prefixes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if (
+            not isinstance(self.bucket, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", self.bucket) is None
+            or not isinstance(self.output_prefixes, tuple)
+            or not 1 <= len(self.output_prefixes) <= 32
+        ):
+            raise AliyunStorageError("Aliyun output STS scope is invalid")
+        for prefix in self.output_prefixes:
+            scope = _compact_scope(prefix) if isinstance(prefix, str) else None
+            if scope is None or scope.directory != "outputs" or scope.project_id is None:
+                raise AliyunStorageError("Aliyun output STS scope is invalid")
+        if len(set(self.output_prefixes)) != len(self.output_prefixes) or len(self.policy) > 2048:
+            raise AliyunStorageError("Aliyun output STS scope is invalid")
+
+    @property
+    def session_name_prefix(self) -> str:
+        return "omnigent-output-read-"
+
+    @property
+    def policy(self) -> str:
+        bucket = f"acs:oss:*:*:{self.bucket}"
+        return json.dumps(
+            {
+                "Version": "1",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": ["oss:ListObjects"],
+                        "Resource": [bucket],
+                        "Condition": {
+                            "StringLike": {
+                                "oss:Prefix": [p.lstrip("/") + "*" for p in self.output_prefixes]
+                            }
+                        },
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": ["oss:GetObject"],
+                        "Resource": [bucket + p + "*" for p in self.output_prefixes],
+                    },
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
 def load_issuer_config(path: Path, expected_sha256: str) -> AliyunStsIssuerConfig:
     try:
         raw = _read_file(path, private=True, maximum=16384)
@@ -96,22 +161,45 @@ def load_issuer_config(path: Path, expected_sha256: str) -> AliyunStsIssuerConfi
         ):
             raise ValueError
         value = json.loads(raw)
+        if not isinstance(value, dict) or raw != encode_sts_document(value):
+            raise ValueError
+        fields = {"schema_version", "source_role_name", "role_arn", "team_id", "credential_file"}
+        version_two = value.get("schema_version") == 2
+        output_read = version_two and value.get("purpose") == "output_read"
+        if version_two:
+            fields |= {"purpose", "network"}
+            if value.get("purpose") not in ("volume_control", "output_read") or value.get(
+                "network"
+            ) not in ("public", "vpc"):
+                raise ValueError
+        if output_read:
+            fields |= {"bucket", "output_prefixes"}
         if (
-            not isinstance(value, dict)
-            or set(value)
-            != {"schema_version", "source_role_name", "role_arn", "team_id", "credential_file"}
-            or raw != encode_sts_document(value)
+            set(value) != fields
             or type(value["schema_version"]) is not int
-            or value["schema_version"] != 1
+            or value["schema_version"] not in (1, 2)
             or str(UUID(value["team_id"])) != value["team_id"]
         ):
             raise ValueError
-        config = AliyunStsIssuerConfig(
+        arguments = (
             value["source_role_name"],
             value["role_arn"],
             UUID(value["team_id"]),
             Path(value["credential_file"]),
         )
+        if output_read:
+            if value["purpose"] != "output_read" or not isinstance(value["output_prefixes"], list):
+                raise ValueError
+            config = AliyunOutputReadStsIssuerConfig(
+                *arguments,
+                value["bucket"],
+                tuple(value["output_prefixes"]),
+                sts_vpc=value["network"] == "vpc",
+            )
+        else:
+            config = AliyunStsIssuerConfig(
+                *arguments, sts_vpc=version_two and value["network"] == "vpc"
+            )
         if path == config.credential_file:
             raise ValueError
         return config
@@ -284,7 +372,8 @@ class AliyunVolumeStsIssuer:
         from darabonba.request import DaraRequest
         from darabonba.runtime import RuntimeOptions
 
-        session = "omnigent-volume-" + secrets.token_hex(8)
+        session = self.config.session_name_prefix + secrets.token_hex(8)
+        host = self.config.sts_host
         expected = {
             "DurationSeconds": "900",
             "RoleArn": self.config.role_arn,
@@ -317,7 +406,7 @@ class AliyunVolumeStsIssuer:
                 signed.method, signed.pathname, signed.query = "POST", "/", query
                 digest = hashlib.sha256(b"").hexdigest()
                 signed.headers = {
-                    "host": _STS_HOST,
+                    "host": host,
                     "x-acs-action": "AssumeRole",
                     "x-acs-version": "2015-04-01",
                     "x-acs-date": Utils.get_timestamp(),
@@ -336,7 +425,7 @@ class AliyunVolumeStsIssuer:
                     credentials["access_key_secret"],
                 )
                 result = json.loads(
-                    transport("POST", f"https://{_STS_HOST}/", headers=signed.headers, query=query)
+                    transport("POST", f"https://{host}/", headers=signed.headers, query=query)
                 )
                 if not isinstance(result, dict):
                     raise ValueError

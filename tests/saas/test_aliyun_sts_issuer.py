@@ -6,6 +6,7 @@ import os
 import stat
 from dataclasses import replace
 from datetime import UTC, datetime
+from fnmatch import fnmatchcase
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,15 +14,18 @@ import httpx
 import pytest
 
 from saas.production import aliyun_sts_issuer as module
-from saas.production.aliyun_storage import AliyunStorageError
+from saas.production.aliyun_artifacts import AliyunArtifactReader
+from saas.production.aliyun_storage import AliyunOssStorageConfig, AliyunStorageError
 from saas.production.aliyun_sts import encode_sts_document, read_sts_document
 from saas.production.aliyun_sts_issuer import (
+    AliyunOutputReadStsIssuerConfig,
     AliyunStsIssuerConfig,
     AliyunVolumeStsIssuer,
     load_issuer_config,
 )
 from saas.production.aliyun_volume_control import AliyunVolumeControlClient
 from tests.saas.test_aliyun_volume_control import _assert_signature
+from tests.saas.test_tenant_sandbox import _runtime
 
 
 def _utc(epoch):
@@ -29,17 +33,40 @@ def _utc(epoch):
 
 
 @pytest.fixture
-def issuer_case(tmp_path):
+def issuer_case(tmp_path, request):
     directory = tmp_path / "private"
     directory.mkdir(mode=0o700)
+    mode = getattr(request, "param", "volume")
     config = AliyunStsIssuerConfig(
         "synthetic-source-role",
         "acs:ram::1234567890123456:role/omnigent-volume-control",
         uuid4(),
         directory / "storage-sts.json",
+        sts_vpc=mode.endswith("_vpc"),
     )
+    runtime = replace(_runtime(), project_id=uuid4())
+    storage = AliyunOssStorageConfig(
+        config.team_id,
+        runtime.tenant_id,
+        runtime.physical_workspace_id,
+        "omnigent-p4-test-bucket",
+        "acs:ram::1234567890123456:role/synthetic-fc-mount",
+        project_scoped=True,
+    )
+    if mode.startswith("output_read"):
+        config = AliyunOutputReadStsIssuerConfig(
+            config.source_role_name,
+            "acs:ram::1234567890123456:role/omnigent-output-read",
+            config.team_id,
+            directory / "outputs-read-sts.json",
+            storage.bucket,
+            (storage.session(runtime, uuid4()).volumes[1].bucket_path,),
+            sts_vpc=config.sts_vpc,
+        )
     c = SimpleNamespace(
         config=config,
+        runtime=runtime,
+        storage=storage,
         requests=[],
         now=1000,
         fail_phase=None,
@@ -106,13 +133,29 @@ def issuer_case(tmp_path):
         "team_id": str(config.team_id),
         "credential_file": str(config.credential_file),
     }
+    if config.sts_vpc or isinstance(config, AliyunOutputReadStsIssuerConfig):
+        document.update(
+            schema_version=2,
+            purpose="volume_control",
+            network="vpc" if config.sts_vpc else "public",
+        )
+    if isinstance(config, AliyunOutputReadStsIssuerConfig):
+        document.update(
+            schema_version=2,
+            purpose="output_read",
+            bucket=config.bucket,
+            output_prefixes=list(config.output_prefixes),
+        )
     c.config_file.write_bytes(encode_sts_document(document))
     c.config_file.chmod(0o600)
     c.config_hash = hashlib.sha256(c.config_file.read_bytes()).hexdigest()
     return c
 
 
-def test_real_sdk_signs_team_only_assumption_and_publishes_consumer_document(
+@pytest.mark.parametrize(
+    "issuer_case", ["volume", "volume_vpc", "output_read", "output_read_vpc"], indirect=True
+)
+def test_real_sdk_signs_scoped_assumption_and_publishes_consumer_document(
     issuer_case, monkeypatch, capsys
 ):
     c = issuer_case
@@ -124,7 +167,12 @@ def test_real_sdk_signs_team_only_assumption_and_publishes_consumer_document(
     assert [(r.method, r.url.host) for r in c.requests] == [
         ("PUT", "100.100.100.200"),
         ("GET", "100.100.100.200"),
-        ("POST", "sts.cn-hangzhou.aliyuncs.com"),
+        (
+            "POST",
+            "sts-vpc.cn-hangzhou.aliyuncs.com"
+            if c.config.sts_vpc
+            else "sts.cn-hangzhou.aliyuncs.com",
+        ),
     ]
     assert c.requests[0].headers["x-aliyun-ecs-metadata-token-ttl-seconds"] == "60"
     assert c.requests[1].headers["x-aliyun-ecs-metadata-token"] == c.token.decode()
@@ -134,15 +182,36 @@ def test_real_sdk_signs_team_only_assumption_and_publishes_consumer_document(
     assert query["DurationSeconds"] == "900"
     assert query["RoleArn"] == c.config.role_arn
     assert query["ExternalId"] == str(c.config.team_id)
-    assert json.loads(query["Policy"])["Statement"] == [
-        {
-            "Effect": "Allow",
-            "Action": ["sandbox:CreateVolume", "sandbox:GetVolume", "sandbox:ListVolumes"],
-            "Resource": (
-                f"acs:sandbox:cn-hangzhou:1234567890123456:teams/{c.config.team_id}/volumes/*"
-            ),
-        }
-    ]
+    if isinstance(c.config, AliyunOutputReadStsIssuerConfig):
+        assert query["RoleSessionName"].startswith("omnigent-output-read-")
+        assert json.loads(query["Policy"])["Statement"] == [
+            {
+                "Effect": "Allow",
+                "Action": ["oss:ListObjects"],
+                "Resource": ["acs:oss:*:*:omnigent-p4-test-bucket"],
+                "Condition": {
+                    "StringLike": {"oss:Prefix": [c.config.output_prefixes[0].lstrip("/") + "*"]}
+                },
+            },
+            {
+                "Effect": "Allow",
+                "Action": ["oss:GetObject"],
+                "Resource": [
+                    "acs:oss:*:*:omnigent-p4-test-bucket" + c.config.output_prefixes[0] + "*"
+                ],
+            },
+        ]
+    else:
+        assert query["RoleSessionName"].startswith("omnigent-volume-")
+        assert json.loads(query["Policy"])["Statement"] == [
+            {
+                "Effect": "Allow",
+                "Action": ["sandbox:CreateVolume", "sandbox:GetVolume", "sandbox:ListVolumes"],
+                "Resource": (
+                    f"acs:sandbox:cn-hangzhou:1234567890123456:teams/{c.config.team_id}/volumes/*"
+                ),
+            }
+        ]
     _assert_signature(
         c.requests[2],
         {
@@ -155,32 +224,54 @@ def test_real_sdk_signs_team_only_assumption_and_publishes_consumer_document(
     assert stored["issued_at"] == c.now
     assert c.config.credential_file.stat().st_mode & 0o777 == 0o600
     assert c.source["SecurityToken"].encode() not in c.config.credential_file.read_bytes()
-    AliyunVolumeControlClient(
-        team_id=c.config.team_id,
-        credential_file=c.config.credential_file,
-        clock=lambda: c.now,
-    ).prepare()
+    if isinstance(c.config, AliyunOutputReadStsIssuerConfig):
+        AliyunArtifactReader(
+            (c.storage,),
+            credential_file=c.config.credential_file,
+            authorize=lambda _: c.runtime,
+            clock=lambda: c.now,
+        ).prepare()
+    else:
+        AliyunVolumeControlClient(
+            team_id=c.config.team_id,
+            credential_file=c.config.credential_file,
+            clock=lambda: c.now,
+        ).prepare()
     output = capsys.readouterr()
     assert output.out == output.err == ""
 
 
-def test_rotation_changes_inode_and_keeps_existing_volume_client_usable(issuer_case):
+@pytest.mark.parametrize(
+    "issuer_case", ["volume", "volume_vpc", "output_read", "output_read_vpc"], indirect=True
+)
+def test_rotation_changes_inode_and_keeps_existing_consumer_usable(issuer_case):
     c = issuer_case
-    client = AliyunVolumeControlClient(
-        team_id=c.config.team_id,
-        credential_file=c.config.credential_file,
-        clock=lambda: c.now,
-    )
+    if isinstance(c.config, AliyunOutputReadStsIssuerConfig):
+        reader = AliyunArtifactReader(
+            (c.storage,),
+            credential_file=c.config.credential_file,
+            authorize=lambda _: c.runtime,
+            clock=lambda: c.now,
+        )
+        credentials = reader.prepare
+    else:
+        client = AliyunVolumeControlClient(
+            team_id=c.config.team_id,
+            credential_file=c.config.credential_file,
+            clock=lambda: c.now,
+        )
+        credentials = client._credentials
     c.build().refresh()
     inode = c.config.credential_file.stat().st_ino
-    assert client._credentials()["security_token"] == c.target_token
+    assert credentials()["security_token"] == c.target_token
     c.target_token += "-rotated"
     c.now += 300
     assert c.build().refresh() == 2200
     assert c.config.credential_file.stat().st_ino != inode
-    assert client._credentials()["security_token"] == c.target_token
+    assert credentials()["security_token"] == c.target_token
 
 
+@pytest.mark.parametrize("issuer_case", ["volume", "volume_vpc"], indirect=True)
 def test_default_transport_disables_ambient_proxies_and_redirects(issuer_case, monkeypatch):
     c = issuer_case
     original = httpx.Client
@@ -198,6 +289,7 @@ def test_default_transport_disables_ambient_proxies_and_redirects(issuer_case, m
 
 
 @pytest.mark.parametrize("phase", ["token", "source", "sts"])
+@pytest.mark.parametrize("issuer_case", ["volume", "output_read"], indirect=True)
 @pytest.mark.parametrize(
     "failure", [301, 302, 307, 308, 403, httpx.ReadTimeout("private-signed-request")]
 )
@@ -276,6 +368,7 @@ def test_wrong_identity_or_invalid_assumed_credentials_cannot_be_published(issue
         "lock_permissions",
     ],
 )
+@pytest.mark.parametrize("issuer_case", ["volume", "output_read"], indirect=True)
 def test_unsafe_destination_is_rejected_before_network(issuer_case, tmp_path, kind):
     c = issuer_case
     if kind == "parent_permissions":
@@ -360,6 +453,8 @@ def test_directory_sync_failure_leaves_a_complete_valid_document(issuer_case, mo
         ("source_role_name", "omnigent-volume-control"),
         ("team_id", None),
         ("role_arn", "acs:ram::1234567890123456:role/*"),
+        ("sts_vpc", "https://untrusted.invalid"),
+        ("sts_vpc", 1),
     ],
 )
 def test_invalid_configuration_is_not_an_ambient_role_fallback(issuer_case, field, value):
@@ -367,6 +462,9 @@ def test_invalid_configuration_is_not_an_ambient_role_fallback(issuer_case, fiel
         replace(issuer_case.config, **{field: value})
 
 
+@pytest.mark.parametrize(
+    "issuer_case", ["volume", "volume_vpc", "output_read", "output_read_vpc"], indirect=True
+)
 def test_config_is_private_canonical_and_hash_pinned(issuer_case):
     c = issuer_case
     assert load_issuer_config(c.config_file, c.config_hash) == c.config
@@ -396,6 +494,7 @@ def test_missing_sdk_is_reported_without_fetching_metadata(issuer_case, monkeypa
     assert issuer_case.requests == []
 
 
+@pytest.mark.parametrize("issuer_case", ["volume", "output_read"], indirect=True)
 def test_cli_once_and_readiness_never_print_credentials(issuer_case, monkeypatch, capsys):
     c = issuer_case
     issuer = c.build()
@@ -416,6 +515,7 @@ def test_cli_once_and_readiness_never_print_credentials(issuer_case, monkeypatch
     assert c.source["SecurityToken"] not in output.err + output.out
 
 
+@pytest.mark.parametrize("issuer_case", ["volume", "output_read"], indirect=True)
 def test_continuous_cli_retries_failed_issuance_and_stops_cleanly(
     issuer_case, monkeypatch, capsys
 ):
@@ -452,6 +552,7 @@ def test_continuous_cli_retries_failed_issuance_and_stops_cleanly(
     assert "private-synthetic-error" not in output.out + output.err
 
 
+@pytest.mark.parametrize("issuer_case", ["volume", "output_read"], indirect=True)
 def test_policy_review_command_does_not_fetch_or_write_credentials(issuer_case, capsys):
     c = issuer_case
     assert (
@@ -471,3 +572,116 @@ def test_policy_review_command_does_not_fetch_or_write_credentials(issuer_case, 
     assert output.err == ""
     assert not c.config.credential_file.exists()
     assert c.requests == []
+
+
+@pytest.mark.parametrize("issuer_case", ["output_read"], indirect=True)
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "inputs",
+        "unbound",
+        "session_wildcard",
+        "zero_project",
+        "relative",
+        "missing_slash",
+        "traversal",
+        "duplicate",
+        "mutable",
+        "empty",
+        "bucket_wildcard",
+        "oversize_policy",
+    ],
+)
+def test_output_issuer_rejects_unbound_wildcard_or_excess_scope_before_network(issuer_case, kind):
+    c = issuer_case
+    prefix = c.config.output_prefixes[0]
+    values = {"output_prefixes": (prefix,)}
+    if kind == "inputs":
+        values["output_prefixes"] = (prefix.replace("/outputs/", "/inputs/"),)
+    elif kind in {"unbound", "session_wildcard", "zero_project"}:
+        parts = prefix.split("/")
+        parts[-3 if kind == "session_wildcard" else -4] = {
+            "unbound": "unbound",
+            "session_wildcard": "*",
+            "zero_project": "A" * 22,
+        }[kind]
+        values["output_prefixes"] = ("/".join(parts),)
+    elif kind == "relative":
+        values["output_prefixes"] = (prefix.lstrip("/"),)
+    elif kind == "missing_slash":
+        values["output_prefixes"] = (prefix.rstrip("/"),)
+    elif kind == "traversal":
+        values["output_prefixes"] = (prefix + "../",)
+    elif kind == "duplicate":
+        values["output_prefixes"] = (prefix, prefix)
+    elif kind == "mutable":
+        values["output_prefixes"] = [prefix]
+    elif kind == "empty":
+        values["output_prefixes"] = ()
+    elif kind == "bucket_wildcard":
+        values["bucket"] = "*"
+    else:
+        values["output_prefixes"] = tuple(
+            c.storage.session(c.runtime, uuid4()).volumes[1].bucket_path for _ in range(32)
+        )
+    with pytest.raises(AliyunStorageError):
+        replace(c.config, **values)
+    assert c.requests == []
+
+
+@pytest.mark.parametrize("issuer_case", ["output_read"], indirect=True)
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"schema_version": 1},
+        {"purpose": "volume"},
+        {"network": "https://untrusted.invalid"},
+        {"network": "cn-shanghai"},
+        {"network": True},
+        {"output_prefixes": "not-a-list"},
+        {"output_prefixes": [None]},
+        {"output_prefixes": []},
+        {"bucket": "../other"},
+        {"endpoint": "https://untrusted.invalid"},
+    ],
+)
+def test_output_issuer_config_cannot_downgrade_or_select_ambient_authority(issuer_case, changes):
+    c = issuer_case
+    document = json.loads(c.config_file.read_bytes())
+    document.update(changes)
+    c.config_file.write_bytes(encode_sts_document(document))
+    with pytest.raises(AliyunStorageError):
+        load_issuer_config(c.config_file, hashlib.sha256(c.config_file.read_bytes()).hexdigest())
+    assert c.requests == []
+
+
+@pytest.mark.parametrize("issuer_case", ["output_read_vpc"], indirect=True)
+def test_output_policy_covers_five_admitted_sessions_without_matching_other_scopes(issuer_case):
+    c = issuer_case
+    prefixes = tuple(
+        c.storage.session(c.runtime, uuid4()).volumes[1].bucket_path for _ in range(5)
+    )
+    config = replace(c.config, output_prefixes=prefixes)
+    policy = json.loads(config.policy)
+    assert len(config.policy) <= 2048
+    listing, objects = policy["Statement"]
+    assert listing["Action"] == ["oss:ListObjects"]
+    assert objects["Action"] == ["oss:GetObject"]
+    bucket = "acs:oss:*:*:" + c.storage.bucket
+    for prefix in prefixes:
+        assert any(fnmatchcase(bucket + prefix + "file.txt", p) for p in objects["Resource"])
+        assert any(
+            fnmatchcase(prefix.lstrip("/") + "folder/", p)
+            for p in listing["Condition"]["StringLike"]["oss:Prefix"]
+        )
+    foreign = [
+        c.storage.session(c.runtime, uuid4()).volumes[1].bucket_path,
+        c.storage.session(replace(c.runtime, project_id=uuid4()), uuid4()).volumes[1].bucket_path,
+        prefixes[0].replace("/outputs/", "/inputs/"),
+    ]
+    for prefix in foreign:
+        assert not any(fnmatchcase(bucket + prefix + "file.txt", p) for p in objects["Resource"])
+        assert not any(
+            fnmatchcase(prefix.lstrip("/"), p)
+            for p in listing["Condition"]["StringLike"]["oss:Prefix"]
+        )

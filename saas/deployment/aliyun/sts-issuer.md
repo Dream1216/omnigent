@@ -1,11 +1,12 @@
-# Volume control STS issuer candidate
+# Storage STS issuer candidate
 
 `saas.production.aliyun_sts_issuer` renews the private STS file consumed by
-profile-v2 storage. It is an explicit, separately operated process. Installing
+profile-v2 storage, or a separate output-read credential for profile v3.
+It is an explicit, separately operated process. Installing
 the code does not start it or change IAM, an instance role, Kubernetes or the
 production Server. Cloud issuance and unattended renewal still need acceptance.
 
-## Identity and permission boundary
+## Volume identity and permission boundary
 
 The issuer reads one explicitly named ECS instance role through IMDSv2 at the
 fixed link-local endpoint. It uses that temporary identity to assume a separate
@@ -39,6 +40,11 @@ These are three distinct identities:
 | Source instance role | Bootstrap the issuer | Assume the one reviewed control role |
 | Target control role | Server's Volume metadata calls | Create/Get/List Volumes for one Team |
 | Sandbox mount role | MicroVM's OSS access | Restricted input/output object prefixes; trust `fc.aliyuncs.com` |
+
+The output-read credential uses a fourth, separate target role. A reviewed
+source may assume both exact targets, but neither target can assume the other.
+Do not add these grants to an unrelated shared instance role. The Server receives
+only the two independently scoped target files, never the source credentials.
 
 The source credentials stay in issuer memory. The Server receives only the
 downscoped target credentials. The Host receives neither identity. VM teardown
@@ -120,6 +126,57 @@ python -m saas.production.aliyun_sts_issuer \
 This command only validates the pinned configuration and prints its Team policy.
 It does not read instance credentials, create a role or write an STS file.
 
+## Explicit VPC transport and output-read renewal
+
+Schema 1 retains its original public Hangzhou STS endpoint and Volume policy.
+Schema 2 requires `purpose` (`volume_control` or `output_read`) and `network`
+(`public` or `vpc`). Only the two documented Hangzhou HTTPS hosts are selectable;
+an arbitrary URL, region, proxy or environment override is not accepted. The
+actual host is included in the signed request. TLS verification, IMDSv2,
+900-second expiry and 300-second refresh are unchanged. A private issuer still
+needs a real DNS/TLS check from its VPC; an endpoint name alone proves no route.
+
+For a private Volume issuer, retain the existing five configuration fields and
+set `schema_version: 2`, `purpose: "volume_control"`, `network: "vpc"`.
+
+For output reads, use a separate pinned configuration and destination file:
+
+```json
+{
+  "schema_version": 2,
+  "purpose": "output_read",
+  "network": "vpc",
+  "source_role_name": "reviewed-source-role",
+  "role_arn": "acs:ram::1234567890123456:role/omnigent-output-read",
+  "team_id": "11111111-2222-4333-8444-555555555555",
+  "credential_file": "/run/omnigent-aliyun/private/outputs-read-sts.json",
+  "bucket": "reviewed-output-bucket",
+  "output_prefixes": [
+    "/<prefix>/v3/<tenant64>/<space64>/<project64>/<actual-session64>/outputs/"
+  ]
+}
+```
+
+Replace every placeholder from actual admitted Session bindings before rendering
+or activating this file. The loader accepts only canonical Project-bound v3
+Session output prefixes, including the leading/trailing slash. It rejects
+unbound, input, traversal, wildcard, duplicate and oversized scopes. Multiple
+explicit Session prefixes are supported within STS's 2048-character policy
+limit; a new Session gains no access merely by supplying its ID.
+
+The generated read session policy contains only prefix-constrained
+`oss:ListObjects` and `oss:GetObject`; it contains no input, write, delete,
+Bucket-admin or Volume permission. The read target's attached policy must be
+equally restricted, and its trust must require the exact source ARN and Team
+ExternalId. `--print-policy`, `--once`, `--check` and continuous mode use the same
+commands as the Volume issuer, with this second configuration/hash. Operate both
+under the existing supervisor with separate files and locks. The profile rejects
+reused control/read paths or access-key identities.
+
+This supplies the explicit output-read renewal implementation; normal IAM
+issuance, independent role identity, private file delivery, actual refresh,
+expiry and deployed download denial remain live acceptance requirements.
+
 ## Deployment prerequisites and acceptance
 
 1. Review the source-role grant and target-role trust/permissions before enabling
@@ -150,4 +207,5 @@ uv run pytest tests/saas/test_aliyun_sts_issuer.py \
 
 References: [ECS instance roles](https://help.aliyun.com/zh/ecs/user-guide/attach-an-instance-ram-role-to-an-ecs-instance),
 [AssumeRole](https://help.aliyun.com/zh/ram/developer-reference/api-sts-2015-04-01-assumerole),
+[Hangzhou public/VPC STS endpoints](https://www.alibabacloud.com/help/zh/ram/developer-reference/api-sts-2015-04-01-endpoint),
 [Volume Team permissions](https://help.aliyun.com/zh/agent-sandbox/create-oss-volume).
