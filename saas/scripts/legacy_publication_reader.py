@@ -311,7 +311,7 @@ def read_registered_publication(
         }
         require(publication == expected, "historical publication differs from exact OCI")
         runtime = publisher.verify_runtime_report(
-            exports["runtime"], admission, publication, manifest
+            exports["runtime"], admission, publication, manifest, oci_root=oci
         )
         predicate = publisher.typed_provenance(
             admission,

@@ -65,11 +65,11 @@ def eligible_match(report: dict[str, Any], *, now: datetime) -> bool:
         and artifact.get("type") == "apk"
         and artifact.get("name") == RULE["package"]
         and artifact.get("version") == RULE["version"]
-        and bool(item.get("matchDetails"))
-        and all(
-            isinstance(detail, dict) and detail.get("matcher") == "apk-matcher"
-            for detail in item["matchDetails"]
-        )
+        and isinstance(item.get("matchDetails"), list)
+        and len(item["matchDetails"]) == 1
+        and isinstance(item["matchDetails"][0], dict)
+        and item["matchDetails"][0].get("matcher") == "apk-matcher"
+        and item["matchDetails"][0].get("type") == "cpe-match"
     )
 
 
@@ -170,6 +170,7 @@ def component_inventory(blobs: ImageBlobs, manifest: dict[str, Any]) -> list[dic
                     "path": name,
                     "type": member.type.decode(),
                     "link": member.linkname,
+                    "mode": member.mode,
                 }
                 if member.isfile():
                     stream = layer.extractfile(member)
@@ -188,10 +189,10 @@ def component_inventory(blobs: ImageBlobs, manifest: dict[str, Any]) -> list[dic
                             for marker in markers:
                                 markers[marker] |= marker in tail + chunk
                             tail = chunk[-64:]
-                        shell = markers[b".recover"] and markers[b"sqlite> "]
-                        recover = markers[b"sqlite3_recover_init"] or (
-                            selected and markers[b".recover"]
+                        shell = (
+                            prefix == b"\x7fELF" and markers[b".recover"] and markers[b"sqlite> "]
                         )
+                        recover = prefix == b"\x7fELF" and markers[b"sqlite3_recover_init"]
                         selected |= shell or recover
                         facts.update(sha256=checksum.hexdigest(), shell=shell, recover=recover)
                 if selected:
@@ -270,7 +271,11 @@ def disposition_receipt(
         if (
             item.get("shell")
             or item.get("recover")
-            or (item["type"] != "5" and re.fullmatch(r"sqlite3(?:[-.].*)?", basename))
+            or (
+                item["type"] != "5"
+                and re.fullmatch(r"sqlite3(?:\.exe|-[0-9][0-9.]*)?", basename)
+                and (item["type"] in {"1", "2"} or bool(item.get("mode", 0) & 0o111))
+            )
         ):
             raise ValueError("SQLite shell or recovery component is present")
         if (
@@ -300,7 +305,7 @@ def disposition_receipt(
     }
 
 
-def validate_disposition(
+def _validate_disposition_receipt(
     report_path: Path | bytes, proof: object, *, now: datetime
 ) -> dict[str, Any]:
     if (
@@ -318,6 +323,18 @@ def validate_disposition(
     return expected
 
 
+def validate_disposition(
+    report_path: Path, proof: object, *, image: Path | None = None, now: datetime
+) -> dict[str, Any]:
+    receipt = _validate_disposition_receipt(report_path, proof, now=now)
+    if image is None:
+        raise ValueError("finite component disposition requires actual verified OCI input")
+    actual = inspect_disposition(image, report_path, platform=receipt["platform"], now=now)
+    if receipt != actual:
+        raise ValueError("finite component inventory differs from actual OCI contents")
+    return actual
+
+
 def main() -> None:
     from saas.scripts.scan_oci_candidates import scan_report
 
@@ -326,9 +343,14 @@ def main() -> None:
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--scanner-exit", type=int, required=True)
     args = parser.parse_args()
     raw = json.loads(args.report.read_bytes())
     parsed = scan_report(raw)
+    if args.scanner_exit not in (0, 2) or (
+        args.scanner_exit == 2 and not any(parsed["counts"].values())
+    ):
+        raise ValueError("unexpected actual scanner exit")
     proof = (
         inspect_disposition(args.image, args.report, platform=args.platform, now=datetime.now(UTC))
         if any(parsed["counts"].values())
@@ -336,7 +358,11 @@ def main() -> None:
     )
     args.output.write_text(
         json.dumps(
-            {"raw_counts": parsed["counts"], "component_disposition": proof},
+            {
+                "raw_counts": parsed["counts"],
+                "scanner_exit": args.scanner_exit,
+                "component_disposition": proof,
+            },
             sort_keys=True,
             indent=2,
         )
@@ -349,8 +375,14 @@ if __name__ == "__main__":
 
 
 def validate_release_dispositions(
-    image: dict[str, Any], scan: dict[str, Any], *, now: datetime
+    repo: Path,
+    image: dict[str, Any],
+    scan: dict[str, Any],
+    evidence: dict[str, Any],
+    *,
+    now: datetime,
 ) -> None:
+    require_admitted_image_inventory(repo, evidence, image, now=now)
     bundle = scan.get("component_dispositions")
     if (
         not isinstance(bundle, list)
@@ -368,7 +400,7 @@ def validate_release_dispositions(
     seen = set()
     for item in bundle:
         raw = item["raw_report"].encode()
-        proof = validate_disposition(raw, item["proof"], now=now)
+        proof = _validate_disposition_receipt(raw, item["proof"], now=now)
         platform = proof["platform"]
         if (
             platform in seen
@@ -378,3 +410,31 @@ def validate_release_dispositions(
         ):
             raise ValueError("release component disposition belongs to another subject")
         seen.add(platform)
+
+
+def require_admitted_image_inventory(
+    repo: Path, evidence: dict[str, Any], image: dict[str, Any], *, now: datetime
+) -> None:
+    from saas.production import admission
+
+    policy_path = repo / "saas/production/evidence-admission-policy.json"
+    policy = json.loads(policy_path.read_text())
+    result = admission.validate_evidence_admission(
+        repo,
+        policy,
+        now=now,
+        expected_product_revision=image["labels"]["org.opencontainers.image.revision"],
+    )
+    _, key_violations, _ = admission._load_keys(repo, policy, now=now)
+    if (
+        admission._validate_policy(repo, policy)
+        or key_violations
+        or result["kinds"]["image"]["status"] != "pass"
+        or result["kinds"]["image"]["production_readiness"] != "ready"
+    ):
+        raise ValueError("finite image inventory lacks trusted signed evidence admission")
+    files, _ = admission._load_policy_files(repo, policy)
+    documents = [json.loads((repo / path).read_text()) for path in files["image"]]
+    bodies = [document.get("release_evidence", document) for document in documents]
+    if evidence not in bodies or image not in evidence.get("images", []):
+        raise ValueError("finite image inventory differs from the authenticated evidence document")

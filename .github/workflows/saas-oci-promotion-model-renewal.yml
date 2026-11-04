@@ -217,7 +217,6 @@ jobs:
           [[ "$(crane digest "$IMAGE_TAG")" == "$expected" ]]
           echo "digest=${expected}" >> "$GITHUB_OUTPUT"
           test -f "${RUNNER_TEMP}/admitted-layouts/server/index.json"
-          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server"
       - name: Promote admitted host OCI without rebuilding
         id: build-host
         env:
@@ -229,7 +228,6 @@ jobs:
           [[ "$(crane digest "$IMAGE_TAG")" == "$expected" ]]
           echo "digest=${expected}" >> "$GITHUB_OUTPUT"
           test -f "${RUNNER_TEMP}/admitted-layouts/host/index.json"
-          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/host"
       - name: Read back promoted OCI bytes before signing
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
@@ -328,15 +326,17 @@ jobs:
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
               "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
                 --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
+              grype_exit=$?
               jq -e '
                 (.ignoredMatches // []) == []
               ' "${prefix}.raw.grype.json" >/dev/null
               python -m saas.scripts.sqlite_component_disposition \
                 --image "${RUNNER_TEMP}/admitted-layouts/${artifact}" \
                 --report "${prefix}.raw.grype.json" --platform "linux/${arch}" \
-                --output "${prefix}.component-disposition.json"
+                --output "${prefix}.component-disposition.json" --scanner-exit "$grype_exit"
             done
           done
+          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server" "${RUNNER_TEMP:?}/admitted-layouts/host"
           "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
             > artifacts/supply-chain/grype-database.json
           find artifacts/supply-chain -type f ! -name SHA256SUMS -print0 \

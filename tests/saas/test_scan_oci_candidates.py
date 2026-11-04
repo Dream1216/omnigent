@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -15,7 +16,11 @@ from saas.scripts.scan_oci_candidates import (
 
 def test_database_must_be_fresh_and_timezone_bound() -> None:
     now = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
-    current = {"valid": True, "schemaVersion": "v6.1.10", "built": "2026-10-08T06:00:00Z"}
+    current: dict[str, Any] = {
+        "valid": True,
+        "schemaVersion": "v6.1.10",
+        "built": "2026-10-08T06:00:00Z",
+    }
     assert parse_database_status(current, now=now) == current["built"]
     with pytest.raises(ValueError, match="older than 24 hours"):
         parse_database_status(
@@ -97,3 +102,34 @@ def test_signed_release_checks_raw_findings_before_signing() -> None:
     assert ".ignoredMatches // []) == []" in command
     assert "--vex" not in command
     assert "admitted.grype.json" not in command
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        "saas-image-candidate.yml",
+        "saas-oci-promotion-resume.yml",
+        "saas-oci-promotion-token-renewal.yml",
+        "saas-oci-promotion-model-renewal.yml",
+    ],
+)
+def test_component_classification_keeps_its_real_input_until_complete(workflow: str) -> None:
+    path = Path(__file__).resolve().parents[2] / ".github/workflows" / workflow
+    document = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+    steps = next(
+        job["steps"]
+        for job in document["jobs"].values()
+        if any(
+            step.get("name") == "Generate per-architecture SBOMs and check raw findings"
+            for step in job.get("steps", [])
+        )
+    )
+    commands = "\n".join(step.get("run", "") for step in steps)
+    classify = commands.index("python -m saas.scripts.sqlite_component_disposition")
+    cleanup = commands.index('rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server"')
+    assert classify < cleanup
+    assert commands.index('"${prefix}.raw.grype.json"') < commands.index(
+        "grype_exit=$?", classify - 400
+    )
+    assert '--scanner-exit "$grype_exit"' in commands
+    assert '--image "${RUNNER_TEMP}/admitted-layouts/${artifact}"' in commands

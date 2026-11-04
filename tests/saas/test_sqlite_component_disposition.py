@@ -38,6 +38,7 @@ def candidate(
         for name, body in files.items():
             member = tarfile.TarInfo(name)
             member.size = len(body)
+            member.mode = 0o755 if name.startswith("usr/bin/") else 0o644
             archive.addfile(member, io.BytesIO(body))
     image = tmp_path / "candidate.tar"
     _write_oci(
@@ -84,7 +85,7 @@ def candidate(
                     "namespace": "nvd:cpe",
                 },
                 "artifact": {"type": "apk", "name": "sqlite-libs", "version": "3.54.1-r0"},
-                "matchDetails": [{"matcher": "apk-matcher"}],
+                "matchDetails": [{"matcher": "apk-matcher", "type": "cpe-match"}],
             }
         ],
     }
@@ -100,7 +101,7 @@ def test_exact_library_only_oci_keeps_original_high_and_binds_every_subject(tmp_
     assert proof["raw_high"] == 1 and proof["raw_critical"] == 0
     assert proof["report_sha256"] == hashlib.sha256(original).hexdigest()
     assert proof["source_revision"] == "a" * 40
-    assert component.validate_disposition(path, proof, now=NOW) == proof
+    assert component.validate_disposition(path, proof, image=image, now=NOW) == proof
     assert path.read_bytes() == original
     assert "ignoredMatches" not in json.loads(original)
     layout = tmp_path / "candidate-layout"
@@ -160,7 +161,7 @@ def test_unqualified_raw_reports_cannot_use_component_disposition(tmp_path, monk
     [
         ("usr/bin/sqlite3", b"shell"),
         ("usr/bin/renamed-tool", b"\x7fELFsqlite> .recover"),
-        ("usr/lib/sqlite3recover.c", b"sqlite3_recover_init"),
+        ("usr/lib/libsqlite-recover.so", b"\x7fELFsqlite3_recover_init"),
         ("usr/lib/libsqlite3.so.3.54.1", LIBRARY + b"tamper"),
     ],
 )
@@ -187,12 +188,13 @@ def test_disposition_receipt_tampering_is_rejected(tmp_path, monkeypatch, field,
     proof = component.inspect_disposition(image, path, platform="linux/amd64", now=NOW)
     proof[field] = value
     with pytest.raises(ValueError):
-        component.validate_disposition(path, proof, now=NOW)
+        component.validate_disposition(path, proof, image=image, now=NOW)
 
 
 @pytest.mark.parametrize("consumer", ["promotion", "core"])
 @pytest.mark.parametrize(
-    "fault", [None, "missing-proof", "fake-zero", "extra-high", "subject-swap"]
+    "fault",
+    [None, "missing-proof", "fake-zero", "extra-high", "subject-swap", "forged-cli-inventory"],
 )
 def test_existing_consumers_recompute_raw_counts_and_subject_bindings(
     tmp_path, monkeypatch, consumer, fault
@@ -207,7 +209,13 @@ def test_existing_consumers_recompute_raw_counts_and_subject_bindings(
             return NOW
 
     monkeypatch.setattr(core, "datetime", Clock)
-    image, _, original = candidate(tmp_path, monkeypatch)
+    image, _, original = candidate(
+        tmp_path,
+        monkeypatch,
+        extra={"usr/bin/sqlite3": b"#!/bin/sh\n.recover\n"}
+        if fault == "forged-cli-inventory"
+        else None,
+    )
     scan_root = tmp_path / "grype"
     scan_root.mkdir()
     rows, images = [], {}
@@ -225,7 +233,21 @@ def test_existing_consumers_recompute_raw_counts_and_subject_bindings(
             )
             path = scan_root / f"{role}-{platform.split('/')[1]}-grype.json"
             path.write_text(json.dumps(raw))
-            proof = component.inspect_disposition(image, path, platform=platform, now=NOW)
+            if fault == "forged-cli-inventory":
+                inventory = [
+                    {
+                        "path": "usr/lib/libsqlite3.so.3.54.1",
+                        "type": "0",
+                        "link": "",
+                        "mode": 0o644,
+                        "sha256": hashlib.sha256(LIBRARY).hexdigest(),
+                        "shell": False,
+                        "recover": False,
+                    }
+                ]
+                proof = component.disposition_receipt(path, inventory, platform=platform, now=NOW)
+            else:
+                proof = component.inspect_disposition(image, path, platform=platform, now=NOW)
             if role == "server" and platform == "linux/amd64":
                 if fault == "missing-proof":
                     proof = None
@@ -263,6 +285,7 @@ def test_existing_consumers_recompute_raw_counts_and_subject_bindings(
         images[role] = {
             "facts": {"platforms": facts},
             "archive_sha256": file_sha256(image),
+            "archive": image.name,
             "labels": original["source"]["target"]["labels"],
         }
     summary = {
@@ -277,7 +300,10 @@ def test_existing_consumers_recompute_raw_counts_and_subject_bindings(
         if consumer == "promotion":
             return promotion.validate_scans(tmp_path, images, now=NOW)
         return core.validate_component_scans(
-            scan_root, images, summary_name="candidate-scan-summary.json"
+            scan_root,
+            images,
+            summary_name="candidate-scan-summary.json",
+            archives=dict.fromkeys(images, image),
         )
 
     if fault is None:
@@ -295,17 +321,95 @@ def test_missing_explicit_rule_keeps_strict_default(tmp_path, monkeypatch):
         component.inspect_disposition(image, path, platform="linux/amd64", now=NOW)
 
 
-@pytest.mark.parametrize("fault", [None, "fake-zero", "different-subject", "extended-expiry"])
+@pytest.mark.parametrize("fault", ["wrong-type", "second-detail"])
+def test_only_the_one_reviewed_cpe_match_is_eligible(tmp_path, monkeypatch, fault):
+    image, path, raw = candidate(tmp_path, monkeypatch)
+    detail = raw["matches"][0]["matchDetails"][0]
+    if fault == "wrong-type":
+        detail["type"] = "exact-direct-match"
+    else:
+        raw["matches"][0]["matchDetails"].append(copy.deepcopy(detail))
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="do not qualify"):
+        component.inspect_disposition(image, path, platform="linux/amd64", now=NOW)
+
+
+def test_actual_checker_and_instructions_are_not_sqlite_shell_components(tmp_path, monkeypatch):
+    image, path, _ = candidate(
+        tmp_path,
+        monkeypatch,
+        extra={
+            "build/saas/scripts/sqlite_component_disposition.py": Path(
+                component.__file__
+            ).read_bytes(),
+            "opt/other-sqlite-audit.py": (
+                b"#!/usr/bin/python\n# Audit .recover, sqlite> and "
+                b"sqlite3_recover_init text only\n"
+            ),
+            "docs/sqlite3.md": b"Use the sqlite3 .recover command only in an isolated environment",
+        },
+    )
+    original = path.read_bytes()
+    proof = component.inspect_disposition(image, path, platform="linux/amd64", now=NOW)
+    assert not any(item.get("shell") or item.get("recover") for item in proof["inventory"])
+    assert component.validate_disposition(path, proof, image=image, now=NOW) == proof
+    assert path.read_bytes() == original
+
+
+def test_deleting_cli_from_self_reported_inventory_never_authenticates_it(tmp_path, monkeypatch):
+
+    image, path, _raw = candidate(
+        tmp_path, monkeypatch, extra={"usr/bin/sqlite3": b"#!/bin/sh\n.recover\n"}
+    )
+    forged_inventory = [
+        {
+            "path": "usr/lib/libsqlite3.so.3.54.1",
+            "type": "0",
+            "link": "",
+            "mode": 0o644,
+            "sha256": hashlib.sha256(LIBRARY).hexdigest(),
+            "shell": False,
+            "recover": False,
+        }
+    ]
+    forged = component.disposition_receipt(path, forged_inventory, platform="linux/amd64", now=NOW)
+    with pytest.raises(ValueError):
+        component.validate_disposition(path, forged, image=image, now=NOW)
+    with pytest.raises(ValueError, match="actual verified OCI"):
+        component.validate_disposition(path, forged, now=NOW)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "fake-zero",
+        "different-subject",
+        "extended-expiry",
+        "self-rehashed-inventory",
+        "missing-admission",
+    ],
+)
 def test_existing_release_image_validator_keeps_finite_raw_evidence(tmp_path, monkeypatch, fault):
+    import base64
+
+    from saas.production.admission import admission_signature_payload
     from saas.scripts.check_image_supply_chain import _validate_image
-    from tests.saas.test_image_supply_chain import _NOW, _policy, _valid_evidence
+    from tests.saas import test_evidence_admission as signed
+    from tests.saas.test_image_supply_chain import _policy, _valid_evidence
+
+    _NOW = signed._NOW
+    admission_policy, signing_key = signed._fixture(tmp_path)
+    policy_path = tmp_path / "saas/production/evidence-admission-policy.json"
+    policy_path.parent.mkdir(parents=True)
+    policy_path.write_text(json.dumps(admission_policy))
 
     evidence = cast(dict[str, Any], _valid_evidence())
     policy = cast(dict[str, Any], _policy())
     value = evidence["images"][0]
     database_time = _NOW.replace(hour=7)
     image, _, original = candidate(tmp_path, monkeypatch, database_time=database_time)
-    bundle = []
+    bundle: list[dict[str, Any]] = []
     for platform in ("linux/amd64", "linux/arm64"):
         with component.image_blobs(image) as blobs:
             digest, manifest = blobs.platform(platform)
@@ -329,6 +433,11 @@ def test_existing_release_image_validator_keeps_finite_raw_evidence(tmp_path, mo
     )
     scan = value["vulnerabilities"]
     scan.update(high=2, scanner="grype 0.120.1", component_dispositions=bundle)
+    for field in ("scanner_database_updated_at", "scan_completed_at"):
+        scan[field] = scan[field].replace("2026-08-05", "2026-08-09")
+    value["admission_completed_at"] = value["admission_completed_at"].replace(
+        "2026-08-05", "2026-08-09"
+    )
     if fault == "fake-zero":
         scan["high"] = 0
     elif fault == "different-subject":
@@ -336,6 +445,39 @@ def test_existing_release_image_validator_keeps_finite_raw_evidence(tmp_path, mo
     elif fault == "extended-expiry":
         bundle[0]["proof"]["expires_at"] = "2099-01-01T00:00:00Z"
     scan["report_sha256"] = hashlib.sha256(json.dumps(bundle, sort_keys=True).encode()).hexdigest()
+    image_document = tmp_path / "evidence/image.json"
+    image_document.write_text(json.dumps(evidence))
+    receipt_path = tmp_path / "admission/receipts/image.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["evidence_sha256"] = hashlib.sha256(image_document.read_bytes()).hexdigest()
+    receipt["signature"] = base64.b64encode(
+        signing_key.sign(admission_signature_payload(receipt))
+    ).decode()
+    receipt_path.write_text(json.dumps(receipt))
+    if fault == "self-rehashed-inventory":
+        inventory = [
+            *bundle[0]["proof"]["inventory"],
+            {
+                "path": "docs/sqlite-invented.txt",
+                "type": "0",
+                "link": "",
+                "mode": 0o644,
+                "sha256": "f" * 64,
+                "shell": False,
+                "recover": False,
+            },
+        ]
+        bundle[0]["proof"] = component.disposition_receipt(
+            bundle[0]["raw_report"].encode(), inventory, platform="linux/amd64", now=_NOW
+        )
+        scan["report_sha256"] = hashlib.sha256(
+            json.dumps(bundle, sort_keys=True).encode()
+        ).hexdigest()
+        image_document.write_text(json.dumps(evidence))
+        receipt["evidence_sha256"] = hashlib.sha256(image_document.read_bytes()).hexdigest()
+        receipt_path.write_text(json.dumps(receipt))
+    elif fault == "missing-admission":
+        receipt_path.unlink()
     violations, _ = _validate_image(
         policy,
         value,
@@ -344,6 +486,7 @@ def test_existing_release_image_validator_keeps_finite_raw_evidence(tmp_path, mo
         evidence=evidence,
         completed_at=_NOW,
         now=_NOW,
+        repo=tmp_path,
     )
     if fault is None:
         assert violations == []

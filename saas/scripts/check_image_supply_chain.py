@@ -1859,6 +1859,7 @@ def _validate_image(
     evidence: dict[str, Any],
     completed_at: datetime | None,
     now: datetime,
+    repo: Path,
 ) -> tuple[list[str], datetime | None]:
     violations: list[str] = []
     name = str(image.get("name", "unknown"))
@@ -1962,8 +1963,8 @@ def _validate_image(
             from saas.scripts.sqlite_component_disposition import validate_release_dispositions
 
             try:
-                validate_release_dispositions(image, scan, now=now)
-            except (ValueError, KeyError, TypeError) as error:
+                validate_release_dispositions(repo, image, scan, evidence, now=now)
+            except (OSError, ValueError, KeyError, TypeError) as error:
                 violations.append(f"{name} finite component disposition is invalid: {error}")
         elif not _exact_integer(scan.get("critical"), 0) or not _exact_integer(
             scan.get("high"), 0
@@ -2320,6 +2321,7 @@ def _validate_evidence(
                 evidence=evidence,
                 completed_at=completed_at,
                 now=now,
+                repo=repo,
             )
             violations.extend(image_violations)
             if admission_at is not None:
