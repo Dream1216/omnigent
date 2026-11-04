@@ -22,7 +22,13 @@ class AptPackageInput(TypedDict):
     sha256: str
 
 
-def parse_inputs(text: str) -> list[AptPackageInput]:
+def parse_inputs(text: str, *, distribution: str = "debian") -> list[AptPackageInput]:
+    roots = {
+        "debian": r"https://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/",
+        "ubuntu": r"https://snapshot[.]ubuntu[.]com/ubuntu/",
+    }
+    if distribution not in roots:
+        raise ValueError("unsupported signed snapshot distribution")
     inputs: list[AptPackageInput] = []
     names: set[str] = set()
     for line in text.splitlines():
@@ -33,18 +39,17 @@ def parse_inputs(text: str) -> list[AptPackageInput]:
             raise ValueError("APT package input must include URI, filename, size and hash")
         uri, name, size, digest = fields
         match = re.fullmatch(
-            r"https://snapshot[.]debian[.]org/archive/(debian|debian-security)/"
-            r"[0-9]{8}T[0-9]{6}Z/(pool/[A-Za-z0-9_./%+~:-]+[.]deb)",
+            roots[distribution] + r"[0-9]{8}T[0-9]{6}Z/(pool/[A-Za-z0-9_./%+~:-]+[.]deb)",
             uri,
         )
         if (
             match is None
-            or ".." in urllib.parse.unquote(match[2]).split("/")
+            or ".." in urllib.parse.unquote(match[1]).split("/")
             or not re.fullmatch(
                 r"[A-Za-z0-9.+-]+_(?:[0-9]+%3[aA])?[A-Za-z0-9.+~:-]+_[A-Za-z0-9-]+[.]deb",
                 name,
             )
-            or urllib.parse.unquote(match[2]).rsplit("/", 1)[-1]
+            or urllib.parse.unquote(match[1]).rsplit("/", 1)[-1]
             != re.sub(r"_[0-9]+(?:%3[aA]|:)", "_", name, count=1)
             or name in names
             or not size.isascii()
@@ -60,7 +65,9 @@ def parse_inputs(text: str) -> list[AptPackageInput]:
     return inputs
 
 
-def fetch(item: AptPackageInput, output: Path) -> AptPackageInput:
+def fetch(item: AptPackageInput, output: Path, *, distribution: str = "debian") -> AptPackageInput:
+    if distribution not in {"debian", "ubuntu"}:
+        raise ValueError("unsupported signed snapshot distribution")
     target = output / str(item["name"])
     if target.exists() or target.is_symlink():
         if target.is_symlink() or not target.is_file():
@@ -75,7 +82,12 @@ def fetch(item: AptPackageInput, output: Path) -> AptPackageInput:
     uri = str(item["uri"])
     suffix = uri.split("/pool/", 1)[1]
     archive = "debian-security" if "/archive/debian-security/" in uri else "debian"
-    urls = [f"https://deb.debian.org/{archive}/pool/{suffix}", uri]
+    mirror = (
+        "https://archive.ubuntu.com/ubuntu"
+        if distribution == "ubuntu"
+        else f"https://deb.debian.org/{archive}"
+    )
+    urls = [f"{mirror}/pool/{suffix}", uri]
     for index, url in enumerate(urls):
         try:
             with tempfile.TemporaryDirectory(dir=output, prefix=".package-") as temporary:
@@ -103,11 +115,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--distribution", choices=("debian", "ubuntu"), default="debian")
     args = parser.parse_args()
-    inputs = parse_inputs(args.inputs.read_text())
+    inputs = parse_inputs(args.inputs.read_text(), distribution=args.distribution)
     args.output.mkdir(parents=True, exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(executor.map(lambda item: fetch(item, args.output), inputs))
+        results = list(
+            executor.map(
+                lambda item: fetch(item, args.output, distribution=args.distribution), inputs
+            )
+        )
     print(json.dumps({"schema_version": 1, "production_admission": False, "packages": results}))
 
 

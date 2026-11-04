@@ -9,9 +9,14 @@ import pytest
 from saas.scripts import materialize_debian_snapshot_packages as packages
 
 
-def line(payload: bytes = b"locked package") -> str:
+def line(payload: bytes = b"locked package", *, distribution: str = "debian") -> str:
+    root = (
+        "https://snapshot.debian.org/archive/debian"
+        if distribution == "debian"
+        else "https://snapshot.ubuntu.com/ubuntu"
+    )
     return (
-        "'https://snapshot.debian.org/archive/debian/20261005T000000Z/"
+        f"'{root}/20261005T000000Z/"
         "pool/main/t/tool/tool_1.0_amd64.deb' tool_1.0_amd64.deb "
         f"{len(payload)} SHA256:{hashlib.sha256(payload).hexdigest()}"
     )
@@ -29,18 +34,28 @@ def line(payload: bytes = b"locked package") -> str:
         lambda value: value + "\n" + value,
     ],
 )
-def test_input_drift_rejected(mutate) -> None:
+@pytest.mark.parametrize("distribution", ["debian", "ubuntu"])
+def test_input_drift_rejected(mutate, distribution) -> None:
     with pytest.raises(ValueError):
-        packages.parse_inputs(mutate(line()))
+        packages.parse_inputs(mutate(line(distribution=distribution)), distribution=distribution)
 
 
-def test_verified_download_is_exported(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("distribution", ["debian", "ubuntu"])
+def test_verified_download_is_exported(tmp_path: Path, monkeypatch, distribution) -> None:
     payload = b"locked package"
-    monkeypatch.setattr(
-        packages.urllib.request, "urlopen", lambda *args, **kwargs: io.BytesIO(payload)
-    )
-    item = packages.parse_inputs(line(payload))[0]
-    assert packages.fetch(item, tmp_path) == item
+    urls = []
+
+    def download(url, **kwargs):
+        urls.append(url)
+        return io.BytesIO(payload)
+
+    monkeypatch.setattr(packages.urllib.request, "urlopen", download)
+    item = packages.parse_inputs(
+        line(payload, distribution=distribution), distribution=distribution
+    )[0]
+    assert packages.fetch(item, tmp_path, distribution=distribution) == item
+    mirror = "archive.ubuntu.com/ubuntu" if distribution == "ubuntu" else "deb.debian.org/debian"
+    assert urls == [f"https://{mirror}/pool/main/t/tool/tool_1.0_amd64.deb"]
     assert (tmp_path / str(item["name"])).read_bytes() == payload
     assert list(tmp_path.iterdir()) == [tmp_path / str(item["name"])]
 
@@ -73,3 +88,12 @@ def test_cache_symlink_is_rejected(tmp_path: Path) -> None:
     (tmp_path / str(item["name"])).symlink_to(source)
     with pytest.raises(ValueError):
         packages.fetch(item, tmp_path)
+
+
+@pytest.mark.parametrize("distribution", ["debian", "ubuntu"])
+def test_snapshot_distribution_cannot_substitute_other_or_unknown_archive(distribution):
+    other = "ubuntu" if distribution == "debian" else "debian"
+    with pytest.raises(ValueError):
+        packages.parse_inputs(line(distribution=other), distribution=distribution)
+    with pytest.raises(ValueError):
+        packages.parse_inputs(line(distribution=distribution), distribution="unknown")
