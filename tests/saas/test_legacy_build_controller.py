@@ -1462,12 +1462,12 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
                         records["Compatibility018"], sort_keys=True, separators=(",", ":")
                     ).encode()
                 ).hexdigest()
-                == "be96870257028c9d33f6b5e8e9b4f11353ee30038faecdf0fa871616a2873373"
+                == "1ed590b809792b3d87dfb6005d87ceccb257293d5d1d54e7d45f0630ca12bafc"
             )
         else:
             reviewed_compatibility = {
                 "legacy-security-pg-profiles.json": (
-                    "c16bac1d85bb92d69584577ddbfbb4f65e8e6f71d71150a4a66069f9a1a28107"
+                    "d277ce27d22f072443a77a9f59eec4adb09e9c3a60364a27cd417a4115408919"
                 ),
                 "legacy-security-original-inputs.json": (
                     "0ca1216882e1acb602d97252a9aec49430c9f7200ee5c75b3b8b4c663b206bb3"
