@@ -325,6 +325,29 @@ def validate_export_inventory(root: Path, role: str) -> None:
         read_json(path)
 
 
+def _checkout_logs(
+    log: str,
+    steps: dict[str, dict[str, Any]],
+    names: tuple[str, str],
+    job_steps: list[dict[str, Any]],
+    workflow: bytes,
+) -> dict[str, str]:
+    """Bind ordered checkout headers before applying native step windows."""
+    lines = log.splitlines(keepends=True)
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if line.removeprefix("\ufeff")
+        .partition(" ")[2]
+        .startswith("##[group]Run actions/checkout@")
+    ]
+    require(len(starts) == len(names), "native publication checkout header inventory differs")
+    return {
+        name: checkout_step_log("".join(lines[start:]), steps[name], job_steps, workflow)
+        for name, start in zip(names, starts, strict=True)
+    }
+
+
 def collect_job_export(
     control: Path,
     product: Path,
@@ -348,15 +371,13 @@ def collect_job_export(
         log_path = destination / "job.log"
         download_job_log(job["id"], log_path)
         log = log_path.read_text()
+        checkout_logs = _checkout_logs(
+            log, steps, (CHECKOUT, PRODUCT_CHECKOUT), job["steps"], workflow
+        )
         require(
-            checkout_commit(
-                checkout_step_log(log, steps[CHECKOUT], job["steps"], workflow), steps[CHECKOUT]
-            )
+            checkout_commit(checkout_logs[CHECKOUT], steps[CHECKOUT])
             == context["control_revision"]
-            and checkout_commit(
-                checkout_step_log(log, steps[PRODUCT_CHECKOUT], job["steps"], workflow),
-                steps[PRODUCT_CHECKOUT],
-            )
+            and checkout_commit(checkout_logs[PRODUCT_CHECKOUT], steps[PRODUCT_CHECKOUT])
             == profile["product_revision"],
             "native publication job actually checked out another control or product",
         )
@@ -411,16 +432,13 @@ def collect_fresh_wheel(
         log_path = destination / "job.log"
         download_job_log(job["id"], log_path)
         log = log_path.read_text()
+        checkout_logs = _checkout_logs(
+            log, steps, (FRESH_STEPS[0], FRESH_STEPS[2]), job["steps"], workflow
+        )
         require(
-            checkout_commit(
-                checkout_step_log(log, steps[FRESH_STEPS[0]], job["steps"], workflow),
-                steps[FRESH_STEPS[0]],
-            )
+            checkout_commit(checkout_logs[FRESH_STEPS[0]], steps[FRESH_STEPS[0]])
             == context["control_revision"]
-            and checkout_commit(
-                checkout_step_log(log, steps[FRESH_STEPS[2]], job["steps"], workflow),
-                steps[FRESH_STEPS[2]],
-            )
+            and checkout_commit(checkout_logs[FRESH_STEPS[2]], steps[FRESH_STEPS[2]])
             == profile["product_revision"],
             "fresh wheel native execution used another control or product checkout",
         )

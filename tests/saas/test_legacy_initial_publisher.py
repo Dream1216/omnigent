@@ -340,6 +340,7 @@ def _add_completion_second_overlap(state, first_checkout, product_checkout):
     first_index = steps.index(first)
     selection = steps[first_index + 1]
     ended = datetime.fromisoformat(first["completed_at"])
+    first_start = first["started_at"]
     previous_start = product["started_at"]
     for step in steps:
         if step["number"] > first["number"]:
@@ -363,6 +364,12 @@ def _add_completion_second_overlap(state, first_checkout, product_checkout):
         .replace(previous_start + " ", (ended + timedelta(seconds=0.8)).isoformat() + " ")
         .splitlines()
     )
+    lines = [
+        line.replace(first_start + " ", (ended + timedelta(seconds=0.05)).isoformat() + " ")
+        if line.startswith(first_start + " ") and "##[group]Run " not in line
+        else line
+        for line in lines
+    ]
     lines.append(
         f"{(ended + timedelta(seconds=0.1)).isoformat()} "
         "##[group]Run actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405"
@@ -384,6 +391,8 @@ def _add_completion_second_overlap(state, first_checkout, product_checkout):
         "step",
         "order",
         "checkout",
+        "checkout_header",
+        "checkout_command",
         "expired",
         "upload_time",
         "zip_hash",
@@ -414,6 +423,14 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
         execution["number"] = 1
     if fault == "checkout":
         state["log"] = state["log"].replace(data["profile"]["product_revision"], "0" * 40)
+    if fault in {"checkout_header", "checkout_command"}:
+        marker = (
+            "##[group]Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+            if fault == "checkout_header"
+            else "[command]/usr/bin/git log -1 --format=%H"
+        )
+        line = next(line for line in state["log"].splitlines() if marker in line)
+        state["log"] = state["log"].replace(line, line + "\n" + line, 1)
     if fault == "expired":
         metadata["expired"] = True
     if fault == "upload_time":
@@ -460,7 +477,16 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
 
 @pytest.mark.parametrize("overlap", [False, True])
 @pytest.mark.parametrize(
-    "fault", [None, "control_checkout", "product_checkout", "upload_time", "post_job"]
+    "fault",
+    [
+        None,
+        "control_checkout",
+        "product_checkout",
+        "checkout_header",
+        "checkout_command",
+        "upload_time",
+        "post_job",
+    ],
 )
 def test_fresh_wheel_binds_separate_native_job_actor_size_and_static_product(
     native_export, tmp_path, monkeypatch, fault, overlap
@@ -510,6 +536,14 @@ def test_fresh_wheel_binds_separate_native_job_actor_size_and_static_product(
     state["log"] = "\n".join(lines)
     if overlap:
         _add_completion_second_overlap(state, publisher.FRESH_STEPS[0], publisher.FRESH_STEPS[2])
+    if fault in {"checkout_header", "checkout_command"}:
+        marker = (
+            "##[group]Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+            if fault == "checkout_header"
+            else "[command]/usr/bin/git log -1 --format=%H"
+        )
+        line = next(line for line in state["log"].splitlines() if marker in line)
+        state["log"] = state["log"].replace(line, line + "\n" + line, 1)
     metadata = state["metadata"]
     metadata.update(
         name=f"legacy-initial-Core-{data['profile']['product_revision']}-{CONTROL}-42-1",
