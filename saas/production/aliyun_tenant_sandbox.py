@@ -9,7 +9,7 @@ from pathlib import Path
 
 from omnigent.db.db_models import current_workspace_id
 from omnigent.server.managed_hosts import ManagedSandboxConfig
-from saas.compatibility.runtime_partition import current_runtime_context
+from saas.compatibility.runtime_partition import RuntimeContext, current_runtime_context
 from saas.production.aliyun_model_client import validated_server_origin
 from saas.production.aliyun_model_lease import HostModelLeaseAuthority
 from saas.production.aliyun_sandbox import AliyunSandboxLauncher, AliyunSandboxScope
@@ -43,6 +43,7 @@ def build_aliyun_managed_config(
     *,
     host_config: dict[str, object] | None,
     storage: AliyunStorageMounts | None = None,
+    authorize_execution: Callable[[], RuntimeContext] | None = None,
 ) -> ManagedSandboxConfig:
     """Append only when Server composition has admitted its explicit release profile."""
 
@@ -81,6 +82,7 @@ def build_aliyun_managed_config(
             model_leases=settings.model_leases,
             model_gateway_url=settings.model_gateway_url,
             storage=storage,
+            authorize_execution=authorize_execution,
         )
 
     def factory() -> AliyunSandboxLauncher:

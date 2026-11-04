@@ -231,6 +231,37 @@ def test_native_project_mapping_cannot_bypass_project_admission_without_session_
         assert c.authorize(c.session_id).project_id == logical
 
 
+@pytest.mark.parametrize("fault", ["membership", "project", "binding", "selector"])
+def test_execution_derives_project_only_from_current_trusted_native_binding(storage_case, fault):
+    from saas.control_plane.db_models import RuntimeResourceBindingRecord
+
+    c = storage_case
+    logical, native = _project(c), uuid4()
+    binding = _binding(
+        c,
+        resource_type="project",
+        runtime_resource_id=native.hex,
+        saas_resource_id=logical,
+        project_id=logical,
+    )
+    with bind_runtime_context(c.runtime):
+        c.conversations.set_conversation_project(c.session_id.hex, native.hex)
+        assert c.authorize.execution(c.session_id) == replace(c.runtime, project_id=logical)
+        with c.factory.begin() as db:
+            if fault == "membership":
+                db.get(
+                    ProjectMembershipRecord, (logical, "user", c.runtime.actor_id)
+                ).role = "read"
+            elif fault == "project":
+                db.get(ProjectRecord, logical).status = "suspended"
+            elif fault == "binding":
+                db.get(RuntimeResourceBindingRecord, binding).partition_generation += 1
+        requested = replace(c.runtime, project_id=uuid4()) if fault == "selector" else c.runtime
+        with bind_runtime_context(requested), pytest.raises(AliyunStorageError):
+            c.authorize.execution(c.session_id)
+    assert c.control.creates == []
+
+
 def test_database_workspace_mismatch_is_denied_before_cloud_access(storage_case):
     c = storage_case
     with bind_runtime_context(c.runtime), workspace_scope(92), pytest.raises(AliyunStorageError):

@@ -46,17 +46,30 @@ class AliyunStorageSessionAuthorizer:
     def __call__(self, session_id: UUID) -> RuntimeContext:
         return self._authorize(session_id, project_action="run.create")
 
+    def execution(self, session_id: UUID) -> RuntimeContext:
+        """Resolve a native Session's Project through its trusted resource bindings."""
+        return self._authorize(session_id, project_action="run.create", resolve_project=True)
+
+    def current_execution(self) -> RuntimeContext:
+        return self.execution(_current_session_id())
+
     def read(self, session_id: UUID) -> RuntimeContext:
         """Authorize existing output bytes without granting execution or Volume creation."""
         return self._authorize(session_id, project_action="run.read_content")
 
-    def _authorize(self, session_id: UUID, *, project_action: str) -> RuntimeContext:
+    def _authorize(
+        self, session_id: UUID, *, project_action: str, resolve_project: bool = False
+    ) -> RuntimeContext:
         try:
-            return self._admit(session_id, project_action=project_action)
+            return self._admit(
+                session_id, project_action=project_action, resolve_project=resolve_project
+            )
         except (ControlPlaneResolutionError, SQLAlchemyError):
             raise AliyunStorageError("Aliyun storage session authority is unavailable") from None
 
-    def _admit(self, session_id: UUID, *, project_action: str) -> RuntimeContext:
+    def _admit(
+        self, session_id: UUID, *, project_action: str, resolve_project: bool
+    ) -> RuntimeContext:
         runtime = current_runtime_context()
         if (
             not isinstance(session_id, UUID)
@@ -124,10 +137,16 @@ class AliyunStorageSessionAuthorizer:
             project_rows = [r for r in rows if r.resource_type == "project"]
             if len(session_rows) > 1 or len(project_rows) > 1:
                 raise AliyunStorageError("Aliyun storage binding is ambiguous")
+            if conversation.project_id is not None and not project_rows:
+                raise AliyunStorageError("Aliyun storage Project binding is unavailable")
             if runtime.project_id is not None and not rows:
                 raise AliyunStorageError("Aliyun storage Project binding is unavailable")
             effective_runtime = runtime
-            if project_action == "run.read_content" and runtime.project_id is None and rows:
+            if (
+                (resolve_project or project_action == "run.read_content")
+                and runtime.project_id is None
+                and rows
+            ):
                 projects = {row.project_id for row in rows}
                 if len(projects) != 1:
                     raise AliyunStorageError("Aliyun storage Project binding is ambiguous")
@@ -174,7 +193,18 @@ class AliyunStorageSessionAuthorizer:
                 raise AliyunStorageError("Aliyun storage binding identity changed")
         if current_runtime_context() != runtime:
             raise AliyunStorageError("Aliyun storage runtime changed")
-        return effective_runtime if project_action == "run.read_content" else runtime
+        return effective_runtime
+
+
+def _current_session_id() -> UUID:
+    hint = current_session_id()
+    try:
+        session_id = UUID(hint) if isinstance(hint, str) else None
+    except ValueError:
+        session_id = None
+    if session_id is None or session_id.int == 0 or hint not in (session_id.hex, str(session_id)):
+        raise AliyunStorageError("Aliyun storage requires an admitted Session")
+    return session_id
 
 
 class AliyunCurrentSessionStorage:
@@ -197,17 +227,8 @@ class AliyunCurrentSessionStorage:
     def _current(self) -> tuple[AliyunSessionVolumeManager, UUID]:
         runtime = current_runtime_context()
         manager = self._managers.get(runtime.tenant_id)
-        hint = current_session_id()
-        try:
-            session_id = UUID(hint) if isinstance(hint, str) else None
-        except ValueError:
-            session_id = None
-        if (
-            manager is None
-            or session_id is None
-            or session_id.int == 0
-            or hint not in (session_id.hex, str(session_id))
-        ):
+        session_id = _current_session_id()
+        if manager is None:
             raise AliyunStorageError("Aliyun storage requires an admitted Session")
         return manager, session_id
 

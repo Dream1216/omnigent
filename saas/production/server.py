@@ -1522,7 +1522,7 @@ def _install_aliyun_storage(
     official: OfficialRuntimeDependencies,
 ) -> OfficialRuntimeDependencies:
     profile = config.aliyun_profile
-    if profile is None or not profile.storage_configs:
+    if profile is None:
         return official
     from omnigent.server.managed_hosts import ManagedSandboxDeployment
     from saas.production.aliyun_storage_admission import (
@@ -1535,24 +1535,34 @@ def _install_aliyun_storage(
     if (
         not isinstance(deployment, ManagedSandboxDeployment)
         or sum(entry.provider == "e2b" for entry in deployment.configs) != 1
-        or profile.storage_credential_file is None
+    ):
+        raise ProductionServerCompositionError("Aliyun profile requires its managed provider")
+    if profile.storage_configs and (
+        profile.storage_credential_file is None
         or {(c.tenant_id, c.workspace_id) for c in profile.storage_configs}
         != {(c.tenant_id, c.workspace_id) for c in profile.managed.scopes}
     ):
         raise ProductionServerCompositionError("Aliyun storage configuration is incomplete")
     authorizer = _aliyun_storage_authorizer(config, sessions, official)
-    storage = AliyunCurrentSessionStorage(
-        profile.storage_configs,
-        AliyunVolumeControlClient(
-            team_id=profile.team_id, credential_file=profile.storage_credential_file
-        ),
-        authorize=authorizer,
+    storage = (
+        AliyunCurrentSessionStorage(
+            profile.storage_configs,
+            AliyunVolumeControlClient(
+                team_id=profile.team_id, credential_file=profile.storage_credential_file
+            ),
+            authorize=authorizer.execution,
+        )
+        if profile.storage_configs
+        else None
     )
     configured = replace(
         deployment,
         configs=tuple(
             build_aliyun_managed_config(
-                profile.managed, host_config=entry.host_config, storage=storage
+                profile.managed,
+                host_config=entry.host_config,
+                storage=storage,
+                authorize_execution=authorizer.current_execution,
             )
             if entry.provider == "e2b"
             else entry
@@ -1650,6 +1660,7 @@ def _install_aliyun_model_broker(
         permission_store=official.permission_store,
         authorities=profile.authorities,
         workspaces={scope.tenant_id: scope.workspace_id for scope in profile.managed.scopes},
+        authorize_session=_aliyun_storage_authorizer(config, sessions, official).execution,
     )
     router.include_router(create_aliyun_host_model_router(broker))
     ingress_enabled = (

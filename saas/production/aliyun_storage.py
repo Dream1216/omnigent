@@ -8,7 +8,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Protocol
 from uuid import UUID
 
@@ -368,15 +368,26 @@ class AliyunSessionVolumeManager:
 
     def admit(self, session_id: UUID) -> AliyunOssSession:
         runtime = self._authorize(session_id)
-        if runtime != current_runtime_context():
+        requested = current_runtime_context()
+        if replace(runtime, project_id=requested.project_id) != requested or (
+            requested.project_id is not None and runtime.project_id != requested.project_id
+        ):
             raise AliyunStorageError("Aliyun storage authorization changed")
         return self.config.session(runtime, session_id)
 
     def ensure(self, session_id: UUID) -> AliyunOssSession:
+        requested = current_runtime_context()
         runtime = self._authorize(session_id)
 
         def revalidate() -> None:
-            if runtime != current_runtime_context() or self._authorize(session_id) != runtime:
+            if (
+                current_runtime_context() != requested
+                or replace(runtime, project_id=requested.project_id) != requested
+                or (
+                    requested.project_id is not None and runtime.project_id != requested.project_id
+                )
+                or self._authorize(session_id) != runtime
+            ):
                 raise AliyunStorageError("Aliyun storage authorization changed")
 
         revalidate()

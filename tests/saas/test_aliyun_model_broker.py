@@ -8,11 +8,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from omnigent.db.db_models import workspace_scope
-from omnigent.db.utils import now_epoch
+from omnigent.db.utils import make_named_managed_session_maker, now_epoch
 from omnigent.server.auth import LEVEL_OWNER
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
+from saas.control_plane.authorization import ProjectAuthorizer
 from saas.control_plane.http_auth import (
     SaasAuthContextMiddleware,
     SaasAuthProvider,
@@ -26,6 +27,7 @@ from saas.production.aliyun_model_broker import (
     create_aliyun_host_model_router,
 )
 from saas.production.aliyun_model_lease import HostModelLeaseAuthority, HostModelLeaseError
+from saas.production.aliyun_storage_admission import AliyunStorageSessionAuthorizer
 from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayTokenAuthority
 from tests.saas.test_control_plane_resolver import (
     COMPATIBILITY_POLICY,
@@ -77,6 +79,16 @@ def broker_case(control_plane, db_uri):
 
     def build(resolved=resolver, authorities=None, workspaces=None):
         selected = authorities or {runtime.tenant_id: authority}
+        authorizer = AliyunStorageSessionAuthorizer(
+            sessions=make_named_managed_session_maker(
+                factory.kw["bind"], query_name_prefix="test.aliyun_model"
+            ),
+            resolver=SqlAlchemyContextResolver(
+                factory, COMPATIBILITY_POLICY, project_authorizer=ProjectAuthorizer(factory)
+            ),
+            conversations=conversations,
+            permissions=permissions,
+        )
         return AliyunHostModelBroker(
             leases=leases,
             resolver=resolved,
@@ -90,6 +102,7 @@ def broker_case(control_plane, db_uri):
                 else dict.fromkeys(selected, runtime.physical_workspace_id)
             ),
             clock=lambda: clock[0],
+            authorize_session=authorizer.execution,
         )
 
     return SimpleNamespace(

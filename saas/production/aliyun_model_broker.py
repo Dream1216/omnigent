@@ -21,9 +21,11 @@ from omnigent.server.permissions import check_session_access
 from omnigent.stores import ConversationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
+from saas.compatibility.runtime_partition import RuntimeContext, bind_runtime_context
 from saas.control_plane.context_snapshot import ControlPlaneDependencyUnavailable
 from saas.control_plane.resolver import ControlPlaneResolutionError, SqlAlchemyContextResolver
 from saas.production.aliyun_model_lease import HostModelLeaseAuthority, HostModelLeaseError
+from saas.production.aliyun_storage import AliyunStorageError
 from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayTokenAuthority
 
 MODEL_TOKEN_TTL_S = 300
@@ -50,6 +52,7 @@ class AliyunHostModelBroker:
         permission_store: PermissionStore,
         authorities: Mapping[UUID, PlatformModelGatewayTokenAuthority],
         workspaces: Mapping[UUID, int],
+        authorize_session: Callable[[UUID], RuntimeContext],
         clock: Callable[[], float] = time.time,
     ) -> None:
         if (
@@ -73,6 +76,7 @@ class AliyunHostModelBroker:
         self._authorities = MappingProxyType(dict(authorities))
         self._workspaces = MappingProxyType(dict(workspaces))
         self._clock = clock
+        self._authorize_session = authorize_session
 
     def issue(
         self, *, host_id: str, launch_token: str, lease_token: str, session_id: UUID
@@ -111,6 +115,8 @@ class AliyunHostModelBroker:
             )
         ):
             raise HostModelAdmissionDenied("Host model session is unavailable")
+        with bind_runtime_context(runtime):
+            runtime = self._authorize_session(session_id)
         self._hosts.admit_launch(host_id, session_key, host.user_id, host.account_generation)
         authority = self._authorities.get(runtime.tenant_id)
         now = int(self._clock())
@@ -154,6 +160,7 @@ def create_aliyun_host_model_router(broker: AliyunHostModelBroker) -> APIRouter:
         except (
             HostModelAdmissionDenied,
             HostModelLeaseError,
+            AliyunStorageError,
             ControlPlaneResolutionError,
             OmnigentError,
         ):

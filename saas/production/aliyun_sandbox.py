@@ -31,7 +31,7 @@ from omnigent.onboarding.sandboxes.base import (
 )
 from omnigent.onboarding.sandboxes.e2b import E2BSandboxLauncher
 from omnigent.onboarding.sandboxes.types import RepoWorkspace, SandboxCapabilities, clone_dir_names
-from saas.compatibility.runtime_partition import current_runtime_context
+from saas.compatibility.runtime_partition import RuntimeContext, current_runtime_context
 from saas.production.aliyun_host import (
     MODEL_GATEWAY_URL_ENV,
     MODEL_LEASE_FILE_ENV,
@@ -121,6 +121,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         model_leases: HostModelLeaseAuthority | None = None,
         model_gateway_url: str | None = None,
         storage: AliyunStorageMounts | None = None,
+        authorize_execution: Callable[[], RuntimeContext] | None = None,
     ) -> None:
         if (
             not isinstance(template, str)
@@ -150,6 +151,16 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         self._model_leases = model_leases
         self._model_gateway_url = model_gateway_url
         self._storage = storage
+        self._authorize_execution = authorize_execution
+
+    def _execution_runtime(self) -> RuntimeContext:
+        requested = current_runtime_context()
+        runtime = self._authorize_execution() if self._authorize_execution else requested
+        if replace(runtime, project_id=requested.project_id) != requested or (
+            requested.project_id is not None and runtime.project_id != requested.project_id
+        ):
+            raise ValueError("Aliyun execution scope changed")
+        return runtime
 
     @property
     def scope(self) -> AliyunSandboxScope:
@@ -193,6 +204,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         """Keep workspace transport, but launch the file-authenticated cloud Host."""
 
         self.scope.check_context(required=True)
+        runtime = self._execution_runtime()
         if self._model_leases is None or self._model_gateway_url is None:
             raise ValueError("Aliyun Host model authority is unavailable")
         server_url = validated_server_origin(server_url)
@@ -214,7 +226,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         lease = self._model_leases.issue(
             host_id=host_id,
             launch_token=token,
-            runtime=current_runtime_context(),
+            runtime=runtime,
             ttl_seconds=admitted_lifetime,
             now=int(info.started_at.timestamp()),
         )
@@ -316,6 +328,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         from e2b.exceptions import AuthenticationException, SandboxException
 
         env = self._resolve_sandbox_env()
+        self._execution_runtime()
         if not isinstance(name, str) or _IDENTIFIER.fullmatch(name) is None:
             raise ValueError("Aliyun sandbox launch name is invalid")
         storage = self._storage.ensure() if self._storage is not None else None

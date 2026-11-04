@@ -26,10 +26,13 @@ from saas.production.server import (
 )
 from saas.production.tenant_sandbox import parse_tenant_sandbox_config
 from tests.saas.test_aliyun_model_broker import broker_case as broker_case
+from tests.saas.test_aliyun_sandbox import cloud as cloud
 from tests.saas.test_aliyun_server_profile import _enable_artifacts, _enable_storage
 from tests.saas.test_aliyun_server_profile import profile_case as profile_case
+from tests.saas.test_aliyun_storage_admission import _binding, _project
 from tests.saas.test_control_plane_resolver import COMPATIBILITY_POLICY
 from tests.saas.test_control_plane_resolver import control_plane as control_plane
+from tests.saas.test_http_cookie_auth import _build_fastapi_app, _login
 from tests.saas.test_production_server import (
     _config,
     _fake_official_app,
@@ -276,43 +279,18 @@ def test_project_rights_are_rechecked_by_the_production_composed_broker(
     composition_case, revocation
 ):
     c = composition_case
-    project = uuid4()
-    with c.factory.begin() as db:
-        db.add(
-            ProjectRecord(
-                id=project,
-                tenant_id=c.runtime.tenant_id,
-                space_id=c.runtime.space_id,
-                name="Model admission",
-                visibility="restricted",
-                created_by=c.runtime.actor_id,
-                status="active",
-                authorization_version=1,
-            )
-        )
-        db.flush()
-        db.add(
-            ProjectMembershipRecord(
-                tenant_id=c.runtime.tenant_id,
-                space_id=c.runtime.space_id,
-                project_id=project,
-                subject_type="user",
-                subject_id=c.runtime.actor_id,
-                role="edit",
-                status="active",
-                created_by=c.runtime.actor_id,
-                version=1,
-            )
-        )
-    lease = c.profile.managed.model_leases.issue(
-        host_id=c.host_id,
-        launch_token=c.token,
-        runtime=replace(c.runtime, project_id=project),
-        ttl_seconds=5400,
+    project, native = _project(c), uuid4()
+    _binding(
+        c,
+        resource_type="project",
+        runtime_resource_id=native.hex,
+        saas_resource_id=project,
+        project_id=project,
     )
-    headers = {**c.headers, "X-Omnigent-Model-Lease": lease}
+    with bind_runtime_context(c.runtime):
+        c.conversations.set_conversation_project(c.session_id.hex, native.hex)
     with TestClient(c.built.app, base_url=c.config.public_origin) as client:
-        assert client.post(c.path, headers=headers).status_code == 200
+        assert client.post(c.path, headers=c.headers).status_code == 200
         with c.factory.begin() as db:
             if revocation == "project":
                 row = db.get(ProjectRecord, project)
@@ -322,7 +300,217 @@ def test_project_rights_are_rechecked_by_the_production_composed_broker(
                 membership = db.get(ProjectMembershipRecord, (project, "user", c.runtime.actor_id))
                 assert membership is not None
                 membership.status = "revoked"
-        assert client.post(c.path, headers=headers).status_code == 403
+        assert client.post(c.path, headers=c.headers).status_code == 403
+
+
+@pytest.mark.parametrize("composition_case", [None, "artifacts"], indirect=True)
+@pytest.mark.parametrize("revocation", ["membership", "binding", "unmapped"])
+def test_composed_launch_resolves_native_project_before_cloud_creation(
+    composition_case, monkeypatch, revocation
+):
+    from saas.control_plane.db_models import RuntimeResourceBindingRecord
+
+    c = composition_case
+    project, native = _project(c), uuid4()
+    binding = _binding(
+        c,
+        resource_type="project",
+        runtime_resource_id=native.hex,
+        saas_resource_id=project,
+        project_id=project,
+    )
+    sdk = Mock()
+    sdk.create.return_value.sandbox_id = "sbx-project-admitted"
+    monkeypatch.setattr("e2b.Sandbox", sdk)
+    entry = c.built.official.sandbox_config.for_provider("e2b")
+    with bind_runtime_context(c.runtime), runner_log_scope(c.session_id.hex, None):
+        c.conversations.set_conversation_project(c.session_id.hex, native.hex)
+        launcher = entry.launcher_factory()
+        assert launcher.provision("managed-project") == "sbx-project-admitted"
+        assert launcher._execution_runtime().project_id == project
+        before = len(c.volume_requests)
+        with c.factory.begin() as db:
+            if revocation == "membership":
+                row = db.get(ProjectMembershipRecord, (project, "user", c.runtime.actor_id))
+                row.status = "revoked"
+            else:
+                row = db.get(RuntimeResourceBindingRecord, binding)
+                if revocation == "binding":
+                    row.status = "retired"
+                else:
+                    db.delete(row)
+        with pytest.raises(ValueError):
+            launcher.provision("managed-project-revoked")
+    assert sdk.create.call_count == 1
+    assert len(c.volume_requests) == before
+
+
+def test_cookie_native_session_create_carries_trusted_project_into_host_lease(
+    cloud, db_uri, tmp_path, monkeypatch
+):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import UUID
+
+    from omnigent.db.db_models import workspace_scope
+    from omnigent.db.utils import make_named_managed_session_maker
+    from omnigent.onboarding.sandboxes.base import RemoteCommandResult
+    from omnigent.runtime.agent_cache import AgentCache
+    from omnigent.server import managed_hosts
+    from omnigent.server.routes import sessions as native_sessions
+    from omnigent.server.routes._sessions import orchestration
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+    from omnigent.stores.artifact_store.local import LocalArtifactStore
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+    from omnigent.stores.host_store import HostStore
+    from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
+    from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
+    from saas.production.aliyun_model_lease import HostModelLeaseAuthority
+    from saas.production.aliyun_sandbox import AliyunSandboxLauncher, AliyunSandboxScope
+    from saas.production.aliyun_storage_admission import AliyunStorageSessionAuthorizer
+    from saas.production.aliyun_tenant_sandbox import (
+        AliyunManagedSandbox,
+        build_aliyun_managed_config,
+    )
+    from tests.server.helpers import build_agent_bundle
+
+    app, ids = _build_fastapi_app(trusted_origin="http://localhost")
+    integration = app.state.saas_test_integration
+    resolver = integration.context_resolver
+    runtime = resolver.resolve_space_allocation(
+        resolver.resolve_request_context(
+            actor_id=UUID(ids["user_id"]),
+            tenant_id=UUID(ids["tenant_id"]),
+            space_id=UUID(ids["space_id"]),
+            trace_id="cookie-managed-test",
+        )
+    )
+    conversations = SqlAlchemyConversationStore(db_uri)
+    permissions, projects = SqlAlchemyPermissionStore(db_uri), SqlAlchemyProjectStore(db_uri)
+    agents, hosts = SqlAlchemyAgentStore(db_uri), HostStore(db_uri)
+    artifacts = LocalArtifactStore(str(tmp_path / "artifacts"))
+    cache = AgentCache(artifact_store=artifacts, cache_dir=tmp_path / "cache")
+    native, agent = uuid4().hex, uuid4().hex
+    with workspace_scope(runtime.physical_workspace_id):
+        permissions.ensure_user(runtime.runtime_user_key)
+        projects.create(native, "Native managed Project", runtime.runtime_user_key)
+        agents.create(agent, "cookie-managed-agent", agent + "/bundle")
+        artifacts.put(agent + "/bundle", build_agent_bundle(name="cookie-managed-agent"))
+    c = SimpleNamespace(factory=app.state.saas_test_sessions, runtime=runtime, session_id=uuid4())
+    logical = _project(c)
+    _binding(
+        c,
+        resource_type="project",
+        runtime_resource_id=native,
+        saas_resource_id=logical,
+        project_id=logical,
+    )
+    authorizer = AliyunStorageSessionAuthorizer(
+        sessions=make_named_managed_session_maker(
+            c.factory.kw["bind"], query_name_prefix="test.cookie_managed"
+        ),
+        resolver=resolver,
+        conversations=conversations,
+        permissions=permissions,
+    )
+    leases = HostModelLeaseAuthority(b"l" * 32)
+    scope = AliyunSandboxScope(runtime.tenant_id, runtime.physical_workspace_id)
+    cloud.info.metadata.update(scope.metadata())
+    config = build_aliyun_managed_config(
+        AliyunManagedSandbox(
+            "host-template",
+            cloud.key,
+            "https://control.invalid",
+            "https://control.invalid/platform-model/v1",
+            (scope,),
+            leases,
+        ),
+        host_config=None,
+        authorize_execution=authorizer.current_execution,
+    )
+    app.state.sandbox_config = managed_hosts.ManagedSandboxDeployment(configs=(config,))
+    app.state.host_store = hosts
+    app.state.managed_launches = managed_hosts.ManagedLaunchTracker()
+    app.include_router(
+        native_sessions.create_sessions_router(
+            conversation_store=conversations,
+            agent_store=agents,
+            auth_provider=integration.auth_provider,
+            permission_store=permissions,
+            project_store=projects,
+            agent_cache=cache,
+            artifact_store=artifacts,
+        ),
+        prefix="/v1",
+    )
+    monkeypatch.setattr(
+        AliyunSandboxLauncher,
+        "run",
+        lambda self, sandbox_id, command, **kwargs: RemoteCommandResult(
+            0, "/home/user" if "$HOME" in command else "", ""
+        ),
+    )
+    monkeypatch.setattr(AliyunSandboxLauncher, "run_background", Mock())
+    monkeypatch.setattr(managed_hosts, "_wait_for_host_online", AsyncMock())
+    completed = threading.Event()
+
+    async def finish(**kwargs):
+        kwargs["tracker"].finish(kwargs["session_id"])
+        completed.set()
+
+    monkeypatch.setattr(orchestration, "_bind_and_launch_managed_runner", finish)
+    with TestClient(app, base_url="http://localhost") as client:
+        csrf = _login(client)
+        response = client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent,
+                "project_id": native,
+                "host_type": "managed",
+                "sandbox_provider": "e2b",
+            },
+            headers={"Origin": "http://localhost", "X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 201, response.text
+        assert completed.wait(10)
+        with c.factory.begin() as db:
+            db.get(ProjectRecord, logical).status = "suspended"
+        revoked = client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent,
+                "project_id": native,
+                "host_type": "managed",
+                "sandbox_provider": "e2b",
+            },
+            headers={"Origin": "http://localhost", "X-CSRF-Token": csrf},
+        )
+        assert revoked.status_code == 201, revoked.text
+
+        async def wait_for_denial():
+            launch = app.state.managed_launches.get(revoked.json()["id"])
+            assert launch is not None
+            await asyncio.wait_for(launch.settled.wait(), timeout=10)
+            return launch.error
+
+        assert client.portal.call(wait_for_denial)
+    writes = cloud.handle.files.write.call_args_list
+    assert len(writes) == 2
+    with workspace_scope(runtime.physical_workspace_id):
+        host = hosts.list_hosts(runtime.runtime_user_key)[0]
+        conversation = conversations.get_conversation(response.json()["id"])
+    admitted = leases.verify(
+        writes[1].args[1],
+        host_id=host.host_id,
+        launch_token=writes[0].args[1],
+        now=int(cloud.clock.now.timestamp()),
+    )
+    assert runtime.project_id is None
+    assert admitted.runtime.project_id == logical
+    assert conversation.project_id == native and logical.hex != native
+    assert cloud.sdk.create.call_count == 1
 
 
 def test_fresh_server_composition_accepts_existing_lease_and_current_revocation(composition_case):
