@@ -28,6 +28,8 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert runtime["runtime_contract"]["architectures"] == ["amd64", "arm64"]
     assert runtime["runtime_contract"]["venv_builder_image"] == "python:3.12-slim"
     assert runtime["runtime_contract"]["common_packages"]["python-3.12"] == "3.12.16-r0"
+    assert runtime["runtime_contract"]["common_packages"]["py3-pip-wheel"] == "26.2.2-r1"
+    assert runtime["runtime_contract"]["common_packages"]["libexpat1"] == "2.10.0-r0"
     assert runtime["runtime_contract"]["common_packages"]["libseccomp"] == "2.6.1-r4"
     assert runtime["runtime_contract"]["common_packages"]["zlib"] == ("1.3.2.1_rc20260917-r0")
     assert runtime["runtime_contract"]["server_packages"] == {
@@ -183,9 +185,9 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert "GOFLAGS='-mod=readonly -buildvcs=false'" in dockerfile
     assert "go version -m /opt/gh-export/gh" in dockerfile
     assert "test ! -d /usr/include/c++" in dockerfile
-    assert 'pyexpat.EXPAT_VERSION == "expat_2.9.0"' in dockerfile
+    assert 'pyexpat.EXPAT_VERSION == "expat_2.10.0"' in dockerfile
     assert 'zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley"' in dockerfile
-    assert 'pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION' in workflow
+    assert 'pyexpat.EXPAT_VERSION == "expat_2.10.0", pyexpat.EXPAT_VERSION' in workflow
     assert ('zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION') in workflow
     assert 'zlib.ZLIB_RUNTIME_VERSION == "1.3.2"' not in workflow
     assert "'test ! -e /usr/bin/perl && test ! -e /usr/local/bin/perl'" in workflow

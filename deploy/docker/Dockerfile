@@ -290,7 +290,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       libbrotlidec1=1.2.0-r7 \
       libbrotlienc1=1.2.0-r7 \
       libbz2-1=1.0.8-r25 \
-      libexpat1=2.9.0-r0 \
+      libexpat1=2.10.0-r0 \
       libffi=3.8.0-r2 \
       libseccomp=2.6.1-r4 \
       libstdc++=16.2.0-r1 \
@@ -302,13 +302,13 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       python-3.12=3.12.16-r0 \
       python-3.12-base=3.12.16-r0 \
       readline=8.3-r3 \
-      sqlite-libs=3.53.4-r2 \
+      sqlite-libs=3.54.1-r0 \
       xz=5.8.4-r0 \
       zlib=1.3.2.1_rc20260917-r0 \
  && ln -s /usr/bin/python3.12 /usr/local/bin/python \
  && ln -s /usr/bin/python3.12 /usr/local/bin/python3 \
  && ln -s /usr/bin/python3.12 /usr/local/bin/python3.12 \
- && python -B -I -c 'import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION' \
+ && python -B -I -c 'import bz2, ctypes, dbm.gnu, lzma, pyexpat, readline, sqlite3, ssl, uuid, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.10.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION' \
  && test ! -d /usr/include/c++ \
  && rm -rf /var/cache/apk/* \
  && rm -f /var/cache/ldconfig/aux-cache \

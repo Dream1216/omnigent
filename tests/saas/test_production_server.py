@@ -59,6 +59,7 @@ from saas.production.server_config import (
     ProductionServerSecrets,
 )
 from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     ProductionServiceRoleBinding,
     ProductionServiceRoleBindings,
@@ -1383,3 +1384,112 @@ def test_build_lineage_accepts_exact_installed_revision(
 
     monkeypatch.setattr(_build_info, "COMMIT_SHA", config.product_revision)
     verify_installed_build_lineage(config)
+
+
+@pytest.mark.parametrize("schema_revision", ["p0s000000017", "p0s000000018"])
+def test_actual_server_ready_endpoint_requires_epoch_grace_and_resets_on_disconnect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, schema_revision: str
+) -> None:
+    import yaml
+
+    from saas.control_plane.revocation import AuthorizationInvalidations
+
+    template = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[2]
+            / "saas/deployment/server/kubernetes.production.yaml"
+        ).read_text()
+    )
+    server = next(
+        item
+        for item in template["items"]
+        if item["kind"] == "Deployment" and item["metadata"]["name"] == "omnigent-saas-server"
+    )
+    main = next(
+        item
+        for item in server["spec"]["template"]["spec"]["containers"]
+        if item["name"] == "server"
+    )
+    projected_uid = next(
+        row
+        for row in main["env"]
+        if row.get("valueFrom", {}).get("fieldRef", {}).get("fieldPath") == "metadata.uid"
+    )
+    pod_uid = "f8e67fc2-57dd-4bbf-97ba-daf712b0c339"
+    monkeypatch.setenv(projected_uid["name"], pod_uid)
+    monotonic = [100.0]
+    cache = AuthorizationInvalidations(clock=lambda: monotonic[0])
+    monkeypatch.setattr("saas.control_plane.revocation.AuthorizationInvalidations", lambda: cache)
+    profile = ProductionServiceRoleBindings(
+        path=tmp_path / "business-delivery-service-role-bindings.json",
+        sha256="a" * 64,
+        bindings=tuple(
+            ProductionServiceRoleBinding(service, service + "_login", role)
+            for service, role in sorted(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES.items())
+        ),
+    )
+    engines = tuple(
+        sa.create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=sa.pool.StaticPool
+        )
+        for _ in range(6)
+    )
+    sessions = RoleSessionFactories(
+        runtime_engine=engines[0],
+        authenticator=sessionmaker(engines[1]),
+        app=sessionmaker(engines[2]),
+        governance=sessionmaker(engines[3]),
+        public_api=sessionmaker(engines[4]),
+        revocation_consumer=sessionmaker(engines[5]),
+        _engines=engines,
+    )
+    config = replace(
+        _config(tmp_path),
+        control_plane_schema_revision=schema_revision,
+        business_delivery_service_role_bindings=profile,
+    )
+    closed = []
+
+    class FollowerPort:
+        def close(self):
+            closed.append(1)
+            cache.unavailable()
+
+    def start(factory, actual_cache, **scope):
+        # This fixture proves production wiring/readiness only. Actual PostgreSQL
+        # LISTEN/ACK/reconnect is separately exercised by the native database suite.
+        assert factory is sessions.revocation_consumer and actual_cache is cache
+        assert scope["product_revision"] == config.product_revision
+        assert scope["pod_uid"] == pod_uid
+        cache.begin_listener_epoch()
+        cache.caught_up()
+        return FollowerPort()
+
+    monkeypatch.setattr("saas.production.business_delivery.start_revocation_follower", start)
+    services = None
+    try:
+        services = build_production_saas_services(config, sessions)
+        app = FastAPI()
+        app.include_router(services.integration.router, prefix="/saas")
+        with TestClient(app) as client:
+            for elapsed in (0.0, 60.0, 64.999):
+                monotonic[0] = 100.0 + elapsed
+                denied = client.get("/saas/readyz")
+                assert denied.status_code == 503
+                assert "authorization_invalidation" in denied.json()["failed_dependencies"]
+            monotonic[0] = 165.0
+            assert client.get("/saas/readyz").status_code == 200
+            cache.unavailable()
+            assert client.get("/saas/readyz").status_code == 503
+            cache.begin_listener_epoch()
+            cache.caught_up()
+            assert client.get("/saas/readyz").status_code == 503
+            monotonic[0] = 230.0
+            assert client.get("/saas/readyz").status_code == 200
+        services.close()
+        services.close()
+        assert closed == [1]
+    finally:
+        if services is not None:
+            services.close()
+        sessions.close()

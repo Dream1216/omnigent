@@ -457,10 +457,26 @@ def test_control_plane_migration_matches_declared_model_columns() -> None:
         assert runner_fence_index["column_names"] == ["run_id", "run_fence_token"]
         assert runner_fence_index["unique"] == 1
 
+        with pytest.raises(
+            RuntimeError, match="P18 downgrade requires reviewed runtime-maintenance"
+        ):
+            command.downgrade(config, "base")
+        assert set(sa.inspect(connection).get_table_names()) == (
+            application_tables | {"saas_alembic_version"}
+        )
+        assert connection.scalar(sa.text("SELECT version_num FROM saas_alembic_version")) == (
+            _migration_head()
+        )
+    engine.dispose()
+
+    legacy = sa.create_engine("sqlite://")
+    with legacy.begin() as connection:
+        config = _migration_config(connection)
+        command.upgrade(config, "p0s000000016")
         command.downgrade(config, "base")
         remaining_tables = set(sa.inspect(connection).get_table_names())
         assert remaining_tables <= {"saas_alembic_version"}
-    engine.dispose()
+    legacy.dispose()
 
 
 def test_platform_model_provider_migration_is_exact_and_reversible() -> None:
@@ -2274,7 +2290,7 @@ def test_outbox_quarantine_migration_ledger_is_content_blind_and_immutable() -> 
     now = datetime(2026, 8, 25, 1, 30, tzinfo=timezone.utc)
     with engine.begin() as connection:
         config = _migration_config(connection)
-        command.upgrade(config, "head")
+        command.upgrade(config, "p0s000000016")
         connection.execute(
             sa.text(
                 "INSERT INTO saas_control_plane_outbox "
@@ -4338,7 +4354,7 @@ def test_scim_schema_extension_migration_defaults_and_refuses_lossy_downgrade() 
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
         config = _migration_config(connection)
-        command.upgrade(config, "head")
+        command.upgrade(config, "p0s000000016")
         inspector = sa.inspect(connection)
         assert {"provider_type", "attribute_mapping"} <= {
             column["name"] for column in inspector.get_columns("saas_enterprise_scim_directories")

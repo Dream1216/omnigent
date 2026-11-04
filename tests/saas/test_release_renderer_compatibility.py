@@ -25,10 +25,25 @@ def legacy_packaged_schema(monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["stage", "final"])
-@pytest.mark.parametrize("head", ["p0s000000015", "lm2r00000001", "lm2s00000001", "lm2t00000001"])
-def test_release_binds_the_actual_database_head_and_exact_migration_mode(tmp_path, mode, head):
-    document = _spec_document(mode=mode)
-    document["control_plane_schema_revision"] = head
+@pytest.mark.parametrize(
+    "head",
+    [
+        "p0s000000015",
+        "p0s000000016",
+        "p0s000000017",
+        "p0s000000018",
+        "lm2r00000001",
+        "lm2s00000001",
+        "lm2t00000001",
+    ],
+)
+def test_release_binds_the_actual_database_head_and_exact_migration_mode(
+    tmp_path, monkeypatch, mode, head
+):
+    packaged_head = head if head.startswith("p0s") else "p0s000000015"
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: packaged_head)
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: packaged_head)
+    document = _spec_document(mode=mode, schema_head=head)
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)
@@ -54,8 +69,7 @@ def test_release_binds_the_actual_database_head_and_exact_migration_mode(tmp_pat
 
 @pytest.mark.parametrize("head", ["lm2q00000001", "future", "p0s000000009"])
 def test_renderer_rejects_unreviewed_database_heads(tmp_path, head):
-    document = _spec_document()
-    document["control_plane_schema_revision"] = head
+    document = _spec_document(schema_head=head)
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)
@@ -64,7 +78,9 @@ def test_renderer_rejects_unreviewed_database_heads(tmp_path, head):
     assert not (tmp_path / "rendered").exists()
 
 
-@pytest.mark.parametrize("packaged", ["lm2r00000001", "lm2s00000001"])
+@pytest.mark.parametrize(
+    "packaged", ["lm2r00000001", "lm2s00000001", "p0s000000016", "p0s000000017", "p0s000000018"]
+)
 def test_newer_packaged_application_rejects_legacy_database(tmp_path, monkeypatch, packaged):
     original = migration._expected_head
 
@@ -88,8 +104,7 @@ def test_r_packaged_image_uses_its_own_migrations_without_a_cross_head_override(
 ):
     monkeypatch.setattr(migration, "_expected_head", lambda _kind: "lm2r00000001")
     monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "lm2r00000001")
-    document = _spec_document()
-    document["control_plane_schema_revision"] = "lm2r00000001"
+    document = _spec_document(schema_head="lm2r00000001")
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)
@@ -104,8 +119,9 @@ def test_r_packaged_image_uses_its_own_migrations_without_a_cross_head_override(
 def test_renderer_never_authorizes_a_mutating_argument_added_to_a_rollback(
     tmp_path, monkeypatch, head
 ):
-    document = _spec_document()
-    document["control_plane_schema_revision"] = head
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: "p0s000000015")
+    monkeypatch.setattr(renderer, "_expected_head", lambda _kind: "p0s000000015")
+    document = _spec_document(schema_head=head)
     spec = tmp_path / "release.json"
     spec.write_bytes(_canonical_json(document))
     spec.chmod(0o600)

@@ -35,7 +35,10 @@ from saas.production.postgresql_migration import (
     _runtime_saas_head,
 )
 from saas.production.service_bindings import (
+    EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES,
     EXPECTED_MODEL_PROJECTION_SERVICE_ROLES,
+    EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES,
+    EXPECTED_PLATFORM_MODEL_SERVICE_ROLES,
     EXPECTED_PRODUCTION_SERVICE_ROLES,
     OPTIONAL_SERVICE_ROLE_PROFILES,
     ProductionServiceRoleBinding,
@@ -935,20 +938,39 @@ def load_public_release_spec(path: Path) -> KubernetesReleaseSpec:
         document.get("service_logins"),
         name="service_logins",
     )
-    if set(login_rows) not in (
-        set(EXPECTED_PRODUCTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
-        set(_RELEASE_SERVICE_ROLES),
-    ):
+    core_roles = set(EXPECTED_PRODUCTION_SERVICE_ROLES)
+    if control_plane_schema_revision in {"p0s000000017", "p0s000000018"}:
+        required_roles = core_roles | set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        model_roles = required_roles | set(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES)
+        admin_roles = model_roles | set(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES)
+        allowed_profiles = (
+            required_roles,
+            model_roles,
+            admin_roles,
+            admin_roles | set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+        )
+    else:
+        legacy_roles = set(_RELEASE_SERVICE_ROLES) - set(EXPECTED_BUSINESS_DELIVERY_SERVICE_ROLES)
+        allowed_profiles = (
+            core_roles,
+            legacy_roles - set(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES),
+            legacy_roles,
+        )
+    if set(login_rows) not in allowed_profiles:
         raise ReleaseRenderError(
-            "service_logins must contain a complete core or full release profile"
+            "service_logins must contain a complete schema-bound release profile"
         )
     if "model_projection" in login_rows and control_plane_schema_revision not in {
         "lm2r00000001",
         "lm2s00000001",
         "lm2t00000001",
+        "p0s000000016",
+        "p0s000000017",
+        "p0s000000018",
     }:
-        raise ReleaseRenderError("model projection profile requires the R, S or T schema")
+        raise ReleaseRenderError(
+            "model projection profile requires R, S, T or its P16/P17/P18 successor"
+        )
     service_logins = {
         service: _string(login_rows, service, parent="service_logins")
         for service in sorted(login_rows)

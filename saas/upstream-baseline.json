@@ -21,7 +21,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "mm1a2b3c4d5e"
+    "d0a1f879a01d"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 214,
-    "max_upstream_net_added_loc": 4576,
+    "max_direct_upstream_files": 225,
+    "max_upstream_net_added_loc": 4921,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -693,6 +693,18 @@
           }
         }
       }
+    },
+    "compatibility018_SQLite_finite_runtime_followup": {
+      "authority": "Existing direct human all-approval and budget authority; necessary fixed rollback source correction, no new approval or production admission.",
+      "authority_receipt": "/Users/dream/BuildArtifacts/omniagent-021-20261031-fast-execution-20261101/runtime-security-completion-Gateway-original-Pi-failure/native-human-standing-authority-verified.PUBLIC.json",
+      "previous_max_direct_upstream_files": 224,
+      "max_direct_upstream_files": 225,
+      "previous_max_upstream_net_added_loc": 4908,
+      "max_upstream_net_added_loc": 4921,
+      "max_active_patches": 9,
+      "min_isolated_custom_code_ratio": 0.85,
+      "new_official_path": ".github/workflows/trivy.yml",
+      "reason": "Fixed sqlite-libs3.54.1-r0 exact library bytes and finite CLI-component applicability implementation; same-version official-SHA Trivy installer transport correction. Separate018 rollback accounting only; Main0214576-line/9patch/.85 limits unchanged. All ownCI, originalOCI, signature, actualmix, independentrestore, observation/canary/rollback gates remain."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

@@ -254,9 +254,7 @@ jobs:
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-image-candidate.db
         run: |
-          uv run alembic -c saas/control_plane/alembic.ini upgrade head
-          uv run alembic -c saas/control_plane/alembic.ini check
-          uv run alembic -c saas/control_plane/alembic.ini downgrade base
+          uv run python -m saas.scripts.check_control_plane_migration_cli
           uv run python -m saas.scripts.check_patch_queue
           uv run python -m saas.scripts.check_upstream_delta
           uv run python -m saas.scripts.check_production_baseline
@@ -565,7 +563,6 @@ jobs:
           [[ "$(crane digest "$IMAGE_TAG")" == "$expected" ]]
           echo "digest=${expected}" >> "$GITHUB_OUTPUT"
           test -f "${RUNNER_TEMP}/admitted-layouts/server/index.json"
-          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server"
       - name: Promote admitted host OCI without rebuilding
         id: build-host
         env:
@@ -577,7 +574,6 @@ jobs:
           [[ "$(crane digest "$IMAGE_TAG")" == "$expected" ]]
           echo "digest=${expected}" >> "$GITHUB_OUTPUT"
           test -f "${RUNNER_TEMP}/admitted-layouts/host/index.json"
-          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/host"
       - name: Read back promoted OCI bytes before signing
         env:
           SERVER_IMAGE: ${{ steps.release.outputs.prefix }}/omnigent-saas-server@${{ steps.build-server.outputs.digest }}
@@ -663,7 +659,7 @@ jobs:
               prefix="artifacts/supply-chain/${artifact}-${arch}"
               docker run --rm --pull always --platform "linux/${arch}" --network none \
                 --entrypoint /usr/local/bin/python "$child_image" -B -I -c \
-                'import pyexpat, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.9.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION'
+                'import pyexpat, zlib; assert pyexpat.EXPAT_VERSION == "expat_2.10.0", pyexpat.EXPAT_VERSION; assert zlib.ZLIB_RUNTIME_VERSION == "1.3.2.1-motley", zlib.ZLIB_RUNTIME_VERSION'
               docker run --rm --pull always --platform "linux/${arch}" --network none \
                 --entrypoint /bin/sh "$child_image" -ec \
                 'test ! -e /usr/bin/perl && test ! -e /usr/local/bin/perl'
@@ -673,13 +669,17 @@ jobs:
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
               "${RUNNER_TEMP}/supply-chain-tools/grype" "$child_image" \
                 --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
+              grype_exit=$?
               jq -e '
-                ([.matches[] | select(.vulnerability.severity == "Critical")] | length) == 0 and
-                ([.matches[] | select(.vulnerability.severity == "High")] | length) == 0 and
                 (.ignoredMatches // []) == []
               ' "${prefix}.raw.grype.json" >/dev/null
+              python -m saas.scripts.sqlite_component_disposition \
+                --image "${RUNNER_TEMP}/admitted-layouts/${artifact}" \
+                --report "${prefix}.raw.grype.json" --platform "linux/${arch}" \
+                --output "${prefix}.component-disposition.json" --scanner-exit "$grype_exit"
             done
           done
+          rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server" "${RUNNER_TEMP:?}/admitted-layouts/host"
           "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
             > artifacts/supply-chain/grype-database.json
           find artifacts/supply-chain -type f ! -name SHA256SUMS -print0 \

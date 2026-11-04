@@ -73,6 +73,11 @@ def test_scheduled_tasks_columns(db_engine: Engine) -> None:
         "last_run_conversation_id",
         "created_at",
         "updated_at",
+        "next_run_at",
+        "project_id",
+        "delegation_ref",
+        "session_mode",
+        "session_id",
     }
 
 
@@ -90,6 +95,9 @@ def test_scheduled_task_runs_columns(db_engine: Engine) -> None:
         "finished_at",
         "error",
         "error_code",
+        "trigger_key",
+        "host_id",
+        "lease_expires_at",
     }
 
 

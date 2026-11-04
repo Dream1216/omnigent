@@ -804,7 +804,9 @@ def execute_runtime(
     # Readback verifies all admitted manifests/configs/layers before scanning
     # their original tar framing, which retains the original archive SHA.
     scan(control, oci_root, destination / "scans")
-    scans = validate_scans(destination / "scans", manifest["images"], now=datetime.now(UTC))
+    scans = validate_scans(
+        destination / "scans", manifest["images"], now=datetime.now(UTC), archive_root=oci_root
+    )
     syft = install_syft(work / "tools")
     sboms = destination / "sbom"
     sboms.mkdir()
@@ -1010,7 +1012,11 @@ def typed_provenance(
 
 
 def verify_runtime_report(
-    root: Path, admission: dict[str, Any], publication: dict[str, Any], manifest: dict[str, Any]
+    root: Path,
+    admission: dict[str, Any],
+    publication: dict[str, Any],
+    manifest: dict[str, Any],
+    oci_root: Path | None = None,
 ) -> dict[str, Any]:
     runtime = read_json(root / "runtime.json")
     require(
@@ -1036,7 +1042,9 @@ def verify_runtime_report(
     )
     require(
         runtime.get("scans")
-        == validate_scans(root / "scans", manifest["images"], now=datetime.now(UTC)),
+        == validate_scans(
+            root / "scans", manifest["images"], now=datetime.now(UTC), archive_root=oci_root
+        ),
         "current raw runtime scans differ",
     )
     require(
@@ -1226,7 +1234,9 @@ def stage(
                     destination=destination / "runtime",
                 )
                 coordinates["runtime_artifact"] = coordinate
-                runtime = verify_runtime_report(runtime_root, admission, publication, manifest)
+                runtime = verify_runtime_report(
+                    runtime_root, admission, publication, manifest, oci_root=root
+                )
                 read_registry(destination / "readback", manifest, publication["images"])
                 predicate = typed_provenance(admission, publication, runtime, **coordinates)
                 write_json(output / "provenance.json", predicate)

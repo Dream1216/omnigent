@@ -63,6 +63,7 @@ from tests._helpers.compat import (
     server_executable,
 )
 from tests._helpers.native_session import create_native_session
+from tests._helpers.operator_agents import operator_agent_store
 from tests._helpers.session import bind_session_runner, bundle_files, post_session_bundle
 from tests.codex_parity.helpers import ev_assistant_message, ev_completed, ev_response_created
 from tests.codex_parity.sidecar_harness import (
@@ -1236,7 +1237,8 @@ def live_server(
     set_fallback_mock_llm(mock_url, "gpt-4o-mini", "Mock LLM response.")
 
     try:
-        yield base_url
+        with operator_agent_store(base_url, f"sqlite:///{db_path}", artifact_dir):
+            yield base_url
     finally:
         _server_state.clear()
         if runner_proc.poll() is None:

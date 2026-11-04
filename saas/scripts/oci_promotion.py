@@ -82,7 +82,9 @@ def archive_index_digest(archive_path: Path) -> str:
         return digest
 
 
-def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+def validate_scans(
+    root: Path, images: dict[str, Any], *, now: datetime, archive_root: Path | None = None
+) -> dict[str, Any]:
     summary_path = root / "grype/candidate-scan-summary.json"
     summary = read_json(summary_path)
     require(
@@ -93,6 +95,7 @@ def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict
     require(isinstance(rows, list) and len(rows) == 4, "four raw scans are required")
     seen: set[tuple[str, str]] = set()
     reports: dict[str, str] = {}
+    verified_archives: dict[str, Path] = {}
     for row in rows:
         name, platform = row.get("image"), row.get("platform")
         require(name in IMAGES and platform in PLATFORMS, "unexpected scan coordinate")
@@ -117,7 +120,25 @@ def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict
             "raw scan must not filter findings",
         )
         parsed = scan_report(report)
-        require(not any(parsed["counts"].values()), "Critical or High finding blocks promotion")
+        if any(parsed["counts"].values()):
+            from saas.scripts.sqlite_component_disposition import validate_disposition
+
+            if name not in verified_archives:
+                archive = (archive_root or root) / images[name]["archive"]
+                require(
+                    file_sha256(archive) == images[name]["archive_sha256"],
+                    "actual component OCI archive differs",
+                )
+                verified_archives[name] = archive
+            validate_disposition(
+                report_path,
+                row.get("component_disposition"),
+                image=verified_archives[name],
+                now=now,
+            )
+            require(row.get("scanner_exit") == 2, "original High scanner exit is required")
+        else:
+            require(row.get("component_disposition") is None, "unexpected component disposition")
         facts = images[name]["facts"]["platforms"][platform]
         target = report.get("source", {}).get("target", {})
         require(
@@ -132,9 +153,9 @@ def validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict
         require(
             row.get("archive_sha256") == images[name]["archive_sha256"]
             and row.get("report_sha256") == sha
-            and row.get("critical") == 0
-            and row.get("high") == 0
-            and row.get("findings") == [],
+            and row.get("critical") == parsed["counts"]["Critical"]
+            and row.get("high") == parsed["counts"]["High"]
+            and row.get("findings") == parsed["findings"],
             "scan summary does not bind original archive and report",
         )
         reports[relative] = sha
@@ -213,7 +234,7 @@ def verify_candidate(
         root, labels=labels, source_date_epoch=source_date_epoch, now=sealed_at
     )
     require(actual == manifest, "candidate seal does not bind transferred OCI bytes")
-    validate_scans(current_scan_root or root, manifest["images"], now=now)
+    validate_scans(current_scan_root or root, manifest["images"], now=now, archive_root=root)
     return manifest
 
 
