@@ -23336,9 +23336,9 @@
           "app_id": 15368,
           "suite_id": 113399218355,
           "name": "evaluate",
-          "scope": "original-domain-not-applicable",
+          "scope": "original-domain-infrastructure-cancellation",
           "expected_conclusion": null,
-          "reason": "Exact current original .github/workflows/saas-n1-merge-gate.yml event=pull_request_target; source workflow SHA256=36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3. Original outcome retained; no skipped job supplies technical or runtime admission credit."
+          "reason": "Exact current C2 cancelled run41849009890/a1 and check126639966591: complete native metadata, annotations and22byte empty ZIP bound by immutable registration. Execution and source remain UNKNOWN, original cancelled retained, no zero-execution/source/technical/production credit; independent current guard refusal remains mandatory."
         },
         {
           "role": "head",
@@ -23635,6 +23635,29 @@
           "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
           "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820"
         }
+      },
+      "domain_infrastructure_cancellation": {
+        ".github/workflows/saas-n1-merge-gate.yml": [
+          {
+            "kind": "legacy_original_main_domain_infrastructure_cancellation/v1",
+            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+            "validation_pr": 223,
+            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+            "event": "pull_request_target",
+            "attachment_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "run_id": 41849009890,
+            "attempt": 1,
+            "job_id": 126639966591,
+            "check_id": 126639966591,
+            "run_sha256": "28d15e51753e3000a83e79d8a6a0449bc5b715c1c460f1c95b74847086c10bcf",
+            "job_sha256": "2293a79bd5104a4f0c41b2c32ce65fa4e91e0086f4a0e67670f97206e3012f9c",
+            "check_sha256": "507c8dc544a366b3c73de9c16078ad90b76f695c6588ee49f4b5a72ec75cf140",
+            "annotations_sha256": "fb8e1427270aa79d0c909aadc4d72e2f1c37a28d0d9ca062fad07f35c5063d49",
+            "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
+          }
+        ]
       }
     }
   },

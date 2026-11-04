@@ -1473,7 +1473,7 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
                     "7fcc22a64abd185216416cdfddafc37a062f3d51386f7093f3940e56de518a61"
                 ),
                 "legacy-source-qualification-profiles.json": (
-                    "7228183916873dc33f508df97ac4cda54d5df184dd3254286f68f218965ebf25"
+                    "19062bbe7ec4794622f73c323afc37c44e46888670e3eddb0dba10b0144baa09"
                 ),
             }
             assert (

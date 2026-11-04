@@ -118,6 +118,17 @@ _COMPATIBILITY_INFRASTRUCTURE_CONTRACTS: dict[str, dict[str, Any]] = {
 # never zero execution or source proof. Every metadata, annotation and ZIP hash
 # remains mandatory; no other label/source gains a compatibility alias.
 _CURRENT_C2_EMPTY_ARCHIVE_CASES = {
+    "04ae52a33b72c55186e07173f0babdd8a76ba716767102e60f1aea2b9be3af9c": {
+        "archive_bytes": 22,
+        "archive_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+        "execution": "native-assigned-runner-cancelled-execution-UNKNOWN",
+        "git_executed": None,
+        "members": (),
+        "operation_line": None,
+        "runner": (0, "", 0, ""),
+        "steps": (),
+        "labels": ["ubuntu-24.04"],
+    },
     "7a8a6dfc62f7df30b8d04175c009bab42cfd5dda45c43b56d8fdb6f1de7bec22": {
         "archive_bytes": 22,
         "archive_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
