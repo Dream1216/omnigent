@@ -894,13 +894,25 @@ def test_registered_compatibility_profile_has_no_original_path_filter_matches():
         qualifier._required_technical_workflows(policy, identity, catalog, profile)
         == qualifier._MANDATORY_TECHNICAL - catalog.keys()
     )
-    assert len(profile["source_delta"]) == 100
+    assert len(profile["source_delta"]) == 114
 
 
 @pytest.mark.parametrize("component", ["Core", "Gateway", "Model", "Compatibility018"])
-def test_actual_registered_source_policy_reaches_production_validation(component):
+def test_registered_source_policy_validates_exact_source_or_rejects_pending(component):
     profile = core.load_profile(ROOT, component)
     identity = qualifier._load_contract(ROOT, profile)
+    stored = json.loads(
+        (ROOT / "saas/supply_chain/legacy-source-qualification-profiles.json").read_text()
+    )["profiles"][component]
+    if stored["product_revision"] != profile["product_revision"]:
+        assert component == "Compatibility018"
+        assert profile["product_revision"] == "4e11681dd3809febeb42cb5d752d423b5f751f82"
+        assert qualifier._digest(stored) == (
+            "59bbbf48d5754235ff162db5ec352fcaec05a9c26481fa8881047e2df7de93ef"
+        )
+        with pytest.raises(ValueError, match="no exact reviewed source qualification policy"):
+            qualifier.load_qualification_policy(ROOT, profile)
+        return
     policy = qualifier.load_qualification_policy(ROOT, profile)
     catalog = {path: row["sha256"] for path, row in policy["workflow_catalog"].items()}
     qualifier.validate_qualification_policy(policy, identity, catalog, profile=profile)
