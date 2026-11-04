@@ -424,6 +424,7 @@ def require_admitted_image_inventory(
         policy,
         now=now,
         expected_product_revision=image["labels"]["org.opencontainers.image.revision"],
+        include_authenticated_documents=True,
     )
     _, key_violations, _ = admission._load_keys(repo, policy, now=now)
     if (
@@ -433,8 +434,12 @@ def require_admitted_image_inventory(
         or result["kinds"]["image"]["production_readiness"] != "ready"
     ):
         raise ValueError("finite image inventory lacks trusted signed evidence admission")
-    files, _ = admission._load_policy_files(repo, policy)
-    documents = [json.loads((repo / path).read_text()) for path in files["image"]]
+    documents = []
+    for relative, verified_sha256 in result["authenticated_documents"]["image"].items():
+        raw = (repo / relative).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != verified_sha256:
+            raise ValueError("finite image inventory bytes changed after verified admission")
+        documents.append(json.loads(raw))
     bodies = [document.get("release_evidence", document) for document in documents]
     if evidence not in bodies or image not in evidence.get("images", []):
         raise ValueError("finite image inventory differs from the authenticated evidence document")
