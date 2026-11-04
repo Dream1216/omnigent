@@ -45,7 +45,12 @@ from saas.scripts.legacy_pr_candidate import (
     upload_step_name,
 )
 from saas.scripts.legacy_pytest_results import verify_job_artifact_identity
-from saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log
+from saas.scripts.legacy_source_ci import (
+    _job_pages,
+    checkout_commit,
+    checkout_step_log,
+    download_job_log,
+)
 from saas.scripts.legacy_source_qualification import qualify_source_ci
 from saas.scripts.oci_promotion import (
     IMAGES,
@@ -320,6 +325,29 @@ def validate_export_inventory(root: Path, role: str) -> None:
         read_json(path)
 
 
+def _checkout_logs(
+    log: str,
+    steps: dict[str, dict[str, Any]],
+    names: tuple[str, str],
+    job_steps: list[dict[str, Any]],
+    workflow: bytes,
+) -> dict[str, str]:
+    """Bind ordered checkout headers before applying native step windows."""
+    lines = log.splitlines(keepends=True)
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if line.removeprefix("\ufeff")
+        .partition(" ")[2]
+        .startswith("##[group]Run actions/checkout@")
+    ]
+    require(len(starts) == len(names), "native publication checkout header inventory differs")
+    return {
+        name: checkout_step_log("".join(lines[start:]), steps[name], job_steps, workflow)
+        for name, start in zip(names, starts, strict=True)
+    }
+
+
 def collect_job_export(
     control: Path,
     product: Path,
@@ -333,6 +361,7 @@ def collect_job_export(
     destination.mkdir(parents=True, exist_ok=False)
     with preserve_native_evidence(destination / "native-api", evidence_root=destination):
         run = verify_native_control(control, context)
+        workflow = (control / WORKFLOW).read_bytes()
         jobs = _job_pages(context["run_id"], context["attempt"])
         matches = [job for job in jobs if job.get("name") == job_name]
         require(len(matches) == 1, "native publication job is missing or duplicated")
@@ -342,9 +371,14 @@ def collect_job_export(
         log_path = destination / "job.log"
         download_job_log(job["id"], log_path)
         log = log_path.read_text()
+        checkout_logs = _checkout_logs(
+            log, steps, (CHECKOUT, PRODUCT_CHECKOUT), job["steps"], workflow
+        )
         require(
-            checkout_commit(log, steps[CHECKOUT]) == context["control_revision"]
-            and checkout_commit(log, steps[PRODUCT_CHECKOUT]) == profile["product_revision"],
+            checkout_commit(checkout_logs[CHECKOUT], steps[CHECKOUT])
+            == context["control_revision"]
+            and checkout_commit(checkout_logs[PRODUCT_CHECKOUT], steps[PRODUCT_CHECKOUT])
+            == profile["product_revision"],
             "native publication job actually checked out another control or product",
         )
         name = artifact_name(role, profile, context)
@@ -388,6 +422,7 @@ def collect_fresh_wheel(
     destination.mkdir(parents=True, exist_ok=False)
     with preserve_native_evidence(destination / "native-api", evidence_root=destination):
         verify_native_control(control, context)
+        workflow = (control / WORKFLOW).read_bytes()
         jobs = _job_pages(context["run_id"], context["attempt"])
         matches = [job for job in jobs if job.get("name") == "build-initial"]
         require(len(matches) == 1, "fresh wheel build job is missing or duplicated")
@@ -397,9 +432,14 @@ def collect_fresh_wheel(
         log_path = destination / "job.log"
         download_job_log(job["id"], log_path)
         log = log_path.read_text()
+        checkout_logs = _checkout_logs(
+            log, steps, (FRESH_STEPS[0], FRESH_STEPS[2]), job["steps"], workflow
+        )
         require(
-            checkout_commit(log, steps[FRESH_STEPS[0]]) == context["control_revision"]
-            and checkout_commit(log, steps[FRESH_STEPS[2]]) == profile["product_revision"],
+            checkout_commit(checkout_logs[FRESH_STEPS[0]], steps[FRESH_STEPS[0]])
+            == context["control_revision"]
+            and checkout_commit(checkout_logs[FRESH_STEPS[2]], steps[FRESH_STEPS[2]])
+            == profile["product_revision"],
             "fresh wheel native execution used another control or product checkout",
         )
         name = (
