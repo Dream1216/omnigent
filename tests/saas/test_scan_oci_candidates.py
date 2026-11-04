@@ -119,6 +119,11 @@ def test_signed_release_checks_raw_findings_before_signing() -> None:
     assert ".ignoredMatches // []) == []" in command
     assert "--vex" not in command
     assert "admitted.grype.json" not in command
+    assert command.count("--from registry") == 2
+    retained = steps[names.index("Retain original published-runtime scan evidence")]
+    assert retained["if"] == "always()"
+    assert retained["with"]["path"] == "artifacts/supply-chain/"
+    assert names.index(retained["name"]) < sign_index
 
 
 @pytest.fixture

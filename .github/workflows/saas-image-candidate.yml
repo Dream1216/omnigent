@@ -754,11 +754,11 @@ jobs:
                 --entrypoint /bin/sh "$child_image" -ec \
                 'test ! -e /usr/bin/perl && test ! -e /usr/local/bin/perl'
               "${RUNNER_TEMP}/supply-chain-tools/syft" "$child_image" \
-                --platform "linux/${arch}" \
+                --from registry --platform "linux/${arch}" \
                 -o "spdx-json=${prefix}.spdx.json" \
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
               "${RUNNER_TEMP}/supply-chain-tools/grype" "$child_image" \
-                --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
+                --from registry --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
               grype_exit=$?
               jq -e '
                 (.ignoredMatches // []) == []
@@ -774,6 +774,14 @@ jobs:
             > artifacts/supply-chain/grype-database.json
           find artifacts/supply-chain -type f ! -name SHA256SUMS -print0 \
             | sort -z | xargs -0 sha256sum > artifacts/supply-chain/SHA256SUMS
+      - name: Retain original published-runtime scan evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: published-runtime-scans-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/supply-chain/
+          if-no-files-found: warn
+          retention-days: 90
       - name: Sign server image provenance with GitHub OIDC
         id: attest-server
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0

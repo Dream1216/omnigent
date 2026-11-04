@@ -612,6 +612,7 @@ def reviewed_source_bytes(root, relative, expected):
         "active_job_log_recovery_correction",
         "native_job_archive_correction",
         "native_runner_metadata_correction",
+        "native_api_quota_observation_correction",
         "compatibility_scope_correction",
         "upstream_sync_correction",
         "type_and_context_correction",

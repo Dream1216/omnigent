@@ -405,6 +405,17 @@
           "after": "        description: Exact legacy component registered in the reviewed main profiles\n        type: choice\n        required: true\n        options: [Core, Gateway, Model, Compatibility018]\n\npermissions:\n  contents: read\n"
         }
       ]
+    },
+    "native_api_quota_observation_correction": {
+      "corrected_sha256": "b91aa293c42360a54977213caa0a18671cfa1a99a68264143558dc69c773818d",
+      "restored_sha256": "d93fd878ed55b627c8b0da10d7e9487c436174455cdb662a664c7eb1252a56b0",
+      "context": "Exact 93811100 quota-observation diagnostic steps only; inverse restores the prior reviewed workflow byte for byte before the unchanged Compatibility018, combined, parent and preserved-function checks. No source or release admission.",
+      "inverse_fragments": [
+        {
+          "before": "",
+          "after": "      - name: Retain native API quota after qualification\n        if: always()\n        continue-on-error: true\n        working-directory: control\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |\n          gh api --include rate_limit \\\n            > \"$RUNNER_TEMP/legacy-native-api-quota.txt\"\n      - name: Retain native API quota observation\n        if: always()\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n        with:\n          name: legacy-native-api-quota-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/legacy-native-api-quota.txt\n          if-no-files-found: warn\n          retention-days: 90\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_pg_contract.py": {
