@@ -313,7 +313,9 @@ def _validate_disposition_receipt(
         or type(proof.get("raw_high")) is not int
         or type(proof.get("raw_critical")) is not int
     ):
-        raise ValueError("finite component disposition proof is missing")
+        raise ValueError(
+            "unapproved Critical or High finding: finite component disposition proof is missing"
+        )
     inventory, platform = proof.get("inventory"), proof.get("platform")
     if not isinstance(inventory, list) or not isinstance(platform, str):
         raise ValueError("finite component disposition inventory or platform is missing")

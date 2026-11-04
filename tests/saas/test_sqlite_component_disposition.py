@@ -310,7 +310,7 @@ def test_existing_consumers_recompute_raw_counts_and_subject_bindings(
         assert len(validate()["reports"]) == 4
         assert all(row["high"] == 1 for row in rows)
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="High finding" if fault == "missing-proof" else None):
             validate()
 
 
