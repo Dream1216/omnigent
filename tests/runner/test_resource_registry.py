@@ -158,6 +158,13 @@ async def test_claude_program_status_real_launch_and_fallback(
         status_file = sessions / f"{status_pid}.json"
         status_file.write_text(json.dumps({"kind": "interactive", "status": "busy"}))
         await wait_status("running")
+        if protocol == "osc":
+            assert reader is not None
+            # Complete OSC negotiation before writing resize keys to the same PTY.
+            async with asyncio.timeout(5):
+                while reader.status is None:
+                    await asyncio.sleep(0.02)
+            assert reader.status.state == "working"
         await instance._tmux("resize-window", "-t", "main", "-x", "93", "-y", "37")
         async with asyncio.timeout(5):
             while (
@@ -172,10 +179,6 @@ async def test_claude_program_status_real_launch_and_fallback(
             await wait_status("idle")
             return
         assert reader is not None
-        async with asyncio.timeout(5):
-            while reader.status is None:
-                await asyncio.sleep(0.02)
-        assert reader.status.state == "working"
         # A contradictory file and a quiet screen must not override live OSC.
         status_file.write_text(json.dumps({"kind": "interactive", "status": "idle"}))
         # Real elapsed time, longer than the pane idle threshold.
@@ -273,7 +276,7 @@ async def test_claude_osc_error_without_a_hook_fails_the_turn_once(
         raw_status = Mock(wraps=poller._on_status)
         monkeypatch.setattr(poller, "_on_status", raw_status)
         async with asyncio.timeout(5):
-            while instance.program_status.child_pid is None:
+            while instance.program_status.status is None:
                 await asyncio.sleep(0.02)
         await instance.send(keys="w")
         await _wait_for_status_edge(statuses, ("running", None))
@@ -312,7 +315,7 @@ async def test_claude_osc_error_is_not_failed_again_once_the_hook_lands(
         raw_status = Mock(wraps=poller._on_status)
         monkeypatch.setattr(poller, "_on_status", raw_status)
         async with asyncio.timeout(5):
-            while instance.program_status.child_pid is None:
+            while instance.program_status.status is None:
                 await asyncio.sleep(0.02)
         await instance.send(keys="w")
         await _wait_for_status_edge(statuses, ("running", None))

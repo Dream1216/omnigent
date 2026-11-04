@@ -604,6 +604,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "native_step_boundary_correction",
         "runtime_dependency_security_correction",
         "raw_native_log_capture_correction",
         "active_job_log_recovery_correction",

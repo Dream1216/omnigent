@@ -114,7 +114,7 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 189,
+    "max_direct_upstream_files": 190,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -835,6 +835,17 @@
       "reason": "Exact original frozen0.18 coverage pairs retain87% backend and86.78/86.79% UI, but the original default-main ratchet compares them to0.21 Main89/90.09%. Add a protected-main-only dispatch to the existing producer, restricted to four exact frozen sources and their reviewed predecessor runs. Enforce identical versions/configuration/selection/workflow bytes, complete original matrices and artifact hashes, and unchanged0.5% tolerance before posting a native result. Original failures retained; Main ratchet,4576LOC,nine patches,.85isolation,required-success source reader and every release gate remain. Candidate pending independent review; no status posted locally.",
       "measured_direct_upstream_files": 189,
       "measured_upstream_net_added_loc": 4040
+    },
+    "upstream_021_osc_test_readiness_followup": {
+      "authority": "Existing direct standing human all-approval and budget authority; no new approval inferred from a cache exception.",
+      "authority_receipt": "/Users/dream/BuildArtifacts/omniagent-021-20261031-fast-execution-20261101/runtime-security-completion-Gateway-original-Pi-failure/native-human-standing-authority-verified.PUBLIC.json",
+      "previous_max_direct_upstream_files": 189,
+      "max_direct_upstream_files": 190,
+      "new_official_path": "tests/runner/test_resource_registry.py",
+      "reason": "Synchronize existing OSC handshake before test-owned resize input; original native job126245320294 proves input arrived during negotiation. Test assertions and production behavior retained.",
+      "max_upstream_net_added_loc": 4576,
+      "max_active_patches": 9,
+      "min_isolated_custom_code_ratio": 0.85
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
