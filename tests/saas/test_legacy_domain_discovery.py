@@ -556,7 +556,11 @@ def reviewed_source_bytes(root, relative, expected):
     body = (root / relative).read_bytes()
     if isinstance(expected, str):
         return body
-    for name in ("runtime_dependency_security_correction", "type_and_context_correction"):
+    for name in (
+        "release_admission_correction",
+        "runtime_dependency_security_correction",
+        "type_and_context_correction",
+    ):
         correction = expected.get(name)
         if correction is None:
             continue
