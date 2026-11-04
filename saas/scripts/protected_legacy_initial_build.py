@@ -23,7 +23,7 @@ from saas.scripts.resume_oci_promotion import (
 REPOSITORY = "Dream1216/omnigent"
 WORKFLOW = ".github/workflows/saas-legacy-security-build.yml"
 COMPATIBILITY_COMPONENT = "Compatibility018"
-_COMPATIBILITY_PROFILE_SHA256 = "2f8ca5541a1521488a5db3182021ec21c130d6f8e28ff2f301ebc98a302c9b56"
+_COMPATIBILITY_PROFILE_SHA256 = "f89d78f3174990019c10416b5cd9f4971d10ad68cd73484c78dbe62798ad8c01"
 BASELINES = {
     "Core": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
     "Gateway": "3319b59a5d75a411f339b294cbe6b4133bfb851a",

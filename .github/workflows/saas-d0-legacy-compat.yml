@@ -158,7 +158,7 @@ jobs:
           set -euo pipefail
           python -m saas.scripts.d0_legacy_pair_release candidate --root artifacts/d0-compat --revision "$SOURCE_REVISION" --epoch "$SOURCE_DATE_EPOCH" --first "$RUNNER_TEMP/d0-first" --second "$RUNNER_TEMP/d0-second" --bases artifacts/d0-compat/bases
           python -m saas.scripts.scan_oci_candidates --scope complete --image "server=$RUNNER_TEMP/d0-first/server.tar" --image "host=$RUNNER_TEMP/d0-first/host.tar" --output artifacts/d0-compat/original-scans
-          python -m saas.scripts.d0_legacy_pair_release scans --root artifacts/d0-compat --revision "$SOURCE_REVISION" --archives artifacts/d0-compat/original-scans > artifacts/d0-compat/original-scan-verification.json
+          python -m saas.scripts.d0_legacy_pair_release scans --root artifacts/d0-compat --revision "$SOURCE_REVISION" --archives artifacts/d0-compat/original-scans --image-root "$RUNNER_TEMP/d0-first" > artifacts/d0-compat/original-scan-verification.json
       - name: Retain exact original archives for protected publishing without rebuild
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -373,11 +373,12 @@ jobs:
           python -m saas.scripts.scan_oci_candidates --scope complete --image "server=$RUNNER_TEMP/d0-readback/server.tar" --image "host=$RUNNER_TEMP/d0-readback/host.tar" --output artifacts/d0-compat/independent-scans
           python - <<'SCANS'
           import json
+          import os
           from pathlib import Path
           from saas.scripts.core_f440_compat_release import validate_component_scans
           root=Path('artifacts/d0-compat')
           manifest=json.loads((root/'readback-repacked-manifest.json').read_text())
-          value=validate_component_scans(root/'independent-scans',manifest['images'],summary_name='candidate-scan-summary.json')
+          value=validate_component_scans(root/'independent-scans',manifest['images'],summary_name='candidate-scan-summary.json',archives={role:Path(os.environ['RUNNER_TEMP'])/'d0-readback'/f'{role}.tar' for role in ('server','host')})
           (root/'independent-scan-verification.json').write_text(json.dumps(value,sort_keys=True)+'\n')
           SCANS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

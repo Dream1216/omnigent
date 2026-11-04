@@ -592,6 +592,7 @@ def main():
     parser.add_argument("--first", type=Path)
     parser.add_argument("--second", type=Path)
     parser.add_argument("--archives", type=Path)
+    parser.add_argument("--image-root", type=Path)
     parser.add_argument("--bases", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--revision", required=True)
@@ -624,7 +625,12 @@ def main():
     )
     if args.command == "scans":
         value = shared.validate_component_scans(
-            args.archives, manifest["images"], summary_name="candidate-scan-summary.json"
+            args.archives,
+            manifest["images"],
+            summary_name="candidate-scan-summary.json",
+            archives={role: args.image_root / f"{role}.tar" for role in ROLES}
+            if args.image_root
+            else None,
         )
     elif args.command == "predicate":
         value = predicate(manifest, args.role, args.run_id, args.attempt)

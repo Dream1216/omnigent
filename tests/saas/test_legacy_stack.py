@@ -7,6 +7,7 @@ import copy
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -148,6 +149,7 @@ def publication(component, number, generation=2):
 def complete_stack(tmp_path, monkeypatch):
     """Only publication native readback is doubled; original Ed25519 verification runs."""
     policy, key = signatures._fixture(tmp_path)
+    policy = cast(dict[str, Any], policy)
     for source in policy["evidence_sources"]:
         if source["kind"] == "deployment":
             source["directory"] = "saas/production/deployment-evidence"
@@ -223,12 +225,12 @@ def complete_stack(tmp_path, monkeypatch):
         return copy.deepcopy(facts[component])
 
     monkeypatch.setattr(stack, "read_registered_publication", native)
-    evidence = image._valid_evidence()
+    evidence = cast(dict[str, Any], image._valid_evidence())
     primary = {
         item["name"].removeprefix("omnigent-saas-"): item["registry_ref"]
         for item in evidence["promotion"]["images"]
     }
-    record = deployment._record()
+    record = cast(dict[str, Any], deployment._record())
     record["completed_at"] = "2026-08-09T10:30:00Z"
     for attestation in record["attestations"]:
         attestation["attested_at"] = "2026-08-09T10:00:00Z"
@@ -343,7 +345,8 @@ def persist(data, *, bad_signature=False):
         {
             "schema_version": 1,
             "publications": {
-                "fixture-" + component: value for component, value in data["rows"].items()
+                "fixture-" + component: value
+                for component, value in data.get("publication_rows", data["rows"]).items()
             },
         },
     )
@@ -363,7 +366,10 @@ def persist(data, *, bad_signature=False):
         )
     for item in data["evidence"]["promotion"]["images"]:
         role = item["name"].removeprefix("omnigent-saas-")
-        target = data["facts"]["Core"]["images"][role]
+        selected = row["physical_inventory"]["workloads"][row["n_minus_one_pair"][role]][
+            "component"
+        ]
+        target = data["facts"][selected]["images"][role]
         item["n_minus_one_rollback"].update(
             to_registry_ref=target,
             to_digest=target.split("@", 1)[1],
@@ -390,7 +396,7 @@ def persist(data, *, bad_signature=False):
         receipt["signature"] = base64.b64encode(b"invalid fixture signature").decode()
     write(receipt_path, receipt)
     return {
-        "kind": stack.VARIANT,
+        "kind": data.get("envelope_kind", stack.VARIANT),
         "product_revision": "a" * 40,
         "release_evidence": data["evidence"],
         "legacy_fallback": {
@@ -400,6 +406,143 @@ def persist(data, *, bad_signature=False):
             "full_stack_rollback": body,
         },
     }
+
+
+def runtime_pair(data, monkeypatch):
+    """Reuse the signed physical-drill fixture; native publication is tested separately."""
+    component = "Compatibility018"
+    row = copy.deepcopy(data["rows"]["Core"])
+    row["profile"] = json.loads(
+        (ROOT / "saas/supply_chain/legacy-security-build-profiles.json").read_text()
+    )["profiles"][component]
+    row["deployment_roles"] = {"fixture-core": "server", "fixture-host": "host"}
+    data["rows"][component] = row
+    data["publication_rows"] = {component: row}
+    facts = copy.deepcopy(data["facts"]["Core"])
+    facts.update(
+        product_revision=row["profile"]["product_revision"],
+        product_tree=row["profile"]["product_tree"],
+    )
+    facts["revision_contract"]["control_plane_schema_revision"] = "p0s000000018"
+    data["facts"][component] = facts
+    selected = data["stack"]
+    selected.update(
+        kind=stack.RUNTIME_PAIR_KIND,
+        publication_ids={component: "fixture-" + component},
+        original_publication_ids={component: "fixture-" + component},
+        source_contracts={component: facts["revision_contract"]},
+    )
+    selected["physical_inventory"]["workloads"] = {
+        name: value
+        for name, value in selected["physical_inventory"]["workloads"].items()
+        if name in row["deployment_roles"]
+    }
+    for value in selected["physical_inventory"]["workloads"].values():
+        value["component"] = component
+    selected["policy_bindings"] = {
+        name: ["fixture-host" if name == "runner" else "fixture-core"]
+        for name in selected["policy_bindings"]
+    }
+    selected["historical_source_qualification"] = {}
+    for historical in stack.COMPONENTS:
+        original = data["rows"][historical]
+        result = original["admission"]["source_qualification"]["result"]
+        selected["historical_source_qualification"][historical] = {
+            "source_only": True,
+            "runtime_admission": False,
+            "control_revision": original["producer"]["control_revision"],
+            "profile_sha256": reader.publisher.digest(original["profile"]),
+            "qualification": result,
+            "qualification_sha256": reader.publisher.digest(result),
+        }
+    body = data["body"]
+    body["kind"] = stack.RUNTIME_PAIR_ROLLBACK_KIND
+    binding = copy.deepcopy(body["publication_bindings"]["Core"])
+    binding.update(
+        publication_id="fixture-" + component,
+        original_publication_id="fixture-" + component,
+        profile_sha256=reader.publisher.digest(row["profile"]),
+        source_revision=facts["product_revision"],
+        source_tree=facts["product_tree"],
+        revision_contract=facts["revision_contract"],
+    )
+    body["publication_bindings"] = {component: binding}
+    body["workloads"] = {
+        name: value for name, value in body["workloads"].items() if name in row["deployment_roles"]
+    }
+    for name, value in body["workloads"].items():
+        value.update(
+            component=component,
+            identity_sha256=reader.publisher.digest(
+                selected["physical_inventory"]["workloads"][name]
+            ),
+        )
+    data["envelope_kind"] = stack.RUNTIME_PAIR_VARIANT
+    original_registered = stack.registered_publication
+
+    def registered(repo, identifier):
+        if identifier == "fixture-" + component:
+            return copy.deepcopy(row)
+        return original_registered(repo, identifier)
+
+    monkeypatch.setattr(stack, "registered_publication", registered)
+    return data
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "mixed-mode",
+        "missing-mix",
+        "wrong-PG-contract",
+        "history-as-runtime",
+        "missing-history",
+        "historical-runtime-claim",
+        "missing-host",
+        "bad-signature",
+    ],
+)
+def test_selected_C2_pair_keeps_three_mixes_and_nonphysical_history(
+    complete_stack, monkeypatch, fault
+):
+    data = runtime_pair(complete_stack, monkeypatch)
+    if fault == "mixed-mode":
+        data["envelope_kind"] = stack.VARIANT
+    elif fault == "missing-mix":
+        del data["body"]["pair_checks"]["old_pair_recovery"]
+    elif fault == "wrong-PG-contract":
+        data["stack"]["source_contracts"]["Compatibility018"]["control_plane_schema_revision"] = (
+            "p0s000000015"
+        )
+    elif fault == "history-as-runtime":
+        data["stack"]["physical_inventory"]["workloads"]["fixture-host"]["component"] = "Core"
+    elif fault == "missing-history":
+        del data["stack"]["historical_source_qualification"]["Gateway"]
+    elif fault == "historical-runtime-claim":
+        data["stack"]["historical_source_qualification"]["Model"]["runtime_admission"] = True
+    envelope = persist(data, bad_signature=fault == "bad-signature")
+    if fault == "missing-host":
+        del data["stack"]["n_minus_one_pair"]["host"]
+        write(
+            data["repo"] / stack.STACK_REGISTRY,
+            {"schema_version": 1, "stacks": {"fixture-stack": data["stack"]}},
+        )
+    if fault is None:
+        assert (
+            stack.validate_stack_fallback(
+                data["repo"], envelope, now=NOW, expected_product_revision="a" * 40
+            )
+            == data["evidence"]
+        )
+        assert data["calls"] == ["Compatibility018"]
+        assert set(data["body"]["pair_checks"]) == stack.PAIR_CHECKS
+        assert set(data["stack"]["historical_source_qualification"]) == stack.COMPONENTS
+    else:
+        with pytest.raises(ValueError):
+            stack.validate_stack_fallback(
+                data["repo"], envelope, now=NOW, expected_product_revision="a" * 40
+            )
 
 
 @pytest.mark.parametrize(

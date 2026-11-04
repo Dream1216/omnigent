@@ -1,32 +1,8 @@
-r"""E2E: ``/login`` from web chat on a claude-native session with an expired login.
+r"""Web /login gives a sign-in remedy without reaching the native model.
 
-On a claude-native session whose Claude Code login has expired, every web
-turn answers ``Login expired · Please run /login`` — and typing ``/login``
-in the composer cannot fix it, because ``/login`` is in
-``_CLAUDE_CLI_DROPPED_COMMANDS`` (``omnigent/harnesses/claude_native/bridge.py``) and
-not in ``_CLAUDE_NATIVE_ALLOWED_USER_SLASH_COMMANDS``, so
-``_escape_unsupported_slash_command`` prefixes it with a space and Claude
-Code receives it as ordinary prose. The CLI then answers it like any other
-prompt — on an expired login, with the very same "Please run /login" line —
-silently spending a model turn on the exact command the error told the user
-to run.
-
-The journey drives the real claude-native stack (a live ``claude`` CLI in
-the session terminal, fed by the in-process mock LLM): the mock plays the
-expired-login answer to every turn, the test sends a message and then
-``/login`` from the web composer, and asserts the ``/login`` turn is NOT
-silently forwarded to the model as escaped prose. Today both observable
-halves of the bug fire and the test FAILS:
-
-- the canonical transcript records the composer's ``/login`` as the
-  escaped user message ``" /login"``, and
-- the model receives a request whose user text carries that escaped
-  ``" /login"`` (the silently-spent turn).
-
-A fix that intercepts ``/login``/``/logout`` before injection — e.g.
-answering with what actually re-authenticates (``omni setup`` on the host,
-whose anthropic step runs ``claude auth login --claudeai``) — makes both
-checks pass without pinning the fix's exact UI shape.
+The real Claude CLI first answers a scripted expired-login message. The web
+command must then be rejected explicitly, render the host sign-in remedy,
+and appear in neither the canonical transcript nor model input as escaped prose.
 """
 
 from __future__ import annotations
@@ -145,20 +121,15 @@ def test_login_slash_is_not_silently_spent_on_the_model(
     native_claude_mock_session: tuple[str, str],
     mock_llm_server_url: str,
 ) -> None:
-    """``/login`` from the composer must not be escaped into a model turn.
+    """Reject web authentication commands with the host sign-in remedy.
 
-    Journey: with the Claude Code login expired, send any
-    message → the assistant answers "Login expired · Please run /login";
-    type ``/login`` → today the bridge escapes it to ``" /login"``,
-    Claude Code answers it as prose with the same dead-end line, and a
-    model turn is silently spent. The session can never be recovered from
-    the web UI, because the remedy the error names is exactly the command
-    the UI refuses to send.
+    The first real native turn proves the browser-to-model pipeline works.
+    The following command must be rejected before recording or model dispatch,
+    while the browser exposes the sign-in action the user can perform.
 
-    :param page: Playwright page (fresh context per test).
-    :param native_claude_mock_session: ``(base_url, session_id)`` on the
-        real claude-native wrapper, backed by the mock LLM.
-    :param mock_llm_server_url: The mock LLM server base URL.
+    :param page: Playwright page with a fresh browser context.
+    :param native_claude_mock_session: Native session backed by the local mock.
+    :param mock_llm_server_url: Mock server whose requests are checked below.
     """
     base_url, session_id = native_claude_mock_session
 
@@ -184,16 +155,22 @@ def test_login_slash_is_not_silently_spent_on_the_model(
     # from the /login turn onward (set_fallback survives this reset).
     reset_mock_llm(mock_llm_server_url)
 
-    # Let Claude Code finish turn 1 entirely (its stop hook runs for a few
-    # seconds after the working indicator clears). A /login pasted while the
-    # CLI is still busy is queued instead of typed: the queue strips the
-    # bridge's escaping prefix and dequeues /login as a real slash command,
-    # which masks the journey under test.
-    time.sleep(15.0)
-
     # Turn 2 — the user does exactly what the error told them to.
-    _send(page, "/login")
-    expect(page.locator(_USER, has_text="/login").first).to_be_visible(timeout=60_000)
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST"
+            and response.url.endswith(f"/v1/sessions/{session_id}/events")
+        ),
+        timeout=30_000,
+    ) as rejected:
+        _send(page, "/login")
+    assert rejected.value.status == 400
+    error = rejected.value.json()["error"]
+    assert error["code"] == "invalid_input"
+    assert "Run omni setup on the host" in error["message"]
+    page.get_by_test_id("error-headline").last.click()
+    expect(page.get_by_text(error["message"], exact=True)).to_be_visible(timeout=30_000)
+    expect(page.locator(_USER, has_text="/login")).to_have_count(0, timeout=30_000)
 
     # Watch for either observable half of the bug: the transcript records
     # the escaped user message, or the model receives it. On a fixed

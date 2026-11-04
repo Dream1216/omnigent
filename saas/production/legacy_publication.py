@@ -178,7 +178,7 @@ def validate_legacy_fallback(
     now: datetime,
     expected_product_revision: str | None,
 ) -> dict[str, Any]:
-    """A single publication cannot qualify the three-service physical fallback."""
+    """Validate the explicitly registered physical scope and all original drill gates."""
     require(
         envelope.get("kind") != "production_release_with_legacy_fallback/v1",
         "single-publication fallback cannot qualify the complete Core/Gateway/Model stack",

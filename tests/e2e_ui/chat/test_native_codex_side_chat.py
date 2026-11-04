@@ -124,18 +124,47 @@ def test_native_codex_side_chat_inherits_context_and_closes_independently(
     expect(settings).to_be_visible(timeout=30_000)
     settings.click()
     page.get_by_test_id("side-chat-model-edit").click()
-    option = page.locator('[data-model-id$="gpt-6-sol"]')
+    alternate_models = [
+        model
+        for model in parent["model_options"]
+        if model["id"] != first_requests[0]["model"]
+        and not model.get("hidden", False)
+        and any(
+            effort["reasoningEffort"] in {"max", "xhigh"}
+            and effort["reasoningEffort"] != model["defaultReasoningEffort"]
+            for effort in model["supportedReasoningEfforts"]
+        )
+    ]
+    assert alternate_models, (
+        "Native catalog must offer an alternate model with nondefault high effort"
+    )
+    model_option = alternate_models[0]
+    selected_effort = next(
+        effort
+        for effort in ("max", "xhigh")
+        if effort != model_option["defaultReasoningEffort"]
+        and any(
+            option["reasoningEffort"] == effort
+            for option in model_option["supportedReasoningEfforts"]
+        )
+    )
+    assert selected_effort != model_option["defaultReasoningEffort"]
+    option = page.locator(f'[data-model-id="{model_option["id"]}"]')
     selected_model = option.get_attribute("data-model-id")
     assert selected_model and selected_model != first_requests[0]["model"]
+    assert selected_model == model_option["id"]
     with page.expect_response(f"**/v1/sessions/{child_id}") as picked_model:
         option.click()
     assert picked_model.value.ok
+    effort_option = page.locator(f'[data-effort-level="{selected_effort}"]')
+    effort_label = effort_option.inner_text().strip()
+    assert effort_label
     with page.expect_response(f"**/v1/sessions/{child_id}") as picked_effort:
-        page.locator('[data-effort-level="max"]').click()
+        effort_option.click()
     assert picked_effort.value.ok
     page.keyboard.press("Escape")
-    expect(settings).to_contain_text("Max")
-    expected_followup_effort = "max"
+    expect(settings).to_contain_text(effort_label)
+    expected_followup_effort = selected_effort
     if mobile:
         # A cleared pick must reset the thread's effort rather than inherit the previous turn.
         reset = httpx.patch(
