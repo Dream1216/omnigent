@@ -155,10 +155,12 @@ def issuer_case(tmp_path, request):
 @pytest.mark.parametrize(
     "issuer_case", ["volume", "volume_vpc", "output_read", "output_read_vpc"], indirect=True
 )
+@pytest.mark.parametrize("source_lifetime", [3600, 22065])
 def test_real_sdk_signs_scoped_assumption_and_publishes_consumer_document(
-    issuer_case, monkeypatch, capsys
+    issuer_case, monkeypatch, capsys, source_lifetime
 ):
     c = issuer_case
+    c.source["Expiration"] = _utc(c.now + source_lifetime)
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
         monkeypatch.setenv(name, "http://untrusted.invalid:99")
     monkeypatch.setenv("DEBUG", "sdk")
@@ -326,7 +328,7 @@ def test_invalid_metadata_token_stops_before_requesting_source_credentials(issue
         ("AccessKeyId", "LTAI" + "a" * 24),
         ("SecurityToken", ""),
         ("Expiration", _utc(1030)),
-        ("Expiration", _utc(50000)),
+        ("Expiration", _utc(1060)),
         ("Expiration", "2026-10-31T00:00:00+08:00"),
     ],
 )

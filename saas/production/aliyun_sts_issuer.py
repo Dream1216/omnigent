@@ -358,9 +358,7 @@ class AliyunVolumeStsIssuer:
         if (
             not isinstance(result, dict)
             or result.get("Code") != "Success"
-            or not self._clock() + 60
-            < _expiration(result.get("Expiration"))
-            <= self._clock() + 21600
+            or not self._clock() + 60 < _expiration(result.get("Expiration"))
         ):
             raise ValueError
         return _cloud_secrets(result)
