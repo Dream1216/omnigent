@@ -1813,8 +1813,18 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
     if not isinstance(vulnerabilities, dict):
         violations.append("vulnerability_policy must be an object")
     else:
-        if set(vulnerabilities) != _VULNERABILITY_POLICY_FIELDS:
+        if set(vulnerabilities) not in (
+            _VULNERABILITY_POLICY_FIELDS,
+            _VULNERABILITY_POLICY_FIELDS | {"component_not_applicable"},
+        ):
             violations.append("vulnerability policy fields do not match schema version 2")
+        if "component_not_applicable" in vulnerabilities:
+            from saas.scripts.sqlite_component_disposition import RULE
+
+            if vulnerabilities["component_not_applicable"] != RULE:
+                violations.append(
+                    "finite component disposition differs from the exact reviewed rule"
+                )
         if not _exact_integer(vulnerabilities.get("critical_allowed"), 0) or not (
             _exact_integer(vulnerabilities.get("high_allowed"), 0)
         ):
@@ -1914,6 +1924,8 @@ def _validate_image(
     product_revision: object,
     evidence: dict[str, Any],
     completed_at: datetime | None,
+    now: datetime,
+    repo: Path,
 ) -> tuple[list[str], datetime | None]:
     violations: list[str] = []
     name = str(image.get("name", "unknown"))
@@ -2001,7 +2013,10 @@ def _validate_image(
 
     scan_at: datetime | None = None
     scan = image.get("vulnerabilities")
-    if not isinstance(scan, dict) or set(scan) != _VULNERABILITY_FIELDS:
+    if not isinstance(scan, dict) or set(scan) not in (
+        _VULNERABILITY_FIELDS,
+        _VULNERABILITY_FIELDS | {"component_dispositions"},
+    ):
         violations.append(f"{name} vulnerability evidence is incomplete")
     else:
         if not isinstance(scan.get("scanner"), str) or not scan["scanner"].strip():
@@ -2010,7 +2025,16 @@ def _validate_image(
             violations.append(f"{name} vulnerability scan subject does not match the image")
         if not _hex_sha256(scan.get("report_sha256")):
             violations.append(f"{name} vulnerability report SHA-256 is invalid")
-        if not _exact_integer(scan.get("critical"), 0) or not _exact_integer(scan.get("high"), 0):
+        if "component_dispositions" in scan:
+            from saas.scripts.sqlite_component_disposition import validate_release_dispositions
+
+            try:
+                validate_release_dispositions(repo, image, scan, evidence, now=now)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                violations.append(f"{name} finite component disposition is invalid: {error}")
+        elif not _exact_integer(scan.get("critical"), 0) or not _exact_integer(
+            scan.get("high"), 0
+        ):
             violations.append(f"{name} exceeds the vulnerability threshold")
         if scan.get("exceptions") != []:
             violations.append(f"{name} release evidence cannot carry vulnerability exceptions")
@@ -2362,6 +2386,8 @@ def _validate_evidence(
                 product_revision=product_revision,
                 evidence=evidence,
                 completed_at=completed_at,
+                now=now,
+                repo=repo,
             )
             violations.extend(image_violations)
             if admission_at is not None:
@@ -2445,6 +2471,7 @@ def validate_release(
         in {
             "production_release_with_legacy_fallback/v1",
             "production_release_with_legacy_fallback/v2",
+            "production_release_with_runtime_pair/v1",
         }
     ):
         from saas.production.legacy_publication import validate_legacy_fallback

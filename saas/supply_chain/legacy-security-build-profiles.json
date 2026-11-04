@@ -3,13 +3,13 @@
     "Compatibility018": {
       "application_version": "0.18.0.dev20261006",
       "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
-      "budget_file_cap": 224,
+      "budget_file_cap": 225,
       "component": "Compatibility018",
-      "product_revision": "7e774d673980729f591304d8d7b991af36a06920",
-      "product_tree": "3c8cfe54ce03854388b4a0007388adbe4080fc0a",
+      "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+      "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
       "repository": "Dream1216/omnigent",
       "schema_version": 1,
-      "source_date_epoch": 1793710955,
+      "source_date_epoch": 1793801374,
       "source_delta": [
         {
           "after": {
@@ -25,13 +25,46 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "5ce3127d68feca0492dac1273fbff81baeed8f045135b1cd2864ba1a65dadeb8"
+            "sha256": "9a42ad4fff59764287f673a5798b742b7be63afd41c3edf53b97dff84aba3707"
           },
           "before": {
             "mode": "100644",
             "sha256": "3cb218a4045fad8f0f3cc8f6bfb872f6c691407f51b529f87fb0edce0a99825c"
           },
           "path": ".github/workflows/saas-image-candidate.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "bd3c3628a3ef30502fa3e515352ae328eaa892bb7902e2ca7dfec650f357b0df"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f06e305856bf5fae56be816e9ecfecadcc7856858bc89cf1e589037aa6ca918e"
+          },
+          "path": ".github/workflows/saas-oci-promotion-model-renewal.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "99a1bc0a134e6a1e984d493001dc58d41e5634390532e6f0035f917e67f6b91d"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "c9de3773f27d307ab06c955ed543e06c23478e3243657d1de2d6ae325b37ef4b"
+          },
+          "path": ".github/workflows/saas-oci-promotion-resume.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "527961760f721f7beecf9069e325c153bb1d747823be69ea43b9ae50173a70d3"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "6ca07b631453e2a33a07fcf88ec3af23a86ea0e084b91f6e286822d256e4c4d9"
+          },
+          "path": ".github/workflows/saas-oci-promotion-token-renewal.yml"
         },
         {
           "after": {
@@ -47,7 +80,18 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "513cde86e98f8018847ba9b022cdbbfc7fe9807459e09ab8326b9778925a85db"
+            "sha256": "882f5238d8e7147eb095b37c838e9f1ad707ae81c0d8314f49460627bb29f6f3"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "57c10d4b3df5054344c5780d75c12000ed15085600d57b18a09d743fc6e2f768"
+          },
+          "path": ".github/workflows/trivy.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "bda7212e8c615d1cae06c91f35f4c667e2e50fb913a8d04d4a15ebe839fe9d41"
           },
           "before": {
             "mode": "100644",
@@ -313,6 +357,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "53a4c5bdfc0d245d015bb99b2416bc493cdcf081e272ed1174322719479311c1"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "ebce63b5130a7e2e8c8b14e27d2030b339b24354fed28d7541aea4cf6c1a18a1"
+          },
+          "path": "saas/production/admission.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "fbe35c404764675e31da1806270901b4cad688792cdd86aa19b6e2cdb7bb581f"
           },
           "before": {
@@ -488,13 +543,57 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "42d8b8d2c706dd719c7229b1554eb9bcb07e7326bf487f878a4da1c3ab6e1f48"
+            "sha256": "04f3886226fdba8e98bb3ff34bd19150692dac8d12066db725cb44f8fcf9a2be"
           },
           "before": {
             "mode": "100644",
             "sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185"
           },
           "path": "saas/scripts/check_image_supply_chain.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "d0e02cbc95dcc0deda6b04a143aa2def365fdc4b06855bd558fb76dc6d77280c"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "dd2ce08cff3a395a6d664cf5d9f27da160c3d08a7036c9bff0797039fe169ec9"
+          },
+          "path": "saas/scripts/core_f440_compat_release.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "db2694e3930aed1a5780c6dbc714ed3b2df0150cd9cb913bf07be195291dab2b"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f8f1cda86c8e22fcfe173cfb1d35f95849e130332122afb4d5c3ba34fd28bc3b"
+          },
+          "path": "saas/scripts/legacy_initial_publisher.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "e683173b741e98a4069a40f0270d30c89e80b4a531d8155ee4e9ca0281c789bc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "ac4e7969ba407c018ebd47ae7c9cf216c2b4c5a2815185adb6d084bb84c28f86"
+          },
+          "path": "saas/scripts/legacy_publication_reader.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "d87913b94c8a1c88e7d712c36d627a7b3aa00a8ad91605cdf49064ba9fc3782b"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef"
+          },
+          "path": "saas/scripts/oci_promotion.py"
         },
         {
           "after": {
@@ -521,7 +620,37 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "15b221fb539ba107697c126850c381b78e3b9a251a9877e4d55c0e6f0dd75d12"
+            "sha256": "04e7c71c32eb35bd275d23f072e82f0a7cd2cc28b5744167d0598dd0c6af4918"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9"
+          },
+          "path": "saas/scripts/scan_oci_candidates.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "d2ec4362da74608d2d058946cdd1fe8865c8ea93057946b6abe83ccc729ecfc6"
+          },
+          "before": null,
+          "path": "saas/scripts/sqlite_component_disposition.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "443df757af5823da489a7fd94474c6536ec6b2e2ef1a87ff488dbf7b56515ce7"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "d3a775b82a37fbe464bb3302c2fdef446dbd4e93d2d017b105af0da60279a7b7"
+          },
+          "path": "saas/supply_chain/release-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "d196f44a5bc061a7ba5b08f3ad94f446bc90530d1557c01fcac83ba494cdb309"
           },
           "before": {
             "mode": "100644",
@@ -532,7 +661,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "0a98d1394625b3a6b6e6cf93de11b1ac7d570625417faedc27e40cb94cfe49b1"
+            "sha256": "e8050ac25407510c79d1bbc61d7cce70969dec43eaf414e898af893b4ecf1018"
           },
           "before": {
             "mode": "100644",
@@ -631,7 +760,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "fa26718b3a57c50b0d338c5ebc09231d45f8cf861e07fc86a5a2913147c31a25"
+            "sha256": "e69b5072222d941c34df3d788de8dcf49680cb3efd5ecd9284a37a7914142419"
           },
           "before": {
             "mode": "100644",
@@ -697,7 +826,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "49b6e323561b5dee86c9bd700d6aa949c5cd9d82adb5fe954bf79ade510d2046"
+            "sha256": "921362608dd727e0a79865180f4725923dbc7108e67cdf964cd2855efc6a72cb"
           },
           "before": {
             "mode": "100644",
@@ -1029,6 +1158,25 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "973f2f470e5366d2f6f4039e34930efdae031e00f32ae95411f4f38c7f01a1cc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "5f4678e969fffc2f61e0d0c36c5d28c750a2d37480d818e663d6f55de17c1070"
+          },
+          "path": "tests/saas/test_scan_oci_candidates.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "84809aedaf2063a15b5703a5b4f5b4bdba24e190e6dded775854ba2681e843a7"
+          },
+          "before": null,
+          "path": "tests/saas/test_sqlite_component_disposition.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "8c4ca88068ec956edec5dbcaddb84fba01c6fb4c28bc7679d356720a6a4f48c3"
           },
           "before": {
@@ -1040,7 +1188,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "36ede4b8cffffbdadd75c236b6ed24e33e9037f7c169ec983fea6703b262085a"
+            "sha256": "afe67928d1c69c8e5741f1e42c1a21396bb8f3dc88883ae6490039c6423d94af"
           },
           "before": {
             "mode": "100644",

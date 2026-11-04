@@ -14,9 +14,10 @@ from saas.scripts.oci_promotion import require
 WORKFLOW = ".github/workflows/security-scan.yml"
 MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
 _CURRENT_MAIN = "796b5da14fed424f9eec11170db05a3316da3a12"
+_CURRENT_MAIN_SOURCE_REVISIONS = {_CURRENT_MAIN, "c724abb9d43c40717e83154a7da9270150f3d418"}
 _REVIEWED_MAIN_CHECKOUTS = {MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe", _CURRENT_MAIN}
 _COMPATIBILITY_OWNER_POLICY_SHA256 = (
-    "9a5506ae3d2b4f10198c250e88bafc6f2f405b4e7dab35785ed6a825ac3b502d"
+    "458ec2c388aaf9980983b065715a4807f5dbea9e08fc88a4061dfd7a2ebe0ba6"
 )
 KIND = "legacy_original_OWNER_security_policy_decision/v1"
 SOURCES = {
@@ -107,7 +108,9 @@ def validate_registration(profile, identity, specification):
         "original OWNER security-policy registration fields differ",
     )
     trusted_sources = (
-        _CURRENT_MAIN_SOURCES if row["trusted_checkout_revision"] == _CURRENT_MAIN else SOURCES
+        _CURRENT_MAIN_SOURCES
+        if row["trusted_checkout_revision"] in _CURRENT_MAIN_SOURCE_REVISIONS
+        else SOURCES
     )
     compatibility = profile["component"] == "Compatibility018"
     if compatibility:
@@ -355,7 +358,9 @@ def collect_policy_decision(
 
     row = validate_registration(profile, identity, specification)
     trusted_sources = (
-        _CURRENT_MAIN_SOURCES if row["trusted_checkout_revision"] == _CURRENT_MAIN else SOURCES
+        _CURRENT_MAIN_SOURCES
+        if row["trusted_checkout_revision"] in _CURRENT_MAIN_SOURCE_REVISIONS
+        else SOURCES
     )
     for path, expected in trusted_sources.items():
         require(

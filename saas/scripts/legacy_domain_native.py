@@ -50,7 +50,11 @@ def matches_hosted_runner_label(
         or (
             expected == "ubuntu-latest"
             and labels == ["ubuntu-24.04"]
-            and trusted_checkout_revision == "796b5da14fed424f9eec11170db05a3316da3a12"
+            and trusted_checkout_revision
+            in {
+                "796b5da14fed424f9eec11170db05a3316da3a12",
+                "c724abb9d43c40717e83154a7da9270150f3d418",
+            }
         )
     )
 

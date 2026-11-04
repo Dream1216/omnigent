@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 201,
-    "max_upstream_net_added_loc": 5391,
+    "max_direct_upstream_files": 205,
+    "max_upstream_net_added_loc": 5430,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -945,6 +945,43 @@
       "max_upstream_net_added_loc": 4576,
       "max_active_patches": 9,
       "min_isolated_custom_code_ratio": 0.85
+    },
+    "upstream_021_ui_native_contract_followup": {
+      "authority": "Existing direct standing human all-approval and budget authority; cache exception is not source-change authority.",
+      "authority_receipt": "/Users/dream/BuildArtifacts/omniagent-021-20261031-fast-execution-20261101/runtime-security-completion-Gateway-original-Pi-failure/native-human-standing-authority-verified.PUBLIC.json",
+      "previous_max_direct_upstream_files": 190,
+      "max_direct_upstream_files": 193,
+      "new_official_paths": [
+        "tests/e2e_ui/messages/test_message_render_parity.py",
+        "tests/e2e_ui/chat/test_native_codex_side_chat.py",
+        "tests/e2e_ui/chat/test_native_claude_login_slash_dead_end.py"
+      ],
+      "reason": "Use the existing accessible composer name across idle/queued states, explicitly send the reconnect follow-up through the existing queue action, and select an alternate model plus a nondefault highest advertised reasoning tier from the real pinned native catalog. Preserve real UI sends, inherited context, request model/effort checks, default reset, parent isolation and original business assertions. Require the existing web auth-command400 boundary and visible sign-in remedy, rather than a rejected optimistic user bubble. Preserve the90s transcript/model negative watch. No production/workflow/timeout increase; exact incremental review and final-source own CI remain required.",
+      "max_upstream_net_added_loc": 4576,
+      "max_active_patches": 9,
+      "min_isolated_custom_code_ratio": 0.85
+    },
+    "upstream_021_official_Trivy_install_followup": {
+      "authority": "Existing direct standing human all-approval and budget authority; no security policy change authorized by this numeric record.",
+      "authority_receipt": "/Users/dream/BuildArtifacts/omniagent-021-20261031-fast-execution-20261101/runtime-security-completion-Gateway-original-Pi-failure/native-human-standing-authority-verified.PUBLIC.json",
+      "previous_max_direct_upstream_files": 193,
+      "max_direct_upstream_files": 194,
+      "new_official_path": ".github/workflows/trivy.yml",
+      "reason": "Install the same official Trivy0.74.0 release using fixed SHA256 before the pinned action because its inherited get.trivy.dev installer endpoint fails. Reuse exact reviewed4e25 workflow bytes and existing native3/3 proof. Scanner options, cache, permissions, reports and SARIF behavior retained. Final combined-source ownCI and exact image qualification remain required.",
+      "max_upstream_net_added_loc": 4576,
+      "max_active_patches": 9,
+      "min_isolated_custom_code_ratio": 0.85
+    },
+    "aliyun_accepted8c_main_integration": {
+      "accepted_main": "8c001134ed22bb4bc2d08cf68a497430b79c6aa4",
+      "Cloud_parent": "40b73b302ecba4eb38fbb03b4fc38d35b6a155d7",
+      "previous_max_direct_upstream_files": 201,
+      "previous_max_upstream_net_added_loc": 5391,
+      "max_direct_upstream_files": 205,
+      "max_upstream_net_added_loc": 5430,
+      "recorded_at": "2026-11-05",
+      "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
+      "reason": "Reconcile the measured existing Aliyun integration with the accepted Main UI, scanner and runtime-pair changes under the verified blanket project authorization. Preserve nine patches, .85 isolation, all prior trusted registrations and technical/signing/production requirements."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

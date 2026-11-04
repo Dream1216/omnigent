@@ -716,6 +716,7 @@ def _send_turn_and_settle(
     user_marker: str,
     assistant_token: str,
     expected_assistant_bubbles: int,
+    send_queued_now: bool = False,
     turn_timeout_ms: int = _MOCK_TURN_TIMEOUT_MS,
 ) -> None:
     """Send one composer turn and wait until Claude has answered it.
@@ -731,11 +732,25 @@ def _send_turn_and_settle(
     :param user_marker: Unique token embedded in the user message.
     :param assistant_token: Unique token the agent is asked to echo back.
     :param expected_assistant_bubbles: Assistant bubbles once this turn is answered.
+    :param send_queued_now: Use the queue action for a follow-up held behind the lost turn.
     :param turn_timeout_ms: Budget for the answer to render.
     """
     set_fallback_mock_llm(mock_llm_server_url, "default", assistant_token)
     set_fallback_mock_llm(mock_llm_server_url, _CLAUDE_MOCK_MODEL, assistant_token)
     _send(page, _turn_prompt(index, user_marker, assistant_token))
+    if send_queued_now:
+        queue = page.get_by_test_id("composer-queued-strip")
+        expect(queue).to_contain_text(user_marker, timeout=30_000)
+        with page.expect_response(
+            lambda response: (
+                response.request.method == "POST"
+                and response.url.endswith(f"/v1/sessions/{session_id}/events")
+                and user_marker in (response.request.post_data or "")
+            ),
+            timeout=60_000,
+        ) as posted:
+            queue.get_by_role("button", name="Send queued message now", exact=True).click()
+        assert posted.value.ok
     answers = page.locator(_ASSISTANT).filter(
         has_not=page.get_by_test_id("error-headline").filter(has_text=_UNDELIVERED_HEADLINE)
     )
@@ -873,6 +888,7 @@ def test_native_claude_lost_message_does_not_duplicate_the_next_one(
         user_marker=next_marker,
         assistant_token=next_token,
         expected_assistant_bubbles=2,
+        send_queued_now=True,
         turn_timeout_ms=_RESUMED_TURN_TIMEOUT_MS,
     )
     _log.info("turn 3 settled after the reconnect")

@@ -267,6 +267,28 @@
           "after": "    destination: Path,\n) -> tuple[dict[str, Any], Path]:\n    destination.mkdir(parents=True, exist_ok=False)\n    with preserve_native_evidence(destination / \"native-api\", evidence_root=destination):\n        verify_native_control(control, context)\n        workflow = (control / WORKFLOW).read_bytes()\n        jobs = _job_pages(context[\"run_id\"], context[\"attempt\"])\n        matches = [job for job in jobs if job.get(\"name\") == \"build-initial\"]\n        require(len(matches) == 1, \"fresh wheel build job is missing or duplicated\")\n        job = api(f\"{PREFIX}/actions/jobs/{matches[0]['id']}\")\n        require(job == matches[0], \"fresh wheel native job changed since listing\")\n        steps = successful_steps(job, FRESH_STEPS, context, name=\"build-initial\")\n        log_path = destination / \"job.log\"\n        download_job_log(job[\"id\"], log_path)\n        log = log_path.read_text()\n        checkout_logs = _checkout_logs(\n            log, steps, (FRESH_STEPS[0], FRESH_STEPS[2]), job[\"steps\"], workflow\n        )\n        require(\n            checkout_commit(checkout_logs[FRESH_STEPS[0]], steps[FRESH_STEPS[0]])\n            == context[\"control_revision\"]\n            and checkout_commit(checkout_logs[FRESH_STEPS[2]], steps[FRESH_STEPS[2]])\n            == profile[\"product_revision\"],\n            \"fresh wheel native execution used another control or product checkout\",\n        )\n        name = (\n            f\"legacy-initial-{profile['component']}-{profile['product_revision']}-\"\n            f\"{context['control_revision']}-{context['run_id']}-{context['attempt']}\"\n"
         }
       ]
+    },
+    "release_admission_correction": {
+      "corrected_sha256": "1490564cd83dc7a8814ec66a705db331be8ba77e98c867a694e7f280b0b573de",
+      "restored_sha256": "ec2e4bf0af003d194bfa231ed19be919ed96450ed8ab998f8e41db4ff10ca778",
+      "inverse_fragments": [
+        {
+          "before": "    # Readback verifies all admitted manifests/configs/layers before scanning\n    # their original tar framing, which retains the original archive SHA.\n    scan(control, oci_root, destination / \"scans\")\n    scans = validate_scans(destination / \"scans\", manifest[\"images\"], now=datetime.now(UTC))\n    syft = install_syft(work / \"tools\")\n    sboms = destination / \"sbom\"\n    sboms.mkdir()\n",
+          "after": "    # Readback verifies all admitted manifests/configs/layers before scanning\n    # their original tar framing, which retains the original archive SHA.\n    scan(control, oci_root, destination / \"scans\")\n    scans = validate_scans(\n        destination / \"scans\", manifest[\"images\"], now=datetime.now(UTC), archive_root=oci_root\n    )\n    syft = install_syft(work / \"tools\")\n    sboms = destination / \"sbom\"\n    sboms.mkdir()\n"
+        },
+        {
+          "before": "\n\ndef verify_runtime_report(\n    root: Path, admission: dict[str, Any], publication: dict[str, Any], manifest: dict[str, Any]\n) -> dict[str, Any]:\n    runtime = read_json(root / \"runtime.json\")\n    require(\n",
+          "after": "\n\ndef verify_runtime_report(\n    root: Path,\n    admission: dict[str, Any],\n    publication: dict[str, Any],\n    manifest: dict[str, Any],\n    oci_root: Path | None = None,\n) -> dict[str, Any]:\n    runtime = read_json(root / \"runtime.json\")\n    require(\n"
+        },
+        {
+          "before": "    )\n    require(\n        runtime.get(\"scans\")\n        == validate_scans(root / \"scans\", manifest[\"images\"], now=datetime.now(UTC)),\n        \"current raw runtime scans differ\",\n    )\n    require(\n",
+          "after": "    )\n    require(\n        runtime.get(\"scans\")\n        == validate_scans(\n            root / \"scans\", manifest[\"images\"], now=datetime.now(UTC), archive_root=oci_root\n        ),\n        \"current raw runtime scans differ\",\n    )\n    require(\n"
+        },
+        {
+          "before": "                    destination=destination / \"runtime\",\n                )\n                coordinates[\"runtime_artifact\"] = coordinate\n                runtime = verify_runtime_report(runtime_root, admission, publication, manifest)\n                read_registry(destination / \"readback\", manifest, publication[\"images\"])\n                predicate = typed_provenance(admission, publication, runtime, **coordinates)\n                write_json(output / \"provenance.json\", predicate)\n",
+          "after": "                    destination=destination / \"runtime\",\n                )\n                coordinates[\"runtime_artifact\"] = coordinate\n                runtime = verify_runtime_report(\n                    runtime_root, admission, publication, manifest, oci_root=root\n                )\n                read_registry(destination / \"readback\", manifest, publication[\"images\"])\n                predicate = typed_provenance(admission, publication, runtime, **coordinates)\n                write_json(output / \"provenance.json\", predicate)\n"
+        }
+      ]
     }
   },
   ".github/workflows/saas-legacy-security-build.yml": {
@@ -418,7 +440,37 @@
       ]
     }
   },
-  "saas/scripts/oci_promotion.py": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
+  "saas/scripts/oci_promotion.py": {
+    "combined_sha256": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
+    "preserved_functions": {},
+    "approved_functions": {},
+    "release_admission_correction": {
+      "corrected_sha256": "d87913b94c8a1c88e7d712c36d627a7b3aa00a8ad91605cdf49064ba9fc3782b",
+      "restored_sha256": "5e94896b9130a34e41796eb90a15ffdc0f18bfdf92973c1757cbdd00d9bb53ef",
+      "inverse_fragments": [
+        {
+          "before": "        return digest\n\n\ndef validate_scans(root: Path, images: dict[str, Any], *, now: datetime) -> dict[str, Any]:\n    summary_path = root / \"grype/candidate-scan-summary.json\"\n    summary = read_json(summary_path)\n    require(\n",
+          "after": "        return digest\n\n\ndef validate_scans(\n    root: Path, images: dict[str, Any], *, now: datetime, archive_root: Path | None = None\n) -> dict[str, Any]:\n    summary_path = root / \"grype/candidate-scan-summary.json\"\n    summary = read_json(summary_path)\n    require(\n"
+        },
+        {
+          "before": "    require(isinstance(rows, list) and len(rows) == 4, \"four raw scans are required\")\n    seen: set[tuple[str, str]] = set()\n    reports: dict[str, str] = {}\n    for row in rows:\n        name, platform = row.get(\"image\"), row.get(\"platform\")\n        require(name in IMAGES and platform in PLATFORMS, \"unexpected scan coordinate\")\n",
+          "after": "    require(isinstance(rows, list) and len(rows) == 4, \"four raw scans are required\")\n    seen: set[tuple[str, str]] = set()\n    reports: dict[str, str] = {}\n    verified_archives: dict[str, Path] = {}\n    for row in rows:\n        name, platform = row.get(\"image\"), row.get(\"platform\")\n        require(name in IMAGES and platform in PLATFORMS, \"unexpected scan coordinate\")\n"
+        },
+        {
+          "before": "            \"raw scan must not filter findings\",\n        )\n        parsed = scan_report(report)\n        require(not any(parsed[\"counts\"].values()), \"Critical or High finding blocks promotion\")\n        facts = images[name][\"facts\"][\"platforms\"][platform]\n        target = report.get(\"source\", {}).get(\"target\", {})\n        require(\n",
+          "after": "            \"raw scan must not filter findings\",\n        )\n        parsed = scan_report(report)\n        if any(parsed[\"counts\"].values()):\n            from saas.scripts.sqlite_component_disposition import validate_disposition\n\n            if name not in verified_archives:\n                archive = (archive_root or root) / images[name][\"archive\"]\n                require(\n                    file_sha256(archive) == images[name][\"archive_sha256\"],\n                    \"actual component OCI archive differs\",\n                )\n                verified_archives[name] = archive\n            validate_disposition(\n                report_path,\n                row.get(\"component_disposition\"),\n                image=verified_archives[name],\n                now=now,\n            )\n            require(row.get(\"scanner_exit\") == 2, \"original High scanner exit is required\")\n        else:\n            require(row.get(\"component_disposition\") is None, \"unexpected component disposition\")\n        facts = images[name][\"facts\"][\"platforms\"][platform]\n        target = report.get(\"source\", {}).get(\"target\", {})\n        require(\n"
+        },
+        {
+          "before": "        require(\n            row.get(\"archive_sha256\") == images[name][\"archive_sha256\"]\n            and row.get(\"report_sha256\") == sha\n            and row.get(\"critical\") == 0\n            and row.get(\"high\") == 0\n            and row.get(\"findings\") == [],\n            \"scan summary does not bind original archive and report\",\n        )\n        reports[relative] = sha\n",
+          "after": "        require(\n            row.get(\"archive_sha256\") == images[name][\"archive_sha256\"]\n            and row.get(\"report_sha256\") == sha\n            and row.get(\"critical\") == parsed[\"counts\"][\"Critical\"]\n            and row.get(\"high\") == parsed[\"counts\"][\"High\"]\n            and row.get(\"findings\") == parsed[\"findings\"],\n            \"scan summary does not bind original archive and report\",\n        )\n        reports[relative] = sha\n"
+        },
+        {
+          "before": "        root, labels=labels, source_date_epoch=source_date_epoch, now=sealed_at\n    )\n    require(actual == manifest, \"candidate seal does not bind transferred OCI bytes\")\n    validate_scans(current_scan_root or root, manifest[\"images\"], now=now)\n    return manifest\n\n\n",
+          "after": "        root, labels=labels, source_date_epoch=source_date_epoch, now=sealed_at\n    )\n    require(actual == manifest, \"candidate seal does not bind transferred OCI bytes\")\n    validate_scans(current_scan_root or root, manifest[\"images\"], now=now, archive_root=root)\n    return manifest\n\n\n"
+        }
+      ]
+    }
+  },
   "saas/scripts/check_image_supply_chain.py": {
     "parent_sha256": "63f30befba6a656f5bd70f36389f5f15e84b145b79a28adbe2d74b416be9cf0c",
     "combined_sha256": "18412a80f174da0e1523d1701ca4cc3232e2f7dcccad56fc6ae1de3ede71ef24",
@@ -510,6 +562,38 @@
           "after": "pyexpat.EXPAT_VERSION == \"expat_2.10.0\""
         }
       ]
+    },
+    "release_admission_correction": {
+      "corrected_sha256": "2443c231886448e270a59a9040c34d73f307a68cb9b5217548cb983c491d5784",
+      "restored_sha256": "02d84bfc05e3a685976c9b6589024df5abd22db288a24ff4233786b86c8db123",
+      "inverse_fragments": [
+        {
+          "before": "    if not isinstance(vulnerabilities, dict):\n        violations.append(\"vulnerability_policy must be an object\")\n    else:\n        if set(vulnerabilities) != _VULNERABILITY_POLICY_FIELDS:\n            violations.append(\"vulnerability policy fields do not match schema version 2\")\n        if not _exact_integer(vulnerabilities.get(\"critical_allowed\"), 0) or not (\n            _exact_integer(vulnerabilities.get(\"high_allowed\"), 0)\n        ):\n",
+          "after": "    if not isinstance(vulnerabilities, dict):\n        violations.append(\"vulnerability_policy must be an object\")\n    else:\n        if set(vulnerabilities) not in (\n            _VULNERABILITY_POLICY_FIELDS,\n            _VULNERABILITY_POLICY_FIELDS | {\"component_not_applicable\"},\n        ):\n            violations.append(\"vulnerability policy fields do not match schema version 2\")\n        if \"component_not_applicable\" in vulnerabilities:\n            from saas.scripts.sqlite_component_disposition import RULE\n\n            if vulnerabilities[\"component_not_applicable\"] != RULE:\n                violations.append(\n                    \"finite component disposition differs from the exact reviewed rule\"\n                )\n        if not _exact_integer(vulnerabilities.get(\"critical_allowed\"), 0) or not (\n            _exact_integer(vulnerabilities.get(\"high_allowed\"), 0)\n        ):\n"
+        },
+        {
+          "before": "    product_revision: object,\n    evidence: dict[str, Any],\n    completed_at: datetime | None,\n) -> tuple[list[str], datetime | None]:\n    violations: list[str] = []\n    name = str(image.get(\"name\", \"unknown\"))\n",
+          "after": "    product_revision: object,\n    evidence: dict[str, Any],\n    completed_at: datetime | None,\n    now: datetime,\n    repo: Path,\n) -> tuple[list[str], datetime | None]:\n    violations: list[str] = []\n    name = str(image.get(\"name\", \"unknown\"))\n"
+        },
+        {
+          "before": "\n    scan_at: datetime | None = None\n    scan = image.get(\"vulnerabilities\")\n    if not isinstance(scan, dict) or set(scan) != _VULNERABILITY_FIELDS:\n        violations.append(f\"{name} vulnerability evidence is incomplete\")\n    else:\n        if not isinstance(scan.get(\"scanner\"), str) or not scan[\"scanner\"].strip():\n",
+          "after": "\n    scan_at: datetime | None = None\n    scan = image.get(\"vulnerabilities\")\n    if not isinstance(scan, dict) or set(scan) not in (\n        _VULNERABILITY_FIELDS,\n        _VULNERABILITY_FIELDS | {\"component_dispositions\"},\n    ):\n        violations.append(f\"{name} vulnerability evidence is incomplete\")\n    else:\n        if not isinstance(scan.get(\"scanner\"), str) or not scan[\"scanner\"].strip():\n"
+        },
+        {
+          "before": "            violations.append(f\"{name} vulnerability scan subject does not match the image\")\n        if not _hex_sha256(scan.get(\"report_sha256\")):\n            violations.append(f\"{name} vulnerability report SHA-256 is invalid\")\n        if not _exact_integer(scan.get(\"critical\"), 0) or not _exact_integer(scan.get(\"high\"), 0):\n            violations.append(f\"{name} exceeds the vulnerability threshold\")\n        if scan.get(\"exceptions\") != []:\n            violations.append(f\"{name} release evidence cannot carry vulnerability exceptions\")\n",
+          "after": "            violations.append(f\"{name} vulnerability scan subject does not match the image\")\n        if not _hex_sha256(scan.get(\"report_sha256\")):\n            violations.append(f\"{name} vulnerability report SHA-256 is invalid\")\n        if \"component_dispositions\" in scan:\n            from saas.scripts.sqlite_component_disposition import validate_release_dispositions\n\n            try:\n                validate_release_dispositions(repo, image, scan, evidence, now=now)\n            except (OSError, ValueError, KeyError, TypeError) as error:\n                violations.append(f\"{name} finite component disposition is invalid: {error}\")\n        elif not _exact_integer(scan.get(\"critical\"), 0) or not _exact_integer(\n            scan.get(\"high\"), 0\n        ):\n            violations.append(f\"{name} exceeds the vulnerability threshold\")\n        if scan.get(\"exceptions\") != []:\n            violations.append(f\"{name} release evidence cannot carry vulnerability exceptions\")\n"
+        },
+        {
+          "before": "                product_revision=product_revision,\n                evidence=evidence,\n                completed_at=completed_at,\n            )\n            violations.extend(image_violations)\n            if admission_at is not None:\n",
+          "after": "                product_revision=product_revision,\n                evidence=evidence,\n                completed_at=completed_at,\n                now=now,\n                repo=repo,\n            )\n            violations.extend(image_violations)\n            if admission_at is not None:\n"
+        },
+        {
+          "before": "        in {\n            \"production_release_with_legacy_fallback/v1\",\n            \"production_release_with_legacy_fallback/v2\",\n        }\n    ):\n        from saas.production.legacy_publication import validate_legacy_fallback\n",
+          "after": "        in {\n            \"production_release_with_legacy_fallback/v1\",\n            \"production_release_with_legacy_fallback/v2\",\n            \"production_release_with_runtime_pair/v1\",\n        }\n    ):\n        from saas.production.legacy_publication import validate_legacy_fallback\n"
+        }
+      ],
+      "accepted_main": "8c001134ed22bb4bc2d08cf68a497430b79c6aa4",
+      "composition_note": "Original accepted Main inverse fragments are unchanged; their exact application restores the previously reviewed Cloud generic validator byte-for-byte."
     }
   },
   "saas/scripts/scan_oci_candidates.py": {
@@ -556,6 +640,30 @@
         {
           "before": "    }[args.scope]\n    (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + \"\\n\")\n    return 2 if blocked else 0\n\n\n",
           "after": "    }[args.scope]\n    (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + \"\\n\")\n    if advisory and findings_present:\n        print(\n            \"::warning::Aliyun Host vulnerability findings are advisory; \"\n            \"original reports, counts and scanner exit codes are retained.\"\n        )\n    return 2 if findings_present and not advisory else 0\n\n\n"
+        }
+      ]
+    },
+    "upstream_sync_correction": {
+      "corrected_sha256": "a58baecdc0efd28c25e4e06ef4d12d4150f4c78933c09ccfaea59978b1904830",
+      "restored_sha256": "3935684003aa9be3d036b5e80a1122892af268cc0c1c2edf15d70f69be4732e4",
+      "accepted_main": "8c001134ed22bb4bc2d08cf68a497430b79c6aa4",
+      "reason": "Compose the accepted finite SQLite component classification with the existing Aliyun-only advisory scope; retain raw reports, counts, scanner exits and every unrelated guard. Exact inverse restores the previously reviewed Cloud scanner.",
+      "inverse_fragments": [
+        {
+          "before": "        summaries = []\n        findings_present = False\n        for name, archive in sorted(images.items()):\n            archive_digest = file_sha256(archive)\n",
+          "after": "        summaries = []\n        findings_present = False\n        blocked = False\n        for name, archive in sorted(images.items()):\n            archive_digest = file_sha256(archive)\n"
+        },
+        {
+          "before": "                parsed = scan_report(json.loads(output.read_text()))\n                counts = parsed[\"counts\"]\n                findings_present |= result.returncode == 2 or any(counts.values())\n                summaries.append(\n                    {\n",
+          "after": "                parsed = scan_report(json.loads(output.read_text()))\n                counts = parsed[\"counts\"]\n                present = result.returncode == 2 or any(counts.values())\n                findings_present |= present\n                disposition = None\n                if args.scope != \"aliyun-host\" and any(counts.values()) and result.returncode == 2:\n                    from saas.scripts.sqlite_component_disposition import inspect_disposition\n\n                    try:\n                        disposition = inspect_disposition(\n                            archive, output, platform=platform, now=datetime.now(UTC)\n                        )\n                    except ValueError as error:\n                        print(f\"Component disposition rejected: {error}\")\n                blocked |= present and disposition is None\n                summaries.append(\n                    {\n"
+        },
+        {
+          "before": "                        \"high\": counts[\"High\"],\n                        \"findings\": parsed[\"findings\"],\n                    }\n                )\n",
+          "after": "                        \"high\": counts[\"High\"],\n                        \"findings\": parsed[\"findings\"],\n                        **(\n                            {\n                                \"component_disposition\": disposition,\n                                \"scanner_exit\": result.returncode,\n                            }\n                            if disposition is not None\n                            else {}\n                        ),\n                    }\n                )\n"
+        },
+        {
+          "before": "            \"original reports, counts and scanner exit codes are retained.\"\n        )\n    return 2 if findings_present and not advisory else 0\n\n\n",
+          "after": "            \"original reports, counts and scanner exit codes are retained.\"\n        )\n    return 2 if blocked and not advisory else 0\n\n\n"
         }
       ]
     }

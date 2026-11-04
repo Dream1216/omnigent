@@ -154,6 +154,7 @@ def main() -> int:
         database_built_at = parse_database_status(status, now=datetime.now(UTC))
         summaries = []
         findings_present = False
+        blocked = False
         for name, archive in sorted(images.items()):
             archive_digest = file_sha256(archive)
             for platform in scan_platforms(args.scope):
@@ -179,7 +180,19 @@ def main() -> int:
                     raise RuntimeError(f"Grype failed to scan {name} {platform}")
                 parsed = scan_report(json.loads(output.read_text()))
                 counts = parsed["counts"]
-                findings_present |= result.returncode == 2 or any(counts.values())
+                present = result.returncode == 2 or any(counts.values())
+                findings_present |= present
+                disposition = None
+                if args.scope != "aliyun-host" and any(counts.values()) and result.returncode == 2:
+                    from saas.scripts.sqlite_component_disposition import inspect_disposition
+
+                    try:
+                        disposition = inspect_disposition(
+                            archive, output, platform=platform, now=datetime.now(UTC)
+                        )
+                    except ValueError as error:
+                        print(f"Component disposition rejected: {error}")
+                blocked |= present and disposition is None
                 summaries.append(
                     {
                         "image": name,
@@ -190,6 +203,14 @@ def main() -> int:
                         "critical": counts["Critical"],
                         "high": counts["High"],
                         "findings": parsed["findings"],
+                        **(
+                            {
+                                "component_disposition": disposition,
+                                "scanner_exit": result.returncode,
+                            }
+                            if disposition is not None
+                            else {}
+                        ),
                     }
                 )
     advisory = args.scope == "aliyun-host"
@@ -213,7 +234,7 @@ def main() -> int:
             "::warning::Aliyun Host vulnerability findings are advisory; "
             "original reports, counts and scanner exit codes are retained."
         )
-    return 2 if findings_present and not advisory else 0
+    return 2 if blocked and not advisory else 0
 
 
 if __name__ == "__main__":

@@ -126,7 +126,7 @@ def _legacy_stack_evidence_only(
         if (
             envelope is None
             or set(envelope) != {"kind", "product_revision", "release_evidence", "legacy_fallback"}
-            or envelope["kind"] != legacy_stack.VARIANT
+            or envelope["kind"] not in {legacy_stack.VARIANT, legacy_stack.RUNTIME_PAIR_VARIANT}
             or envelope["product_revision"] != product_revision
             or not isinstance(envelope["release_evidence"], dict)
             or envelope["release_evidence"].get("product_revision") != product_revision
@@ -150,7 +150,13 @@ def _legacy_stack_evidence_only(
             fallback["publication_ids"] != row["publication_ids"]
             or fallback["original_publication_ids"] != row["original_publication_ids"]
             or not isinstance(body, dict)
-            or body.get("kind") != "production_legacy_full_stack_rollback/v2"
+            or row["kind"]
+            != (
+                legacy_stack.RUNTIME_PAIR_KIND
+                if envelope["kind"] == legacy_stack.RUNTIME_PAIR_VARIANT
+                else "protected_legacy_full_stack/v1"
+            )
+            or body.get("kind") != legacy_stack.rollback_kind(row)
             or body.get("product_revision") != product_revision
             or body.get("result") != "passed"
             or legacy_stack.publisher.digest(body) != row["rollback_sha256"]

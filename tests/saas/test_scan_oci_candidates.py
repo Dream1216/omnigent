@@ -1,10 +1,12 @@
 """Safety checks for exact OCI candidate scan receipts."""
 
+import copy
 import hashlib
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -20,7 +22,11 @@ from saas.scripts.scan_oci_candidates import (
 
 def test_database_must_be_fresh_and_timezone_bound() -> None:
     now = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
-    current = {"valid": True, "schemaVersion": "v6.1.10", "built": "2026-10-08T06:00:00Z"}
+    current: dict[str, Any] = {
+        "valid": True,
+        "schemaVersion": "v6.1.10",
+        "built": "2026-10-08T06:00:00Z",
+    }
     assert parse_database_status(current, now=now) == current["built"]
     with pytest.raises(ValueError, match="older than 24 hours"):
         parse_database_status(
@@ -211,3 +217,128 @@ def test_aliyun_workflow_does_not_hide_scanner_errors():
     assert "continue-on-error" not in scan
     assert "|| true" not in scan["run"]
     assert "set -euo pipefail" in scan["run"]
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        "saas-image-candidate.yml",
+        "saas-oci-promotion-resume.yml",
+        "saas-oci-promotion-token-renewal.yml",
+        "saas-oci-promotion-model-renewal.yml",
+    ],
+)
+def test_component_classification_keeps_its_real_input_until_complete(workflow: str) -> None:
+    path = Path(__file__).resolve().parents[2] / ".github/workflows" / workflow
+    document = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+    steps = next(
+        job["steps"]
+        for job in document["jobs"].values()
+        if any(
+            step.get("name") == "Generate per-architecture SBOMs and check raw findings"
+            for step in job.get("steps", [])
+        )
+    )
+    commands = "\n".join(step.get("run", "") for step in steps)
+    classify = commands.index("python -m saas.scripts.sqlite_component_disposition")
+    cleanup = commands.index('rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server"')
+    assert classify < cleanup
+    assert commands.index('"${prefix}.raw.grype.json"') < commands.index(
+        "grype_exit=$?", classify - 400
+    )
+    assert '--scanner-exit "$grype_exit"' in commands
+    assert '--image "${RUNNER_TEMP}/admitted-layouts/${artifact}"' in commands
+
+
+@pytest.mark.parametrize(
+    ("scope", "shell", "exit_code", "reports"),
+    [
+        ("complete", False, 0, 4),
+        ("server-preflight", False, 0, 2),
+        ("complete", True, 2, 4),
+        ("server-preflight", True, 2, 2),
+        ("aliyun-host", True, 0, 1),
+    ],
+)
+def test_policy_composition_preserves_original_high_and_finite_scope(
+    tmp_path, monkeypatch, scope, shell, exit_code, reports
+):
+    from saas.scripts import sqlite_component_disposition as component
+    from tests.saas.test_sqlite_component_disposition import NOW, candidate
+
+    image, _, original = candidate(
+        tmp_path,
+        monkeypatch,
+        extra={"usr/bin/sqlite3": b"#!/bin/sh\n.recover\n"} if shell else None,
+    )
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, timezone=None):
+            return NOW
+
+    monkeypatch.setattr(scan_oci_candidates, "datetime", Clock)
+    output = tmp_path / "scan-output"
+    argv = ["scan", "--scope", scope, "--output", str(output)]
+    names = ["host"] if scope == "aliyun-host" else ["server"]
+    if scope == "complete":
+        names.append("host")
+    for name in names:
+        argv += ["--image", f"{name}={image}"]
+    monkeypatch.setattr("sys.argv", argv)
+    monkeypatch.setattr(scan_oci_candidates, "install_grype", lambda root: root / "grype")
+    monkeypatch.setattr(
+        scan_oci_candidates.subprocess,
+        "check_output",
+        lambda *args, **kwargs: json.dumps(
+            {"valid": True, "schemaVersion": "v6.1.10", "built": NOW.isoformat()}
+        ),
+    )
+    original_reports = {}
+
+    def scanner(command, **kwargs):
+        if command[-2:] == ["db", "update"]:
+            return subprocess.CompletedProcess(command, 0)
+        platform = command[command.index("--platform") + 1]
+        report = copy.deepcopy(original)
+        with component.image_blobs(image) as blobs:
+            digest, manifest = blobs.platform(platform)
+            config = blobs.document(manifest["config"]["digest"])
+        report["source"]["target"].update(
+            manifestDigest=digest,
+            imageID=manifest["config"]["digest"],
+            architecture=platform.split("/")[1],
+            labels=config["config"]["Labels"],
+        )
+        path = Path(command[-1])
+        raw = (json.dumps(report) + "\n").encode()
+        path.write_bytes(raw)
+        original_reports[path] = raw
+        return subprocess.CompletedProcess(command, 2)
+
+    monkeypatch.setattr(scan_oci_candidates.subprocess, "run", scanner)
+    if scope == "aliyun-host":
+
+        def unrelated_disposition_must_not_run(*args, **kwargs):
+            raise AssertionError("Aliyun advisory path entered generic component classification")
+
+        monkeypatch.setattr(component, "inspect_disposition", unrelated_disposition_must_not_run)
+
+    assert scan_oci_candidates.main() == exit_code
+    summary = json.loads(next(output.glob("*summary.json")).read_text())
+    assert summary["scope"] == scope
+    assert summary["vulnerability_policy"] == (
+        "advisory" if scope == "aliyun-host" else "blocking"
+    )
+    assert summary["vulnerability_findings_present"] is True
+    assert summary["exceptions"] == []
+    assert len(summary["images"]) == reports
+    for row in summary["images"]:
+        path = output / f"{row['image']}-{row['platform'].split('/')[1]}-grype.json"
+        assert path.read_bytes() == original_reports[path]
+        assert row["report_sha256"] == hashlib.sha256(original_reports[path]).hexdigest()
+        assert row["critical"] == 0 and row["high"] == 1
+        assert row["scanner_returncode"] == 2 and len(row["findings"]) == 1
+        assert ("component_disposition" in row) == (not shell and scope != "aliyun-host")
+        if "component_disposition" in row:
+            assert row["scanner_exit"] == 2

@@ -263,11 +263,14 @@ def test_native_domain_preserves_head_failure_and_rejects_unsupported_attachment
 @pytest.mark.parametrize(
     "fault", [None, "unreviewed-checkout", "self-hosted", "mixed-labels", "fixed-attachment"]
 )
+@pytest.mark.parametrize(
+    "trusted",
+    ["796b5da14fed424f9eec11170db05a3316da3a12", "c724abb9d43c40717e83154a7da9270150f3d418"],
+)
 def test_original_refusal_alternate_runner_requires_exact_protected_checkout(
-    scenario, native_domain, fault
+    scenario, native_domain, fault, trusted
 ):
     data = native_domain
-    trusted = "796b5da14fed424f9eec11170db05a3316da3a12"
     if fault == "unreviewed-checkout":
         trusted = "f" * 40
     rule = copy.deepcopy(data["rule"])

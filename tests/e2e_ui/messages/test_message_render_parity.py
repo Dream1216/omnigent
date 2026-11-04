@@ -62,7 +62,7 @@ def _send(page: Page, text: str) -> None:
     :param page: The Playwright page, on the session's chat surface.
     :param text: The message body to send.
     """
-    composer = page.get_by_placeholder(_COMPOSER)
+    composer = page.get_by_role("textbox", name="Message the agent", exact=True)
     expect(composer).to_be_visible(timeout=30_000)
     composer.fill(text)
     page.get_by_role("button", name="Send", exact=True).click()
