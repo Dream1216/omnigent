@@ -1548,7 +1548,7 @@ def test_fixed_compatibility_registration_rejects_each_changed_coordinate(fault)
         }[fault]
         profile[field] = "f" * 40
     elif fault == "budget":
-        profile["budget_file_cap"] = 225
+        profile["budget_file_cap"] += 1
     elif fault == "version":
         profile["application_version"] = "0.21.0"
     elif fault == "missing":
