@@ -1537,24 +1537,20 @@ def _install_aliyun_storage(
         or sum(entry.provider == "e2b" for entry in deployment.configs) != 1
     ):
         raise ProductionServerCompositionError("Aliyun profile requires its managed provider")
-    if profile.storage_configs and (
-        profile.storage_credential_file is None
-        or {(c.tenant_id, c.workspace_id) for c in profile.storage_configs}
-        != {(c.tenant_id, c.workspace_id) for c in profile.managed.scopes}
-    ):
-        raise ProductionServerCompositionError("Aliyun storage configuration is incomplete")
     authorizer = _aliyun_storage_authorizer(config, sessions, official)
-    storage = (
-        AliyunCurrentSessionStorage(
+    storage = None
+    if profile.storage_configs:
+        if profile.storage_credential_file is None or {
+            (c.tenant_id, c.workspace_id) for c in profile.storage_configs
+        } != {(c.tenant_id, c.workspace_id) for c in profile.managed.scopes}:
+            raise ProductionServerCompositionError("Aliyun storage configuration is incomplete")
+        storage = AliyunCurrentSessionStorage(
             profile.storage_configs,
             AliyunVolumeControlClient(
                 team_id=profile.team_id, credential_file=profile.storage_credential_file
             ),
             authorize=authorizer.execution,
         )
-        if profile.storage_configs
-        else None
-    )
     configured = replace(
         deployment,
         configs=tuple(
