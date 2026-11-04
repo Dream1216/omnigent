@@ -1,135 +1,110 @@
-name: Trivy CVE Scan
+name: SQLite package diagnostic (temporary branch only)
 
 on:
-  pull_request:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '23 6 * * *'  # Daily: new advisories can affect unchanged lockfiles.
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: trivy-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  gate:
-    uses: ./.github/workflows/security-gate.yml
-    permissions:
-      contents: read
-      pull-requests: read
-
-  scan:
-    name: Trivy CVE Scan (${{ matrix.scope }})
-    needs: gate
+  diagnose:
+    name: Collect fixed-DB CPE results (not image admission)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      actions: read  # Required by upload-sarif in private repositories.
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - scope: repository
-            path: .
-          # Trivy always skips root-level dev/ as a system directory.
-          - scope: dev-tools
-            path: dev
+    timeout-minutes: 10
     steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Checkout exact diagnostic source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Install pinned Trivy from official release
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Prepare actual APK root filesystem without an application image build
         env:
-          TRIVY_ARCHIVE_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+          PINNED_BASE: cgr.dev/chainguard/wolfi-base@sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e
         run: |
           set -euo pipefail
-          download_dir=$(mktemp -d "$RUNNER_TEMP/trivy-download.XXXXXX")
-          trap 'rm -rf "$download_dir"' EXIT
-          curl --fail --show-error --location --retry 2 --retry-max-time 45 \
-            --output "$download_dir/trivy.tar.gz" \
-            https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
-          printf '%s  %s\n' "$TRIVY_ARCHIVE_SHA256" "$download_dir/trivy.tar.gz" | sha256sum --check --strict -
-          tar -xzf "$download_dir/trivy.tar.gz" -C "$download_dir" trivy
-          "$download_dir/trivy" --version | grep --fixed-strings --line-regexp 'Version: 0.74.0'
-          install -d "$RUNNER_TEMP/trivy-bin"
-          install -m 0755 "$download_dir/trivy" "$RUNNER_TEMP/trivy-bin/trivy"
-          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
-
-      - name: Scan locked dependencies
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        env:
-          TRIVY_INCLUDE_DEV_DEPS: 'true'
-        with:
-          version: v0.74.0
-          skip-setup-trivy: true
-          scan-type: fs
-          scan-ref: ${{ matrix.path }}
-          scanners: vuln
-          format: json
-          output: ${{ runner.temp }}/trivy-results.json
-          # Findings are informational during baseline triage; scanner errors still fail.
-          exit-code: '0'
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: false
-          list-all-pkgs: true
-          skip-dirs: .git,**/.venv,**/node_modules
-          cache-dir: ${{ runner.temp }}/trivy-cache
-          timeout: 10m
-
-      - name: Render vulnerability reports
-        env:
-          REPORT_DIR: ${{ runner.temp }}
-          SCAN_PATH: ${{ matrix.path }}
+          container_name="sqlite-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
+          mkdir -p "$RUNNER_TEMP/sqlite-apk-root" "$RUNNER_TEMP/sqlite-package-probe"
+          docker run --name "$container_name" --entrypoint /bin/sh "$PINNED_BASE" -ec '
+            apk add --no-cache sqlite-libs=3.54.1-r0
+            apk info -v sqlite-libs glibc-2.44
+            apk info -L sqlite-libs
+            if command -v sqlite3; then exit 1; fi
+            if apk info -e sqlite; then exit 1; fi
+          ' | tee "$RUNNER_TEMP/sqlite-package-probe/actual-apk-install.txt"
+          docker export "$container_name" | tar --no-same-owner --no-same-permissions -xf - -C "$RUNNER_TEMP/sqlite-apk-root"
+          find "$RUNNER_TEMP/sqlite-apk-root" -type f \( -name sqlite3 -o -name sqlite3.exe \) > "$RUNNER_TEMP/sqlite-package-probe/sqlite-shell-files.txt"
+          test ! -s "$RUNNER_TEMP/sqlite-package-probe/sqlite-shell-files.txt"
+      - name: Collect actual pinned scanner results
         run: |
-          trivy convert --scanners vuln --format table --output "$REPORT_DIR/trivy-results.txt" "$REPORT_DIR/trivy-results.json"
-          trivy convert --format sarif --output "$REPORT_DIR/trivy-results.sarif" "$REPORT_DIR/trivy-results.json"
-          # Converted SARIF must resolve paths against the scanned source, not the JSON file.
-          python3 - <<'PY'
+          python -B - <<'PYTHON'
+          import hashlib
           import json
           import os
+          import subprocess
+          from datetime import UTC, datetime
           from pathlib import Path
 
-          path = Path(os.environ["REPORT_DIR"]) / "trivy-results.sarif"
-          report = json.loads(path.read_text())
-          source = Path(os.environ["GITHUB_WORKSPACE"]) / os.environ["SCAN_PATH"]
-          for run in report["runs"]:
-              run["originalUriBaseIds"]["ROOTPATH"]["uri"] = source.resolve().as_uri() + "/"
-          path.write_text(json.dumps(report) + "\n")
-          PY
-          cat "$REPORT_DIR/trivy-results.txt"
-          {
-            echo '## Trivy CVE scan (report-only)'
-            echo
-            echo 'Findings do not fail this check. All severities, unfixed vulnerabilities, and development dependencies are included.'
-            echo 'Successful SARIF uploads appear under **Security > Code scanning**, categorized as **trivy-repository** and **trivy-dev-tools**.'
-            echo 'Download the **trivy-cve-report-repository** and **trivy-cve-report-dev-tools** artifacts for readable tables, JSON inventories, and SARIF reports.'
-          } >> "$GITHUB_STEP_SUMMARY"
+          from saas.scripts.scan_oci_candidates import install_grype, parse_database_status
 
-      - name: Upload vulnerability reports
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+          root = Path(os.environ["RUNNER_TEMP"]) / "sqlite-package-probe"
+          root.mkdir(exist_ok=True)
+          binary = install_grype(root)
+          config = root / "grype.yaml"
+          config.write_text(
+              "ignore: []\nvex-documents: []\ncheck-for-app-update: false\ndb:\n"
+              f"  cache-dir: {root / 'db'}\n"
+              "  auto-update: true\n  validate-age: true\n"
+              "  max-allowed-built-age: 24h\n"
+          )
+          subprocess.run([str(binary), "-c", str(config), "db", "update"], check=True)
+          status = json.loads(subprocess.check_output(
+              [str(binary), "-c", str(config), "db", "status", "-o", "json"], text=True
+          ))
+          parse_database_status(status, now=datetime.now(UTC))
+          rows = []
+          targets = [
+              ("CPE-3.53.4", "cpe:2.3:a:sqlite:sqlite:3.53.4:*:*:*:*:*:*:*"),
+              ("CPE-3.54.1", "cpe:2.3:a:sqlite:sqlite:3.54.1:*:*:*:*:*:*:*"),
+              ("actual-APK-root", f"dir:{Path(os.environ['RUNNER_TEMP']) / 'sqlite-apk-root'}"),
+          ]
+          for label, target in targets:
+              report = root / f"sqlite-{label}.json"
+              result = subprocess.run([
+                  str(binary), "-c", str(config), target, "--fail-on", "high",
+                  "-o", "json", "--file", str(report),
+              ], check=False)
+              if result.returncode not in (0, 2):
+                  raise RuntimeError(f"Scanner execution failed: {result.returncode}")
+              original = json.loads(report.read_text())
+              findings = [
+                  {"id": item["vulnerability"]["id"], "severity": item["vulnerability"]["severity"],
+                   "package": item["artifact"]["name"], "version": item["artifact"]["version"]}
+                  for item in original["matches"]
+                  if item["vulnerability"]["severity"] in ("Critical", "High")
+              ]
+              rows.append({
+                  "target": target, "scanner_exit": result.returncode,
+                  "findings": findings,
+                  "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
+              })
+          (root / "diagnostic-summary.json").write_text(json.dumps({
+              "source": os.environ["GITHUB_SHA"], "run": os.environ["GITHUB_RUN_ID"],
+              "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "database": status,
+              "results": rows, "image_or_release_admission": False,
+              "purpose": "Actual CPE version comparison only; job completion does not mean zero High.",
+          }, indent=2) + "\n")
+          print(json.dumps(rows))
+          PYTHON
+      - name: Retain original diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: trivy-cve-report-${{ matrix.scope }}
-          path: |
-            ${{ runner.temp }}/trivy-results.json
-            ${{ runner.temp }}/trivy-results.txt
-            ${{ runner.temp }}/trivy-results.sarif
+          name: sqlite-package-diagnostic-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sqlite-package-probe/
           if-no-files-found: error
-          retention-days: 30
-
-      # pull_request uploads also support GitHub's read-only token for fork PRs.
-      - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@c35d1b164463ee62a100735382aaaa525c5d3496  # codeql-bundle-v2.25.6
-        with:
-          sarif_file: ${{ runner.temp }}/trivy-results.sarif
-          checkout_path: ${{ github.workspace }}
-          category: trivy-${{ matrix.scope }}
-          wait-for-processing: true
+          retention-days: 3
