@@ -45,7 +45,12 @@ from saas.scripts.legacy_pr_candidate import (
     upload_step_name,
 )
 from saas.scripts.legacy_pytest_results import verify_job_artifact_identity
-from saas.scripts.legacy_source_ci import _job_pages, checkout_commit, download_job_log
+from saas.scripts.legacy_source_ci import (
+    _job_pages,
+    checkout_commit,
+    checkout_step_log,
+    download_job_log,
+)
 from saas.scripts.legacy_source_qualification import qualify_source_ci
 from saas.scripts.oci_promotion import (
     IMAGES,
@@ -333,6 +338,7 @@ def collect_job_export(
     destination.mkdir(parents=True, exist_ok=False)
     with preserve_native_evidence(destination / "native-api", evidence_root=destination):
         run = verify_native_control(control, context)
+        workflow = (control / WORKFLOW).read_bytes()
         jobs = _job_pages(context["run_id"], context["attempt"])
         matches = [job for job in jobs if job.get("name") == job_name]
         require(len(matches) == 1, "native publication job is missing or duplicated")
@@ -343,8 +349,15 @@ def collect_job_export(
         download_job_log(job["id"], log_path)
         log = log_path.read_text()
         require(
-            checkout_commit(log, steps[CHECKOUT]) == context["control_revision"]
-            and checkout_commit(log, steps[PRODUCT_CHECKOUT]) == profile["product_revision"],
+            checkout_commit(
+                checkout_step_log(log, steps[CHECKOUT], job["steps"], workflow), steps[CHECKOUT]
+            )
+            == context["control_revision"]
+            and checkout_commit(
+                checkout_step_log(log, steps[PRODUCT_CHECKOUT], job["steps"], workflow),
+                steps[PRODUCT_CHECKOUT],
+            )
+            == profile["product_revision"],
             "native publication job actually checked out another control or product",
         )
         name = artifact_name(role, profile, context)
@@ -388,6 +401,7 @@ def collect_fresh_wheel(
     destination.mkdir(parents=True, exist_ok=False)
     with preserve_native_evidence(destination / "native-api", evidence_root=destination):
         verify_native_control(control, context)
+        workflow = (control / WORKFLOW).read_bytes()
         jobs = _job_pages(context["run_id"], context["attempt"])
         matches = [job for job in jobs if job.get("name") == "build-initial"]
         require(len(matches) == 1, "fresh wheel build job is missing or duplicated")
@@ -398,8 +412,16 @@ def collect_fresh_wheel(
         download_job_log(job["id"], log_path)
         log = log_path.read_text()
         require(
-            checkout_commit(log, steps[FRESH_STEPS[0]]) == context["control_revision"]
-            and checkout_commit(log, steps[FRESH_STEPS[2]]) == profile["product_revision"],
+            checkout_commit(
+                checkout_step_log(log, steps[FRESH_STEPS[0]], job["steps"], workflow),
+                steps[FRESH_STEPS[0]],
+            )
+            == context["control_revision"]
+            and checkout_commit(
+                checkout_step_log(log, steps[FRESH_STEPS[2]], job["steps"], workflow),
+                steps[FRESH_STEPS[2]],
+            )
+            == profile["product_revision"],
             "fresh wheel native execution used another control or product checkout",
         )
         name = (

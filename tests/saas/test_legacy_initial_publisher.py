@@ -246,6 +246,10 @@ def test_native_control_uses_current_run_and_actual_workflow_bytes(tmp_path, mon
 @pytest.fixture
 def native_export(publication_data, tmp_path, monkeypatch):
     data = publication_data
+    data["control"] = tmp_path / "native-control"
+    workflow = data["control"] / publisher.WORKFLOW
+    workflow.parent.mkdir(parents=True)
+    workflow.write_bytes((ROOT / publisher.WORKFLOW).read_bytes())
     context, profile = data["context"], data["profile"]
     root = tmp_path / "native-payload"
     root.mkdir()
@@ -329,6 +333,46 @@ def native_export(publication_data, tmp_path, monkeypatch):
     return data, state
 
 
+def _add_completion_second_overlap(state, first_checkout, product_checkout):
+    steps = state["job"]["steps"]
+    first = next(step for step in steps if step["name"] == first_checkout)
+    product = next(step for step in steps if step["name"] == product_checkout)
+    first_index = steps.index(first)
+    selection = steps[first_index + 1]
+    ended = datetime.fromisoformat(first["completed_at"])
+    previous_start = product["started_at"]
+    for step in steps:
+        if step["number"] > first["number"]:
+            step["number"] += 1
+    selection.update(started_at=ended.isoformat(), completed_at=ended.isoformat())
+    product.update(
+        started_at=ended.isoformat(), completed_at=(ended + timedelta(seconds=1)).isoformat()
+    )
+    steps.insert(
+        first_index + 1,
+        dict(
+            first,
+            number=first["number"] + 1,
+            name="Set up Python",
+            started_at=ended.isoformat(),
+            completed_at=ended.isoformat(),
+        ),
+    )
+    lines = (
+        state["log"]
+        .replace(previous_start + " ", (ended + timedelta(seconds=0.8)).isoformat() + " ")
+        .splitlines()
+    )
+    lines.append(
+        f"{(ended + timedelta(seconds=0.1)).isoformat()} "
+        "##[group]Run actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405"
+    )
+    state["log"] = "\n".join(
+        sorted(lines, key=lambda line: datetime.fromisoformat(line.partition(" ")[0]))
+    )
+
+
+@pytest.mark.parametrize("overlap", [False, True])
 @pytest.mark.parametrize(
     "fault",
     [
@@ -347,10 +391,15 @@ def native_export(publication_data, tmp_path, monkeypatch):
     ],
 )
 def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
-    native_export, tmp_path, monkeypatch, fault
+    native_export, tmp_path, monkeypatch, fault, overlap
 ):
     data, state = native_export
     job, metadata = state["job"], state["metadata"]
+    if overlap:
+        _add_completion_second_overlap(state, publisher.CHECKOUT, publisher.PRODUCT_CHECKOUT)
+    execution = next(
+        step for step in job["steps"] if step["name"] == publisher.RUN_STEPS[job["name"]][3]
+    )
     if fault == "head":
         job["head_sha"] = "0" * 40
     if fault == "attempt":
@@ -360,9 +409,9 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
     if fault == "runner_label":
         job["labels"] = ["ubuntu-latest"]
     if fault == "step":
-        job["steps"][3]["conclusion"] = "skipped"
+        execution["conclusion"] = "skipped"
     if fault == "order":
-        job["steps"][3]["number"] = 1
+        execution["number"] = 1
     if fault == "checkout":
         state["log"] = state["log"].replace(data["profile"]["product_revision"], "0" * 40)
     if fault == "expired":
@@ -387,7 +436,7 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
 
     def collect():
         return publisher.collect_job_export(
-            data["source"],
+            data["control"],
             data["source"],
             data["profile"],
             data["context"],
@@ -409,11 +458,12 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
         assert coordinate["zip_sha256"] == metadata["digest"][7:]
 
 
+@pytest.mark.parametrize("overlap", [False, True])
 @pytest.mark.parametrize(
     "fault", [None, "control_checkout", "product_checkout", "upload_time", "post_job"]
 )
 def test_fresh_wheel_binds_separate_native_job_actor_size_and_static_product(
-    native_export, tmp_path, monkeypatch, fault
+    native_export, tmp_path, monkeypatch, fault, overlap
 ):
     data, state = native_export
     stage = tmp_path / "fresh-stage"
@@ -458,6 +508,8 @@ def test_fresh_wheel_binds_separate_native_job_actor_size_and_static_product(
                 )
             )
     state["log"] = "\n".join(lines)
+    if overlap:
+        _add_completion_second_overlap(state, publisher.FRESH_STEPS[0], publisher.FRESH_STEPS[2])
     metadata = state["metadata"]
     metadata.update(
         name=f"legacy-initial-Core-{data['profile']['product_revision']}-{CONTROL}-42-1",
@@ -483,7 +535,7 @@ def test_fresh_wheel_binds_separate_native_job_actor_size_and_static_product(
     if fault:
         with pytest.raises(ValueError):
             publisher.collect_fresh_wheel(
-                data["source"],
+                data["control"],
                 data["source"],
                 data["profile"],
                 data["context"],
@@ -491,7 +543,7 @@ def test_fresh_wheel_binds_separate_native_job_actor_size_and_static_product(
             )
     else:
         coordinate, wheel = publisher.collect_fresh_wheel(
-            data["source"],
+            data["control"],
             data["source"],
             data["profile"],
             data["context"],
