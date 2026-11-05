@@ -9,14 +9,14 @@ import os
 import re
 import subprocess
 import threading
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from saas.scripts.oci_promotion import require
-from saas.scripts.resume_oci_promotion import api as _native_api
+from saas.scripts.resume_oci_promotion import api as _plain_native_api
 
 _ACTIVE: ContextVar[NativeEvidence | None] = ContextVar("legacy_native_evidence", default=None)
 
@@ -26,6 +26,75 @@ _MAX_RESPONSES = 16384
 
 class NativeEvidenceFailure(RuntimeError):
     """Fatal capture failure; never a recoverable per-run governance observation."""
+
+
+class _HTTPResponse:
+    def __init__(self, value, observation, etag):
+        self.value = value
+        self.observation = observation
+        self.etag = etag
+
+
+class _HTTPFailure(subprocess.CalledProcessError):
+    def __init__(self, result, command, observation):
+        super().__init__(result.returncode or 1, command, result.stdout, result.stderr)
+        self.observation = observation
+
+
+def _native_api(endpoint: str) -> Any:
+    recorder = _ACTIVE.get()
+    if recorder is None:
+        return _plain_native_api(endpoint)
+    prior = recorder._validated_responses.get(endpoint)
+    command = ["gh", "api", "--include", endpoint]
+    if prior is not None:
+        command.extend(["-H", "If-None-Match: " + prior["etag"]])
+    result = subprocess.run(command, capture_output=True, timeout=60)
+    wire = recorder.write_http(result.stdout)
+    header, separator, body = result.stdout.partition(b"\r\n\r\n")
+    lines = header.splitlines()
+    status_match = re.fullmatch(rb"HTTP/[0-9.]+ ([0-9]{3})[^\r\n]*", lines[0]) if lines else None
+    require(bool(separator and status_match), "native HTTP response framing differs")
+    assert status_match is not None
+    status = int(status_match[1])
+    headers = {}
+    for line in header.splitlines()[1:]:
+        key, colon, value = line.partition(b":")
+        require(bool(colon), "native HTTP header is malformed")
+        key = key.decode("ascii").lower()
+        if key in {"etag", "date", "x-github-request-id", "retry-after"} or key.startswith(
+            "x-ratelimit-"
+        ):
+            require(key not in headers, "native HTTP header is duplicated")
+            headers[key] = value.decode("ascii").strip()
+    etag = headers.get("etag")
+    require(
+        etag is None or bool(re.fullmatch(r'(?:W/)?"[\x21\x23-\x7e]*"', etag)),
+        "native HTTP entity tag is malformed",
+    )
+    observation = {
+        "status": status,
+        "headers": headers,
+        "conditional_request": prior is not None,
+        **wire,
+        **({"validated_source_record": prior["source_record"]} if prior is not None else {}),
+    }
+    if status == 304:
+        require(
+            prior is not None
+            and result.returncode in {0, 1}
+            and not body
+            and etag is not None
+            and etag.removeprefix("W/") == prior["etag"].removeprefix("W/"),
+            "native HTTP 304 lacks the exact previously captured representation",
+        )
+        assert prior is not None
+        return _HTTPResponse(copy.deepcopy(prior["response"]), observation, etag)
+    if result.returncode or status != 200:
+        raise _HTTPFailure(result, command, observation)
+    value = json.loads(body)
+    require(isinstance(value, (dict, list)), "native HTTP JSON response is not an object or array")
+    return _HTTPResponse(value, observation, etag)
 
 
 class NativeEvidence:
@@ -44,6 +113,28 @@ class NativeEvidence:
         self._failure: NativeEvidenceFailure | None = None
         self._immutable_sources: dict[str, dict[str, Any]] = {}
         self._immutable_source_reuses: dict[str, dict[str, Any]] = {}
+        self._validated_responses: dict[str, dict[str, Any]] = {}
+        self._http_response_count = 0
+
+    def write_http(self, body: bytes) -> dict[str, Any]:
+        with self._lock:
+            self.check()
+            if len(body) > 32 * 1024 * 1024:
+                raise self._fail("native HTTP response exceeds bound")
+            if self.total_bytes + len(body) > 512 * 1024 * 1024:
+                raise self._fail("native evidence total exceeds bound")
+            name = f"http-{self._http_response_count + 1:06d}.PRIVATE.response"
+            try:
+                _write(self.root / name, body)
+            except OSError as error:
+                raise self._fail("native HTTP response cannot be preserved") from error
+            self._http_response_count += 1
+            self.total_bytes += len(body)
+            return {
+                "raw_http_path": name,
+                "raw_http_bytes": len(body),
+                "raw_http_sha256": hashlib.sha256(body).hexdigest(),
+            }
 
     def enable_bootstrap_limits(self) -> None:
         with self._lock:
@@ -68,6 +159,10 @@ class NativeEvidence:
         self.reserve()
         try:
             value = _native_api("rate_limit")
+            if isinstance(value, _HTTPResponse):
+                value = value.value
+            if not isinstance(value, dict):
+                raise ValueError("native rate advisory is not an object")
             core = value.get("resources", {}).get("core", {})
             fields = ("limit", "remaining", "reset", "used")
             if all(type(core.get(k)) is int and core[k] >= 0 for k in fields):
@@ -265,8 +360,8 @@ def api(endpoint: str) -> dict[str, Any]:
     immutable_source = source is not None and all(
         part not in {"", ".", ".."} for part in source[1].split("/")
     )
-    # Single-flight only for immutable bytes, never across mutable checkpoints.
-    with recorder.source_lock(endpoint) if immutable_source else nullcontext():
+    # Mutable checkpoints always contact GitHub; only a native 304 validates reuse.
+    with recorder.source_lock(endpoint):
         with recorder._lock:
             recorder.check()
             if immutable_source and endpoint in recorder._immutable_sources:
@@ -277,16 +372,50 @@ def api(endpoint: str) -> dict[str, Any]:
             value = _native_api(endpoint)
         except BaseException as error:
             try:
-                recorder.write(endpoint, {"api_exception_type": type(error).__name__})
+                recorder.write(
+                    endpoint,
+                    {
+                        "api_exception_type": type(error).__name__,
+                        **(
+                            {"http_observation": error.observation}
+                            if isinstance(error, _HTTPFailure)
+                            else {}
+                        ),
+                    },
+                )
             except NativeEvidenceFailure as write_error:
                 error.add_note(
                     "Native API failure evidence write failed: " + type(write_error).__name__
                 )
-            if recorder._bootstrap_limits:
+            if recorder._bootstrap_limits or (
+                isinstance(error, _HTTPFailure) and error.observation["status"] in {403, 429}
+            ):
                 with recorder._lock:
-                    recorder._fail("bootstrap native request failed; no further requests allowed")
+                    failure = recorder._fail("native request failed; no further requests allowed")
+                raise failure from error
             raise
-        record = recorder.write(endpoint, {"response": value})
+        observed = value if isinstance(value, _HTTPResponse) else None
+        if observed is not None:
+            value = observed.value
+        record = recorder.write(
+            endpoint,
+            {
+                "response": value,
+                **({"http_observation": observed.observation} if observed is not None else {}),
+            },
+        )
+        if observed is not None and observed.etag is not None:
+            recorder._validated_responses[endpoint] = {
+                "etag": observed.etag,
+                "response": copy.deepcopy(value),
+                "source_record": observed.observation.get(
+                    "validated_source_record", record["path"]
+                )
+                if observed.observation["status"] == 304
+                else record["path"],
+            }
+        elif observed is not None:
+            recorder._validated_responses.pop(endpoint, None)
         if immutable_source:
             with recorder._lock:
                 recorder.check()
