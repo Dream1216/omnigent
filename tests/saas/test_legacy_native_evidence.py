@@ -431,7 +431,7 @@ def test_new_source_responses_still_obey_all_original_evidence_bounds(
     with pytest.raises(capture.NativeEvidenceFailure, match=message):
         with capture.preserve_native_evidence(tmp_path / "api") as evidence:
             if bound == "records":
-                evidence.records.extend({} for _ in range(16384))
+                evidence.records.extend({} for _ in range(capture._MAX_RESPONSES))
             if bound == "total-bytes":
                 evidence.total_bytes = 512 * 1024 * 1024
             with pytest.raises(capture.NativeEvidenceFailure, match=message):
@@ -557,12 +557,31 @@ def test_immutable_single_flight_deepcopies_and_provenance_is_own_write(tmp_path
     assert original["response"]["nested"]["original"] is True
 
 
+def test_native_capture_accepts_request_after_previous_record_capacity(tmp_path, monkeypatch):
+    calls = []
+
+    def native(endpoint):
+        calls.append(endpoint)
+        return {"current_native_origin": True}
+
+    monkeypatch.setattr(capture, "_native_api", native)
+    with capture.preserve_native_evidence(tmp_path / "api") as evidence:
+        evidence.requests_started = 16384
+        assert capture.api("mutable-current-domain") == {"current_native_origin": True}
+        assert evidence.requests_started == 16385
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    assert calls == ["mutable-current-domain"]
+    assert receipt["capture_failed"] is False
+    assert receipt["native_requests_started"] == 16385
+    assert len(receipt["records"]) == 1
+
+
 def test_parallel_limit_reservation_stops_extra_GET_and_stays_fatal(tmp_path, monkeypatch):
     import threading
 
     from saas.scripts import legacy_domain_discovery as discovery
 
-    assert capture._MAX_RESPONSES == 16384
+    assert capture._MAX_RESPONSES == 32768
     monkeypatch.setattr(capture, "_MAX_RESPONSES", 3)
     calls = []
     lock = threading.Lock()

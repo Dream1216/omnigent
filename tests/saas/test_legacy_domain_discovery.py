@@ -652,6 +652,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "source_native_response_capacity_correction",
         "same_attempt_source_qualification_reuse_correction",
         "verified_source_build_log_correction",
         "release_admission_correction",
@@ -684,7 +685,16 @@ def reviewed_source_bytes(root, relative, expected):
     "fault",
     [None, "unregistered-source", "duplicate", "missing", "wrong-before", "wrong-restored"],
 )
-def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged(tmp_path, fault):
+@pytest.mark.parametrize(
+    "correction_name",
+    [
+        "source_native_response_capacity_correction",
+        "same_attempt_source_qualification_reuse_correction",
+    ],
+)
+def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged(
+    tmp_path, fault, correction_name
+):
     parent = json.loads(
         (RESOURCE.parent / "native-domain-discovery-parent-hashes.json").read_text()
     )
@@ -692,7 +702,7 @@ def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged
     if fault is not None:
         relative = "saas/scripts/legacy_initial_publisher.py"
         expected = copy.deepcopy(parent[relative])
-        correction = expected["same_attempt_source_qualification_reuse_correction"]
+        correction = expected[correction_name]
         body = (root / relative).read_bytes()
         fragment = correction["inverse_fragments"][0]
         if fault == "unregistered-source":

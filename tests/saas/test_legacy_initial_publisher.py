@@ -170,6 +170,9 @@ def test_source_interface_requires_strict_exact_qualification(publication_data, 
         "original_component",
         "rate_limit",
         "incomplete",
+        "record_boundary",
+        "record_limit",
+        "empty_records",
         "source_block",
         "wrong_control",
         "wrong_product",
@@ -187,6 +190,7 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
 ):
     from saas.scripts import legacy_native_evidence as native
 
+    assert publisher._MAX_RESPONSES == native._MAX_RESPONSES == 32768
     data = publication_data
     if fault == "original_component":
         calls = []
@@ -254,6 +258,10 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
     }
     if fault == "incomplete":
         receipt["capture_failed"] = True
+    if fault in {"record_boundary", "record_limit"}:
+        monkeypatch.setattr(publisher, "_MAX_RESPONSES", 2 if fault == "record_boundary" else 1)
+    if fault == "empty_records":
+        receipt["records"] = []
     if fault == "response_hash":
         records[0]["sha256"] = "0" * 64
     if fault == "response_size":
@@ -305,7 +313,7 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
             tmp_path / "source-revalidation",
         )
 
-    if fault not in {None, "changed", "changed_listing", "no_etag"}:
+    if fault not in {None, "changed", "changed_listing", "no_etag", "record_boundary"}:
         with pytest.raises(ValueError if fault != "rate_limit" else native.NativeEvidenceFailure):
             collect()
         assert bool(recalculations) is (fault == "changed_blocked")
@@ -361,6 +369,7 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
         "duplicate",
         "expansion",
         "many_members",
+        "capacity_boundary",
         "too_many_members",
     ],
 )
@@ -389,13 +398,14 @@ def test_publication_zip_checks_all_members_before_extracting(tmp_path, fault, s
         if fault == "duplicate":
             with pytest.warns(UserWarning):
                 bundle.writestr(entry, b"{}")
-        if fault in {"many_members", "too_many_members"}:
+        if fault in {"many_members", "capacity_boundary", "too_many_members"}:
             # Same shape/count as the actual successful qualification artifact.
-            members = 35865 if fault == "many_members" else 65537
+            bound = 2 * publisher._MAX_RESPONSES + 8192 if source_ci else 8192
+            members = 35865 if fault == "many_members" else bound + (fault == "too_many_members")
             for number in range(members - 1 - (4 if source_ci else 0)):
                 bundle.writestr(f"unneeded-ci/record-{number:06d}.json", b"{}")
     target = tmp_path / "extract"
-    if fault and not (source_ci and fault == "many_members"):
+    if fault and fault != "capacity_boundary" and not (source_ci and fault == "many_members"):
         with pytest.raises(ValueError):
             publisher.safe_extract(
                 archive,

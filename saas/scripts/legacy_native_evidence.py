@@ -21,7 +21,7 @@ from saas.scripts.resume_oci_promotion import api as _plain_native_api
 _ACTIVE: ContextVar[NativeEvidence | None] = ContextVar("legacy_native_evidence", default=None)
 
 
-_MAX_RESPONSES = 16384
+_MAX_RESPONSES = 32768
 
 
 class NativeEvidenceFailure(RuntimeError):

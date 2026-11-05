@@ -35,7 +35,7 @@ from saas.scripts.legacy_build_controller import (
 )
 from saas.scripts.legacy_check_history import _pages
 from saas.scripts.legacy_control_results import collect_pg_receipts, verify_control_run
-from saas.scripts.legacy_native_evidence import api, preserve_native_evidence
+from saas.scripts.legacy_native_evidence import _MAX_RESPONSES, api, preserve_native_evidence
 from saas.scripts.legacy_pr_candidate import (
     UPLOAD_STEP as UPLOAD_STEP,
 )
@@ -284,7 +284,7 @@ def safe_extract(
         # Source exports also retain historical CI payloads; extraction below
         # selects qualification/API files after validating the complete inventory.
         require(
-            0 < len(entries) <= (65536 if source_ci else 8192),
+            0 < len(entries) <= (2 * _MAX_RESPONSES + 8192 if source_ci else 8192),
             "publication ZIP member count exceeds bound",
         )
         names = set()
@@ -577,7 +577,7 @@ def collect_qualified_source(
         and receipt.get("capture_failed") is False
         and receipt.get("pin_errors") == []
         and isinstance(receipt.get("records"), list)
-        and 0 < len(receipt["records"]) <= 16384,
+        and 0 < len(receipt["records"]) <= _MAX_RESPONSES,
         "source producer native capture is not complete",
     )
     responses: dict[str, dict[str, Any]] = {}
