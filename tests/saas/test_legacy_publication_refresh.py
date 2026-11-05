@@ -250,9 +250,25 @@ def native_original(data, destination, monkeypatch, *, expired=False):
     return control, calls
 
 
-@pytest.mark.parametrize("fault", [None, "legacy_name", "legacy_step", "actor", "revision"])
+@pytest.mark.parametrize(
+    "fault,log_error",
+    [
+        (None, None),
+        ("legacy_name", None),
+        ("legacy_step", None),
+        ("actor", None),
+        ("revision", None),
+        (None, "size"),
+        (None, "unrelated"),
+        ("legacy_name", "size"),
+        ("legacy_step", "size"),
+        ("actor", "size"),
+        ("revision", "size"),
+        ("checkout", "size"),
+    ],
+)
 def test_compatibility_OCI_transfer_preserves_native_producer_boundaries(
-    old_material, tmp_path, monkeypatch, fault
+    old_material, tmp_path, monkeypatch, fault, log_error
 ):
     data = old_material
     profile = data["profile"]
@@ -300,11 +316,34 @@ def test_compatibility_OCI_transfer_preserves_native_producer_boundaries(
         return value
 
     monkeypatch.setitem(publisher.api.__globals__, "_native_api", changed_api)
+    direct = collector.__globals__["download_job_log"]
+    recoveries = []
+
+    def capped_read(job_id, path):
+        direct(job_id, path)
+        if fault == "checkout":
+            path.write_text(path.read_text().replace(profile["product_revision"], "e" * 40))
+        if log_error:
+            raise ValueError(
+                "native job log exceeds its bounded input" if log_error == "size" else "unrelated"
+            )
+
+    def recovered(job, path):
+        recoveries.append(job["id"])
+        assert job["id"] == original["job_id"]
+        assert job["head_sha"] == profile["product_revision"]
+        assert job["run_id"] == original["run_id"]
+        assert job["run_attempt"] == original["attempt"]
+        assert job["status"] == "completed" and job["conclusion"] == "success"
+        assert path.is_file()
+
+    monkeypatch.setitem(collector.__globals__, "download_job_log", capped_read)
+    monkeypatch.setitem(collector.__globals__, "_recover_verified_source_build_log", recovered)
     arguments = {
         key: original[key]
         for key in ("run_id", "attempt", "artifact_id", "zip_size", "zip_sha256", "seal_sha256")
     }
-    if fault:
+    if fault or log_error == "unrelated":
         with pytest.raises(ValueError):
             collector(control, "Compatibility018", **arguments, destination=tmp_path / "collected")
     else:
@@ -316,6 +355,7 @@ def test_compatibility_OCI_transfer_preserves_native_producer_boundaries(
         assert result["native_artifact"]["name"] == (
             "saas-oci-validation-" + profile["product_revision"]
         )
+    assert recoveries == ([original["job_id"]] if log_error == "size" and not fault else [])
 
 
 @pytest.mark.parametrize("fault", [None, "expired", "stale_new_DB", "high", "different_OCI"])
