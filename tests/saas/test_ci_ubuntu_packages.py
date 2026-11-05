@@ -351,6 +351,8 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
         ".github/actions/integration-run/action.yml",
         ".github/actions/compat-smoke-run/action.yml",
         ".github/actions/compat-smoke-ui-run/action.yml",
+        ".github/workflows/server-compat.yml",
+        ".github/workflows/integration.yml",
     ]
     browser_installs = 0
     for name in paths:
@@ -359,6 +361,18 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
         for group in groups:
             for step in group.get("steps", []):
                 command = step.get("run", "")
+                if "jobs" in content and step.get("uses") in {
+                    "./.github/actions/e2e-run",
+                    "./.github/actions/integration-run",
+                    "./.github/actions/compat-smoke-run",
+                    "./.github/actions/compat-smoke-ui-run",
+                }:
+                    environment = {
+                        **content.get("env", {}),
+                        **group.get("env", {}),
+                        **step.get("env", {}),
+                    }
+                    assert environment.get("OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY") == "1"
                 assert "sudo apt-get" not in command, (name, step.get("name"))
                 if "playwright install chromium" in command:
                     browser_installs += 1

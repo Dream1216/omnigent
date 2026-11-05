@@ -84,6 +84,37 @@ def test_preflight_blocks_rebuilds_but_keeps_final_scan() -> None:
     assert "--image server=" in final_scan and "--image host=" in final_scan
     upload = steps[names.index("Upload candidate evidence")]["with"]["path"]
     assert "artifacts/grype-preflight/*.json" in upload
+    diagnostic_index = names.index("Retain failed Server preflight OCI for diagnosis")
+    diagnostic = steps[diagnostic_index]
+    assert preflight < diagnostic_index < names.index("Build server candidate attempt 2")
+    assert steps[preflight]["id"] == "server_preflight"
+    assert "continue-on-error" not in steps[preflight]
+    assert "failure()" in diagnostic["if"]
+    assert "!cancelled()" in diagnostic["if"]
+    for required in (
+        "steps.first_server_build.outcome == 'success'",
+        "steps.server_preflight.outcome == 'failure'",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.ref == 'refs/heads/main'",
+    ):
+        assert required in diagnostic["if"]
+    assert diagnostic["timeout-minutes"] == "10"
+    assert diagnostic["with"]["retention-days"] == "1"
+    assert diagnostic["with"]["compression-level"] == "0"
+    assert diagnostic["with"]["if-no-files-found"] == "error"
+    assert diagnostic["with"]["name"].startswith("failed-server-preflight-oci-")
+    assert diagnostic["with"]["path"].splitlines() == [
+        "${{ runner.temp }}/server-1.tar",
+        "artifacts/grype-preflight/*.json",
+    ]
+    for name in (
+        "Build server candidate attempt 2",
+        "Build host candidate attempt 1",
+        "Build host candidate attempt 2",
+        "Seal exact admitted OCI archives and raw scan evidence",
+    ):
+        assert "if" not in steps[names.index(name)]
+        assert "continue-on-error" not in steps[names.index(name)]
     assert "artifacts/grype/*.json" in upload
 
 
