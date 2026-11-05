@@ -1,4 +1,6 @@
-name: Flake stress
+name: Native status diagnostic (one case)
+
+# Diagnostic branch only: one fixed native-status case, no application promotion.
 
 # Manually-dispatched flake-reproducer (workflow_dispatch only, so it
 # doesn't burn runner minutes per PR). Runs a pytest target N times in
@@ -29,15 +31,15 @@ on:
       attempts:
         description: "Number of parallel attempts (1-50, default: 20)"
         required: false
-        default: "20"
+        default: "1"
       workers:
         description: "pytest-xdist -n value (default: 4)"
         required: false
-        default: "4"
+        default: "3"
       dist:
         description: "pytest-xdist --dist mode (loadfile|worksteal|loadscope|load|each|no, default: worksteal)"
         required: false
-        default: "worksteal"
+        default: "loadscope"
       extra_pytest_args:
         description: "Extra pytest args appended to the command, e.g. '-x' (default: empty)"
         required: false
@@ -53,6 +55,10 @@ env:
   # Pin the PyPI index for uv/pip resolution (same as ci.yml).
   UV_INDEX_URL: https://pypi.org/simple
   PIP_INDEX_URL: https://pypi.org/simple
+  ANTHROPIC_API_KEY: ""
+  OPENAI_API_KEY: ""
+  CODEX: ""
+  CLAUDE_CODE: ""
 
 jobs:
   prep:
@@ -72,6 +78,8 @@ jobs:
           DIST: ${{ github.event.inputs.dist }}
           TEST_TARGET: ${{ github.event.inputs.test_target }}
           EXTRA_ARGS: ${{ github.event.inputs.extra_pytest_args }}
+          TARGET_REVISION: ${{ github.event.inputs.target_branch }}
+          WORKFLOW_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           # attempts ∈ [1, 50]; 50 soft-caps runner-pool consumption.
@@ -107,6 +115,11 @@ jobs:
             echo "::error::extra_pytest_args contains disallowed characters; allowed: a-zA-Z0-9 . / _ : [ ] - = space"
             exit 1
           fi
+          # Bound this diagnostic to one unchanged case on one immutable revision.
+          [[ "$ATTEMPTS" == 1 && "$WORKERS" == 3 && "$DIST" == loadscope ]]
+          [[ "$TEST_TARGET" == 'tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_host_offline_user_acts[codex-send-20s]' ]]
+          [[ "$EXTRA_ARGS" == '--reruns 0 --timeout=180 --timeout-method=thread --max-worker-restart=0' ]]
+          [[ "$TARGET_REVISION" =~ ^[0-9a-f]{40}$ && "$TARGET_REVISION" == "$WORKFLOW_REVISION" ]]
           # Build JSON array [1,2,...,N] for the matrix.
           ARR=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['ATTEMPTS'])+1))))")
           echo "attempts_json=$ARR" >> "$GITHUB_OUTPUT"
@@ -136,7 +149,7 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Set up uv
-        uses: omnigent-ai/omnigent/.github/actions/setup-uv@c144e4b1a1c2f9ed45aa6596b90c3672b3faf1c8 # self-contained setup
+        uses: ./.github/actions/setup-uv
         with:
           enable-cache: true
 
@@ -144,8 +157,7 @@ jobs:
         # Inner tests need these (Grep fallback, linux_bwrap sandbox);
         # always install so inner-test flakes work. Apparmor sysctl mirrors ci.yml.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep bubblewrap
+          bash saas/scripts/ci_install_ubuntu_packages.sh ripgrep tmux bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Cache virtualenv
@@ -157,7 +169,36 @@ jobs:
       - name: Install dependencies
         # Matches ci.yml; ``--extra all`` pulls the harness SDKs so
         # executor adapters import at collection time.
-        run: uv sync --extra all --group test
+        run: uv sync --locked --extra all --extra openshell --extra kubernetes --group test
+
+      - name: Install original pinned Codex CLI
+        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
+        with:
+          harness: codex
+
+      - name: Verify diagnostic source and original scenario inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(codex --version)" == 'codex-cli 0.142.0' ]]
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          pins = {'uv.lock': 'd5f1d133221f33dca75e9e0a4e7c49b2bded0da5cfcabc2ae212f7e615681ce2',
+           'pyproject.toml': '77ffd5d339656adfec3e7b15660599226ff29a527e05f75cdbbb386ad280550f',
+           '.python-version': '7b55f8e67b5623c4bef3fa691288da9437d79d3aba156de48d481db32ac7d16d',
+           'tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py': 'cf83927273f4d4ef5c789d7bc7aee5b50aca206fbb4b61620b7b8af8ba391697',
+           'tests/e2e/resilience/scenarios/_contract.py': 'dffc64d6d1a31e467673577224366956ac61e50091a7e7471fb8f7561ac53d44',
+           'tests/e2e/resilience/lab/lab.py': 'f5674d45ec033cc98e62062c11c1de609e418d15f6fdf5e1c6261fb96cf9561b',
+           'tests/e2e/resilience/lab/driver.py': 'cc68bcab108035460f7641472594989631f198aacc916b59a530facffe0fe59c',
+           'omnigent/harnesses/codex_native/forwarder.py': '3a286d5ffa3071c31b06725aa7bbbb59bab7aa3a1f2288e633e4174e8e33c07f',
+           '.github/actions/setup-harness-cli/locks/codex/package.json': '52dc186d237572ee62a07787346c8db931720a26f1c08575b2671c8c8786bdd8',
+           '.github/actions/setup-harness-cli/locks/codex/package-lock.json': '87428d34f0f8ca1eefdb076a064f8bdf7dc2712c0180e67bac0e6395d751a7a0'}
+          for name, expected in pins.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == expected, name
+          assert hashlib.sha256(Path("omnigent/server/routes/_sessions/helpers.py").read_bytes()).hexdigest() == "3599c931c4c83375c67797a678fecdfd6bb809b60faacf2f5287054666d74eac", "Source trace-only patch differs"
+          PY
 
       - name: Run pytest target
         # Inputs validated by prep. Word-splitting on $TEST_TARGET /
@@ -170,16 +211,125 @@ jobs:
           DIST: ${{ github.event.inputs.dist }}
           EXTRA_ARGS: ${{ github.event.inputs.extra_pytest_args }}
           # Match ci.yml so hang guards (tests.budgets.budget) get CI's slack.
-          OMNIGENT_TEST_TIMEOUT_SCALE: "4"
+          OMNIGENT_RESILIENCE_KEEP: "1"
+          OMNIGENT_RESILIENCE_REPORT_DIR: ${{ runner.temp }}/native-status-reports
         run: |
           mkdir -p artifacts
+          set -f
           # shellcheck disable=SC2086
           env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN \
             uv run pytest $TEST_TARGET \
               -n "$WORKERS" --dist="$DIST" \
               --junitxml=artifacts/pytest-attempt-${{ matrix.attempt }}.xml \
-              -v --tb=long --showlocals --log-level=INFO -r a \
+              -v --tb=long --log-level=INFO -r a \
               $EXTRA_ARGS
+
+      - name: Export focused native-status metadata
+        if: always()
+        shell: bash
+        env:
+          NATIVE_DIAG_REPORT_DIR: ${{ runner.temp }}/native-status-reports
+          NATIVE_DIAG_OUTPUT: artifacts/native-status-metadata
+        run: |
+          python3 - <<'PY'
+          """Collect bounded metadata for the one native-status diagnostic."""
+
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          reports = Path(os.environ["NATIVE_DIAG_REPORT_DIR"])
+          output = Path(os.environ["NATIVE_DIAG_OUTPUT"])
+          output.mkdir(parents=True, exist_ok=True)
+          marker = "session_status_ordering_diagnostic "
+          target = "test_s5_host_offline_user_acts[codex-send-20s]"
+          keys = {
+              "wall", "mono", "mono_ns", "at_utc", "session_id", "previous_status",
+              "status", "effective_status", "response_id", "old_active_response_id",
+              "origin", "failure_origin", "caller", "caller_function", "caller_line", "phase", "utc", "monotonic_ns", "incoming_status", "incoming_response_id",
+          }
+          event_keys = {"wall", "mono", "source", "kind", "tag", "mode", "runner_id", "host_id"}
+          ansi = re.compile(r"\x1b\[[0-9;]*m")
+          decoder = json.JSONDecoder()
+          selected = []
+          states = []
+          events = []
+          lifecycle = []
+          seen = set()
+
+          for report_path in sorted(reports.glob("*.json")):
+              report = json.loads(report_path.read_text())
+              if report.get("params") != {"harness": "codex", "action": "send", "outage_s": 20}:
+                  continue
+              root = Path(report["lab_root"]).resolve()
+              if root.parent != Path("/tmp").resolve() or not root.name.startswith("rlab-"):
+                  raise SystemExit("Diagnostic Lab path is outside the expected temporary scope")
+              selected.append({
+                  "scenario": report["scenario"], "params": report["params"],
+                  "started": report["started"], "timeline": report["timeline"],
+                  "checks": [{k: c[k] for k in ("name", "passed", "detail", "known_gap", "intermittent")}
+                             for c in report["checks"]],
+              })
+              log_paths = [root / "logs/server.log", *sorted((root / "data/logs").rglob("*.log"))]
+              for log_path in log_paths:
+                  if not log_path.is_file():
+                      continue
+                  for raw in log_path.read_text(errors="replace").splitlines():
+                      line = ansi.sub("", raw)
+                      if marker in line:
+                          try:
+                              value, _ = decoder.raw_decode(line.split(marker, 1)[1].lstrip())
+                          except ValueError:
+                              continue
+                          if not isinstance(value, dict):
+                              continue
+                          safe = {k: v for k, v in value.items() if k in keys
+                                  and (v is None or isinstance(v, (bool, int, float))
+                                       or isinstance(v, str) and len(v) <= 256)}
+                          identity = json.dumps(safe, sort_keys=True)
+                          if safe and identity not in seen:
+                              states.append(safe)
+                              seen.add(identity)
+                      match = re.search(
+                          r"Codex forwarder publishing turn status: source=(\S+) turn_id=(\S+) status=(\S+)",
+                          line,
+                      )
+                      if match:
+                          lifecycle.append({"timestamp_prefix": line[:40], "source": match[1],
+                                            "turn_id": match[2], "status": match[3]})
+              event_path = root / "events.jsonl"
+              if event_path.is_file():
+                  for raw in event_path.read_text().splitlines():
+                      value = json.loads(raw)
+                      safe = {k: v for k, v in value.items() if k in event_keys
+                              and (v is None or isinstance(v, (bool, int, float))
+                                   or isinstance(v, str) and len(v) <= 128)}
+                      events.append(safe)
+
+          if len(selected) != 1 or any(len(values) > 5000 for values in (states, events, lifecycle)):
+              raise SystemExit("Expected one bounded diagnostic report")
+
+          payloads = {
+              "scenario.json": selected[0], "status-origins.json": states,
+              "lab-events.json": events, "codex-lifecycle.json": lifecycle,
+              "provenance.json": {
+                  "purpose": "One diagnostic execution; no application qualification or flake verdict",
+                  "runtime_base_revision": "b3bca582363144ef7013b10910782241ee7b59da",
+                  "diagnostic_revision": os.environ.get("GITHUB_SHA"),
+                  "run_id": os.environ.get("GITHUB_RUN_ID"),
+                  "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+                  "target": target, "executions": 1, "reruns": 0,
+                  "outage_seconds": 20, "idle_settle_seconds": 15,
+                  "raw_Lab_files_uploaded": False, "source_trace_metadata_records": len(states),
+                  "paid_model_calls_requested": False,
+              },
+          }
+          for name, value in payloads.items():
+              (output / name).write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+          if not states:
+              raise SystemExit("Source status-origin trace is missing; diagnostic evidence is incomplete")
+          PY
 
       - name: Upload pytest artifacts
         if: always()
@@ -261,9 +411,9 @@ jobs:
           rate = (n_red / n * 100.0) if n else 0.0
 
           lines = [
-              "## Flake stress results",
+              "## Focused native-status diagnostic",
               "",
-              f"**Failure rate: {n_red}/{n} ({rate:.0f}%)**",
+              f"**Diagnostic result: {n_red}/{n} failed. This is not a flake-rate estimate or application qualification.**",
               "",
               "| Attempt | Status | Tests | Pass | Fail | Error | Skip | Failing test(s) |",
               "|---:|:---:|---:|---:|---:|---:|---:|---|",

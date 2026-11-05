@@ -13,6 +13,7 @@ import json
 import math
 import re
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -28,7 +29,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
@@ -4981,6 +4982,35 @@ def _publish_status(
         confirmed finished (e.g. claude-native's ``Stop`` hook), which clears a
         sticky ``failed`` like a ``running`` edge would.
     """
+    diagnostic: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        caller = sys._getframe(1)
+        diagnostic = {
+            "utc": datetime.now(UTC).isoformat(),
+            "monotonic_ns": time.monotonic_ns(),
+            "previous_status": _session_status_cache.get(session_id),
+            "incoming_status": status,
+            "incoming_response_id": response_id,
+            "old_active_response_id": _session_active_response_cache.get(session_id),
+            "failure_origin": failure_origin,
+            "caller_function": caller.f_code.co_name,
+            "caller_line": caller.f_lineno,
+        }
+        del caller
+
+    def _record_status_ordering() -> None:
+        with contextlib.suppress(Exception):
+            fields = {
+                "session_id": session_id,
+                "effective_status": _session_status_cache.get(session_id),
+                **diagnostic,
+            }
+            _logger.info(
+                "session_status_ordering_diagnostic %s",
+                json.dumps(fields, sort_keys=True, separators=(",", ":")),
+                extra=debug_event("session_status_ordering_diagnostic", **fields),
+            )
+
     # ``failed`` is sticky against a trailing ``idle``. A turn error is
     # terminal — it must not be silently downgraded to ``idle`` by a
     # follow-on quiescence signal. This matters for claude-native: the
@@ -5004,6 +5034,7 @@ def _publish_status(
         # tracked in-flight response id rather than leaving it for the
         # snapshot to reopen a streaming bubble.
         _session_active_response_cache.pop(session_id, None)
+        _record_status_ordering()
         return
     previous_status = _session_status_cache.get(session_id)
     _session_status_cache[session_id] = status
@@ -5134,6 +5165,7 @@ def _publish_status(
     if blocked_on is None:
         payload.pop("blocked_on", None)
     session_stream.publish(session_id, payload)
+    _record_status_ordering()
 
 
 def reconcile_orphaned_running_status(
