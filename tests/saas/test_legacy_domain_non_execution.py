@@ -27,10 +27,21 @@ from tests.saas.test_legacy_source_qualification import scenario as scenario
 
 
 @pytest.fixture
-def refusal_cancel_native():
-    data = json.loads(
-        (Path(__file__).parent / "resources/legacy_core_refusal_cancel_native.json").read_text()
+def refusal_cancel_native(request):
+    case = getattr(request, "param", None)
+    resource = (
+        "legacy_core_refusal_cancel_native.json"
+        if case is None
+        else "legacy_compatibility_refusal_cancel_native.json"
     )
+    data = json.loads((Path(__file__).parent / "resources" / resource).read_text())
+    if case is not None:
+        data = data[case]
+        from saas.scripts.protected_legacy_initial_build import load_profile
+
+        profile = load_profile(Path(__file__).parents[2], "Compatibility018")
+        assert all(profile[key] == value for key, value in data["profile"].items())
+        data["profile"] = profile
     data["logs"] = base64.b64decode(data.pop("logs_base64"), validate=True)
     return data
 
@@ -53,6 +64,7 @@ def _refusal_cancel_proof(data):
     )
 
 
+@pytest.mark.parametrize("refusal_cancel_native", [None, 0, 1], indirect=True)
 def test_exact_resolve_failure_then_cancel_retains_four_false(refusal_cancel_native):
     proof = _refusal_cancel_proof(refusal_cancel_native)
     assert audit.typed_observation(proof)
@@ -103,6 +115,7 @@ def test_exact_resolve_failure_then_cancel_retains_four_false(refusal_cancel_nat
         "extra_field",
     ],
 )
+@pytest.mark.parametrize("refusal_cancel_native", [None, 0, 1], indirect=True)
 def test_refusal_cancel_rejects_any_unreviewed_tuple(refusal_cancel_native, fault):
     data = refusal_cancel_native
     if fault in {"run", "job", "check"}:
@@ -129,6 +142,96 @@ def test_refusal_cancel_rejects_any_unreviewed_tuple(refusal_cancel_native, faul
         data["rule"]["allow"] = True
     with pytest.raises(ValueError):
         _refusal_cancel_proof(data)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "source",
+        "tree",
+        "PR",
+        "coordinate",
+        "attachment",
+        "workflow",
+        "gate",
+        "check",
+        "log",
+        "registration_hash",
+        "unregistered",
+    ],
+)
+def test_current_fixed_runner_refusal_requires_exact_registration(monkeypatch, tmp_path, fault):
+    from saas.scripts import legacy_domain_discovery as discovery
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    data = json.loads(
+        (
+            Path(__file__).parent
+            / "resources/legacy_compatibility_fixed_runner_refusal_native.json"
+        ).read_text()
+    )
+    profile = load_profile(Path(__file__).parents[2], "Compatibility018")
+    assert all(profile[key] == value for key, value in data["profile"].items())
+    if fault in {"source", "tree", "PR"}:
+        key = {"source": "product_revision", "tree": "product_tree", "PR": "validation_pr"}[fault]
+        data["identity"][key] = 224 if fault == "PR" else "a" * 40
+    elif fault == "coordinate":
+        data["rule"]["job_id"] += 1
+    elif fault == "attachment":
+        data["rule"]["attachment_revision"] = "a" * 40
+    elif fault == "check":
+        data["check"]["conclusion"] = "success"
+    elif fault == "log":
+        data["log"] += "changed"
+    elif fault == "registration_hash":
+        data["rule"]["job_log_sha256"] = "a" * 64
+
+    def api(endpoint):
+        if "/check-runs/" in endpoint:
+            return copy.deepcopy(data["check"])
+        if "/actions/runs/" in endpoint:
+            return copy.deepcopy(data["run"] if "/attempts/" in endpoint else data["latest_run"])
+        raise AssertionError(endpoint)
+
+    def native_file(path, revision):
+        assert revision == "c724abb9d43c40717e83154a7da9270150f3d418"
+        key = "workflow" if path == domain.MAIN_WORKFLOW else "gate"
+        return b"changed" if fault == key else data[key + "_text"].encode()
+
+    monkeypatch.setattr(discovery, "api", api)
+    monkeypatch.setattr(discovery.domain, "_native_file", native_file)
+    monkeypatch.setattr(domain, "_native_file", native_file)
+    monkeypatch.setattr(discovery, "_job_pages", lambda *_: [data["job"]])
+    monkeypatch.setattr(
+        discovery, "download_job_log", lambda _id, path: path.write_bytes(data["log"].encode())
+    )
+
+    def inspect():
+        return discovery._inspect_run(
+            data["latest_run"],
+            profile,
+            data["identity"]["validation_pr"],
+            tmp_path,
+            {"attempts": []},
+            data["identity"],
+            registered_refusals=[] if fault == "unregistered" else [data["rule"]],
+        )
+
+    if fault == "PR":
+        result = inspect()
+        assert result["classification"] == "other-pr"
+        assert all(row["classification"] != "related" for row in result["attempts"])
+    elif fault:
+        with pytest.raises(ValueError):
+            inspect()
+    else:
+        result = inspect()
+        assert result["classification"] == "related"
+        assert (
+            result["attempts"][0]["original_event_source_revision"] == profile["product_revision"]
+        )
+        assert result["attempts"][0]["technical_gate_waiver"] is False
 
 
 @pytest.mark.parametrize("fault", [None, "workflow_bytes", "gate_bytes", "changed_check"])
@@ -990,6 +1093,93 @@ def test_registered_audit_allows_only_exact_live_PR_head_reference(
             )
         )
     assert observed == originals
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "source",
+        "tree",
+        "PR",
+        "component",
+        "coordinate",
+        "label",
+        "steps",
+        "runner",
+        "logs",
+        "bytes",
+    ],
+)
+def test_current_C2_registered_empty_job_keeps_exact_label_and_no_authority(
+    scenario, audit_case, monkeypatch, fault
+):
+    profile = {
+        **scenario["profile"],
+        "component": "Compatibility018",
+        "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+        "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+    }
+    identity = {
+        **scenario["identity"],
+        **profile,
+        "validation_pr": 223,
+        "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    }
+    observed = audit_case
+    observed["job"]["labels"] = ["ubuntu-24.04"]
+    scope = {"profile": profile, "identity": identity}
+    rule = register(
+        scope, *(observed[key] for key in ("run", "job", "check", "annotations", "logs"))
+    )
+    coordinate = tuple(rule[key] for key in ("run_id", "attempt", "job_id", "check_id"))
+    monkeypatch.setattr(
+        audit,
+        "_COMPATIBILITY_REGISTERED_EMPTY_JOBS",
+        set() if fault == "coordinate" else {coordinate},
+    )
+    if fault in {"source", "tree", "component"}:
+        key = {"source": "product_revision", "tree": "product_tree", "component": "component"}[
+            fault
+        ]
+        value = "Core" if fault == "component" else "0" * 40
+        profile[key] = identity[key] = value
+        if key in rule:
+            rule[key] = value
+    elif fault == "PR":
+        identity["validation_pr"] = rule["validation_pr"] = 219
+    elif fault == "label":
+        observed["job"]["labels"] = ["ubuntu-latest"]
+    elif fault == "steps":
+        observed["job"]["steps"] = [{"name": "Run product", "conclusion": "success"}]
+    elif fault == "runner":
+        observed["job"]["runner_id"] = 1
+    elif fault == "logs":
+        observed["logs"] += b"changed"
+    elif fault == "bytes":
+        observed["job"]["unreviewed"] = True
+    args = (
+        profile,
+        identity,
+        rule,
+        *(observed[key] for key in ("run", "job", "check", "annotations", "logs")),
+    )
+    if fault:
+        with pytest.raises(ValueError):
+            audit.verify_zero_execution(*args)
+    else:
+        proof = audit.verify_zero_execution(*args)
+        assert proof.receipt["source_classification"] == "UNKNOWN"
+        assert all(
+            proof.receipt[key] is False
+            for key in (
+                "source_proof",
+                "guard_refusal",
+                "technical_gate_waiver",
+                "production_admission",
+            )
+        )
 
 
 @pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)

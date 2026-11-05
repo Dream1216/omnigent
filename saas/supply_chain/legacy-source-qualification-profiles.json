@@ -23658,6 +23658,109 @@
             "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
           }
         ]
+      },
+      "domain_non_execution": {
+        ".github/workflows/saas-n1-merge-gate.yml": [
+          {
+            "kind": "legacy_original_main_domain_zero_execution/v1",
+            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+            "validation_pr": 223,
+            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+            "event": "pull_request_target",
+            "attachment_revision": "3c28c1814161368e37b46f3cf0e1259b35e1ef6d",
+            "run_id": 41631986434,
+            "attempt": 1,
+            "job_id": 125903611634,
+            "check_id": 125903611634,
+            "run_sha256": "8fc39b99cd2d36962cdbcef9695eb66d2adfbfa51c2736ae50738bcc833e3c46",
+            "job_sha256": "fcdfbf7517298acbf19bccc8fa9c59bb9ae3f09d087b74cc85def8f47c32dbcf",
+            "check_sha256": "13a0b7e73f607da3983676577af3450d664b8fc9fdd1c422f23f3c0ebbae6b9d",
+            "annotations_sha256": "7dbb5102577bd3a173242624d96e8be0c9a4ad76909d9d90ed94ba4ceaae17cb",
+            "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
+          },
+          {
+            "kind": "legacy_original_main_domain_zero_execution/v1",
+            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+            "validation_pr": 223,
+            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+            "event": "pull_request_target",
+            "attachment_revision": "7e774d673980729f591304d8d7b991af36a06920",
+            "run_id": 41640932704,
+            "attempt": 1,
+            "job_id": 125933963558,
+            "check_id": 125933963558,
+            "run_sha256": "4d42f687e4084920a76470883e78347fddafabdda65ee0d6763bad36cd2333d0",
+            "job_sha256": "335328fed47429bae67a450f7d3f74647a049b076d6f66dfb3b4e6ebd4e98eed",
+            "check_sha256": "8962eefd38ce7b7bb3f7400dd1af9da1c4125a5faea4c717493f09ccae5a3fa2",
+            "annotations_sha256": "a71d35200dd26120af58152c08e5f519982bcece5f8785dddffc4c38e5b02fd5",
+            "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
+          },
+          {
+            "kind": "legacy_original_main_domain_zero_execution/v1",
+            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+            "validation_pr": 223,
+            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+            "event": "pull_request_target",
+            "attachment_revision": "b6aab0108381d2ff4afaef0641437a6d559d3e62",
+            "run_id": 41838270342,
+            "attempt": 1,
+            "job_id": 126602775892,
+            "check_id": 126602775892,
+            "run_sha256": "298b6b74e1e21a53fcc78de650e0d0436c6a04540032d75a1b7e592fed01d8a1",
+            "job_sha256": "0687c7d457956ed4b2c7b8c9b961c2bf3f2d754874a3c6d4160392920e00fbd6",
+            "check_sha256": "cb392292c084041d1f052bdda768214fe60a020f5f837e216e2db5fb0da1c7f2",
+            "annotations_sha256": "ff74fbdbe6c671188a7fa1d465173b5268b5b8af523ad4f1c1dc825dc403c242",
+            "run_logs_sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85"
+          }
+        ]
+      },
+      "domain_refusal_cancellation": {
+        ".github/workflows/saas-n1-merge-gate.yml": [
+          {
+            "kind": "legacy_original_main_domain_refusal_then_cancellation/v1",
+            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+            "validation_pr": 223,
+            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+            "event": "workflow_run",
+            "attachment_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
+            "run_id": 41838285982,
+            "attempt": 1,
+            "job_id": 126602830928,
+            "check_id": 126602830928,
+            "run_sha256": "393636b161e969883c4b6fcaaefd85a139775aa4b3543f42d6042ebe2e5c3b5b",
+            "job_sha256": "203493ff5216a16a540810bce77585951b1bb5763c08848de863d4f99c6e6160",
+            "check_sha256": "a12c499ae0e2047283c4bac87bd6fc6a1733f6158a7385258431aa2abd174785",
+            "annotations_sha256": "98179688baa53453ed70744218f03728b1fdcb6bfb2552dd54ab14bcc9eee76e",
+            "run_logs_sha256": "cad182d5697be8109053f6bb69b005c48c42da2f7ffb8a56129031ee5dea38a1"
+          },
+          {
+            "kind": "legacy_original_main_domain_refusal_then_cancellation/v1",
+            "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+            "validation_pr": 223,
+            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+            "event": "workflow_run",
+            "attachment_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
+            "run_id": 41849023989,
+            "attempt": 1,
+            "job_id": 126640009862,
+            "check_id": 126640009862,
+            "run_sha256": "88e1dcea34a278eccb0653b74872cbb9c387dccd96407be185153cf86c471a73",
+            "job_sha256": "9ad8e8b04c0de2ecc3ab87bb855c73862683bb04100476c6fa380a67aaa5af22",
+            "check_sha256": "362434ed43f803ffd0b31da250471295b12cd4e98b31ea107304aa2edde5291e",
+            "annotations_sha256": "4b786adbe86dad526e78d39c1a8ce63bef2b67f3d738a876cdb1b8254558da3f",
+            "run_logs_sha256": "f7dcc35cc2027e33ee410907baadc27ffd269b3985703e6767afc170929c5d2f"
+          }
+        ]
       }
     }
   },

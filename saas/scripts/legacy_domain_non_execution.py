@@ -53,6 +53,11 @@ _INFRASTRUCTURE_STEPS = (
     (13, "Complete job", "success"),
 )
 _EMPTY_ZIP = b"PK\x05\x06" + b"\x00" * 18
+_COMPATIBILITY_REGISTERED_EMPTY_JOBS = {
+    (41631986434, 1, 125903611634, 125903611634),
+    (41640932704, 1, 125933963558, 125933963558),
+    (41838270342, 1, 126602775892, 126602775892),
+}
 _COMPATIBILITY_INFRASTRUCTURE_CONTRACTS: dict[str, dict[str, Any]] = {
     "b6ec90023226590ac6278106f5dd4d0104ce196283e708f6b0eb242365ebcd02": {
         "archive_bytes": 1436,
@@ -370,8 +375,19 @@ def verify_zero_execution(
     profile, identity, rule, run, job, check, annotations, logs, *, reference_heads=()
 ):
     """Authenticate execution absence without assigning an original event source."""
+    from saas.scripts.legacy_domain_discovery import _exact_current_C2
+
     validate_rules([rule], profile, identity)
-    _verify_native_zero_execution(identity, rule, run, job, check, annotations, logs)
+    coordinates = tuple(rule[key] for key in ("run_id", "attempt", "job_id", "check_id"))
+    label = (
+        "ubuntu-24.04"
+        if _exact_current_C2(profile, identity)
+        and coordinates in _COMPATIBILITY_REGISTERED_EMPTY_JOBS
+        else "ubuntu-latest"
+    )
+    _verify_native_zero_execution(
+        identity, rule, run, job, check, annotations, logs, expected_runner_label=label
+    )
     require(
         _registered_snapshot_matches(
             run, rule["run_sha256"], profile, identity, rule, reference_heads
@@ -1540,6 +1556,51 @@ _REFUSAL_CANCELLATION_STEPS = (
     (13, "Complete job", "success"),
 )
 
+_COMPATIBILITY_REFUSAL_CANCELLATIONS = {
+    (41838285982, 1, 126602830928, 126602830928): {
+        "run_sha256": "393636b161e969883c4b6fcaaefd85a139775aa4b3543f42d6042ebe2e5c3b5b",
+        "job_sha256": "203493ff5216a16a540810bce77585951b1bb5763c08848de863d4f99c6e6160",
+        "check_sha256": "a12c499ae0e2047283c4bac87bd6fc6a1733f6158a7385258431aa2abd174785",
+        "annotations_sha256": "98179688baa53453ed70744218f03728b1fdcb6bfb2552dd54ab14bcc9eee76e",
+        "run_logs_sha256": "cad182d5697be8109053f6bb69b005c48c42da2f7ffb8a56129031ee5dea38a1",
+        "archive_bytes": 5109,
+        "members": (
+            (
+                "0_evaluate.txt",
+                18725,
+                "41daa67a3b9f5351a0a942a7c097142be0d63755839ebb8ccbba7c72205f1629",
+            ),
+            (
+                "evaluate/system.txt",
+                811,
+                "f0f6f5f21975a717c82950467b887aad4faabc05fefc239a991b264a86f0e83a",
+            ),
+        ),
+        "original_event_source_revision": "b6aab0108381d2ff4afaef0641437a6d559d3e62",
+    },
+    (41849023989, 1, 126640009862, 126640009862): {
+        "run_sha256": "88e1dcea34a278eccb0653b74872cbb9c387dccd96407be185153cf86c471a73",
+        "job_sha256": "9ad8e8b04c0de2ecc3ab87bb855c73862683bb04100476c6fa380a67aaa5af22",
+        "check_sha256": "362434ed43f803ffd0b31da250471295b12cd4e98b31ea107304aa2edde5291e",
+        "annotations_sha256": "4b786adbe86dad526e78d39c1a8ce63bef2b67f3d738a876cdb1b8254558da3f",
+        "run_logs_sha256": "f7dcc35cc2027e33ee410907baadc27ffd269b3985703e6767afc170929c5d2f",
+        "archive_bytes": 5141,
+        "members": (
+            (
+                "0_evaluate.txt",
+                18725,
+                "b6572af5b0067700e9c6bb1d08acae8596758cfd12393a6b739453c370abef17",
+            ),
+            (
+                "evaluate/system.txt",
+                811,
+                "7b292f2d26ad4b830e69365de56c453a8ea026620863125593274550293bc27e",
+            ),
+        ),
+        "original_event_source_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+    },
+}
+
 
 @dataclass(frozen=True)
 class RefusalCancellationObservation:
@@ -1548,9 +1609,35 @@ class RefusalCancellationObservation:
     receipt: dict[str, Any]
 
 
+def compatibility_refusal_cancellation_contract(profile, identity, rule):
+    from saas.scripts.legacy_domain_discovery import _exact_current_C2
+
+    if not isinstance(rule, dict) or not _exact_current_C2(profile, identity):
+        return None
+    key = tuple(rule.get(field) for field in ("run_id", "attempt", "job_id", "check_id"))
+    return _COMPATIBILITY_REFUSAL_CANCELLATIONS.get(key)
+
+
 def validate_refusal_cancellation_rules(rows, profile, identity):
-    require(isinstance(rows, list) and len(rows) <= 1, "refusal cancellation scope differs")
+    from saas.scripts.legacy_domain_discovery import _exact_current_C2
+
+    limit = 2 if _exact_current_C2(profile, identity) else 1
+    require(isinstance(rows, list) and len(rows) <= limit, "refusal cancellation scope differs")
     for row in rows:
+        contract = compatibility_refusal_cancellation_contract(profile, identity, row)
+        if contract is not None:
+            require(
+                row.get("kind") == REFUSAL_CANCELLATION_KIND
+                and row.get("event") == "workflow_run"
+                and row.get("attachment_revision") == "c724abb9d43c40717e83154a7da9270150f3d418"
+                and all(
+                    row.get(key) == value
+                    for key, value in contract.items()
+                    if key.endswith("sha256")
+                ),
+                "refusal cancellation is not the exact reviewed compatibility tuple",
+            )
+            continue
         require(
             isinstance(row, dict)
             and row.get("kind") == REFUSAL_CANCELLATION_KIND
@@ -1571,6 +1658,11 @@ def verify_refusal_cancellation(profile, identity, rule, run, job, check, annota
     from saas.scripts.legacy_source_ci import checkout_commit, completed_step_lines
 
     validate_refusal_cancellation_rules([rule], profile, identity)
+    contract = compatibility_refusal_cancellation_contract(profile, identity, rule)
+    if contract is not None:
+        return _verify_compatibility_refusal_cancellation(
+            profile, identity, rule, run, job, check, annotations, logs, contract
+        )
     require(
         all(
             native.native_digest(value) == rule[key]
@@ -1672,6 +1764,98 @@ def verify_refusal_cancellation(profile, identity, rule, run, job, check, annota
     )
 
 
+def _verify_compatibility_refusal_cancellation(
+    profile, identity, rule, run, job, check, annotations, logs, contract
+):
+    from saas.scripts.legacy_domain_discovery import (
+        _cancelled_trigger_group,
+        _discovery_trigger_identity,
+    )
+    from saas.scripts.legacy_source_ci import checkout_commit, completed_step_lines
+
+    require(
+        all(
+            native.native_digest(value) == rule[key]
+            for key, value in (
+                ("run_sha256", run),
+                ("job_sha256", job),
+                ("check_sha256", check),
+                ("annotations_sha256", annotations),
+            )
+        )
+        and len(logs) == contract["archive_bytes"]
+        and hashlib.sha256(logs).hexdigest() == rule["run_logs_sha256"],
+        "compatibility refusal cancellation raw native tuple differs",
+    )
+    coordinates = cancelled_job_coordinates(run, job, check, expected_runner_label="ubuntu-24.04")
+    require(
+        run.get("event") == rule["event"]
+        and run.get("head_sha") == rule["attachment_revision"]
+        and native._pr_numbers(run.get("pull_requests")) == [],
+        "compatibility refusal cancellation native attachment differs",
+    )
+    steps = job.get("steps", [])
+    require(
+        tuple((step.get("number"), step.get("name"), step.get("conclusion")) for step in steps)
+        == _REFUSAL_CANCELLATION_STEPS
+        and all(step.get("status") == "completed" for step in steps),
+        "compatibility refusal cancellation executed another step",
+    )
+    prior, end = native._instant(job["started_at"]), native._instant(job["completed_at"])
+    for step in steps:
+        start, finish = native._instant(step["started_at"]), native._instant(step["completed_at"])
+        require(prior <= start <= finish <= end, "compatibility cancellation chronology differs")
+        prior = finish
+    with zipfile.ZipFile(io.BytesIO(logs)) as archive:
+        require(
+            tuple(
+                (entry.filename, entry.file_size, hashlib.sha256(archive.read(entry)).hexdigest())
+                for entry in archive.infolist()
+            )
+            == contract["members"]
+            and archive.testzip() is None,
+            "compatibility refusal archive inventory differs",
+        )
+        log = archive.read("0_evaluate.txt").decode("utf-8")
+    control = checkout_commit(log, steps[1])
+    require(
+        control == "c724abb9d43c40717e83154a7da9270150f3d418", "compatibility checkout differs"
+    )
+    require(
+        [line for line in completed_step_lines(log, steps[2]) if line.startswith("##[error]")]
+        == [native._ERROR, "##[error]Process completed with exit code 1."],
+        "compatibility cancellation did not execute the main-only refusal",
+    )
+    environment = native.trigger_environment(_cancelled_trigger_group(log, steps[2]), steps[2])
+    number, source = _discovery_trigger_identity(environment, run["event"], profile)
+    require(
+        number == identity["validation_pr"]
+        and source == contract["original_event_source_revision"],
+        "compatibility refusal original event differs",
+    )
+    return RefusalCancellationObservation(
+        {
+            **rule,
+            **coordinates,
+            "workflow": native.MAIN_WORKFLOW,
+            "attachment_workflow_sha256": native.FIXED_RUNNER_WORKFLOW_SHA256,
+            "check_revision": check["head_sha"],
+            "check_suite_id": run["check_suite_id"],
+            "app_id": 15368,
+            "source_classification": "UNKNOWN",
+            "original_event_source_revision": source,
+            "trusted_checkout_revision": control,
+            "execution": "native-refusal-then-cancelled",
+            "original_conclusion": "cancelled",
+            "source_proof": False,
+            "guard_refusal": False,
+            "technical_gate_waiver": False,
+            "production_admission": False,
+            "registration_sha256": native.native_digest(rule),
+        }
+    )
+
+
 def collect_refusal_cancellation(profile, identity, rule, run, jobs, destination):
     validate_refusal_cancellation_rules([rule], profile, identity)
     require(len(jobs) == 1, "refusal cancellation native job set differs")
@@ -1679,13 +1863,25 @@ def collect_refusal_cancellation(profile, identity, rule, run, jobs, destination
     annotations = annotations_for(rule["check_id"])
     path = destination / f"refusal-cancelled-run-{run['id']}-attempt-{run['run_attempt']}.zip"
     _download_run_logs(run["id"], run["run_attempt"], path, 8192)
+    contract = compatibility_refusal_cancellation_contract(profile, identity, rule)
+    control = (
+        "c724abb9d43c40717e83154a7da9270150f3d418"
+        if contract is not None
+        else _REFUSAL_CANCELLATION_CONTROL
+    )
     require(
         hashlib.sha256(native._native_file(native.MAIN_WORKFLOW, run["head_sha"])).hexdigest()
-        == native.MAIN_WORKFLOW_SHA256
-        and hashlib.sha256(
-            native._native_file(native._GATE, _REFUSAL_CANCELLATION_CONTROL)
-        ).hexdigest()
-        == _REFUSAL_CANCELLATION_GATE_SHA256,
+        == (
+            native.FIXED_RUNNER_WORKFLOW_SHA256
+            if contract is not None
+            else native.MAIN_WORKFLOW_SHA256
+        )
+        and hashlib.sha256(native._native_file(native._GATE, control)).hexdigest()
+        == (
+            "f8745b96d08de0704ba2cffbee4f437b5bba429ee55d2b84d66c071ff0a81648"
+            if contract is not None
+            else _REFUSAL_CANCELLATION_GATE_SHA256
+        ),
         "refusal cancellation workflow/gate source bytes differ",
     )
     return verify_refusal_cancellation(
