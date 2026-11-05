@@ -3321,6 +3321,7 @@ class ProductionPostgreSqlPlan:
     require_tls: bool = True
     lock_timeout_seconds: float = 30.0
     verification_saas_head: str | None = None
+    install_preview_authority: bool = False
 
     @classmethod
     def from_urls(
@@ -3339,6 +3340,7 @@ class ProductionPostgreSqlPlan:
         require_tls: bool = True,
         lock_timeout_seconds: float = 30.0,
         verification_saas_head: str | None = None,
+        install_preview_authority: bool = False,
     ) -> ProductionPostgreSqlPlan:
         return cls(
             product_revision=product_revision,
@@ -3370,6 +3372,7 @@ class ProductionPostgreSqlPlan:
             require_tls=require_tls,
             lock_timeout_seconds=lock_timeout_seconds,
             verification_saas_head=verification_saas_head,
+            install_preview_authority=install_preview_authority,
         )
 
     def authorities(self) -> tuple[PostgreSqlAuthority, ...]:
@@ -3556,6 +3559,8 @@ def _installed_product_revision() -> str:
 
 
 def _validate_plan(plan: ProductionPostgreSqlPlan) -> None:
+    if type(plan.install_preview_authority) is not bool:
+        raise PostgreSqlMigrationError("preview_authority_mode_invalid", "configuration")
     if _FULL_GIT_SHA.fullmatch(plan.product_revision) is None:
         raise PostgreSqlMigrationError("product_revision_invalid", "configuration")
     if _installed_product_revision() != plan.product_revision:
@@ -4877,7 +4882,9 @@ def _apply_runtime_authority(engine: Engine) -> None:
         _verify_owner_acl_surface(connection, phase="runtime_authority")
 
 
-def _preview_authority_grants_present(connection: Connection) -> bool:
+def _preview_authority_grants_present(
+    connection: Connection, *, require_full: bool = False
+) -> bool:
     rows = connection.execute(
         sa.text(
             "SELECT relation.relname, '' AS column_name, grantee.rolname, "
@@ -4901,8 +4908,11 @@ def _preview_authority_grants_present(connection: Connection) -> bool:
             "JOIN pg_roles grantee ON grantee.oid = acl.grantee "
             "WHERE namespace.nspname = 'public' "
             "AND relation.relname = 'saas_preview_gateway_instances' "
-            "AND attribute.attname = 'server_name' "
-            "AND grantee.rolname = 'saas_preview_owner' "
+            "AND ((grantee.rolname = 'saas_preview_owner' AND attribute.attname "
+            "IN ('server_name', 'connect_host', 'connect_port')) OR "
+            "(grantee.rolname = 'saas_preview_edge' AND attribute.attname "
+            "IN ('id', 'status', 'lease_expires_at', 'server_name', "
+            "'connect_host', 'connect_port'))) "
             "AND acl.privilege_type = 'SELECT'"
         )
     ).all()
@@ -4914,18 +4924,56 @@ def _preview_authority_grants_present(connection: Connection) -> bool:
         ("saas_preview_gateway_instances", "", "saas_preview_edge", owner, False),
         ("saas_preview_gateway_instances", "server_name", "saas_preview_owner", owner, False),
     }
-    if observed not in (set(), expected):
+    full_projection = (
+        (expected - {("saas_preview_gateway_instances", "", "saas_preview_edge", owner, False)})
+        | {
+            ("saas_preview_gateway_instances", column, "saas_preview_owner", owner, False)
+            for column in ("connect_host", "connect_port")
+        }
+        | {
+            ("saas_preview_gateway_instances", column, "saas_preview_edge", owner, False)
+            for column in (
+                "id",
+                "status",
+                "lease_expires_at",
+                "server_name",
+                "connect_host",
+                "connect_port",
+            )
+        }
+    )
+    if observed not in (set(), expected, full_projection):
         raise PostgreSqlMigrationError("preview_authority_acl_partial", "control_plane_authority")
+    if require_full and observed != full_projection:
+        raise PostgreSqlMigrationError("preview_authority_missing", "control_plane_authority")
     return bool(observed)
 
 
-def _apply_control_plane_authority(engine: Engine) -> None:
+def _apply_control_plane_authority(
+    engine: Engine, *, install_preview_authority: bool = False
+) -> None:
     with engine.begin() as connection:
         _preflight_owner_acl_surface(connection, phase="control_plane_authority")
         preview_authority = _preview_authority_grants_present(connection)
+        full_preview = (
+            preview_authority
+            and connection.execute(
+                sa.text(
+                    "SELECT has_column_privilege('saas_preview_owner', "
+                    "'public.saas_preview_gateway_instances', 'connect_host', 'SELECT') "
+                    "AND has_column_privilege('saas_preview_owner', "
+                    "'public.saas_preview_gateway_instances', 'connect_port', 'SELECT')"
+                )
+            ).scalar_one()
+        )
         _revoke_owner_acl_surface(connection)
         connection.exec_driver_sql(_read_resource("saas.control_plane", "postgresql_roles.sql"))
-        if preview_authority:
+        if install_preview_authority or full_preview:
+            connection.exec_driver_sql(
+                _read_resource("saas.control_plane", "postgresql_preview_authority.sql")
+            )
+            _preview_authority_grants_present(connection, require_full=True)
+        elif preview_authority:
             connection.exec_driver_sql(
                 "GRANT SELECT (server_name) ON public.saas_preview_gateway_instances "
                 "TO saas_preview_owner; "
@@ -5196,6 +5244,26 @@ def _verify_public_schema_inventory(
     return _verify_public_schema_inventory_digest(inventory, key=key)
 
 
+_PRODUCTION_PREVIEW_PUBLIC_SCHEMA_INVENTORY_SHA256: dict[tuple[int, str, str], tuple[str, ...]] = {
+    (16, "d0a1f879a01d", "p0s000000018"): (
+        "16cf118ee08a2daaafdc1a6a84df2bf6b43402ba991551615cfeaf5f3c8aa337",
+    ),
+    (18, "d0a1f879a01d", "p0s000000018"): (
+        "e9a84a42342e033ff0b3a789dcef46df255f7ce8c84ff67b8429a7440656a548",
+    ),
+}
+_PRODUCTION_PREVIEW_SOURCE_SECURITY_CATALOG_SHA256: dict[tuple[int, str, str], tuple[str, str]] = {
+    (16, "d0a1f879a01d", "p0s000000018"): (
+        "04103373694d826f697f2ab649f7edaafd8fc6ee30df7ce381991656fd9fc8b5",
+        "bd5898a8fa57cd95a1620da5676b2dbe78c065a13b38227b92c3ad4a2d7e43ee",
+    ),
+    (18, "d0a1f879a01d", "p0s000000018"): (
+        "fe31f561c6eedc67d0916601e77772432973ef1f657e31e1182c73efd84df36e",
+        "39da42de9d4504be841a82b33a1386df6afba0cc2161c2b1139679a8be5a0efd",
+    ),
+}
+
+
 def _verify_public_schema_inventory_digest(
     inventory: list[list[str]],
     *,
@@ -5215,6 +5283,7 @@ def _verify_public_schema_inventory_digest(
         )
         if item is not None
     }
+    accepted_digests.update(_PRODUCTION_PREVIEW_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key, ()))
     if digest not in accepted_digests:
         predecessor = _project_identity_guard_inventory_predecessor(inventory)
         predecessor_digest = hashlib.sha256(
@@ -5335,11 +5404,16 @@ def _verify_source_security_catalog_digest(
             **dict(EXPECTED_PLATFORM_MODEL_SERVICE_ROLES),
             **dict(EXPECTED_PLATFORM_ADMIN_SERVICE_ROLES),
         }
+        native_preview = _PRODUCTION_PREVIEW_SOURCE_SECURITY_CATALOG_SHA256.get(key)
         if observed == platform_admin:
+            if native_preview is not None:
+                accepted_digests.add(native_preview[0])
             accepted_digests.add(
                 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(key)
             )
         if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
+            if native_preview is not None:
+                accepted_digests.add(native_preview[1])
             accepted_digests.add(
                 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256.get(key)
             )
@@ -6533,6 +6607,18 @@ def _control_plane_security_catalog(
     )
     if guard:
         catalog["project_identity_guard"] = guard
+    preview_scope_guard = rows(
+        "SELECT routine.proname, pg_get_function_identity_arguments(routine.oid), "
+        "pg_get_function_result(routine.oid), language.lanname, routine.prosecdef, "
+        "routine.proleakproof, routine.proisstrict, routine.provolatile, routine.proconfig, "
+        "btrim(routine.prosrc, E' \n\r\t') FROM pg_proc routine "
+        "JOIN pg_namespace namespace ON namespace.oid=routine.pronamespace "
+        "JOIN pg_language language ON language.oid=routine.prolang "
+        "WHERE namespace.nspname='public' AND routine.proname="
+        "'saas_preview_owner_scope_is_current_v1' AND routine.pronargs=0"
+    )
+    if preview_scope_guard:
+        catalog["preview_owner_scope_guard"] = preview_scope_guard
     return catalog
 
 
@@ -7154,7 +7240,8 @@ def run_production_postgresql_migration(
     """Apply the ordered authority chain, or verify it without mutations."""
 
     if type(verify_only) is not bool or (
-        plan.verification_saas_head is not None and not verify_only
+        plan.verification_saas_head is not None
+        and not (verify_only or plan.install_preview_authority)
     ):
         raise PostgreSqlMigrationError(
             "verification_override_requires_verify_only", "configuration"
@@ -7189,52 +7276,99 @@ def run_production_postgresql_migration(
                         official_owner=plan.official_owner.login,
                     )
                 phases.append("lock_pg_trgm_preflight:verified")
-                _phase(
-                    "principals",
-                    lambda: _apply_principals(
-                        engines["principal_operator"],
-                        bindings=plan.service_role_graph,
-                        principal_operator=plan.principal_operator.login,
-                    ),
-                )
-                phases.append("principals:applied")
-                _phase(
-                    "database",
-                    lambda: _apply_database_authority(
-                        engines["database_owner"],
-                        principal_operator=plan.principal_operator.login,
-                        official_owner=plan.official_owner.login,
-                        saas_owner=plan.saas_owner.login,
-                        bindings=plan.service_role_graph,
-                    ),
-                )
-                phases.append("database:applied")
-                _phase("official_alembic", lambda: _upgrade(engines["official_owner"], "official"))
-                phases.append("official_alembic:applied")
-                _phase("saas_alembic", lambda: _upgrade(engines["saas_owner"], "saas"))
-                phases.append("saas_alembic:applied")
-                _phase(
-                    "runtime_authority",
-                    lambda: _apply_runtime_authority(engines["official_owner"]),
-                )
-                phases.append("runtime_authority:applied")
-                _phase(
-                    "control_plane_authority",
-                    lambda: _apply_control_plane_authority(engines["saas_owner"]),
-                )
-                phases.append("control_plane_authority:applied")
-                _phase(
-                    "database_acl_finalize",
-                    lambda: _finalize_database_authority(
-                        engines["database_owner"],
-                        principal_operator=plan.principal_operator.login,
-                        official_owner=plan.official_owner.login,
-                        saas_owner=plan.saas_owner.login,
-                        bindings=plan.service_role_graph,
-                    ),
-                )
-                phases.append("database_acl_finalize:applied")
+                if plan.install_preview_authority:
+                    key = (
+                        session_facts[0].server_version_num // 10000,
+                        _expected_head("official"),
+                        plan.verification_saas_head or _expected_head("saas"),
+                    )
+                    if (
+                        plan.platform_admin_service_role_bindings is None
+                        or not _PRODUCTION_PREVIEW_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
+                        or not _PRODUCTION_PREVIEW_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+                    ):
+                        raise PostgreSqlMigrationError(
+                            "preview_authority_baseline_missing", "preflight"
+                        )
+                    _verify_state(plan, engines)
+                    with engines["saas_owner"].connect() as connection:
+                        lease_owners = (
+                            connection.execute(
+                                sa.text(
+                                    "SELECT pg_get_userbyid(proowner) FROM pg_proc "
+                                    "JOIN pg_namespace namespace ON namespace.oid=pronamespace "
+                                    "WHERE namespace.nspname='public' AND proname IN ("
+                                    "'saas_preview_owner_heartbeat_gateway_v1', "
+                                    "'saas_preview_owner_release_gateway_v1')"
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+                    if lease_owners != [plan.saas_owner.login] * 2:
+                        raise PostgreSqlMigrationError(
+                            "preview_authority_lease_owner_unsupported", "preflight"
+                        )
+                    phases.append("preview_predecessor:verified")
+                    _phase(
+                        "control_plane_authority",
+                        lambda: _apply_control_plane_authority(
+                            engines["saas_owner"], install_preview_authority=True
+                        ),
+                    )
+                    phases.append("preview_authority:applied")
+                else:
+                    _phase(
+                        "principals",
+                        lambda: _apply_principals(
+                            engines["principal_operator"],
+                            bindings=plan.service_role_graph,
+                            principal_operator=plan.principal_operator.login,
+                        ),
+                    )
+                    phases.append("principals:applied")
+                    _phase(
+                        "database",
+                        lambda: _apply_database_authority(
+                            engines["database_owner"],
+                            principal_operator=plan.principal_operator.login,
+                            official_owner=plan.official_owner.login,
+                            saas_owner=plan.saas_owner.login,
+                            bindings=plan.service_role_graph,
+                        ),
+                    )
+                    phases.append("database:applied")
+                    _phase(
+                        "official_alembic", lambda: _upgrade(engines["official_owner"], "official")
+                    )
+                    phases.append("official_alembic:applied")
+                    _phase("saas_alembic", lambda: _upgrade(engines["saas_owner"], "saas"))
+                    phases.append("saas_alembic:applied")
+                    _phase(
+                        "runtime_authority",
+                        lambda: _apply_runtime_authority(engines["official_owner"]),
+                    )
+                    phases.append("runtime_authority:applied")
+                    _phase(
+                        "control_plane_authority",
+                        lambda: _apply_control_plane_authority(engines["saas_owner"]),
+                    )
+                    phases.append("control_plane_authority:applied")
+                    _phase(
+                        "database_acl_finalize",
+                        lambda: _finalize_database_authority(
+                            engines["database_owner"],
+                            principal_operator=plan.principal_operator.login,
+                            official_owner=plan.official_owner.login,
+                            saas_owner=plan.saas_owner.login,
+                            bindings=plan.service_role_graph,
+                        ),
+                    )
+                    phases.append("database_acl_finalize:applied")
         verified = _verify_state(plan, engines)
+        if plan.install_preview_authority:
+            with engines["saas_owner"].connect() as connection:
+                _preview_authority_grants_present(connection, require_full=True)
         phases.append("state:verified")
     except PostgreSqlMigrationError:
         raise

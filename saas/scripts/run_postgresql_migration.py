@@ -116,11 +116,20 @@ def main() -> int:
         default=30.0,
     )
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument(
+        "--install-preview-authority",
+        action="store_true",
+        help="install Preview authority on a verified existing schema without upgrading Alembic",
+    )
     parser.add_argument("--verification-saas-head")
     parser.add_argument("--output")
     args = parser.parse_args()
-    if args.verification_saas_head is not None and not args.verify_only:
-        parser.error("--verification-saas-head requires --verify-only")
+    if args.verification_saas_head is not None and not (
+        args.verify_only or args.install_preview_authority
+    ):
+        parser.error(
+            "--verification-saas-head requires --verify-only or --install-preview-authority"
+        )
     if not args.product_revision:
         parser.error("--product-revision or OMNIGENT_SAAS_SOURCE_SHA is required")
     product_environment = os.environ.get("OMNIGENT_SAAS_PRODUCT_REVISION")
@@ -185,6 +194,7 @@ def main() -> int:
             model_projection_service_role_bindings=model_projection_service_role_bindings,
             business_delivery_service_role_bindings=business_delivery_service_role_bindings,
             verification_saas_head=args.verification_saas_head,
+            install_preview_authority=args.install_preview_authority,
         )
         receipt = run_production_postgresql_migration(plan, verify_only=args.verify_only)
         rendered = json.dumps(receipt.to_dict(), indent=2, sort_keys=True) + "\n"

@@ -1142,8 +1142,10 @@ def test_preview_authority_public_inventory_accepts_only_the_pinned_projection(
     assert drift.value.code == "public_schema_inventory_drifted"
 
 
+@pytest.mark.parametrize("anchor", ["legacy", "native"])
 def test_preview_authority_security_catalog_requires_platform_admin_profile(
     monkeypatch: pytest.MonkeyPatch,
+    anchor: str,
 ) -> None:
     key = (18, "official", "saas")
     catalog = {"policies": [["preview-edge", "SELECT"]]}
@@ -1158,11 +1160,18 @@ def test_preview_authority_security_catalog_requires_platform_admin_profile(
     monkeypatch.setattr(
         migration, "_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256", {key: "0" * 64}
     )
-    monkeypatch.setattr(
-        migration,
-        "_PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
-        {key: digest},
-    )
+    if anchor == "legacy":
+        monkeypatch.setattr(
+            migration,
+            "_PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256",
+            {key: digest},
+        )
+    else:
+        monkeypatch.setattr(
+            migration,
+            "_PRODUCTION_PREVIEW_SOURCE_SECURITY_CATALOG_SHA256",
+            {key: (digest, "f" * 64)},
+        )
 
     assert (
         migration._verify_source_security_catalog_digest(
@@ -1437,6 +1446,80 @@ def test_migration_executes_the_seven_authority_phases_in_order(
     )
     rendered = json.dumps(receipt.to_dict(), sort_keys=True)
     assert "top-secret" not in rendered
+
+
+@pytest.mark.parametrize(
+    "state", ["install", "verify", "missing_anchor", "catalog_drift", "legacy_owner"]
+)
+def test_preview_install_is_bounded_to_an_authenticated_existing_projection(monkeypatch, state):
+    events = []
+    engines = _patch_execution_boundary(monkeypatch, events)
+    plan = replace(
+        _plan(),
+        install_preview_authority=True,
+        verification_saas_head="p0s000000018",
+        platform_model_service_role_bindings=_platform_bindings(),
+        platform_admin_service_role_bindings=_platform_admin_bindings(),
+    )
+
+    class PreviewEngine(_FakeEngine):
+        @contextmanager
+        def connect(self):
+            owners = ["bootstrap"] * 2 if state == "legacy_owner" else [plan.saas_owner.login] * 2
+            yield SimpleNamespace(
+                execute=lambda _sql: SimpleNamespace(
+                    scalars=lambda: SimpleNamespace(all=lambda: owners)
+                )
+            )
+
+    engines["saas_owner"] = PreviewEngine(events, "saas_owner")
+    monkeypatch.setattr(
+        migration,
+        "_apply_control_plane_authority",
+        lambda _engine, **kwargs: events.append(("preview", kwargs)),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_preview_authority_grants_present",
+        lambda _connection, **kwargs: events.append(("grants", kwargs)),
+    )
+    if state == "missing_anchor":
+        monkeypatch.setattr(migration, "_PRODUCTION_PREVIEW_SOURCE_SECURITY_CATALOG_SHA256", {})
+    if state == "catalog_drift":
+
+        def drift(*_args):
+            raise migration.PostgreSqlMigrationError(
+                "source_security_catalog_drifted", "verification"
+            )
+
+        monkeypatch.setattr(migration, "_verify_state", drift)
+    if state in {"missing_anchor", "catalog_drift", "legacy_owner"}:
+        with pytest.raises(migration.PostgreSqlMigrationError) as rejected:
+            migration.run_production_postgresql_migration(plan)
+        assert (
+            rejected.value.code
+            == {
+                "missing_anchor": "preview_authority_baseline_missing",
+                "catalog_drift": "source_security_catalog_drifted",
+                "legacy_owner": "preview_authority_lease_owner_unsupported",
+            }[state]
+        )
+        assert not any(isinstance(event, tuple) for event in events)
+    else:
+        migration.run_production_postgresql_migration(plan, verify_only=state == "verify")
+        assert (("preview", {"install_preview_authority": True}) in events) == (state == "install")
+        assert ("grants", {"require_full": True}) in events
+    assert not any(
+        event in events
+        for event in (
+            "principals",
+            "database",
+            "alembic:official",
+            "alembic:saas",
+            "runtime",
+            "database:finalize",
+        )
+    )
 
 
 def test_verify_only_performs_no_lock_or_mutation(monkeypatch: pytest.MonkeyPatch) -> None:

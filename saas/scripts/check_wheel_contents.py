@@ -231,6 +231,7 @@ REQUIRED_WHEEL_PATHS = (
     "saas/control_plane/postgresql_runner_agent_cluster.psql",
     "saas/control_plane/postgresql_runner_agent_cluster.sql",
     "saas/control_plane/postgresql_roles.sql",
+    "saas/control_plane/postgresql_preview_authority.sql",
     "saas/control_plane/postgresql_roles.psql",
     "saas/control_plane/project_http.py",
     "saas/control_plane/projects.py",

@@ -23,14 +23,15 @@ from typing import cast
 import sqlalchemy as sa
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.orm import Session, SessionTransaction, sessionmaker
 
 from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
 from saas.control_plane import (
     PreviewGatewayCertificateAuthority,
     PreviewGatewayDirectoryAuthority,
 )
+from saas.control_plane.gateways import PreviewGatewayLifecycleError, _token_hash
 from saas.control_plane.preview_sessions import PreviewSessionAuthority
 from saas.preview_gateway import PreviewTunnelRequest, PreviewTunnelResponse
 from saas.preview_relay_transport import (
@@ -324,6 +325,7 @@ class ProductionPreviewRelayOwnerConfig:
     bind_port: int
     maximum_request_bytes: int
     maximum_response_bytes: int
+    gateway_registration_token_path: Path | None = field(default=None, repr=False)
 
 
 def load_production_preview_relay_owner_config(
@@ -425,16 +427,54 @@ def load_production_preview_relay_owner_config(
             minimum=1024,
             maximum=104_857_600,
         ),
+        gateway_registration_token_path=(
+            _secure_file(
+                source, "OMNIGENT_SAAS_PREVIEW_GATEWAY_REGISTRATION_TOKEN_FILE", secret=True
+            )
+            if source.get("OMNIGENT_SAAS_PREVIEW_GATEWAY_REGISTRATION_TOKEN_FILE")
+            else None
+        ),
     )
 
 
 class ProductionPreviewRelayOwner:
     """One standalone mTLS owner with a process-local official tunnel registry."""
 
-    def __init__(self, config: ProductionPreviewRelayOwnerConfig, engine: Engine) -> None:
+    def __init__(
+        self,
+        config: ProductionPreviewRelayOwnerConfig,
+        engine: Engine,
+        *,
+        gateway_registration_token: str | None = None,
+    ) -> None:
         self.config = config
         self._engine = engine
         self._sessions = sessionmaker(engine, expire_on_commit=False, class_=Session)
+        if gateway_registration_token is not None:
+            try:
+                token_hash = _token_hash(gateway_registration_token)
+            except PreviewGatewayLifecycleError:
+                raise ProductionPreviewRelayError(
+                    "Preview Relay owner gateway credential is invalid"
+                ) from None
+
+            def bind_gateway_scope(
+                _session: Session, _transaction: SessionTransaction, connection: Connection
+            ) -> None:
+                if connection.dialect.name == "postgresql":
+                    connection.execute(
+                        sa.text(
+                            "SELECT set_config('app.preview_gateway_instance_id', "
+                            ":gateway, true), "
+                            "set_config('app.preview_gateway_registration_token_hash', "
+                            ":token, true)"
+                        ),
+                        {"gateway": config.gateway_instance_id, "token": token_hash},
+                    )
+
+            sa.event.listen(self._sessions, "after_begin", bind_gateway_scope)
+        elif engine.dialect.name == "postgresql":
+            raise ProductionPreviewRelayError("Preview Relay owner gateway credential is required")
         self._certificates = PreviewGatewayCertificateAuthority(
             self._sessions,
             accepted_trust_bundle_versions=config.relay_trust_bundle_versions,
@@ -514,6 +554,9 @@ class ProductionPreviewRelayOwner:
             ):
                 raise ProductionPreviewRelayError("Preview Relay owner identity is not active")
 
+        if self._engine.dialect.name == "postgresql":
+            self._directory.resolve(self.config)
+
     def assert_production_ready(self) -> None:
         self._assert_authority_ready()
         if self._startup_attempted and not self._listening:
@@ -587,12 +630,16 @@ class ProductionPreviewRelayOwner:
 
 
 def build_production_preview_relay_owner(
-    *, config: ProductionPreviewRelayOwnerConfig | None = None
+    *,
+    config: ProductionPreviewRelayOwnerConfig | None = None,
+    gateway_registration_token: str | None = None,
 ) -> ProductionPreviewRelayOwner:
     """Build one standalone production Preview Owner composition."""
 
     owner_config = config or load_production_preview_relay_owner_config()
-    engine = sa.create_engine(owner_config.preview_database_url, pool_pre_ping=True)
+    engine = sa.create_engine(
+        owner_config.preview_database_url, pool_pre_ping=True, hide_parameters=True
+    )
     try:
         if engine.dialect.name != "postgresql":
             raise ProductionPreviewRelayError("Preview Relay owner requires PostgreSQL")
@@ -601,12 +648,38 @@ def build_production_preview_relay_owner(
             expected_login=owner_config.expected_preview_login,
             expected_base_role="saas_preview_owner",
         )
-        owner = ProductionPreviewRelayOwner(owner_config, engine)
+        if gateway_registration_token is None:
+            if owner_config.gateway_registration_token_path is None:
+                raise ProductionPreviewRelayError(
+                    "Preview Relay owner gateway credential is required"
+                )
+            gateway_registration_token = read_preview_gateway_registration_token(
+                owner_config.gateway_registration_token_path
+            )
+        owner = ProductionPreviewRelayOwner(
+            owner_config, engine, gateway_registration_token=gateway_registration_token
+        )
         owner.assert_production_ready()
         return owner
     except Exception:
         engine.dispose()
         raise
+
+
+def read_preview_gateway_registration_token(path: Path) -> str:
+    try:
+        token = path.read_text(encoding="ascii").rstrip("\r\n")
+    except (OSError, UnicodeError):
+        raise ProductionPreviewRelayError(
+            "Preview Owner gateway credential is unavailable"
+        ) from None
+    try:
+        _token_hash(token)
+    except PreviewGatewayLifecycleError:
+        raise ProductionPreviewRelayError(
+            "Preview Owner gateway credential is unavailable"
+        ) from None
+    return token
 
 
 __all__ = [
@@ -617,4 +690,5 @@ __all__ = [
     "build_production_preview_relay_owner",
     "build_production_preview_tunnel",
     "load_production_preview_relay_owner_config",
+    "read_preview_gateway_registration_token",
 ]
