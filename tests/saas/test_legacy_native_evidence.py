@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+import subprocess
 import sys
 
 import pytest
@@ -13,6 +14,140 @@ from tests.saas.test_legacy_source_ci import expected, reader
 from tests.saas.test_legacy_source_ci import native as native
 
 capture = sys.modules["saas.scripts.legacy_native_evidence"]
+
+
+def test_conditional_native_refresh_keeps_every_checkpoint_and_exact_original_body(
+    tmp_path, monkeypatch
+):
+    endpoint = "repos/Dream1216/omnigent/actions/runs/91"
+    calls = []
+    replies = iter(
+        [
+            (200, 'W/"first"', b'{"nested":{"status":"original"}}'),
+            (304, '"first"', b""),
+            (200, '"changed"', b'{"nested":{"status":"changed"}}'),
+            (304, '"changed"', b""),
+            (200, '"independent"', b'{"nested":{"status":"independent"}}'),
+        ]
+    )
+
+    def native(command, **kwargs):
+        assert kwargs == {"capture_output": True, "timeout": 60}
+        calls.append(command)
+        status, etag, body = next(replies)
+        wire = f"HTTP/1.1 {status} fixture\nEtag: {etag}\r\n\r\n".encode() + body
+        return subprocess.CompletedProcess(command, int(status == 304), wire, b"")
+
+    monkeypatch.setattr(capture.subprocess, "run", native)
+    with capture.preserve_native_evidence(tmp_path / "first") as evidence:
+        capture.api(endpoint)["nested"]["status"] = "caller mutation"
+        evidence.stage = "independent-refresh"
+        assert capture.api(endpoint) == {"nested": {"status": "original"}}
+        assert capture.api(endpoint) == {"nested": {"status": "changed"}}
+        assert capture.api(endpoint) == {"nested": {"status": "changed"}}
+    with capture.preserve_native_evidence(tmp_path / "independent"):
+        assert capture.api(endpoint) == {"nested": {"status": "independent"}}
+    assert calls == [
+        ["gh", "api", "--include", endpoint],
+        ["gh", "api", "--include", endpoint, "-H", 'If-None-Match: W/"first"'],
+        ["gh", "api", "--include", endpoint, "-H", 'If-None-Match: "first"'],
+        ["gh", "api", "--include", endpoint, "-H", 'If-None-Match: "changed"'],
+        ["gh", "api", "--include", endpoint],
+    ]
+    receipt = json.loads((tmp_path / "first/receipt.json").read_text())
+    rows = [json.loads((tmp_path / "first" / r["path"]).read_text()) for r in receipt["records"]]
+    assert receipt["native_requests_started"] == len(rows) == 4
+    assert [r["http_observation"]["status"] for r in rows] == [200, 304, 200, 304]
+    assert rows[1]["response"] == rows[0]["response"]
+    assert rows[3]["response"] == rows[2]["response"]
+    assert rows[1]["http_observation"]["validated_source_record"] == "response-000001.json"
+    assert rows[3]["http_observation"]["validated_source_record"] == "response-000003.json"
+    assert rows[1]["stage"] == "independent-refresh"
+    for row in rows:
+        http = row["http_observation"]
+        raw = tmp_path / "first" / http["raw_http_path"]
+        assert raw.stat().st_size == http["raw_http_bytes"]
+        assert hashlib.sha256(raw.read_bytes()).hexdigest() == http["raw_http_sha256"]
+        assert stat.S_IMODE(raw.stat().st_mode) == 0o600
+    assert receipt["immutable_source_reuses"] == []
+    assert receipt["source_ci_admission"] is False
+
+
+def test_native_200_without_etag_clears_previous_conditional_representation(tmp_path, monkeypatch):
+    calls = []
+
+    def native(command, **_kwargs):
+        calls.append(command)
+        etag = b'Etag: "first"\r\n' if len(calls) == 1 else b""
+        wire = b"HTTP/1.1 200 OK\r\n" + etag + b"\r\n" + json.dumps({"n": len(calls)}).encode()
+        return subprocess.CompletedProcess(command, 0, wire, b"")
+
+    monkeypatch.setattr(capture.subprocess, "run", native)
+    with capture.preserve_native_evidence(tmp_path / "api"):
+        for number in range(1, 4):
+            assert capture.api("mutable") == {"n": number}
+    assert [len(command) for command in calls] == [4, 6, 4]
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "body", "expected_error"),
+    [
+        (304, b'Etag: "different"\r\n', b"", ValueError),
+        (304, b"", b"", ValueError),
+        (304, b'Etag: "first"\r\n', b"unexpected", ValueError),
+        (200, b"Etag: invalid\r\n", b"{}", ValueError),
+        (200, b'Etag: "first"\r\nEtag: "second"\r\n', b"{}", ValueError),
+        (200, b"", b"not-json", ValueError),
+        (200, b"", b"[]", ValueError),
+        (403, b"X-Ratelimit-Remaining: 0\r\n", b"{}", capture.NativeEvidenceFailure),
+        (429, b"Retry-After: 60\r\n", b"{}", capture.NativeEvidenceFailure),
+        (500, b"", b"{}", subprocess.CalledProcessError),
+    ],
+)
+def test_native_http_failure_never_falls_back_to_previous_body(
+    status, headers, body, expected_error, tmp_path, monkeypatch
+):
+    calls = []
+
+    def native(command, **_kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            wire = b'HTTP/1.1 200 OK\nEtag: "first"\r\n\r\n{"original":true}'
+            return subprocess.CompletedProcess(command, 0, wire, b"")
+        wire = f"HTTP/1.1 {status} fixture\r\n".encode() + headers + b"\r\n" + body
+        return subprocess.CompletedProcess(command, int(status != 200), wire, b"")
+
+    monkeypatch.setattr(capture.subprocess, "run", native)
+    with pytest.raises(expected_error):
+        with capture.preserve_native_evidence(tmp_path / "api"):
+            assert capture.api("mutable") == {"original": True}
+            try:
+                capture.api("mutable")
+            except capture.NativeEvidenceFailure:
+                # A rate refusal prevents every subsequent endpoint from starting.
+                with pytest.raises(capture.NativeEvidenceFailure):
+                    capture.api("another-endpoint")
+                raise
+    assert len(calls) == 2
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    failure = json.loads((tmp_path / "api/response-000002.json").read_text())
+    assert receipt["invocation_raised"] and receipt["source_ci_admission"] is False
+    assert "response" not in failure
+    if status in {403, 429}:
+        assert failure["http_observation"]["status"] == status
+        assert receipt["capture_failed"] is True
+
+
+def test_unsolicited_native_304_cannot_create_source_evidence(tmp_path, monkeypatch):
+    def native(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command, 1, b'HTTP/1.1 304 fixture\nEtag: "unseen"\r\n\r\n', b""
+        )
+
+    monkeypatch.setattr(capture.subprocess, "run", native)
+    with pytest.raises(ValueError, match="exact previously captured representation"):
+        with capture.preserve_native_evidence(tmp_path / "api"):
+            capture.api("mutable")
 
 
 def test_raw_response_is_private_preserved_before_real_failed_job_assertion(
