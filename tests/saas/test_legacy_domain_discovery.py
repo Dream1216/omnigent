@@ -472,11 +472,17 @@ def test_other_PR_outcome_change_does_not_become_a_product_technical_gate(
     [
         (("head", "repo", "size"), 268459, True),
         (("base", "repo", "size"), 268459, True),
+        (("head", "repo", "open_issues"), 35, True),
+        (("head", "repo", "open_issues_count"), 35, True),
+        (("base", "repo", "open_issues"), 35, True),
+        (("base", "repo", "open_issues_count"), 35, True),
         (("head", "sha"), "f" * 40, False),
         (("base", "sha"), "f" * 40, False),
         (("base", "ref"), "main", False),
         (("head", "repo", "full_name"), "other/repository", False),
         (("base", "repo", "full_name"), "other/repository", False),
+        (("head", "repo", "private"), True, False),
+        (("base", "repo", "archived"), True, False),
         (("merge_commit_sha",), "f" * 40, False),
         (("state",), "closed", False),
         (("draft",), True, False),
@@ -484,12 +490,13 @@ def test_other_PR_outcome_change_does_not_become_a_product_technical_gate(
         (("title",), "changed PR", False),
     ],
 )
-def test_PR_stability_excludes_only_repository_storage_size(
+def test_PR_stability_excludes_only_repository_accounting_counters(
     scenario, discovery_case, tmp_path, monkeypatch, path, value, complete
 ):
     data = discovery_case
     for side in ("head", "base"):
         scenario["pull"][side]["repo"]["size"] = 268442
+        scenario["pull"][side]["repo"].update(open_issues=36, open_issues_count=36)
     original = discovery.api
     pull_reads = 0
 
