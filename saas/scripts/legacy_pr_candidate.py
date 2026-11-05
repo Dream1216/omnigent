@@ -19,6 +19,7 @@ from typing import Any, cast
 from saas.scripts.legacy_native_evidence import api
 from saas.scripts.legacy_source_ci import (
     _job_pages,
+    _recover_verified_source_build_log,
     checkout_commit,
     download_job_log,
     verify_run_pull_request,
@@ -415,22 +416,33 @@ def collect_native_pr_oci(
     metadata = api(f"repos/{REPOSITORY}/actions/artifacts/{artifact_id}")
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     log_path = destination / f"job-{build[0]['id']}.log"
-    download_job_log(build[0]["id"], log_path)
-    observation = verify_pr_oci_artifact(
-        metadata,
-        run,
-        build[0],
-        profile=profile,
-        transfer=transfer,
-        pull=pull,
-        merge_commit=commit,
-        workflow_bytes=body,
-        checkout_log=log_path.read_text(),
-        artifact_id=artifact_id,
-        zip_size=zip_size,
-        zip_sha256=zip_sha256,
-        seal_sha256=seal_sha256,
-    )
+
+    def verify_log() -> dict[str, Any]:
+        return verify_pr_oci_artifact(
+            metadata,
+            run,
+            build[0],
+            profile=profile,
+            transfer=transfer,
+            pull=pull,
+            merge_commit=commit,
+            workflow_bytes=body,
+            checkout_log=log_path.read_text(),
+            artifact_id=artifact_id,
+            zip_size=zip_size,
+            zip_sha256=zip_sha256,
+            seal_sha256=seal_sha256,
+        )
+
+    try:
+        download_job_log(build[0]["id"], log_path)
+    except ValueError as error:
+        if str(error) != "native job log exceeds its bounded input":
+            raise
+        # Bind the original producer before the bounded, prefix-checked recovery.
+        verify_log()
+        _recover_verified_source_build_log(build[0], log_path)
+    observation = verify_log()
     latest = api(f"repos/{REPOSITORY}/actions/runs/{run_id}")
     require(
         all(

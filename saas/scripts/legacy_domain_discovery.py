@@ -938,13 +938,14 @@ def _ordered_parallel(function: Callable[[_T], _R], items: list[_T]) -> list[_R]
 
 
 def _pr_stability_snapshot(pull: dict[str, Any]) -> dict[str, Any]:
-    """Retain every PR field except repository-wide storage accounting."""
+    """Retain every PR field except repository-wide accounting counters."""
     snapshot = copy.deepcopy(pull)
     for side in ("head", "base"):
         branch = snapshot.get(side)
         repository = branch.get("repo") if isinstance(branch, dict) else None
         if isinstance(repository, dict):
-            repository.pop("size", None)
+            for field in ("size", "open_issues", "open_issues_count"):
+                repository.pop(field, None)
     return snapshot
 
 
