@@ -16,7 +16,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts import legacy_domain_native as native
 from saas.scripts.legacy_native_evidence import api, reserve_native_download
@@ -1614,7 +1614,10 @@ def compatibility_refusal_cancellation_contract(profile, identity, rule):
 
     if not isinstance(rule, dict) or not _exact_current_C2(profile, identity):
         return None
-    key = tuple(rule.get(field) for field in ("run_id", "attempt", "job_id", "check_id"))
+    key = cast(
+        tuple[int, int, int, int],
+        tuple(rule.get(field) for field in ("run_id", "attempt", "job_id", "check_id")),
+    )
     return _COMPATIBILITY_REFUSAL_CANCELLATIONS.get(key)
 
 

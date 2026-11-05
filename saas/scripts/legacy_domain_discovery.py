@@ -768,7 +768,9 @@ def _inspect_run(
                 == hashlib.sha256(domain._native_file(domain._GATE, control)).hexdigest(),
                 "fixed-runner attachment cannot grant current legacy source eligibility",
             )
-            verify_main_domain_refusal(profile, identity, registered[0], observed, job, check, log)
+            verify_main_domain_refusal(
+                profile, cast(dict[str, Any], identity), registered[0], observed, job, check, log
+            )
         require(
             not numbers or original_pr in numbers,
             "native PR association contradicts original trigger",
