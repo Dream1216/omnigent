@@ -78,12 +78,14 @@ jobs:
         ) or row.get(\"Ref\") for row in rows}\n        assert all(isinstance(ref, str) and ref.strip() == ref and\
         \ ref for ref in result), \"Invalid build ref\"\n        return result\n    created = refs(output / \"history-after.json\"\
         ) - refs(output / \"history-before.json\")\n    assert len(created) == 1 and None not in created, \"Ambiguous\
-        \ build record\"\n    ref = created.pop()\n    receipt[\"build_ref\"] = ref\n    with (output / \"server-1.progress.original.log\"\
+        \ build record\"\n    ref = created.pop()\n    receipt[\"build_ref\"] = ref\n    parts = ref.split(\"/\"\
+        )\n    assert len(parts) == 3 and parts[0] == builder and all(parts), \"Unexpected builder/node/ref\"\n\
+        \    record_ref = parts[-1]\n    receipt[\"native_record_ref\"] = record_ref\n    with (output / \"server-1.progress.original.log\"\
         ).open(\"wb\") as log:\n        subprocess.run([\"docker\", \"buildx\", \"--builder\", builder, \"history\"\
-        , \"logs\",\n                        \"--progress\", \"plain\", ref], stdout=log,\n                    \
-        \   stderr=subprocess.STDOUT, check=True, timeout=120)\n    receipt[\"complete\"] = True\nexcept BaseException\
-        \ as error:\n    receipt[\"capture_error_type\"] = type(error).__name__\n    raise\nfinally:\n    (output\
-        \ / \"capture.json\").write_text(json.dumps(receipt, indent=2) + \"\\n\")\nPYCODE\n"
+        , \"logs\",\n                        \"--progress\", \"plain\", record_ref], stdout=log,\n             \
+        \          stderr=subprocess.STDOUT, check=True, timeout=120)\n    receipt[\"complete\"] = True\nexcept\
+        \ BaseException as error:\n    receipt[\"capture_error_type\"] = type(error).__name__\n    raise\nfinally:\n\
+        \    (output / \"capture.json\").write_text(json.dumps(receipt, indent=2) + \"\\n\")\nPYCODE\n"
     - name: Verify actual intentional timeout and raw cancellation capture
       if: ${{ always() }}
       run: 'python - <<''PYCODE''
