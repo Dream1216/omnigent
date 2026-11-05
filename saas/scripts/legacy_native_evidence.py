@@ -28,9 +28,9 @@ class NativeEvidenceFailure(RuntimeError):
     """Fatal capture failure; never a recoverable per-run governance observation."""
 
 
-class _HTTPResponse(dict[str, Any]):
+class _HTTPResponse:
     def __init__(self, value, observation, etag):
-        super().__init__(value)
+        self.value = value
         self.observation = observation
         self.etag = etag
 
@@ -41,7 +41,7 @@ class _HTTPFailure(subprocess.CalledProcessError):
         self.observation = observation
 
 
-def _native_api(endpoint: str) -> dict[str, Any]:
+def _native_api(endpoint: str) -> Any:
     recorder = _ACTIVE.get()
     if recorder is None:
         return _plain_native_api(endpoint)
@@ -93,7 +93,7 @@ def _native_api(endpoint: str) -> dict[str, Any]:
     if result.returncode or status != 200:
         raise _HTTPFailure(result, command, observation)
     value = json.loads(body)
-    require(isinstance(value, dict), "native HTTP JSON response is not an object")
+    require(isinstance(value, (dict, list)), "native HTTP JSON response is not an object or array")
     return _HTTPResponse(value, observation, etag)
 
 
@@ -159,6 +159,10 @@ class NativeEvidence:
         self.reserve()
         try:
             value = _native_api("rate_limit")
+            if isinstance(value, _HTTPResponse):
+                value = value.value
+            if not isinstance(value, dict):
+                raise ValueError("native rate advisory is not an object")
             core = value.get("resources", {}).get("core", {})
             fields = ("limit", "remaining", "reset", "used")
             if all(type(core.get(k)) is int and core[k] >= 0 for k in fields):
@@ -392,7 +396,7 @@ def api(endpoint: str) -> dict[str, Any]:
             raise
         observed = value if isinstance(value, _HTTPResponse) else None
         if observed is not None:
-            value = dict(observed)
+            value = observed.value
         record = recorder.write(
             endpoint,
             {

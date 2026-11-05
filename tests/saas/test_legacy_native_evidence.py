@@ -89,6 +89,56 @@ def test_native_200_without_etag_clears_previous_conditional_representation(tmp_
     assert [len(command) for command in calls] == [4, 6, 4]
 
 
+@pytest.mark.parametrize("payload", [[], [{"id": 31, "state": "success"}]])
+def test_native_commit_status_arrays_preserve_shape_and_conditional_refresh(
+    payload, tmp_path, monkeypatch
+):
+    calls = []
+
+    def native(command, **_kwargs):
+        calls.append(command)
+        status = 200 if len(calls) == 1 else 304
+        body = json.dumps(payload).encode() if status == 200 else b""
+        wire = f'HTTP/1.1 {status} fixture\nEtag: "statuses"\r\n\r\n'.encode() + body
+        return subprocess.CompletedProcess(command, int(status == 304), wire, b"")
+
+    monkeypatch.setattr(capture.subprocess, "run", native)
+    endpoint = "repos/Dream1216/omnigent/commits/" + "a" * 40 + "/statuses?per_page=100&page=1"
+    with capture.preserve_native_evidence(tmp_path / "api"):
+        first = capture.api(endpoint)
+        assert isinstance(first, list) and first == payload
+        first.append({"caller": "mutation"})
+        assert capture.api(endpoint) == payload
+    assert len(calls) == 2 and calls[1][-1] == 'If-None-Match: "statuses"'
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    rows = [json.loads((tmp_path / "api" / r["path"]).read_text()) for r in receipt["records"]]
+    assert [r["response"] for r in rows] == [payload, payload]
+    assert [r["http_observation"]["status"] for r in rows] == [200, 304]
+
+
+def test_native_bootstrap_rate_advisory_unwraps_auditable_HTTP_object(tmp_path, monkeypatch):
+    core = {"limit": 5000, "remaining": 4900, "reset": 1900000000, "used": 100}
+
+    def native(command, **_kwargs):
+        assert command == ["gh", "api", "--include", "rate_limit"]
+        wire = (
+            b'HTTP/1.1 200 OK\nEtag: "quota"\r\n\r\n'
+            + json.dumps({"resources": {"core": core}}).encode()
+        )
+        return subprocess.CompletedProcess(command, 0, wire, b"")
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GH_TOKEN", "fixture-not-an-actual-token")
+    monkeypatch.setattr(capture.subprocess, "run", native)
+    with capture.preserve_native_evidence(tmp_path / "api") as evidence:
+        evidence.enable_bootstrap_limits()
+        evidence.observe_bootstrap_rate_limit()
+        assert evidence.rate_advisory == {"status": "OBSERVED_ADVISORY_ONLY", "core": core}
+    receipt = json.loads((tmp_path / "api/receipt.json").read_text())
+    assert receipt["native_requests_started"] == 1 and len(receipt["records"]) == 1
+    assert receipt["source_ci_admission"] is False
+
+
 @pytest.mark.parametrize(
     ("status", "headers", "body", "expected_error"),
     [
@@ -98,7 +148,7 @@ def test_native_200_without_etag_clears_previous_conditional_representation(tmp_
         (200, b"Etag: invalid\r\n", b"{}", ValueError),
         (200, b'Etag: "first"\r\nEtag: "second"\r\n', b"{}", ValueError),
         (200, b"", b"not-json", ValueError),
-        (200, b"", b"[]", ValueError),
+        (200, b"", b"true", ValueError),
         (403, b"X-Ratelimit-Remaining: 0\r\n", b"{}", capture.NativeEvidenceFailure),
         (429, b"Retry-After: 60\r\n", b"{}", capture.NativeEvidenceFailure),
         (500, b"", b"{}", subprocess.CalledProcessError),
