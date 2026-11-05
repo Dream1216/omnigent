@@ -524,6 +524,7 @@ def _inspect_run(
     unattributed_observations: list[nonexecution.UnattributedObservation] | None = None,
     unattributed_expected: set[tuple[int, int]] | None = None,
     refusal_cancellation_rules=(),
+    registered_refusals=(),
 ) -> dict[str, Any]:
     numbers = _pr_numbers(run["pull_requests"])
     # PR numbers are stable associations; their mutable head SHA is never a source proof.
@@ -572,7 +573,15 @@ def _inspect_run(
             row for row in audit_rules if (row["run_id"], row["attempt"]) == (run["id"], attempt)
         ]
         require(
-            not fixed_runner_attachment or not matches,
+            not fixed_runner_attachment
+            or not matches
+            or (
+                len(matches) == 1
+                and nonexecution.compatibility_refusal_cancellation_contract(
+                    profile, identity, matches[0]
+                )
+                is not None
+            ),
             "fixed-runner attachment cannot replace a registered legacy proof",
         )
         if (
@@ -744,10 +753,24 @@ def _inspect_run(
                 _EXACT_FIXED_RUNNER_C2_AUDITS,
             )
         )
-        require(
-            not fixed_current or exact_exclusion,
-            "fixed-runner attachment cannot grant current legacy source eligibility",
-        )
+        if fixed_current and not exact_exclusion:
+            from saas.scripts.legacy_domain_eligibility import (
+                registered_attachment_workflow,
+                verify_main_domain_refusal,
+            )
+
+            registered = [row for row in registered_refusals if _key(row) == _key(coordinate)]
+            require(
+                len(registered) == 1
+                and registered_attachment_workflow(profile, identity, registered[0])
+                == attachment_workflow_sha256
+                and registered[0]["trusted_gate_sha256"]
+                == hashlib.sha256(domain._native_file(domain._GATE, control)).hexdigest(),
+                "fixed-runner attachment cannot grant current legacy source eligibility",
+            )
+            verify_main_domain_refusal(
+                profile, cast(dict[str, Any], identity), registered[0], observed, job, check, log
+            )
         require(
             not numbers or original_pr in numbers,
             "native PR association contradicts original trigger",
@@ -990,6 +1013,7 @@ def discover_main_domain(
                 local_unattributed,
                 local_expected,
                 refusal_cancellation_rules,
+                rules,
             )
         except NativeEvidenceFailure:
             raise

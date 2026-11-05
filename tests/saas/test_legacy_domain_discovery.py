@@ -805,7 +805,9 @@ def test_parallel_discovery_owns_typed_results_and_preserves_phase_barriers(
         unattributed,
         expected,
         refusal_rules,
+        registered_refusals,
     ):
+        assert registered_refusals == []
         with lock:
             owned_lists.append((observations, unattributed, expected))
         barrier.wait(5)
