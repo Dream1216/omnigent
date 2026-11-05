@@ -17,10 +17,12 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -3753,6 +3755,26 @@ def create_runner_app(
                     **failure_log_attributes(source.get("failure_context")),
                     **dimensions,
                 ),
+            )
+        with contextlib.suppress(Exception):
+            caller = sys._getframe(1)
+            diagnostic = {
+                "session_id": conv_id,
+                "utc": datetime.now(UTC).isoformat(),
+                "monotonic_ns": time.monotonic_ns(),
+                "status": status,
+                "response_id": response_id,
+                "origin": "runner_turn_status",
+                "caller_function": caller.f_code.co_name,
+                "caller_line": caller.f_lineno,
+                "turn_bind_epoch": _turn_bind_epoch.get(conv_id),
+                "active_turn_present": conv_id in _active_turns,
+                "harness": harness,
+            }
+            del caller
+            _logger.info(
+                "session_status_ordering_diagnostic %s",
+                json.dumps(diagnostic, sort_keys=True, separators=(",", ":")),
             )
         _publish_event(conv_id, event)
 
