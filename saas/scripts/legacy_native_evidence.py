@@ -219,6 +219,29 @@ class NativeEvidence:
             self.check()
             return self._source_locks.setdefault(endpoint, threading.Lock())
 
+    def seed_verified_response(
+        self, endpoint: str, response: Any, etag: str, provenance: dict[str, Any]
+    ) -> None:
+        """Import authenticated producer bytes for a mandatory fresh conditional GET."""
+        require(
+            endpoint.startswith("repos/Dream1216/omnigent/")
+            and isinstance(response, (dict, list))
+            and bool(re.fullmatch(r'(?:W/)?"[\x21\x23-\x7e]*"', etag))
+            and bool(provenance),
+            "verified response seed is malformed",
+        )
+        with self._lock:
+            self.check()
+            require(endpoint not in self._validated_responses, "verified response seed repeats")
+            record = self.write(
+                endpoint, {"response": response, "verified_producer_input": provenance}
+            )
+            self._validated_responses[endpoint] = {
+                "etag": etag,
+                "response": copy.deepcopy(response),
+                "source_record": record["path"],
+            }
+
     def write(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             self.check()

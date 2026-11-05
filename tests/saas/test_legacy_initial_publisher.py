@@ -160,11 +160,221 @@ def test_source_interface_requires_strict_exact_qualification(publication_data, 
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "traversal", "alias", "symlink", "special", "duplicate", "expansion"]
+    "fault",
+    [
+        None,
+        "changed",
+        "changed_listing",
+        "changed_blocked",
+        "no_etag",
+        "original_component",
+        "rate_limit",
+        "incomplete",
+        "source_block",
+        "wrong_control",
+        "wrong_product",
+        "response_hash",
+        "response_size",
+        "response_path",
+        "duplicate_path",
+        "foreign_endpoint",
+        "failed_http",
+        "bad_etag",
+    ],
 )
-def test_publication_zip_checks_all_members_before_extracting(tmp_path, fault):
+def test_same_attempt_source_reuse_requires_current_native_origin(
+    publication_data, tmp_path, monkeypatch, fault
+):
+    from saas.scripts import legacy_native_evidence as native
+
+    data = publication_data
+    if fault == "original_component":
+        calls = []
+        original = data["admission"]["source_qualification"]["result"]
+        monkeypatch.setattr(
+            publisher, "qualify_source_ci", lambda *args: (calls.append(args), original)[1]
+        )
+        monkeypatch.setattr(
+            publisher,
+            "collect_job_export",
+            lambda *_a, **_k: pytest.fail("other components must retain the original qualifier"),
+        )
+        qualified, provenance = publisher.collect_qualified_source(
+            data["source"], data["source"], data["profile"], data["context"], tmp_path / "source"
+        )
+        assert qualified == original and len(calls) == 1
+        assert provenance == {"mode": "original-full-source-qualification"}
+        return
+    data["profile"]["component"] = publisher.COMPATIBILITY_COMPONENT
+    result = copy.deepcopy(data["admission"]["source_qualification"]["result"])
+    result["component"] = publisher.COMPATIBILITY_COMPONENT
+    if fault == "source_block":
+        result["source_ci_pass"] = False
+    if fault == "wrong_control":
+        result["control_revision"] = "0" * 40
+    if fault == "wrong_product":
+        result["product_revision"] = "0" * 40
+    root = tmp_path / "qualified-native-export"
+    (root / "native-api").mkdir(parents=True)
+    publisher.write_json(root / "source-qualification.json", result)
+    endpoint = publisher.PREFIX + "/actions/runs/91"
+    if fault == "foreign_endpoint":
+        endpoint = "repos/foreign/repository/actions/runs/91"
+    etag = None if fault == "no_etag" else '"qualified"'
+    if fault == "bad_etag":
+        etag = '"qualified"\r\nInjected: value'
+    old = {"id": 91, "status": "completed", "conclusion": "success"}
+    if fault == "changed_listing":
+        endpoint = publisher.PREFIX + "/actions/workflows/saas-n1-merge-gate.yml/runs?page=1"
+        old = {"total_count": 1, "workflow_runs": [{"id": 91}]}
+    records = []
+    for number in (1, 2):
+        path = root / "native-api" / f"response-{number:06d}.json"
+        publisher.write_json(
+            path,
+            {
+                "endpoint": endpoint,
+                "response": old,
+                "http_observation": {
+                    "status": 403 if fault == "failed_http" else 200,
+                    "headers": {"etag": etag} if etag is not None else {},
+                },
+            },
+        )
+        records.append(
+            {"path": path.name, "bytes": path.stat().st_size, "sha256": file_sha256(path)}
+        )
+    receipt = {
+        "kind": "legacy_native_api_evidence_receipt/v1",
+        "stage": "pass",
+        "invocation_raised": False,
+        "capture_failed": False,
+        "pin_errors": [],
+        "records": records,
+    }
+    if fault == "incomplete":
+        receipt["capture_failed"] = True
+    if fault == "response_hash":
+        records[0]["sha256"] = "0" * 64
+    if fault == "response_size":
+        records[0]["bytes"] += 1
+    if fault == "response_path":
+        records[0]["path"] = "../response-000001.json"
+    if fault == "duplicate_path":
+        records.append(copy.deepcopy(records[0]))
+    publisher.write_json(root / "native-api/receipt.json", receipt)
+    coordinate = {"artifact_id": 902, "job_id": 901, "zip_sha256": "a" * 64}
+    monkeypatch.setattr(publisher, "collect_job_export", lambda *_a, **_k: (root, coordinate))
+    calls, recalculations = [], []
+
+    def fresh(command, **kwargs):
+        assert kwargs == {"capture_output": True, "timeout": 60}
+        calls.append(command)
+        if fault == "rate_limit":
+            return subprocess.CompletedProcess(
+                command, 1, b"HTTP/1.1 403 Forbidden\r\nX-Ratelimit-Remaining: 0\r\n\r\n{}", b""
+            )
+        if fault in {"changed", "changed_listing", "changed_blocked", "no_etag"}:
+            value = old if fault == "no_etag" else {**old, "conclusion": "failure"}
+            if fault == "changed_listing":
+                value = {"total_count": 2, "workflow_runs": [{"id": 92}, {"id": 91}]}
+            return subprocess.CompletedProcess(
+                command, 0, b"HTTP/1.1 200 OK\r\n\r\n" + json.dumps(value).encode(), b""
+            )
+        return subprocess.CompletedProcess(
+            command, 1, b'HTTP/1.1 304 Not Modified\r\nEtag: "qualified"\r\n\r\n', b""
+        )
+
+    def recalculate(*args):
+        recalculations.append(args)
+        return {
+            **result,
+            "fresh_full_qualification": True,
+            "source_ci_pass": fault != "changed_blocked",
+        }
+
+    monkeypatch.setattr(native.subprocess, "run", fresh)
+    monkeypatch.setattr(publisher, "qualify_source_ci", recalculate)
+
+    def collect():
+        return publisher.collect_qualified_source(
+            data["source"],
+            data["source"],
+            data["profile"],
+            data["context"],
+            tmp_path / "source-revalidation",
+        )
+
+    if fault not in {None, "changed", "changed_listing", "no_etag"}:
+        with pytest.raises(ValueError if fault != "rate_limit" else native.NativeEvidenceFailure):
+            collect()
+        assert bool(recalculations) is (fault == "changed_blocked")
+        assert len(calls) == (1 if fault in {"rate_limit", "changed_blocked"} else 0)
+    else:
+        qualified, provenance = collect()
+        assert len(calls) == 1  # Both recorded checkpoints have the same native endpoint.
+        assert calls[0][:4] == ["gh", "api", "--include", endpoint]
+        assert ("-H" in calls[0]) is (fault != "no_etag")
+        assert provenance["artifact_id"] == 902
+        changed = fault in {"changed", "changed_listing"}
+        assert provenance["current_inputs_required_full_requalification"] is changed
+        assert bool(recalculations) is changed
+        assert qualified == ({**result, "fresh_full_qualification": True} if changed else result)
+        audit = json.loads(
+            (tmp_path / "source-revalidation/revalidation-api/receipt.json").read_text()
+        )
+        assert audit["native_requests_started"] == 1 and audit["capture_failed"] is False
+        if fault != "no_etag":
+            seed = json.loads(
+                (
+                    tmp_path / "source-revalidation/revalidation-api/response-000001.json"
+                ).read_text()
+            )
+            assert "http_observation" not in seed
+            assert seed["verified_producer_input"] == {
+                "producer": coordinate,
+                "record": records[-1],
+            }
+            refreshed = json.loads(
+                (
+                    tmp_path / "source-revalidation/revalidation-api/response-000002.json"
+                ).read_text()
+            )
+            if not changed:
+                assert refreshed["http_observation"]["status"] == 304
+                assert refreshed["response"] == old
+                assert (
+                    refreshed["http_observation"]["validated_source_record"]
+                    == "response-000001.json"
+                )
+
+
+@pytest.mark.parametrize("source_ci", [False, True])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "traversal",
+        "alias",
+        "symlink",
+        "special",
+        "duplicate",
+        "expansion",
+        "many_members",
+        "too_many_members",
+    ],
+)
+def test_publication_zip_checks_all_members_before_extracting(tmp_path, fault, source_ci):
     archive = tmp_path / "export.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
+        if source_ci:
+            for name in (
+                "source-qualification.json",
+                "native-api/receipt.json",
+                "native-api/response-000001.json",
+                "native-api/http-000001.PRIVATE.response",
+            ):
+                bundle.writestr(name, b"{}")
         name = (
             "../escape"
             if fault == "traversal"
@@ -179,14 +389,34 @@ def test_publication_zip_checks_all_members_before_extracting(tmp_path, fault):
         if fault == "duplicate":
             with pytest.warns(UserWarning):
                 bundle.writestr(entry, b"{}")
+        if fault in {"many_members", "too_many_members"}:
+            # Same shape/count as the actual successful qualification artifact.
+            members = 35865 if fault == "many_members" else 65537
+            for number in range(members - 1 - (4 if source_ci else 0)):
+                bundle.writestr(f"unneeded-ci/record-{number:06d}.json", b"{}")
     target = tmp_path / "extract"
-    if fault:
+    if fault and not (source_ci and fault == "many_members"):
         with pytest.raises(ValueError):
-            publisher.safe_extract(archive, target, max_bytes=1 if fault == "expansion" else 100)
+            publisher.safe_extract(
+                archive,
+                target,
+                max_bytes=1 if fault == "expansion" else 1024 * 1024,
+                source_ci=source_ci,
+            )
         assert not target.exists()
     else:
-        publisher.safe_extract(archive, target, max_bytes=100)
-        assert (target / "file.json").read_bytes() == b"{}"
+        publisher.safe_extract(archive, target, max_bytes=1024 * 1024, source_ci=source_ci)
+        if source_ci:
+            assert sorted(
+                str(p.relative_to(target)) for p in target.rglob("*") if p.is_file()
+            ) == [
+                "native-api/http-000001.PRIVATE.response",
+                "native-api/receipt.json",
+                "native-api/response-000001.json",
+                "source-qualification.json",
+            ]
+        else:
+            assert (target / "file.json").read_bytes() == b"{}"
 
 
 @pytest.mark.parametrize(
@@ -244,7 +474,7 @@ def test_native_control_uses_current_run_and_actual_workflow_bytes(tmp_path, mon
 
 
 @pytest.fixture
-def native_export(publication_data, tmp_path, monkeypatch):
+def native_export(publication_data, tmp_path, monkeypatch, request):
     data = publication_data
     data["control"] = tmp_path / "native-control"
     workflow = data["control"] / publisher.WORKFLOW
@@ -253,15 +483,24 @@ def native_export(publication_data, tmp_path, monkeypatch):
     context, profile = data["context"], data["profile"]
     root = tmp_path / "native-payload"
     root.mkdir()
-    publisher.write_json(root / "admission.json", data["admission"])
-    publisher.write_json(root / "publication.json", {})
+    job_name, role = getattr(request, "param", ("publish-exact-oci", "publication"))
+    if role == "source-ci":
+        publisher.write_json(
+            root / "source-qualification.json", data["admission"]["source_qualification"]["result"]
+        )
+        (root / "native-api").mkdir()
+        publisher.write_json(root / "native-api/receipt.json", {"kind": "fixture"})
+    else:
+        publisher.write_json(root / "admission.json", data["admission"])
+        publisher.write_json(root / "publication.json", {})
     archive = tmp_path / "native-export.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
-        for path in root.iterdir():
-            bundle.write(path, path.name)
+        for path in root.rglob("*"):
+            if path.is_file():
+                bundle.write(path, path.relative_to(root))
     job = {
         "id": 901,
-        "name": "publish-exact-oci",
+        "name": job_name,
         "run_id": 42,
         "run_attempt": 1,
         "head_sha": CONTROL,
@@ -284,8 +523,9 @@ def native_export(publication_data, tmp_path, monkeypatch):
             "completed_at": (start + timedelta(seconds=2)).isoformat(),
         }
         job["steps"].append(step)
-        if name in (publisher.CHECKOUT, publisher.PRODUCT_CHECKOUT):
-            revision = CONTROL if name == publisher.CHECKOUT else profile["product_revision"]
+        checkout_names = (publisher.RUN_STEPS[job_name][0], publisher.RUN_STEPS[job_name][2])
+        if name in checkout_names:
+            revision = CONTROL if name == checkout_names[0] else profile["product_revision"]
             lines.extend(
                 f"{start.isoformat()} {text}"
                 for text in (
@@ -296,7 +536,7 @@ def native_export(publication_data, tmp_path, monkeypatch):
             )
     metadata = {
         "id": 902,
-        "name": publisher.artifact_name("publication", profile, context),
+        "name": publisher.artifact_name(role, profile, context),
         "size_in_bytes": archive.stat().st_size,
         "digest": "sha256:" + file_sha256(archive),
         "expired": False,
@@ -309,7 +549,7 @@ def native_export(publication_data, tmp_path, monkeypatch):
         "head_sha": CONTROL,
         "repository": {"full_name": publisher.REPOSITORY},
     }
-    state = {"job": job, "metadata": metadata, "log": "\n".join(lines), "run": run}
+    state = {"job": job, "metadata": metadata, "log": "\n".join(lines), "run": run, "role": role}
     monkeypatch.setattr(
         publisher, "verify_native_control", lambda *_args: copy.deepcopy(state["run"])
     )
@@ -379,6 +619,11 @@ def _add_completion_second_overlap(state, first_checkout, product_checkout):
     )
 
 
+@pytest.mark.parametrize(
+    "native_export",
+    [("publish-exact-oci", "publication"), ("qualify-source", "source-ci")],
+    indirect=True,
+)
 @pytest.mark.parametrize("overlap", [False, True])
 @pytest.mark.parametrize(
     "fault",
@@ -404,8 +649,9 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
 ):
     data, state = native_export
     job, metadata = state["job"], state["metadata"]
+    checkout_names = (publisher.RUN_STEPS[job["name"]][0], publisher.RUN_STEPS[job["name"]][2])
     if overlap:
-        _add_completion_second_overlap(state, publisher.CHECKOUT, publisher.PRODUCT_CHECKOUT)
+        _add_completion_second_overlap(state, *checkout_names)
     execution = next(
         step for step in job["steps"] if step["name"] == publisher.RUN_STEPS[job["name"]][3]
     )
@@ -457,8 +703,8 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
             data["source"],
             data["profile"],
             data["context"],
-            job_name="publish-exact-oci",
-            role="publication",
+            job_name=job["name"],
+            role=state["role"],
             destination=destination,
         )
 
@@ -470,7 +716,9 @@ def test_cross_job_transfer_binds_native_job_checkout_upload_and_zip(
         ]
     else:
         root, coordinate = collect()
-        assert root.joinpath("admission.json").is_file()
+        assert root.joinpath(
+            "source-qualification.json" if state["role"] == "source-ci" else "admission.json"
+        ).is_file()
         assert coordinate["artifact_id"] == 902 and coordinate["job_id"] == 901
         assert coordinate["zip_sha256"] == metadata["digest"][7:]
 
@@ -656,7 +904,9 @@ def test_native_input_join_requires_all_independent_gates(
     monkeypatch.setattr(
         publisher, "load_transfer_profile", lambda *_a: data["admission"]["transfer_profile"]
     )
-    monkeypatch.setattr(publisher, "qualify_source_ci", lambda *_a: source_result)
+    monkeypatch.setattr(
+        publisher, "collect_qualified_source", lambda *_a: (source_result, {"artifact_id": 123})
+    )
 
     def pg(*_args, **_kwargs):
         effects.append("PG")

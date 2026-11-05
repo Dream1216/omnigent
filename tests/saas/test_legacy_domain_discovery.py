@@ -652,6 +652,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "same_attempt_source_qualification_reuse_correction",
         "verified_source_build_log_correction",
         "release_admission_correction",
         "publication_checkout_boundary_correction",
@@ -679,11 +680,40 @@ def reviewed_source_bytes(root, relative, expected):
     return body
 
 
-def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged():
+@pytest.mark.parametrize(
+    "fault",
+    [None, "unregistered-source", "duplicate", "missing", "wrong-before", "wrong-restored"],
+)
+def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged(tmp_path, fault):
     parent = json.loads(
         (RESOURCE.parent / "native-domain-discovery-parent-hashes.json").read_text()
     )
     root = Path(__file__).resolve().parents[2]
+    if fault is not None:
+        relative = "saas/scripts/legacy_initial_publisher.py"
+        expected = copy.deepcopy(parent[relative])
+        correction = expected["same_attempt_source_qualification_reuse_correction"]
+        body = (root / relative).read_bytes()
+        fragment = correction["inverse_fragments"][0]
+        if fault == "unregistered-source":
+            body += b"\n# unregistered source change\n"
+        elif fault in {"duplicate", "missing"}:
+            body = (
+                body + fragment["after"].encode()
+                if fault == "duplicate"
+                else body.replace(fragment["after"].encode(), b"", 1)
+            )
+            correction["corrected_sha256"] = hashlib.sha256(body).hexdigest()
+        elif fault == "wrong-before":
+            fragment["before"] += "# undeclared restoration\n"
+        else:
+            correction["restored_sha256"] = "0" * 64
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True)
+        path.write_bytes(body)
+        with pytest.raises(AssertionError):
+            reviewed_source_bytes(tmp_path, relative, expected)
+        return
     for relative, expected in parent.items():
         body = (
             (root / relative).read_bytes()
