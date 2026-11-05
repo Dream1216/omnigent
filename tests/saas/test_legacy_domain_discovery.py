@@ -466,6 +466,54 @@ def test_other_PR_outcome_change_does_not_become_a_product_technical_gate(
     assert result["records"][0]["original_run_conclusion"] == "failure"
 
 
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize(
+    "path,value,complete",
+    [
+        (("head", "repo", "size"), 268459, True),
+        (("base", "repo", "size"), 268459, True),
+        (("head", "sha"), "f" * 40, False),
+        (("base", "sha"), "f" * 40, False),
+        (("base", "ref"), "main", False),
+        (("head", "repo", "full_name"), "other/repository", False),
+        (("base", "repo", "full_name"), "other/repository", False),
+        (("merge_commit_sha",), "f" * 40, False),
+        (("state",), "closed", False),
+        (("draft",), True, False),
+        (("updated_at",), "2026-11-05T05:11:49Z", False),
+        (("title",), "changed PR", False),
+    ],
+)
+def test_PR_stability_excludes_only_repository_storage_size(
+    scenario, discovery_case, tmp_path, monkeypatch, path, value, complete
+):
+    data = discovery_case
+    for side in ("head", "base"):
+        scenario["pull"][side]["repo"]["size"] = 268442
+    original = discovery.api
+    pull_reads = 0
+
+    def changing(endpoint):
+        nonlocal pull_reads
+        response = original(endpoint)
+        if endpoint == discovery._ROOT + f"/pulls/{scenario['identity']['validation_pr']}":
+            pull_reads += 1
+            if pull_reads > 1:
+                target = response
+                for field in path[:-1]:
+                    target = target[field]
+                target[path[-1]] = value
+        return response
+
+    monkeypatch.setattr(discovery, "api", changing)
+    monkeypatch.setattr(discovery.history, "api", changing)
+    result = invoke(scenario, data, tmp_path)
+    assert result["complete_discovery"] is complete
+    assert result["source_ci_pass"] is result["technical_gate_waiver"] is False
+    if not complete:
+        assert {"reason": "native PR changed during domain discovery"} in result["blockers"]
+
+
 @pytest.mark.parametrize(
     "fault",
     [
@@ -604,6 +652,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "verified_source_build_log_correction",
         "release_admission_correction",
         "publication_checkout_boundary_correction",
         "native_step_boundary_correction",
@@ -805,7 +854,9 @@ def test_parallel_discovery_owns_typed_results_and_preserves_phase_barriers(
         unattributed,
         expected,
         refusal_rules,
+        registered_refusals,
     ):
+        assert registered_refusals == []
         with lock:
             owned_lists.append((observations, unattributed, expected))
         barrier.wait(5)

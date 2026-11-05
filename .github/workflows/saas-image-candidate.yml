@@ -87,6 +87,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # Fix one official signed Ubuntu index view per job while Snapshot is unavailable.
+  OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:

@@ -37,6 +37,8 @@ jobs:
           --health-retries 10
     env:
       OMNIGENT_SKIP_WEB_UI: "true"
+      # CI transport recovery; product locks, Ubuntu trust and tests stay fixed.
+      OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
       OMNIGENT_SAAS_TEST_POSTGRES_URL: >-
         postgresql+psycopg://postgres:postgres@localhost:5432/postgres
     steps:

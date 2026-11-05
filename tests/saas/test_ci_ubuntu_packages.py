@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -15,22 +16,39 @@ SCRIPT = Path(__file__).resolve().parents[2] / "saas/scripts/ci_install_ubuntu_p
 
 
 @pytest.mark.parametrize(
-    "update_status,configure_only,reuse,update_errors,install_errors,updates,installs,status",
+    "update_status,configure_only,reuse,update_errors,install_errors,updates,installs,status,archive_recovery,index_state",
     [
-        (0, False, False, (), (), 1, 1, 0),
-        (0, False, True, (), (), 1, 1, 0),
-        (17, False, False, (), (), 1, 0, 17),
-        (100, False, False, (), (), 1, 0, 100),
-        (0, True, False, (), (), 0, 0, 0),
-        (0, False, False, ("502 Bad Gateway",), (), 2, 1, 0),
-        (0, False, False, ("503 Service Unavailable",) * 2, (), 3, 1, 0),
-        (0, False, False, ("503 Service Unavailable",) * 3, (), 3, 0, 100),
-        (0, False, False, ("502 Bad Gateway\nHash Sum mismatch",), (), 1, 0, 100),
-        (0, False, False, ("503 Service Unavailable\nNO_PUBKEY",), (), 1, 0, 100),
-        (0, False, False, ("404 Not Found",), (), 1, 0, 100),
-        (0, False, False, (), ("502 Bad Gateway",), 1, 2, 0),
-        (0, False, False, (), ("503 Service Unavailable",) * 3, 1, 3, 100),
-        (0, False, False, ("503 Service Unavailable",), ("502 Bad Gateway",), 2, 2, 0),
+        (0, False, False, (), (), 1, 1, 0, False, None),
+        (0, False, True, (), (), 1, 1, 0, False, None),
+        (17, False, False, (), (), 1, 0, 17, False, None),
+        (100, False, False, (), (), 1, 0, 100, False, None),
+        (0, True, False, (), (), 0, 0, 0, False, None),
+        (0, False, False, ("502 Bad Gateway",), (), 2, 1, 0, False, None),
+        (0, False, False, ("503 Service Unavailable",) * 2, (), 3, 1, 0, False, None),
+        (0, False, False, ("503 Service Unavailable",) * 3, (), 3, 0, 100, False, None),
+        (0, False, False, ("502 Bad Gateway\nHash Sum mismatch",), (), 1, 0, 100, False, None),
+        (0, False, False, ("503 Service Unavailable\nNO_PUBKEY",), (), 1, 0, 100, False, None),
+        (0, False, False, ("404 Not Found",), (), 1, 0, 100, False, None),
+        (0, False, False, (), ("502 Bad Gateway",), 1, 2, 0, False, None),
+        (0, False, False, (), ("503 Service Unavailable",) * 3, 1, 3, 100, False, None),
+        (
+            0,
+            False,
+            False,
+            ("503 Service Unavailable",),
+            ("502 Bad Gateway",),
+            2,
+            2,
+            0,
+            False,
+            None,
+        ),
+        (0, False, False, (), (), 1, 1, 0, True, None),
+        (0, False, True, (), (), 0, 1, 0, True, "valid"),
+        (0, False, True, (), (), 0, 0, 1, True, "changed"),
+        (0, False, True, (), (), 0, 0, 1, True, "stale"),
+        (0, False, False, ("503 Service Unavailable\nNO_PUBKEY",), (), 1, 0, 100, True, None),
+        (0, False, False, ("502 Bad Gateway\nHash Sum mismatch",), (), 1, 0, 100, True, None),
     ],
 )
 def test_signed_package_setup_stops_on_failed_update(
@@ -43,11 +61,26 @@ def test_signed_package_setup_stops_on_failed_update(
     updates,
     installs,
     status,
+    archive_recovery,
+    index_state,
 ):
     snapshot_path = tmp_path / "omnigent-ubuntu-snapshot"
     cached = (datetime.now(UTC) - timedelta(hours=3)).strftime("%Y%m%dT%H0000Z")
     if reuse:
         snapshot_path.write_text(cached)
+    if index_state is not None:
+        names = [
+            "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_InRelease",
+            "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-updates_InRelease",
+            "/var/lib/apt/lists/security.ubuntu.com_ubuntu_dists_noble-security_InRelease",
+        ]
+        hashes = [hashlib.sha256(name.encode()).hexdigest() + "  " + name for name in names]
+        if index_state == "changed":
+            hashes[0] = "0" * 64 + "  " + names[0]
+        captured = datetime.now(UTC) - timedelta(hours=25 if index_state == "stale" else 0)
+        (tmp_path / "omnigent-ubuntu-archive-index-state").write_text(
+            json.dumps({"captured_at": captured.isoformat(), "hashes": hashes})
+        )
     commands = tmp_path / "commands"
     commands.mkdir()
     log = tmp_path / "commands.jsonl"
@@ -68,6 +101,9 @@ def test_signed_package_setup_stops_on_failed_update(
         " row={'args':args,'content':sys.stdin.read()}\n"
         " with open(os.environ['TEST_APT_LOG'],'a') as f: f.write(json.dumps(row)+'\\n')\n"
         " sys.exit(0)\n"
+        "if args[0]=='sha256sum':\n"
+        " for name in args[1:]: print(hashlib.sha256(name.encode()).hexdigest()+'  '+name)\n"
+        " sys.exit(0)\n"
         "if args[0]=='python3':\n"
         " with open(os.environ['TEST_APT_LOG'],'a') as f: "
         "f.write(json.dumps({'args':args})+'\\n')\n"
@@ -85,7 +121,7 @@ def test_signed_package_setup_stops_on_failed_update(
         "with open(os.environ['TEST_APT_LOG'],'a') as f: f.write(json.dumps(row)+'\\n')\n"
         "if '--print-uris' in args:\n"
         " root=next(x for x in row['sources'].split() "
-        "if x.startswith('https://snapshot.ubuntu.com/'))\n"
+        "if x.startswith('https://'))\n"
         " payload=b'locked Ubuntu package'\n"
         ' print("\'"+root+"pool/main/t/tool/tool_1.0_amd64.deb\' '
         'tool_1.0_amd64.deb "+str(len(payload))+" SHA256:"+'
@@ -127,6 +163,7 @@ def test_signed_package_setup_stops_on_failed_update(
             "TEST_APT_UPDATE_ERRORS": json.dumps(update_errors),
             "TEST_APT_INSTALL_ERRORS": json.dumps(install_errors),
             "TEST_APT_CACHE": str(tmp_path / "prefetched-packages"),
+            "OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY": str(int(archive_recovery)),
         },
         capture_output=True,
         text=True,
@@ -147,7 +184,10 @@ def test_signed_package_setup_stops_on_failed_update(
         )
         assert earliest <= selected <= latest
     uri = f"https://snapshot.ubuntu.com/ubuntu/{snapshot}/"
-    assert f"Ubuntu CI snapshot: {uri}" in result.stdout
+    if archive_recovery:
+        assert "Ubuntu CI recovery: official archive/security HTTPS" in result.stdout
+    else:
+        assert f"Ubuntu CI snapshot: {uri}" in result.stdout
     commands = [json.loads(line) for line in log.read_text().splitlines()]
     configs = [row for row in commands if row["args"][0] == "tee"]
     assert any(
@@ -160,10 +200,18 @@ def test_signed_package_setup_stops_on_failed_update(
         for row in configs
         if row["args"][1] == "/etc/apt/sources.list.d/ubuntu.sources"
     )
-    assert ubuntu.count("By-Hash: force") == 1
-    assert ubuntu.count("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg") == 1
-    assert f"URIs: {uri}\n" in ubuntu
-    assert "Suites: noble noble-updates noble-security\n" in ubuntu
+    assert ubuntu.count("By-Hash: force") == (2 if archive_recovery else 1)
+    assert ubuntu.count("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg") == (
+        2 if archive_recovery else 1
+    )
+    if archive_recovery:
+        assert "URIs: https://archive.ubuntu.com/ubuntu/\n" in ubuntu
+        assert "URIs: https://security.ubuntu.com/ubuntu/\n" in ubuntu
+        assert "Suites: noble noble-updates\n" in ubuntu
+        assert "Suites: noble-security\n" in ubuntu
+    else:
+        assert f"URIs: {uri}\n" in ubuntu
+        assert "Suites: noble noble-updates noble-security\n" in ubuntu
     assert "trusted=yes" not in ubuntu and "http:" not in ubuntu
     assert all(
         row["args"][1]
@@ -181,6 +229,9 @@ def test_signed_package_setup_stops_on_failed_update(
     plans = [row for row in commands if "--print-uris" in row["args"]]
     materializations = [row for row in commands if row["args"][0] == "python3"]
     assert len(plans) == len(materializations) == installs
+    assert all(
+        ("--allow-ubuntu-archive" in row["args"]) == archive_recovery for row in materializations
+    )
     assert all("Acquire::ForceHash=SHA256" in row["args"] for row in plans)
     assert all(
         row["args"][2:] and row["args"][2:4] == ["--distribution", "ubuntu"]
@@ -206,10 +257,14 @@ def test_signed_package_setup_stops_on_failed_update(
             row["sources"].count("signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg") == 3
         )
         assert row["sources"].count("by-hash=force") == 3
-        assert row["sources"].count(uri) == 3
+        if archive_recovery:
+            assert row["sources"].count("https://archive.ubuntu.com/ubuntu/") == 2
+            assert row["sources"].count("https://security.ubuntu.com/ubuntu/") == 1
+        else:
+            assert row["sources"].count(uri) == 3
+            assert "archive.ubuntu.com" not in row["sources"]
+            assert "security.ubuntu.com" not in row["sources"]
         assert "http:" not in row["sources"] and "azure" not in row["sources"]
-        assert "archive.ubuntu.com" not in row["sources"]
-        assert "security.ubuntu.com" not in row["sources"]
     assert "Check-Valid-Until" not in ubuntu
     assert "AllowInsecure" not in "\n".join(str(row) for row in commands)
     for row in rows:
@@ -305,6 +360,13 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
             for step in group.get("steps", []):
                 command = step.get("run", "")
                 assert "sudo apt-get" not in command, (name, step.get("name"))
+                if name in paths[:5] and "ci_install_ubuntu_packages.sh" in command:
+                    environment = {
+                        **content.get("env", {}),
+                        **group.get("env", {}),
+                        **step.get("env", {}),
+                    }
+                    assert environment.get("OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY") == "1"
                 if "playwright install chromium" in command:
                     browser_installs += 1
                     assert command.index(
@@ -314,6 +376,7 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
     assert browser_installs == 5
 
 
+@pytest.mark.parametrize("archive_recovery", [False, True])
 @pytest.mark.parametrize(
     "errors,apt_failure,calls,status",
     [
@@ -325,12 +388,14 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
     ],
 )
 def test_locked_playwright_dependency_transport_is_bounded(
-    tmp_path, errors, apt_failure, calls, status
+    tmp_path, errors, apt_failure, calls, status, archive_recovery
 ):
     environment = tmp_path / "environment.sh"
     environment.write_text(
         "function .() { ID=ubuntu; VERSION_ID=24.04; VERSION_CODENAME=noble; }\n"
-        'function sudo() { [[ "$1" == tee ]] || return 81; cat >/dev/null; }\n'
+        'function sudo() { if [[ "$1" == tee ]]; then cat >/dev/null; '
+        'elif [[ "$1" == sha256sum ]]; then shift; for name in "$@"; do '
+        'printf "%064d  %s\\n" 0 "$name"; done; else return 81; fi; }\n'
         'function timeout() { [[ "$1 $2" == "--kill-after=10s 360s" ]] || return 81; '
         'shift 2; "$@"; }\n'
         'function sleep() { [[ "$1" == 5 || "$1" == 10 ]]; }\n'
@@ -361,6 +426,7 @@ def test_locked_playwright_dependency_transport_is_bounded(
             "RUNNER_TEMP": str(tmp_path),
             "TEST_ERRORS": json.dumps(errors),
             "TEST_APT_FAILURE": str(apt_failure).lower(),
+            "OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY": str(int(archive_recovery)),
         },
         capture_output=True,
         text=True,

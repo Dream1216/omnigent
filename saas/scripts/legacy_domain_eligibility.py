@@ -30,6 +30,21 @@ _ERROR = native._ERROR
 native_digest = native.native_digest
 
 
+def registered_attachment_workflow(profile, identity, rule):
+    from saas.scripts.legacy_domain_discovery import _exact_current_C2
+
+    coordinate = tuple(rule.get(key) for key in ("run_id", "attempt", "job_id", "check_id"))
+    if (
+        _exact_current_C2(profile, identity)
+        and coordinate == (41850549942, 1, 126645369962, 126645369962)
+        and rule.get("attachment_revision")
+        == rule.get("trusted_checkout_revision")
+        == "c724abb9d43c40717e83154a7da9270150f3d418"
+    ):
+        return native.FIXED_RUNNER_WORKFLOW_SHA256
+    return MAIN_WORKFLOW_SHA256
+
+
 def validate_domain_rules(policy: dict[str, Any], identity: dict[str, Any]) -> None:
     unattributed = policy.get("domain_unattributed_zero_execution", {})
     require(
@@ -614,7 +629,7 @@ def collect_domain_eligibility(
         download_job_log(rule["job_id"], log_path)
         require(
             hashlib.sha256(_native_file(MAIN_WORKFLOW, run["head_sha"])).hexdigest()
-            == MAIN_WORKFLOW_SHA256
+            == registered_attachment_workflow(profile, identity, rule)
             and hashlib.sha256(_native_file(_GATE, rule["trusted_checkout_revision"])).hexdigest()
             == rule["trusted_gate_sha256"],
             "executed original domain workflow or trusted gate bytes changed",
@@ -622,6 +637,9 @@ def collect_domain_eligibility(
         receipt = verify_main_domain_refusal(
             profile, identity, rule, run, job, check, log_path.read_bytes().decode("utf-8")
         )
+        attachment = registered_attachment_workflow(profile, identity, rule)
+        if attachment != MAIN_WORKFLOW_SHA256:
+            receipt["attachment_workflow_sha256"] = attachment
         receipt["authenticated_domain_discovery_sha256"] = binding
         results.append(receipt)
         require(

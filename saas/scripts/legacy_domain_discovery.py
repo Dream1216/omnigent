@@ -7,6 +7,7 @@ discovery receipt cannot enable the frozen-legacy domain rule or waive a check.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -524,6 +525,7 @@ def _inspect_run(
     unattributed_observations: list[nonexecution.UnattributedObservation] | None = None,
     unattributed_expected: set[tuple[int, int]] | None = None,
     refusal_cancellation_rules=(),
+    registered_refusals=(),
 ) -> dict[str, Any]:
     numbers = _pr_numbers(run["pull_requests"])
     # PR numbers are stable associations; their mutable head SHA is never a source proof.
@@ -572,7 +574,15 @@ def _inspect_run(
             row for row in audit_rules if (row["run_id"], row["attempt"]) == (run["id"], attempt)
         ]
         require(
-            not fixed_runner_attachment or not matches,
+            not fixed_runner_attachment
+            or not matches
+            or (
+                len(matches) == 1
+                and nonexecution.compatibility_refusal_cancellation_contract(
+                    profile, identity, matches[0]
+                )
+                is not None
+            ),
             "fixed-runner attachment cannot replace a registered legacy proof",
         )
         if (
@@ -744,10 +754,24 @@ def _inspect_run(
                 _EXACT_FIXED_RUNNER_C2_AUDITS,
             )
         )
-        require(
-            not fixed_current or exact_exclusion,
-            "fixed-runner attachment cannot grant current legacy source eligibility",
-        )
+        if fixed_current and not exact_exclusion:
+            from saas.scripts.legacy_domain_eligibility import (
+                registered_attachment_workflow,
+                verify_main_domain_refusal,
+            )
+
+            registered = [row for row in registered_refusals if _key(row) == _key(coordinate)]
+            require(
+                len(registered) == 1
+                and registered_attachment_workflow(profile, identity, registered[0])
+                == attachment_workflow_sha256
+                and registered[0]["trusted_gate_sha256"]
+                == hashlib.sha256(domain._native_file(domain._GATE, control)).hexdigest(),
+                "fixed-runner attachment cannot grant current legacy source eligibility",
+            )
+            verify_main_domain_refusal(
+                profile, cast(dict[str, Any], identity), registered[0], observed, job, check, log
+            )
         require(
             not numbers or original_pr in numbers,
             "native PR association contradicts original trigger",
@@ -913,6 +937,17 @@ def _ordered_parallel(function: Callable[[_T], _R], items: list[_T]) -> list[_R]
     return results
 
 
+def _pr_stability_snapshot(pull: dict[str, Any]) -> dict[str, Any]:
+    """Retain every PR field except repository-wide storage accounting."""
+    snapshot = copy.deepcopy(pull)
+    for side in ("head", "base"):
+        branch = snapshot.get(side)
+        repository = branch.get("repo") if isinstance(branch, dict) else None
+        if isinstance(repository, dict):
+            repository.pop("size", None)
+    return snapshot
+
+
 def discover_main_domain(
     profile: dict[str, Any],
     identity: dict[str, Any],
@@ -990,6 +1025,7 @@ def discover_main_domain(
                 local_unattributed,
                 local_expected,
                 refusal_cancellation_rules,
+                rules,
             )
         except NativeEvidenceFailure:
             raise
@@ -1142,7 +1178,7 @@ def discover_main_domain(
     if not stable:
         blockers.append({"reason": "native workflow discovery sets changed"})
     final_pull = api(f"{_ROOT}/pulls/{number}")
-    if final_pull != pull:
+    if _pr_stability_snapshot(final_pull) != _pr_stability_snapshot(pull):
         blockers.append({"reason": "native PR changed during domain discovery"})
     related = [
         attempt

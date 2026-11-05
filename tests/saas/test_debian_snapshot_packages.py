@@ -97,3 +97,27 @@ def test_snapshot_distribution_cannot_substitute_other_or_unknown_archive(distri
         packages.parse_inputs(line(distribution=other), distribution=distribution)
     with pytest.raises(ValueError):
         packages.parse_inputs(line(distribution=distribution), distribution="unknown")
+
+
+@pytest.mark.parametrize("host", ["archive.ubuntu.com", "security.ubuntu.com"])
+def test_official_ubuntu_archive_requires_explicit_recovery(tmp_path, monkeypatch, host):
+    value = line(distribution="ubuntu").replace(
+        "snapshot.ubuntu.com/ubuntu/20261005T000000Z", host + "/ubuntu"
+    )
+    with pytest.raises(ValueError):
+        packages.parse_inputs(value, distribution="ubuntu")
+    with pytest.raises(ValueError):
+        packages.parse_inputs(value, distribution="debian", allow_ubuntu_archive=True)
+    item = packages.parse_inputs(value, distribution="ubuntu", allow_ubuntu_archive=True)[0]
+    monkeypatch.setattr(
+        packages.urllib.request, "urlopen", lambda *args, **kwargs: io.BytesIO(b"locked package")
+    )
+    assert packages.fetch(item, tmp_path, distribution="ubuntu") == item
+    for drift in (
+        value.replace("https:", "http:"),
+        value.replace(host, "unknown.example"),
+        value.replace("SHA256:", "MD5Sum:"),
+        value.replace("pool/main/", "pool/../"),
+    ):
+        with pytest.raises(ValueError):
+            packages.parse_inputs(drift, distribution="ubuntu", allow_ubuntu_archive=True)

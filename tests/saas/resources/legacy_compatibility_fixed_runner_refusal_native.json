@@ -1,0 +1,1824 @@
+{
+  "profile": {
+    "component": "Compatibility018",
+    "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+    "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820"
+  },
+  "identity": {
+    "component": "Compatibility018",
+    "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+    "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+    "schema_version": 1,
+    "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    "validation_pr": 223,
+    "workflows": [
+      {
+        "attempt": 1,
+        "jobs": {
+          "Coverage report": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (codex-parity)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (databricks)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (inner-rest)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (integration-mock)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (misc)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (repl-sdk)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (runner-app)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (runtime-core)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (runtime-harnesses)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (runtime-policies)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (server-approvals)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (server-integration)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (server-rest)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (slack)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (spec-llms)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (stores)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (stores-crdb-23.2.28)": {
+            "checkouts": [
+              {
+                "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (stores-mysql)": {
+            "checkouts": [
+              {
+                "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                "number": 3,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (stores-postgres)": {
+            "checkouts": [
+              {
+                "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                "number": 3,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Pytest (tools)": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "gate / Security Gate": {
+            "checkouts": [
+              {
+                "name": "Check out trust check from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "CI",
+        "path": ".github/workflows/ci.yml",
+        "run_id": 41849014094,
+        "source_sha256": "ea4fde43ab964d47e77d6c9279e36bd9ce74b82ba684835d1b0b2d5c61af1b42"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Docker build": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "gate / Security Gate": {
+            "checkouts": [
+              {
+                "name": "Check out trust check from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "Docker build",
+        "path": ".github/workflows/docker-build.yml",
+        "run_id": 41849013946,
+        "source_sha256": "a78ddf58c06232be410641656b54f4838441d626e112c199972e670a7662090a"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Browser Contract UI": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 0/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 1/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 2/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 3/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 4/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 5/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 6/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 7/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 8/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E UI Tests (shard 9/10)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "build codex-parity sidecar": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "gate / Security Gate": {
+            "checkouts": [
+              {
+                "name": "Check out trust check from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "setup": {
+            "checkouts": [
+              {
+                "name": "Check out CI scripts",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "E2E UI Tests",
+        "path": ".github/workflows/e2e-ui.yml",
+        "run_id": 41849013989,
+        "source_sha256": "3a7d5ecfd4859c0697df27c1c922bf3074cbd480c62843eb65ccbd5f53aecd4b"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "E2E Tests (shard 0/4)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E Tests (shard 1/4)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E Tests (shard 2/4)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "E2E Tests (shard 3/4)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "gate / Security Gate": {
+            "checkouts": [
+              {
+                "name": "Check out trust check from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "setup": {
+            "checkouts": [
+              {
+                "name": "Check out CI scripts",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "E2E Tests",
+        "path": ".github/workflows/e2e.yml",
+        "run_id": 41849014073,
+        "source_sha256": "6d652a385a9b611a2d751cfca64594de97932fcf20fe366ed7e6526db4ac504e"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Integration (openai-agents)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "gate / Security Gate": {
+            "checkouts": [
+              {
+                "name": "Check out trust check from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "setup": {
+            "checkouts": [
+              {
+                "name": "Check out CI scripts",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "Integration Tests",
+        "path": ".github/workflows/integration.yml",
+        "run_id": 41849014004,
+        "source_sha256": "70db493196bd4b133e075d3e4e17ac7011cccb42e47ac70d01c79baa896b79cb"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Pre-commit checks": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Version lockstep check": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "gate / Security Gate": {
+            "checkouts": [
+              {
+                "name": "Check out trust check from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "Lint",
+        "path": ".github/workflows/lint.yml",
+        "run_id": 41849014122,
+        "source_sha256": "ad768fcf2f8891d090c5a8334572d151c9afc919e14d8c647c48807200e963ce"
+      },
+      {
+        "attempt": 2,
+        "jobs": {
+          "build-candidate": {
+            "checkouts": [
+              {
+                "name": "Checkout immutable candidate",
+                "number": 3,
+                "revision": "product"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "publish-signed": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "verify-candidate-preflight": {
+            "checkouts": [
+              {
+                "name": "Checkout immutable preflight candidate",
+                "number": 2,
+                "revision": "product"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...": {
+            "checkouts": [
+              {
+                "name": "Checkout immutable migration replay candidate",
+                "number": 3,
+                "revision": "product"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...": {
+            "checkouts": [
+              {
+                "name": "Checkout immutable migration replay candidate",
+                "number": 3,
+                "revision": "product"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "verify-published-source": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "SaaS image candidate",
+        "path": ".github/workflows/saas-image-candidate.yml",
+        "run_id": 41849013923,
+        "source_sha256": "9a42ad4fff59764287f673a5798b742b7be63afd41c3edf53b97dff84aba3707"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "publish-candidate": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "verify-candidate": {
+            "checkouts": [
+              {
+                "name": "Checkout immutable patch source",
+                "number": 2,
+                "revision": "product"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "verify-postgresql-current": {
+            "checkouts": [
+              {
+                "name": "Checkout exact contract source",
+                "number": 3,
+                "revision": "product"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "verify-postgresql-n1": {
+            "checkouts": [
+              {
+                "name": "Checkout exact N-1 contract source",
+                "number": 3,
+                "revision": "product"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "SaaS N-1 pull_request pr=223 base=a7b5cf29294556084216e9e2746125ccafc9cda0 head=4e11681dd3809febeb42cb5d752d423b5f751f82",
+        "path": ".github/workflows/saas-n1-compat-image.yml",
+        "run_id": 41849014127,
+        "source_sha256": "2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "compatibility-gate": {
+            "checkouts": [
+              {
+                "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                "number": 3,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "SaaS upstream compatibility",
+        "path": ".github/workflows/saas-upstream-compat.yml",
+        "run_id": 41849013905,
+        "source_sha256": "09c926531635b053140b6da199814d8d08bfef4f62c256a66ebcd6d1171e681d"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Security Scan": {
+            "checkouts": [
+              {
+                "name": "Check out scanner from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "Security Scan",
+        "path": ".github/workflows/security-scan.yml",
+        "run_id": 41849013959,
+        "source_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
+        "trusted_security_policy": {
+          "attempt": 1,
+          "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
+          "check_id": 126639981686,
+          "check_sha256": "0e5b0e66ecba20b65e793cfd22e301297bda40f3e7a3a11f3b9ef0511d254a46",
+          "check_suite_id": 113399229011,
+          "component": "Compatibility018",
+          "job_id": 126639981686,
+          "job_log_sha256": "6cf1e7e12c4ce90a61502b16aa63e81d3dcd2ec87d82c354d0f34d0e830f8f24",
+          "job_sha256": "1ad1a8016f906cff078b6bbb0d8c9c3f69f2c009b0fd52b4438af5cdd672ae56",
+          "kind": "legacy_original_OWNER_security_policy_decision/v1",
+          "load_maintainers_sha256": "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78",
+          "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+          "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+          "run_id": 41849013959,
+          "run_sha256": "57cd67fed2ef88fa3ab17acb53645292d7cb03c4c82d392678ba5cd19c2285d7",
+          "should_scan_sha256": "ef682dbda4e903303af3b670cf256140dfd1ecd8711d9fb3148a6ad64e37d250",
+          "trusted_checkout_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
+          "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+          "validation_pr": 223,
+          "workflow_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd"
+        }
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Backcompat e2e (server ${{ matrix.server }} / runner ${{ matrix.runner }}, shard ${{ matrix.shard_id }}/${{ matrix.num_shards }})": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Backcompat e2e-ui (Config ${{ matrix.config }}: ${{ (((matrix.config == 'A') && matrix.server) || matrix.ui) }}, shard ${{ matrix.shard_id }}/${{ matrix.num_shards }})": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Backcompat integration (server ${{ matrix.server }} / runner ${{ matrix.runner }}, ${{ matrix.harness }})": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Compat smoke – Config 1 (new server / old runner v0.20.0)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Compat smoke – Config 2 (new runner / old server v0.20.0)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Compat smoke – UI Config A (new SPA / old server v0.20.0)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Compat smoke – UI Config B (old SPA v0.20.0 / new server)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Resolve latest stable tag": {
+            "checkouts": [
+              {
+                "name": "Checkout (tags only)",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "setup": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "setup-ui": {
+            "checkouts": [],
+            "conclusion": "skipped",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "Backwards-Compat",
+        "path": ".github/workflows/server-compat.yml",
+        "run_id": 41849013994,
+        "source_sha256": "a9b8d80f5528f1bb7a2853863012cb65b633ccca265a700c86499bc4685af3cf"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Pinned callers match tested action": {
+            "checkouts": [
+              {
+                "name": "Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "Harness CLI action pin consistency",
+        "path": ".github/workflows/setup-harness-cli-pin-test.yml",
+        "run_id": 41849014321,
+        "source_sha256": "f69f27f6ffe5ac023533c1191367d7ab68e542d193964e092a89dbffcf7e9275"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Trivy CVE Scan (dev-tools)": {
+            "checkouts": [
+              {
+                "name": "Check out source",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "Trivy CVE Scan (repository)": {
+            "checkouts": [
+              {
+                "name": "Check out source",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "gate / Security Gate": {
+            "checkouts": [
+              {
+                "name": "Check out trust check from main",
+                "number": 2,
+                "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          }
+        },
+        "name": "Trivy CVE Scan",
+        "path": ".github/workflows/trivy.yml",
+        "run_id": 41849014137,
+        "source_sha256": "882f5238d8e7147eb095b37c838e9f1ad707ae81c0d8314f49460627bb29f6f3"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Detect render-affecting changes": {
+            "checkouts": [],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-latest"
+            ]
+          },
+          "UI Snapshot (visual baselines)": {
+            "checkouts": [
+              {
+                "name": "Checkout",
+                "number": 3,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "ubuntu-24.04"
+            ]
+          }
+        },
+        "name": "UI Snapshot",
+        "path": ".github/workflows/ui-snapshot.yml",
+        "run_id": 41849013876,
+        "source_sha256": "1b62597512c7e76293d0836abf1872969d5545cb9d3b2e7f0bbc942646e53f1a"
+      },
+      {
+        "attempt": 1,
+        "jobs": {
+          "Windows smoke + unit": {
+            "checkouts": [
+              {
+                "name": "Check out repo",
+                "number": 2,
+                "revision": "product-merge"
+              }
+            ],
+            "conclusion": "success",
+            "labels": [
+              "windows-latest"
+            ]
+          }
+        },
+        "name": "Windows (native)",
+        "path": ".github/workflows/windows.yml",
+        "run_id": 41849014082,
+        "source_sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
+      }
+    ]
+  },
+  "rule": {
+    "kind": "legacy_original_main_domain_refusal/v2",
+    "workflow_sha256": "36db03f8a9a0242a2e2020e39806d2008c960ca52ef2c2dd950df6b96c0beca3",
+    "validation_pr": 223,
+    "validation_base_ref": "codex/p18-a7-validation-base-20261102",
+    "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+    "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+    "attachment_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
+    "run_id": 41850549942,
+    "attempt": 1,
+    "job_id": 126645369962,
+    "check_id": 126645369962,
+    "run_sha256": "a99fa18d2c888c3711ecba1fabdd0a47f50d9884895ebdca405114a54f11a9ac",
+    "job_sha256": "5ddc14e54cfb5f4ace3525904c5aa1c46de25abf86df3783cbaeecc7c4eb547b",
+    "check_sha256": "888364c9a74d305c1e022d8f730fcc4b2e6af3e73b5eac59764b356a33a2cc54",
+    "job_log_sha256": "d201035bdb6e30e71b661be331834012471305056a9c03600fa07c306a756e56",
+    "trusted_checkout_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
+    "trusted_gate_sha256": "f8745b96d08de0704ba2cffbee4f437b5bba429ee55d2b84d66c071ff0a81648"
+  },
+  "latest_run": {
+    "actor": {
+      "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+      "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+      "followers_url": "https://api.github.com/users/Dream1216/followers",
+      "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+      "gravatar_id": "",
+      "html_url": "https://github.com/Dream1216",
+      "id": 39821512,
+      "login": "Dream1216",
+      "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+      "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+      "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+      "repos_url": "https://api.github.com/users/Dream1216/repos",
+      "site_admin": false,
+      "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+      "type": "User",
+      "url": "https://api.github.com/users/Dream1216",
+      "user_view_type": "public"
+    },
+    "artifacts_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/artifacts",
+    "cancel_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/cancel",
+    "check_suite_id": 113403593078,
+    "check_suite_node_id": "CS_kwDOTqIGI88AAAAaZ2GBdg",
+    "check_suite_url": "https://api.github.com/repos/Dream1216/omnigent/check-suites/113403593078",
+    "conclusion": "failure",
+    "created_at": "2026-11-04T14:44:17Z",
+    "display_title": "SaaS N-1 merge gate",
+    "event": "workflow_run",
+    "head_branch": "main",
+    "head_commit": {
+      "author": {
+        "email": "39821512+Dream1216@users.noreply.github.com",
+        "name": "胜天半子"
+      },
+      "committer": {
+        "email": "noreply@github.com",
+        "name": "GitHub"
+      },
+      "id": "c724abb9d43c40717e83154a7da9270150f3d418",
+      "message": "fix(saas): bind publication checkout logs to native step boundaries (#226)\n\nfix(saas): bind publication checkout logs to native step boundaries",
+      "timestamp": "2026-11-04T04:14:33Z",
+      "tree_id": "c1b5435fa23d68b67fa8a338b164074caa82e8be"
+    },
+    "head_repository": {
+      "archive_url": "https://api.github.com/repos/Dream1216/omnigent/{archive_format}{/ref}",
+      "assignees_url": "https://api.github.com/repos/Dream1216/omnigent/assignees{/user}",
+      "blobs_url": "https://api.github.com/repos/Dream1216/omnigent/git/blobs{/sha}",
+      "branches_url": "https://api.github.com/repos/Dream1216/omnigent/branches{/branch}",
+      "collaborators_url": "https://api.github.com/repos/Dream1216/omnigent/collaborators{/collaborator}",
+      "comments_url": "https://api.github.com/repos/Dream1216/omnigent/comments{/number}",
+      "commits_url": "https://api.github.com/repos/Dream1216/omnigent/commits{/sha}",
+      "compare_url": "https://api.github.com/repos/Dream1216/omnigent/compare/{base}...{head}",
+      "contents_url": "https://api.github.com/repos/Dream1216/omnigent/contents/{+path}",
+      "contributors_url": "https://api.github.com/repos/Dream1216/omnigent/contributors",
+      "deployments_url": "https://api.github.com/repos/Dream1216/omnigent/deployments",
+      "description": "Omnigent is an open-source AI agent framework and meta-harness: orchestrate Claude Code, Codex, Cursor, Pi, and custom agents — swap harnesses without rewriting, enforce policies and sandboxing, and collaborate in real time from any device.",
+      "downloads_url": "https://api.github.com/repos/Dream1216/omnigent/downloads",
+      "events_url": "https://api.github.com/repos/Dream1216/omnigent/events",
+      "fork": true,
+      "forks_url": "https://api.github.com/repos/Dream1216/omnigent/forks",
+      "full_name": "Dream1216/omnigent",
+      "git_commits_url": "https://api.github.com/repos/Dream1216/omnigent/git/commits{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Dream1216/omnigent/git/refs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Dream1216/omnigent/git/tags{/sha}",
+      "hooks_url": "https://api.github.com/repos/Dream1216/omnigent/hooks",
+      "html_url": "https://github.com/Dream1216/omnigent",
+      "id": 1319241251,
+      "issue_comment_url": "https://api.github.com/repos/Dream1216/omnigent/issues/comments{/number}",
+      "issue_events_url": "https://api.github.com/repos/Dream1216/omnigent/issues/events{/number}",
+      "issues_url": "https://api.github.com/repos/Dream1216/omnigent/issues{/number}",
+      "keys_url": "https://api.github.com/repos/Dream1216/omnigent/keys{/key_id}",
+      "labels_url": "https://api.github.com/repos/Dream1216/omnigent/labels{/name}",
+      "languages_url": "https://api.github.com/repos/Dream1216/omnigent/languages",
+      "merges_url": "https://api.github.com/repos/Dream1216/omnigent/merges",
+      "milestones_url": "https://api.github.com/repos/Dream1216/omnigent/milestones{/number}",
+      "name": "omnigent",
+      "node_id": "R_kgDOTqIGIw",
+      "notifications_url": "https://api.github.com/repos/Dream1216/omnigent/notifications{?since,all,participating}",
+      "owner": {
+        "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+        "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+        "followers_url": "https://api.github.com/users/Dream1216/followers",
+        "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+        "gravatar_id": "",
+        "html_url": "https://github.com/Dream1216",
+        "id": 39821512,
+        "login": "Dream1216",
+        "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+        "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+        "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+        "repos_url": "https://api.github.com/users/Dream1216/repos",
+        "site_admin": false,
+        "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+        "type": "User",
+        "url": "https://api.github.com/users/Dream1216",
+        "user_view_type": "public"
+      },
+      "private": false,
+      "pulls_url": "https://api.github.com/repos/Dream1216/omnigent/pulls{/number}",
+      "releases_url": "https://api.github.com/repos/Dream1216/omnigent/releases{/id}",
+      "stargazers_url": "https://api.github.com/repos/Dream1216/omnigent/stargazers",
+      "statuses_url": "https://api.github.com/repos/Dream1216/omnigent/statuses/{sha}",
+      "subscribers_url": "https://api.github.com/repos/Dream1216/omnigent/subscribers",
+      "subscription_url": "https://api.github.com/repos/Dream1216/omnigent/subscription",
+      "tags_url": "https://api.github.com/repos/Dream1216/omnigent/tags",
+      "teams_url": "https://api.github.com/repos/Dream1216/omnigent/teams",
+      "trees_url": "https://api.github.com/repos/Dream1216/omnigent/git/trees{/sha}",
+      "url": "https://api.github.com/repos/Dream1216/omnigent"
+    },
+    "head_sha": "c724abb9d43c40717e83154a7da9270150f3d418",
+    "html_url": "https://github.com/Dream1216/omnigent/actions/runs/41850549942",
+    "id": 41850549942,
+    "jobs_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/jobs",
+    "logs_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/logs",
+    "name": "SaaS N-1 merge gate",
+    "node_id": "WFR_kwLOTqIGI88AAAAJvny2tg",
+    "path": ".github/workflows/saas-n1-merge-gate.yml",
+    "previous_attempt_url": null,
+    "pull_requests": [],
+    "referenced_workflows": [],
+    "repository": {
+      "archive_url": "https://api.github.com/repos/Dream1216/omnigent/{archive_format}{/ref}",
+      "assignees_url": "https://api.github.com/repos/Dream1216/omnigent/assignees{/user}",
+      "blobs_url": "https://api.github.com/repos/Dream1216/omnigent/git/blobs{/sha}",
+      "branches_url": "https://api.github.com/repos/Dream1216/omnigent/branches{/branch}",
+      "collaborators_url": "https://api.github.com/repos/Dream1216/omnigent/collaborators{/collaborator}",
+      "comments_url": "https://api.github.com/repos/Dream1216/omnigent/comments{/number}",
+      "commits_url": "https://api.github.com/repos/Dream1216/omnigent/commits{/sha}",
+      "compare_url": "https://api.github.com/repos/Dream1216/omnigent/compare/{base}...{head}",
+      "contents_url": "https://api.github.com/repos/Dream1216/omnigent/contents/{+path}",
+      "contributors_url": "https://api.github.com/repos/Dream1216/omnigent/contributors",
+      "deployments_url": "https://api.github.com/repos/Dream1216/omnigent/deployments",
+      "description": "Omnigent is an open-source AI agent framework and meta-harness: orchestrate Claude Code, Codex, Cursor, Pi, and custom agents — swap harnesses without rewriting, enforce policies and sandboxing, and collaborate in real time from any device.",
+      "downloads_url": "https://api.github.com/repos/Dream1216/omnigent/downloads",
+      "events_url": "https://api.github.com/repos/Dream1216/omnigent/events",
+      "fork": true,
+      "forks_url": "https://api.github.com/repos/Dream1216/omnigent/forks",
+      "full_name": "Dream1216/omnigent",
+      "git_commits_url": "https://api.github.com/repos/Dream1216/omnigent/git/commits{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Dream1216/omnigent/git/refs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Dream1216/omnigent/git/tags{/sha}",
+      "hooks_url": "https://api.github.com/repos/Dream1216/omnigent/hooks",
+      "html_url": "https://github.com/Dream1216/omnigent",
+      "id": 1319241251,
+      "issue_comment_url": "https://api.github.com/repos/Dream1216/omnigent/issues/comments{/number}",
+      "issue_events_url": "https://api.github.com/repos/Dream1216/omnigent/issues/events{/number}",
+      "issues_url": "https://api.github.com/repos/Dream1216/omnigent/issues{/number}",
+      "keys_url": "https://api.github.com/repos/Dream1216/omnigent/keys{/key_id}",
+      "labels_url": "https://api.github.com/repos/Dream1216/omnigent/labels{/name}",
+      "languages_url": "https://api.github.com/repos/Dream1216/omnigent/languages",
+      "merges_url": "https://api.github.com/repos/Dream1216/omnigent/merges",
+      "milestones_url": "https://api.github.com/repos/Dream1216/omnigent/milestones{/number}",
+      "name": "omnigent",
+      "node_id": "R_kgDOTqIGIw",
+      "notifications_url": "https://api.github.com/repos/Dream1216/omnigent/notifications{?since,all,participating}",
+      "owner": {
+        "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+        "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+        "followers_url": "https://api.github.com/users/Dream1216/followers",
+        "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+        "gravatar_id": "",
+        "html_url": "https://github.com/Dream1216",
+        "id": 39821512,
+        "login": "Dream1216",
+        "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+        "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+        "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+        "repos_url": "https://api.github.com/users/Dream1216/repos",
+        "site_admin": false,
+        "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+        "type": "User",
+        "url": "https://api.github.com/users/Dream1216",
+        "user_view_type": "public"
+      },
+      "private": false,
+      "pulls_url": "https://api.github.com/repos/Dream1216/omnigent/pulls{/number}",
+      "releases_url": "https://api.github.com/repos/Dream1216/omnigent/releases{/id}",
+      "stargazers_url": "https://api.github.com/repos/Dream1216/omnigent/stargazers",
+      "statuses_url": "https://api.github.com/repos/Dream1216/omnigent/statuses/{sha}",
+      "subscribers_url": "https://api.github.com/repos/Dream1216/omnigent/subscribers",
+      "subscription_url": "https://api.github.com/repos/Dream1216/omnigent/subscription",
+      "tags_url": "https://api.github.com/repos/Dream1216/omnigent/tags",
+      "teams_url": "https://api.github.com/repos/Dream1216/omnigent/teams",
+      "trees_url": "https://api.github.com/repos/Dream1216/omnigent/git/trees{/sha}",
+      "url": "https://api.github.com/repos/Dream1216/omnigent"
+    },
+    "rerun_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/rerun",
+    "run_attempt": 1,
+    "run_number": 5928,
+    "run_started_at": "2026-11-04T14:44:17Z",
+    "status": "completed",
+    "triggering_actor": {
+      "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+      "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+      "followers_url": "https://api.github.com/users/Dream1216/followers",
+      "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+      "gravatar_id": "",
+      "html_url": "https://github.com/Dream1216",
+      "id": 39821512,
+      "login": "Dream1216",
+      "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+      "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+      "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+      "repos_url": "https://api.github.com/users/Dream1216/repos",
+      "site_admin": false,
+      "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+      "type": "User",
+      "url": "https://api.github.com/users/Dream1216",
+      "user_view_type": "public"
+    },
+    "updated_at": "2026-11-04T14:44:28Z",
+    "url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942",
+    "workflow_id": 343249704,
+    "workflow_url": "https://api.github.com/repos/Dream1216/omnigent/actions/workflows/343249704"
+  },
+  "run": {
+    "actor": {
+      "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+      "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+      "followers_url": "https://api.github.com/users/Dream1216/followers",
+      "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+      "gravatar_id": "",
+      "html_url": "https://github.com/Dream1216",
+      "id": 39821512,
+      "login": "Dream1216",
+      "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+      "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+      "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+      "repos_url": "https://api.github.com/users/Dream1216/repos",
+      "site_admin": false,
+      "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+      "type": "User",
+      "url": "https://api.github.com/users/Dream1216",
+      "user_view_type": "public"
+    },
+    "artifacts_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/artifacts",
+    "cancel_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/cancel",
+    "check_suite_id": 113403593078,
+    "check_suite_node_id": "CS_kwDOTqIGI88AAAAaZ2GBdg",
+    "check_suite_url": "https://api.github.com/repos/Dream1216/omnigent/check-suites/113403593078",
+    "conclusion": "failure",
+    "created_at": "2026-11-04T14:44:17Z",
+    "display_title": "SaaS N-1 merge gate",
+    "event": "workflow_run",
+    "head_branch": "main",
+    "head_commit": {
+      "author": {
+        "email": "39821512+Dream1216@users.noreply.github.com",
+        "name": "胜天半子"
+      },
+      "committer": {
+        "email": "noreply@github.com",
+        "name": "GitHub"
+      },
+      "id": "c724abb9d43c40717e83154a7da9270150f3d418",
+      "message": "fix(saas): bind publication checkout logs to native step boundaries (#226)\n\nfix(saas): bind publication checkout logs to native step boundaries",
+      "timestamp": "2026-11-04T04:14:33Z",
+      "tree_id": "c1b5435fa23d68b67fa8a338b164074caa82e8be"
+    },
+    "head_repository": {
+      "archive_url": "https://api.github.com/repos/Dream1216/omnigent/{archive_format}{/ref}",
+      "assignees_url": "https://api.github.com/repos/Dream1216/omnigent/assignees{/user}",
+      "blobs_url": "https://api.github.com/repos/Dream1216/omnigent/git/blobs{/sha}",
+      "branches_url": "https://api.github.com/repos/Dream1216/omnigent/branches{/branch}",
+      "collaborators_url": "https://api.github.com/repos/Dream1216/omnigent/collaborators{/collaborator}",
+      "comments_url": "https://api.github.com/repos/Dream1216/omnigent/comments{/number}",
+      "commits_url": "https://api.github.com/repos/Dream1216/omnigent/commits{/sha}",
+      "compare_url": "https://api.github.com/repos/Dream1216/omnigent/compare/{base}...{head}",
+      "contents_url": "https://api.github.com/repos/Dream1216/omnigent/contents/{+path}",
+      "contributors_url": "https://api.github.com/repos/Dream1216/omnigent/contributors",
+      "deployments_url": "https://api.github.com/repos/Dream1216/omnigent/deployments",
+      "description": "Omnigent is an open-source AI agent framework and meta-harness: orchestrate Claude Code, Codex, Cursor, Pi, and custom agents — swap harnesses without rewriting, enforce policies and sandboxing, and collaborate in real time from any device.",
+      "downloads_url": "https://api.github.com/repos/Dream1216/omnigent/downloads",
+      "events_url": "https://api.github.com/repos/Dream1216/omnigent/events",
+      "fork": true,
+      "forks_url": "https://api.github.com/repos/Dream1216/omnigent/forks",
+      "full_name": "Dream1216/omnigent",
+      "git_commits_url": "https://api.github.com/repos/Dream1216/omnigent/git/commits{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Dream1216/omnigent/git/refs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Dream1216/omnigent/git/tags{/sha}",
+      "hooks_url": "https://api.github.com/repos/Dream1216/omnigent/hooks",
+      "html_url": "https://github.com/Dream1216/omnigent",
+      "id": 1319241251,
+      "issue_comment_url": "https://api.github.com/repos/Dream1216/omnigent/issues/comments{/number}",
+      "issue_events_url": "https://api.github.com/repos/Dream1216/omnigent/issues/events{/number}",
+      "issues_url": "https://api.github.com/repos/Dream1216/omnigent/issues{/number}",
+      "keys_url": "https://api.github.com/repos/Dream1216/omnigent/keys{/key_id}",
+      "labels_url": "https://api.github.com/repos/Dream1216/omnigent/labels{/name}",
+      "languages_url": "https://api.github.com/repos/Dream1216/omnigent/languages",
+      "merges_url": "https://api.github.com/repos/Dream1216/omnigent/merges",
+      "milestones_url": "https://api.github.com/repos/Dream1216/omnigent/milestones{/number}",
+      "name": "omnigent",
+      "node_id": "R_kgDOTqIGIw",
+      "notifications_url": "https://api.github.com/repos/Dream1216/omnigent/notifications{?since,all,participating}",
+      "owner": {
+        "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+        "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+        "followers_url": "https://api.github.com/users/Dream1216/followers",
+        "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+        "gravatar_id": "",
+        "html_url": "https://github.com/Dream1216",
+        "id": 39821512,
+        "login": "Dream1216",
+        "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+        "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+        "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+        "repos_url": "https://api.github.com/users/Dream1216/repos",
+        "site_admin": false,
+        "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+        "type": "User",
+        "url": "https://api.github.com/users/Dream1216",
+        "user_view_type": "public"
+      },
+      "private": false,
+      "pulls_url": "https://api.github.com/repos/Dream1216/omnigent/pulls{/number}",
+      "releases_url": "https://api.github.com/repos/Dream1216/omnigent/releases{/id}",
+      "stargazers_url": "https://api.github.com/repos/Dream1216/omnigent/stargazers",
+      "statuses_url": "https://api.github.com/repos/Dream1216/omnigent/statuses/{sha}",
+      "subscribers_url": "https://api.github.com/repos/Dream1216/omnigent/subscribers",
+      "subscription_url": "https://api.github.com/repos/Dream1216/omnigent/subscription",
+      "tags_url": "https://api.github.com/repos/Dream1216/omnigent/tags",
+      "teams_url": "https://api.github.com/repos/Dream1216/omnigent/teams",
+      "trees_url": "https://api.github.com/repos/Dream1216/omnigent/git/trees{/sha}",
+      "url": "https://api.github.com/repos/Dream1216/omnigent"
+    },
+    "head_sha": "c724abb9d43c40717e83154a7da9270150f3d418",
+    "html_url": "https://github.com/Dream1216/omnigent/actions/runs/41850549942",
+    "id": 41850549942,
+    "jobs_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/attempts/1/jobs",
+    "logs_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/attempts/1/logs",
+    "name": "SaaS N-1 merge gate",
+    "node_id": "WFR_kwLOTqIGI88AAAAJvny2tg",
+    "path": ".github/workflows/saas-n1-merge-gate.yml",
+    "previous_attempt_url": null,
+    "pull_requests": [],
+    "referenced_workflows": [],
+    "repository": {
+      "archive_url": "https://api.github.com/repos/Dream1216/omnigent/{archive_format}{/ref}",
+      "assignees_url": "https://api.github.com/repos/Dream1216/omnigent/assignees{/user}",
+      "blobs_url": "https://api.github.com/repos/Dream1216/omnigent/git/blobs{/sha}",
+      "branches_url": "https://api.github.com/repos/Dream1216/omnigent/branches{/branch}",
+      "collaborators_url": "https://api.github.com/repos/Dream1216/omnigent/collaborators{/collaborator}",
+      "comments_url": "https://api.github.com/repos/Dream1216/omnigent/comments{/number}",
+      "commits_url": "https://api.github.com/repos/Dream1216/omnigent/commits{/sha}",
+      "compare_url": "https://api.github.com/repos/Dream1216/omnigent/compare/{base}...{head}",
+      "contents_url": "https://api.github.com/repos/Dream1216/omnigent/contents/{+path}",
+      "contributors_url": "https://api.github.com/repos/Dream1216/omnigent/contributors",
+      "deployments_url": "https://api.github.com/repos/Dream1216/omnigent/deployments",
+      "description": "Omnigent is an open-source AI agent framework and meta-harness: orchestrate Claude Code, Codex, Cursor, Pi, and custom agents — swap harnesses without rewriting, enforce policies and sandboxing, and collaborate in real time from any device.",
+      "downloads_url": "https://api.github.com/repos/Dream1216/omnigent/downloads",
+      "events_url": "https://api.github.com/repos/Dream1216/omnigent/events",
+      "fork": true,
+      "forks_url": "https://api.github.com/repos/Dream1216/omnigent/forks",
+      "full_name": "Dream1216/omnigent",
+      "git_commits_url": "https://api.github.com/repos/Dream1216/omnigent/git/commits{/sha}",
+      "git_refs_url": "https://api.github.com/repos/Dream1216/omnigent/git/refs{/sha}",
+      "git_tags_url": "https://api.github.com/repos/Dream1216/omnigent/git/tags{/sha}",
+      "hooks_url": "https://api.github.com/repos/Dream1216/omnigent/hooks",
+      "html_url": "https://github.com/Dream1216/omnigent",
+      "id": 1319241251,
+      "issue_comment_url": "https://api.github.com/repos/Dream1216/omnigent/issues/comments{/number}",
+      "issue_events_url": "https://api.github.com/repos/Dream1216/omnigent/issues/events{/number}",
+      "issues_url": "https://api.github.com/repos/Dream1216/omnigent/issues{/number}",
+      "keys_url": "https://api.github.com/repos/Dream1216/omnigent/keys{/key_id}",
+      "labels_url": "https://api.github.com/repos/Dream1216/omnigent/labels{/name}",
+      "languages_url": "https://api.github.com/repos/Dream1216/omnigent/languages",
+      "merges_url": "https://api.github.com/repos/Dream1216/omnigent/merges",
+      "milestones_url": "https://api.github.com/repos/Dream1216/omnigent/milestones{/number}",
+      "name": "omnigent",
+      "node_id": "R_kgDOTqIGIw",
+      "notifications_url": "https://api.github.com/repos/Dream1216/omnigent/notifications{?since,all,participating}",
+      "owner": {
+        "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+        "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+        "followers_url": "https://api.github.com/users/Dream1216/followers",
+        "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+        "gravatar_id": "",
+        "html_url": "https://github.com/Dream1216",
+        "id": 39821512,
+        "login": "Dream1216",
+        "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+        "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+        "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+        "repos_url": "https://api.github.com/users/Dream1216/repos",
+        "site_admin": false,
+        "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+        "type": "User",
+        "url": "https://api.github.com/users/Dream1216",
+        "user_view_type": "public"
+      },
+      "private": false,
+      "pulls_url": "https://api.github.com/repos/Dream1216/omnigent/pulls{/number}",
+      "releases_url": "https://api.github.com/repos/Dream1216/omnigent/releases{/id}",
+      "stargazers_url": "https://api.github.com/repos/Dream1216/omnigent/stargazers",
+      "statuses_url": "https://api.github.com/repos/Dream1216/omnigent/statuses/{sha}",
+      "subscribers_url": "https://api.github.com/repos/Dream1216/omnigent/subscribers",
+      "subscription_url": "https://api.github.com/repos/Dream1216/omnigent/subscription",
+      "tags_url": "https://api.github.com/repos/Dream1216/omnigent/tags",
+      "teams_url": "https://api.github.com/repos/Dream1216/omnigent/teams",
+      "trees_url": "https://api.github.com/repos/Dream1216/omnigent/git/trees{/sha}",
+      "url": "https://api.github.com/repos/Dream1216/omnigent"
+    },
+    "rerun_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942/rerun",
+    "run_attempt": 1,
+    "run_number": 5928,
+    "run_started_at": "2026-11-04T14:44:17Z",
+    "status": "completed",
+    "triggering_actor": {
+      "avatar_url": "https://avatars.githubusercontent.com/u/39821512?v=4",
+      "events_url": "https://api.github.com/users/Dream1216/events{/privacy}",
+      "followers_url": "https://api.github.com/users/Dream1216/followers",
+      "following_url": "https://api.github.com/users/Dream1216/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Dream1216/gists{/gist_id}",
+      "gravatar_id": "",
+      "html_url": "https://github.com/Dream1216",
+      "id": 39821512,
+      "login": "Dream1216",
+      "node_id": "MDQ6VXNlcjM5ODIxNTEy",
+      "organizations_url": "https://api.github.com/users/Dream1216/orgs",
+      "received_events_url": "https://api.github.com/users/Dream1216/received_events",
+      "repos_url": "https://api.github.com/users/Dream1216/repos",
+      "site_admin": false,
+      "starred_url": "https://api.github.com/users/Dream1216/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Dream1216/subscriptions",
+      "type": "User",
+      "url": "https://api.github.com/users/Dream1216",
+      "user_view_type": "public"
+    },
+    "updated_at": "2026-11-04T14:44:28Z",
+    "url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942",
+    "workflow_id": 343249704,
+    "workflow_url": "https://api.github.com/repos/Dream1216/omnigent/actions/workflows/343249704"
+  },
+  "job": {
+    "check_run_url": "https://api.github.com/repos/Dream1216/omnigent/check-runs/126645369962",
+    "completed_at": "2026-11-04T14:44:27Z",
+    "conclusion": "failure",
+    "created_at": "2026-11-04T14:44:18Z",
+    "head_branch": "main",
+    "head_sha": "c724abb9d43c40717e83154a7da9270150f3d418",
+    "html_url": "https://github.com/Dream1216/omnigent/actions/runs/41850549942/job/126645369962",
+    "id": 126645369962,
+    "labels": [
+      "ubuntu-24.04"
+    ],
+    "name": "evaluate",
+    "node_id": "CR_kwDOTqIGI88AAAAdfKb8ag",
+    "run_attempt": 1,
+    "run_id": 41850549942,
+    "run_url": "https://api.github.com/repos/Dream1216/omnigent/actions/runs/41850549942",
+    "runner_group_id": 0,
+    "runner_group_name": "GitHub Actions",
+    "runner_id": 1000104947,
+    "runner_name": "GitHub Actions 1000104947",
+    "started_at": "2026-11-04T14:44:20Z",
+    "status": "completed",
+    "steps": [
+      {
+        "completed_at": "2026-11-04T14:44:21Z",
+        "conclusion": "success",
+        "name": "Set up job",
+        "number": 1,
+        "started_at": "2026-11-04T14:44:20Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-11-04T14:44:23Z",
+        "conclusion": "success",
+        "name": "Check out trusted gate",
+        "number": 2,
+        "started_at": "2026-11-04T14:44:21Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-11-04T14:44:24Z",
+        "conclusion": "failure",
+        "name": "Resolve current PR head",
+        "number": 3,
+        "started_at": "2026-11-04T14:44:23Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-11-04T14:44:24Z",
+        "conclusion": "skipped",
+        "name": "Evaluate exact PostgreSQL N-1 authority",
+        "number": 4,
+        "started_at": "2026-11-04T14:44:24Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-11-04T14:44:24Z",
+        "conclusion": "skipped",
+        "name": "Mark non-completed N-1 run pending",
+        "number": 5,
+        "started_at": "2026-11-04T14:44:24Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-11-04T14:44:24Z",
+        "conclusion": "skipped",
+        "name": "Post exact-head gate status",
+        "number": 6,
+        "started_at": "2026-11-04T14:44:24Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-11-04T14:44:24Z",
+        "conclusion": "success",
+        "name": "Post Check out trusted gate",
+        "number": 12,
+        "started_at": "2026-11-04T14:44:24Z",
+        "status": "completed"
+      },
+      {
+        "completed_at": "2026-11-04T14:44:24Z",
+        "conclusion": "success",
+        "name": "Complete job",
+        "number": 13,
+        "started_at": "2026-11-04T14:44:24Z",
+        "status": "completed"
+      }
+    ],
+    "url": "https://api.github.com/repos/Dream1216/omnigent/actions/jobs/126645369962",
+    "workflow_name": "SaaS N-1 merge gate"
+  },
+  "check": {
+    "app": {
+      "client_id": "Iv1.05c79e9ad1f6bdfa",
+      "created_at": "2018-07-30T09:30:17Z",
+      "description": "Automate your workflow from idea to production",
+      "events": [
+        "branch_protection_rule",
+        "check_run",
+        "check_suite",
+        "create",
+        "delete",
+        "deployment",
+        "deployment_status",
+        "discussion",
+        "discussion_comment",
+        "fork",
+        "gollum",
+        "issues",
+        "issue_comment",
+        "label",
+        "merge_group",
+        "milestone",
+        "page_build",
+        "public",
+        "pull_request",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "push",
+        "registry_package",
+        "release",
+        "repository",
+        "repository_dispatch",
+        "status",
+        "watch",
+        "workflow_dispatch",
+        "workflow_run"
+      ],
+      "external_url": "https://help.github.com/en/actions",
+      "html_url": "https://github.com/apps/github-actions",
+      "id": 15368,
+      "name": "GitHub Actions",
+      "node_id": "MDM6QXBwMTUzNjg=",
+      "owner": {
+        "avatar_url": "https://avatars.githubusercontent.com/u/9919?v=4",
+        "events_url": "https://api.github.com/users/github/events{/privacy}",
+        "followers_url": "https://api.github.com/users/github/followers",
+        "following_url": "https://api.github.com/users/github/following{/other_user}",
+        "gists_url": "https://api.github.com/users/github/gists{/gist_id}",
+        "gravatar_id": "",
+        "html_url": "https://github.com/github",
+        "id": 9919,
+        "login": "github",
+        "node_id": "MDEyOk9yZ2FuaXphdGlvbjk5MTk=",
+        "organizations_url": "https://api.github.com/users/github/orgs",
+        "received_events_url": "https://api.github.com/users/github/received_events",
+        "repos_url": "https://api.github.com/users/github/repos",
+        "site_admin": false,
+        "starred_url": "https://api.github.com/users/github/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/github/subscriptions",
+        "type": "Organization",
+        "url": "https://api.github.com/users/github",
+        "user_view_type": "public"
+      },
+      "permissions": {
+        "actions": "write",
+        "administration": "read",
+        "artifact_metadata": "write",
+        "attestations": "write",
+        "checks": "write",
+        "code_quality": "write",
+        "contents": "write",
+        "copilot_requests": "write",
+        "deployments": "write",
+        "discussions": "write",
+        "drives": "write",
+        "issues": "write",
+        "merge_queues": "write",
+        "metadata": "read",
+        "models": "read",
+        "packages": "write",
+        "pages": "write",
+        "pull_requests": "write",
+        "repository_hooks": "write",
+        "repository_projects": "write",
+        "security_events": "write",
+        "statuses": "write",
+        "vulnerability_alerts": "read"
+      },
+      "slug": "github-actions",
+      "updated_at": "2026-06-18T16:17:48Z"
+    },
+    "check_suite": {
+      "id": 113403593078
+    },
+    "completed_at": "2026-11-04T14:44:27Z",
+    "conclusion": "failure",
+    "details_url": "https://github.com/Dream1216/omnigent/actions/runs/41850549942/job/126645369962",
+    "external_id": "a921f211-456c-5bcc-ab6e-21d6a510cf8f",
+    "head_sha": "c724abb9d43c40717e83154a7da9270150f3d418",
+    "html_url": "https://github.com/Dream1216/omnigent/actions/runs/41850549942/job/126645369962",
+    "id": 126645369962,
+    "name": "evaluate",
+    "node_id": "CR_kwDOTqIGI88AAAAdfKb8ag",
+    "output": {
+      "annotations_count": 2,
+      "annotations_url": "https://api.github.com/repos/Dream1216/omnigent/check-runs/126645369962/annotations",
+      "summary": null,
+      "text": null,
+      "title": null
+    },
+    "pull_requests": [],
+    "started_at": "2026-11-04T14:44:20Z",
+    "status": "completed",
+    "url": "https://api.github.com/repos/Dream1216/omnigent/check-runs/126645369962"
+  },
+  "workflow_text": "name: SaaS N-1 merge gate\n\n# Runs only trusted main-side policy and posts a dedicated commit status to the\n# exact PR head. Candidate code is never checked out or executed here.\non:\n  pull_request_target:\n    types: [opened, reopened, synchronize, ready_for_review]\n  workflow_run:\n    workflows: [SaaS N-1 compatibility image]\n    types: [requested, in_progress, completed]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: saas-n1-merge-gate-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}\n  cancel-in-progress: true\n\njobs:\n  evaluate:\n    name: evaluate\n    if: >-\n      github.event_name != 'workflow_run' ||\n      github.event.workflow_run.event == 'pull_request'\n    permissions:\n      actions: read\n      contents: read\n      pull-requests: read\n      statuses: write\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - name: Check out trusted gate\n        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0\n        with:\n          ref: main\n          sparse-checkout: .github/actions/compat-smoke-saas-n1-gate\n          persist-credentials: false\n\n      - name: Resolve current PR head\n        id: context\n        env:\n          GH_TOKEN: ${{ github.token }}\n          REPO: ${{ github.repository }}\n          EVENT_NAME: ${{ github.event_name }}\n          EVENT_PR: ${{ github.event.pull_request.number }}\n          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}\n          WORKFLOW_PRS: ${{ toJSON(github.event.workflow_run.pull_requests) }}\n        run: |\n          set -euo pipefail\n          if [[ \"$EVENT_NAME\" == \"pull_request_target\" ]]; then\n            PR=\"$EVENT_PR\"\n            EXPECTED_SHA=\"$EVENT_HEAD_SHA\"\n          else\n            EXPECTED_SHA=\"$WORKFLOW_HEAD_SHA\"\n            PR=$(jq -r '.[0].number // empty' <<<\"$WORKFLOW_PRS\")\n            if [[ -z \"$PR\" ]]; then\n              SEARCH=$(gh api \"search/issues?q=repo:$REPO+type:pr+state:open+sha:$EXPECTED_SHA\")\n              COUNT=$(jq '.items | length' <<<\"$SEARCH\")\n              [[ \"$COUNT\" -eq 1 ]] || {\n                echo \"::error::workflow head must resolve to exactly one open PR\"\n                exit 1\n              }\n              PR=$(jq -r '.items[0].number' <<<\"$SEARCH\")\n            fi\n          fi\n\n          META=$(gh api \"repos/$REPO/pulls/$PR\" \\\n            --jq '[.state, .base.ref, .base.sha, .head.sha] | @tsv')\n          IFS=$'\\t' read -r STATE BASE_REF BASE_SHA SHA <<<\"$META\"\n          [[ \"$STATE\" == \"open\" && \"$BASE_REF\" == \"main\" && \\\n             \"$BASE_SHA\" =~ ^[0-9a-f]{40}$ && \"$SHA\" =~ ^[0-9a-f]{40}$ ]] || {\n            echo \"::error::resolved PR is not an open main-targeting PR\"\n            exit 1\n          }\n          [[ -z \"$EXPECTED_SHA\" || \"$SHA\" == \"$EXPECTED_SHA\" ]] || {\n            echo \"::error::workflow run no longer matches the current PR head\"\n            exit 1\n          }\n          echo \"pr=$PR\" >>\"$GITHUB_OUTPUT\"\n          echo \"base_sha=$BASE_SHA\" >>\"$GITHUB_OUTPUT\"\n          echo \"sha=$SHA\" >>\"$GITHUB_OUTPUT\"\n\n      - name: Evaluate exact PostgreSQL N-1 authority\n        id: gate\n        if: >-\n          github.event_name != 'workflow_run' ||\n          github.event.action == 'completed'\n        continue-on-error: true\n        env:\n          GH_TOKEN: ${{ github.token }}\n          REPO: ${{ github.repository }}\n          PR: ${{ steps.context.outputs.pr }}\n          SHA: ${{ steps.context.outputs.sha }}\n        run: bash .github/actions/compat-smoke-saas-n1-gate/evaluate.sh\n\n      - name: Mark non-completed N-1 run pending\n        if: >-\n          github.event_name == 'workflow_run' &&\n          github.event.action != 'completed'\n        env:\n          GH_TOKEN: ${{ github.token }}\n          REPO: ${{ github.repository }}\n          PR: ${{ steps.context.outputs.pr }}\n          BASE_SHA: ${{ steps.context.outputs.base_sha }}\n          SHA: ${{ steps.context.outputs.sha }}\n          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n        run: |\n          set -euo pipefail\n          CURRENT=$(gh api \"repos/$REPO/pulls/$PR\" \\\n            --jq '[.state, .base.ref, .base.sha, .head.sha] | @tsv')\n          IFS=$'\\t' read -r CURRENT_STATE CURRENT_BASE_REF CURRENT_BASE_SHA \\\n            CURRENT_HEAD_SHA <<<\"$CURRENT\"\n          [[ \"$CURRENT_STATE\" == \"open\" && \"$CURRENT_BASE_REF\" == \"main\" && \\\n             \"$CURRENT_BASE_SHA\" == \"$BASE_SHA\" && \"$CURRENT_HEAD_SHA\" == \"$SHA\" ]] || {\n            echo \"::error::PR head or base changed before pending status\"\n            exit 1\n          }\n          gh api \"repos/$REPO/statuses/$SHA\" \\\n            -f state=pending \\\n            -f context=\"SaaS N-1 Merge Ready\" \\\n            -f target_url=\"$TARGET_URL\" \\\n            -f description=\"PostgreSQL 16 N-1 verification is running\" >/dev/null\n\n      - name: Post exact-head gate status\n        if: >-\n          github.event_name != 'workflow_run' ||\n          github.event.action == 'completed'\n        env:\n          GH_TOKEN: ${{ github.token }}\n          REPO: ${{ github.repository }}\n          PR: ${{ steps.context.outputs.pr }}\n          BASE_SHA: ${{ steps.context.outputs.base_sha }}\n          SHA: ${{ steps.context.outputs.sha }}\n          OUTCOME: ${{ steps.gate.outcome }}\n          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n        run: |\n          set -euo pipefail\n          CURRENT=$(gh api \"repos/$REPO/pulls/$PR\" \\\n            --jq '[.state, .base.ref, .base.sha, .head.sha] | @tsv')\n          IFS=$'\\t' read -r CURRENT_STATE CURRENT_BASE_REF CURRENT_BASE_SHA \\\n            CURRENT_HEAD_SHA <<<\"$CURRENT\"\n          [[ \"$CURRENT_STATE\" == \"open\" && \"$CURRENT_BASE_REF\" == \"main\" && \\\n             \"$CURRENT_BASE_SHA\" == \"$BASE_SHA\" && \"$CURRENT_HEAD_SHA\" == \"$SHA\" ]] || {\n            echo \"::error::PR head or base changed during gate evaluation\"\n            exit 1\n          }\n          if [[ \"$OUTCOME\" == \"success\" ]]; then\n            STATE=success\n            DESCRIPTION=\"trusted PostgreSQL 16 N-1 evidence accepted\"\n          else\n            STATE=failure\n            DESCRIPTION=\"trusted PostgreSQL 16 N-1 evidence missing or rejected\"\n          fi\n          gh api \"repos/$REPO/statuses/$SHA\" \\\n            -f state=\"$STATE\" \\\n            -f context=\"SaaS N-1 Merge Ready\" \\\n            -f target_url=\"$TARGET_URL\" \\\n            -f description=\"$DESCRIPTION\" >/dev/null\n          [[ \"$STATE\" == \"success\" ]]\n",
+  "gate_text": "#!/usr/bin/env bash\n\n# Evaluate the PostgreSQL N-1 check for one exact pull-request head. This file\n# is checked out from main by a pull_request_target/workflow_run workflow; no\n# candidate-owned gate code is executed.\n\nset -euo pipefail\n\nPOSTGRESQL_N1_CHECK=\"verify-postgresql-n1\"\nPOSTGRESQL_N1_WORKFLOW_NAME=\"SaaS N-1 compatibility image\"\nPOSTGRESQL_N1_WORKFLOW_ID=\"342012814\"\nPOSTGRESQL_N1_WORKFLOW_PATH=\".github/workflows/saas-n1-compat-image.yml\"\nPOSTGRESQL_N1_WORKFLOW_SHA256=\"84f224ac8436e7b42eb49442d2017e225ea2599ecfc3c7a9d25c5ba6b4535217\"\nPOSTGRESQL_N1_ACTIONS_APP_ID=\"15368\"\n\n# Candidate inputs that can change pytest collection, dependency resolution,\n# fixtures, or the selected assertions are pinned by the trusted main policy.\nPOSTGRESQL_N1_TRUSTED_INPUTS=(\n  \"pyproject.toml|2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9,24fe2762769bbd06e8da179caf64140a5869e3c33ee875c83bb3a51f266ba322\"\n  \"uv.lock|8c4aef4e0da8a83415effabc4f9b4e946756145729a88ee43c466f994a35730f,a307dcaca4909b33b5fcce4846d03b2beebbda62a42d1c7148f708042bc70866\"\n  \"tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n  \"tests/_model_pools.py|d25fda757b12bffbaa6a42e468f625f715cc3ee37df7f9b5af4b8d70af781362\"\n  \"tests/_token_usage.py|25dbfbc0caea11edd4be3bb3eb530e2a784e9c98e6e2f652beeddae7b7071fa8\"\n  \"tests/conftest.py|8dc962866d33ba30ebac092b47e6afd0318bac2e2c861fd78b8bbe6d15792b8f,54a9017176a2a4d423f377122e3d6cd7e9dcc024af3eed15ea6237f1c45e8828\"\n  \"tests/saas/__init__.py|7c14e27fe713806e1e8fe6d3034333e8fb9442289484cf8778ec88c754c7181d\"\n  \"tests/saas/conftest.py|5e1c588076fd6f7976e81cdc58047d5d21830b393af496b158907af0dfc7339c\"\n  \"tests/saas/test_n1_compat_patch.py|ef658549e497e6a64c6f686a699926ef9f6ffc79790e745d9d8ad4308ccd1475,094c8b99bd8ec31fc27002fa4c1bc6fdb01e018a9ed9acc98120aed44f4fe07c\"\n  \"tests/saas/test_image_supply_chain.py|0b554b2e7bbfc71789bb6278765e469976bdcf2014ec09f4c8ff8f8da50d0392,ce051c02f6232658fad652ef89af3a6ae7ad4cf3ac63a4ae3c7bf4f7b8150f76\"\n  \"saas/scripts/build_n1_compat.py|566557b74dfdbcfeaad30f88b172820b88d9e86cc7f7af70b8e92f910f45303d\"\n  \"saas/scripts/compare_oci_rebuilds.py|74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b\"\n  \"saas/n1_compat/manifest.json|eb74bc6f938da18792a190ade70f3604f247f50f6c1b25f70bb96ac68d56d99f\"\n  \"saas/n1_compat/Dockerfile|df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed\"\n  \"saas/n1_compat/Dockerfile.dockerignore|72aa85a2e1e88d468d3843d18199b1d0959a7ba4b3227c4354c722c4461f3275\"\n  \"saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29\"\n  \"tests/saas/test_n1_merge_gate_candidate.py|ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365,0a09d3731cce4d6611c85de07e76f7238295a5add9ecc82a2cf92e0bb524c7d4\"\n  \"tests/saas/test_n1_merge_gate.py|14ac6f69efaf5dcb165e082857bcbbe11764dab043a8cf1ff3b738d3c9b4d262,2621c5890478d5cc4d4d7a5e8fef6a1d69bd25b85943b64ec8a2e62f06db83d2\"\n  \"tests/saas/test_n1_outbox_admission.py|d5db6f7cc3feb7a8a9de64da88bab036ba7b6e57be4043e36c29736d462811c1,2570537024bd3ba5d1501ad58d0e76d65a0b49c66ad471869f7c5cb757440b30\"\n  \"tests/saas/test_control_plane_migration.py|deedcbfcf9cabb1ac4e71cfeb0f0803eb5b62a659bac00720ee99f9befd4d0ef,c533432965dcdc87fb9201459d96e44ce086ccb264007af7f2ba0330a31305eb\"\n  \"tests/saas/test_production_runner_postgresql.py|3212366d4d615971b1a386831abb47280d2d94332c1876b7552a371dbfc34ee2,0004ce57cb1ec4dafad3ea80729c8fedd95d0308098df8e073382e1cd66c0400\"\n)\n\n# Separately reviewed Aliyun input bytes; preserve generic and old018 hashes.\nPOSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS=(\n  \"pyproject.toml|7b7bfc95d45ac928bb91cf6b383c94c48792474adf967e34fcfddca15d0c58a6\"\n  \"uv.lock|51412e72b0d0119f388ad9349025fb40f1f5458e55695b736f9e79ab99395b5b\"\n  \"tests/saas/test_image_supply_chain.py|109ac4d727d73b271613089acbb693944047f9705f10c33c4e676075fe52d4f7\"\n  \"saas/scripts/compare_oci_rebuilds.py|fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732\"\n)\n\nPOSTGRESQL_N1_PATHS=(\n  \".github/actions/compat-smoke-saas-n1-gate/**\"\n  \".github/workflows/saas-n1-merge-gate.yml\"\n  \".github/workflows/saas-n1-compat-image.yml\"\n  \".python-version\"\n  \".uv/**\"\n  \".venv/**\"\n  \"conftest.py\"\n  \"deploy/docker/Dockerfile\"\n  \"pyproject.toml\"\n  \"pytest.ini\"\n  \"setup.cfg\"\n  \"setup.py\"\n  \"tox.ini\"\n  \"uv.toml\"\n  \"uv.lock\"\n  \"saas/**\"\n  \"tests/conftest.py\"\n  \"tests/saas/**\"\n)\n\nPOSTGRESQL_N1_POLICY_PATHS=(\n  \".github/actions/compat-smoke-saas-n1-gate/**\"\n  \".github/workflows/saas-n1-merge-gate.yml\"\n)\n\nPOSTGRESQL_N1_FORBIDDEN_PATHS=(\n  \".uv/**\"\n  \".venv/**\"\n)\n\nPRIVILEGED_AUTOMATION_PATHS=(\n  \".github/actions/**\"\n  \".github/workflows/**\"\n)\n\nfail() {\n  echo \"::error::$*\"\n  exit 1\n}\n\nmatches_any() {\n  local path=$1\n  shift\n  local pattern\n  for pattern in \"$@\"; do\n    if [[ \"$path\" == $pattern ]]; then\n      return 0\n    fi\n  done\n  return 1\n}\n\nrequires_postgresql_n1() {\n  local path\n  while IFS= read -r path; do\n    matches_any \"$path\" \"${POSTGRESQL_N1_PATHS[@]}\" && return 0\n  done\n  return 1\n}\n\nchanges_postgresql_n1_policy() {\n  local path\n  while IFS= read -r path; do\n    matches_any \"$path\" \"${POSTGRESQL_N1_POLICY_PATHS[@]}\" && return 0\n  done\n  return 1\n}\n\nchanges_forbidden_environment() {\n  local path\n  while IFS= read -r path; do\n    matches_any \"$path\" \"${POSTGRESQL_N1_FORBIDDEN_PATHS[@]}\" && return 0\n  done\n  return 1\n}\n\nchanges_untrusted_automation() {\n  local path\n  while IFS= read -r path; do\n    # The candidate workflow is the one automation change allowed through this\n    # gate, and only at the byte-exact digest pinned below. Any other workflow\n    # or action could mint a same-app status and therefore needs an explicit\n    # administrator merge.\n    [[ \"$path\" == \"$POSTGRESQL_N1_WORKFLOW_PATH\" ]] && continue\n    matches_any \"$path\" \"${PRIVILEGED_AUTOMATION_PATHS[@]}\" && return 0\n  done\n  return 1\n}\n\nis_reviewed_aliyun_input() {\n  local path=$1 digest=$2 entry\n  case \"$path\" in\n    pyproject.toml|uv.lock|tests/saas/test_image_supply_chain.py|saas/scripts/compare_oci_rebuilds.py) ;;\n    *) return 1 ;;\n  esac\n  [[ \"$digest\" =~ ^[0-9a-f]{64}$ ]] || return 1\n  for entry in \"${POSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS[@]}\"; do\n    [[ \"$entry\" == \"$path|$digest\" ]] && return 0\n  done\n  return 1\n}\n\nif ! [[ \"${PR:-}\" =~ ^[0-9]+$ ]] || ! [[ \"${SHA:-}\" =~ ^[0-9a-f]{40}$ ]]; then\n  fail \"PR and full head SHA are required\"\nfi\n\nPR_METADATA=$(gh api \"repos/$REPO/pulls/$PR\" \\\n  --jq '[.state, .head.sha, .base.ref, .base.sha, (.changed_files | tostring)] | @tsv')\nIFS=$'\\t' read -r PR_STATE PR_HEAD_SHA PR_BASE_REF PR_BASE_SHA \\\n  PR_CHANGED_FILES <<<\"$PR_METADATA\"\nif [[ \"$PR_STATE\" != \"open\" ]] || [[ \"$PR_BASE_REF\" != \"main\" ]] || \\\n   [[ \"$PR_HEAD_SHA\" != \"$SHA\" ]] || ! [[ \"$PR_BASE_SHA\" =~ ^[0-9a-f]{40}$ ]] || \\\n   ! [[ \"$PR_CHANGED_FILES\" =~ ^[0-9]+$ ]]; then\n  fail \"PR is not an open main-targeting PR at exact head SHA $SHA\"\nfi\n\nPR_FILE_ROWS=$(gh api \"repos/$REPO/pulls/$PR/files\" --paginate \\\n  --jq '.[] | [.filename, (.previous_filename // \"\")] | @tsv')\nPR_FILE_COUNT=$(printf '%s\\n' \"$PR_FILE_ROWS\" | awk 'NF {count++} END {print count + 0}')\n[[ \"$PR_FILE_COUNT\" -eq \"$PR_CHANGED_FILES\" ]] || fail \"PR file pagination is incomplete\"\nPR_FILES=$(printf '%s\\n' \"$PR_FILE_ROWS\" | awk -F'\\t' \\\n  '{print $1; if ($2 != \"\") print $2}')\n\nif changes_forbidden_environment <<<\"$PR_FILES\"; then\n  fail \"Committed .uv/.venv state requires an explicit administrator merge\"\nfi\nif changes_postgresql_n1_policy <<<\"$PR_FILES\"; then\n  fail \"PostgreSQL N-1 gate policy changes require an explicit administrator merge\"\nfi\nif changes_untrusted_automation <<<\"$PR_FILES\"; then\n  fail \"GitHub Actions policy changes require an explicit administrator merge\"\nfi\nif ! requires_postgresql_n1 <<<\"$PR_FILES\"; then\n  echo \"SaaS PostgreSQL N-1 gate is not required for this PR.\"\n  exit 0\nfi\n\n[[ \"$POSTGRESQL_N1_WORKFLOW_SHA256\" =~ ^[0-9a-f]{64}$ ]] || \\\n  fail \"trusted PostgreSQL N-1 workflow digest is not configured\"\nOBSERVED_WORKFLOW_SHA256=$(gh api \\\n  -H 'Accept: application/vnd.github.raw+json' \\\n  \"repos/$REPO/contents/$POSTGRESQL_N1_WORKFLOW_PATH?ref=$SHA\" \\\n  | shasum -a 256 | awk '{print $1}')\n[[ \"$OBSERVED_WORKFLOW_SHA256\" == \"$POSTGRESQL_N1_WORKFLOW_SHA256\" ]] || \\\n  fail \"PostgreSQL N-1 workflow bytes do not match trusted main policy\"\n\nfor trusted_input in \"${POSTGRESQL_N1_TRUSTED_INPUTS[@]}\"; do\n  trusted_path=\"${trusted_input%%|*}\"\n  trusted_sha256s=\"${trusted_input#*|}\"\n  [[ \"$trusted_sha256s\" =~ ^[0-9a-f]{64}(,[0-9a-f]{64})?$ ]] || \\\n    fail \"PostgreSQL N-1 trusted input policy is malformed: $trusted_path\"\n  observed_sha256=$(gh api \\\n    -H 'Accept: application/vnd.github.raw+json' \\\n    \"repos/$REPO/contents/$trusted_path?ref=$SHA\" \\\n    | shasum -a 256 | awk '{print $1}')\n  if [[ \",$trusted_sha256s,\" != *\",$observed_sha256,\"* ]] && \\\n    ! is_reviewed_aliyun_input \"$trusted_path\" \"$observed_sha256\"; then\n    fail \"PostgreSQL N-1 trusted input drift: $trusted_path\"\n  fi\ndone\n\n# The latest exact workflow run is authoritative, including its rerun attempt.\n# This prevents an older successful check-run from surviving while a newer\n# attempt is queued, in progress, or failed.\nWORKFLOW_METADATA=$(gh api \\\n  \"repos/$REPO/actions/workflows/$POSTGRESQL_N1_WORKFLOW_ID\" \\\n  --jq '[(.id | tostring), .name, .path, .state] | @tsv')\nIFS=$'\\t' read -r OBSERVED_WORKFLOW_ID OBSERVED_WORKFLOW_NAME \\\n  OBSERVED_WORKFLOW_PATH OBSERVED_WORKFLOW_STATE <<<\"$WORKFLOW_METADATA\"\n[[ \"$OBSERVED_WORKFLOW_ID\" == \"$POSTGRESQL_N1_WORKFLOW_ID\" ]] && \\\n  [[ \"$OBSERVED_WORKFLOW_NAME\" == \"$POSTGRESQL_N1_WORKFLOW_NAME\" ]] && \\\n  [[ \"$OBSERVED_WORKFLOW_PATH\" == \"$POSTGRESQL_N1_WORKFLOW_PATH\" ]] && \\\n  [[ \"$OBSERVED_WORKFLOW_STATE\" == \"active\" ]] || \\\n  fail \"PostgreSQL N-1 workflow registry identity drifted\"\n\nN1_RUN_ROWS=$(gh api \\\n  \"repos/$REPO/actions/workflows/$POSTGRESQL_N1_WORKFLOW_ID/runs?event=pull_request&head_sha=$SHA&per_page=100\" \\\n  --paginate \\\n  --jq '.workflow_runs[] | [(.id | tostring), (.run_attempt | tostring), .status, (.conclusion // \"null\"), (.workflow_id | tostring), .display_title, .path, .event, .head_sha] | @tsv')\nLATEST_N1_RUN=$(printf '%s\\n' \"$N1_RUN_ROWS\" \\\n  | awk -F'\\t' -v workflow_id=\"$POSTGRESQL_N1_WORKFLOW_ID\" \\\n      -v path=\"$POSTGRESQL_N1_WORKFLOW_PATH\" -v sha=\"$SHA\" \\\n      '$5 == workflow_id && $7 == path && $8 == \"pull_request\" && $9 == sha' \\\n  | sort -t$'\\t' -k1,1nr -k2,2nr | head -n1)\n[[ -n \"$LATEST_N1_RUN\" ]] || fail \"exact PostgreSQL N-1 workflow run is missing\"\nIFS=$'\\t' read -r AUTHORITATIVE_RUN_ID AUTHORITATIVE_RUN_ATTEMPT \\\n  AUTHORITATIVE_RUN_STATUS AUTHORITATIVE_RUN_CONCLUSION _ \\\n  AUTHORITATIVE_RUN_TITLE _ _ _ <<<\"$LATEST_N1_RUN\"\nEXPECTED_RUN_TITLE=\"SaaS N-1 pull_request pr=$PR base=$PR_BASE_SHA head=$SHA\"\n[[ \"$AUTHORITATIVE_RUN_TITLE\" == \"$EXPECTED_RUN_TITLE\" ]] || \\\n  fail \"latest PostgreSQL N-1 workflow run title does not bind this PR/base/head\"\nif [[ \"$AUTHORITATIVE_RUN_STATUS\" != \"completed\" ]] || \\\n   [[ \"$AUTHORITATIVE_RUN_CONCLUSION\" != \"success\" ]]; then\n  fail \"latest PostgreSQL N-1 workflow run $AUTHORITATIVE_RUN_ID attempt $AUTHORITATIVE_RUN_ATTEMPT is not successful\"\nfi\n\nAUTHORITATIVE_RUN_METADATA=$(gh api \\\n  \"repos/$REPO/actions/runs/$AUTHORITATIVE_RUN_ID\" \\\n  --jq '[(.workflow_id | tostring), .display_title, .path, .event, .status, (.conclusion // \"null\"), .head_sha, (.id | tostring), (.run_attempt | tostring), (.check_suite_id | tostring)] | @tsv')\nIFS=$'\\t' read -r RUN_WORKFLOW_ID RUN_DISPLAY_TITLE RUN_PATH RUN_EVENT \\\n  RUN_STATUS RUN_CONCLUSION RUN_HEAD_SHA RUN_ID RUN_ATTEMPT \\\n  AUTHORITATIVE_CHECK_SUITE_ID <<<\"$AUTHORITATIVE_RUN_METADATA\"\n[[ \"$RUN_WORKFLOW_ID\" == \"$POSTGRESQL_N1_WORKFLOW_ID\" ]] && \\\n  [[ \"$RUN_DISPLAY_TITLE\" == \"$EXPECTED_RUN_TITLE\" ]] && \\\n  [[ \"$RUN_PATH\" == \"$POSTGRESQL_N1_WORKFLOW_PATH\" ]] && \\\n  [[ \"$RUN_EVENT\" == \"pull_request\" ]] && \\\n  [[ \"$RUN_STATUS\" == \"$AUTHORITATIVE_RUN_STATUS\" ]] && \\\n  [[ \"$RUN_CONCLUSION\" == \"$AUTHORITATIVE_RUN_CONCLUSION\" ]] && \\\n  [[ \"$RUN_HEAD_SHA\" == \"$SHA\" ]] && \\\n  [[ \"$RUN_ID\" == \"$AUTHORITATIVE_RUN_ID\" ]] && \\\n  [[ \"$RUN_ATTEMPT\" == \"$AUTHORITATIVE_RUN_ATTEMPT\" ]] && \\\n  [[ \"$AUTHORITATIVE_CHECK_SUITE_ID\" =~ ^[0-9]+$ ]] || \\\n  fail \"authoritative PostgreSQL N-1 workflow metadata drifted\"\n\nN1_CANDIDATES=$(gh api \"repos/$REPO/commits/$SHA/check-runs\" --paginate \\\n  --jq '.check_runs[] | select(.name == \"verify-postgresql-n1\") | [.id, .status, (.conclusion // \"null\"), .details_url, (.app.id | tostring), .app.slug, (.check_suite.id | tostring)] | @tsv')\nTRUSTED_RUNS=\"\"\nwhile IFS=$'\\t' read -r check_id check_status check_conclusion details_url \\\n  app_id app_slug check_suite_id; do\n  [[ -z \"$check_id\" ]] && continue\n  [[ \"$app_id\" == \"$POSTGRESQL_N1_ACTIONS_APP_ID\" ]] || continue\n  [[ \"$app_slug\" == \"github-actions\" ]] || continue\n  [[ \"$check_suite_id\" == \"$AUTHORITATIVE_CHECK_SUITE_ID\" ]] || continue\n  if ! [[ \"$details_url\" =~ ^https://github.com/$REPO/actions/runs/([0-9]+)/job/([0-9]+)$ ]]; then\n    continue\n  fi\n  run_id=\"${BASH_REMATCH[1]}\"\n  job_id=\"${BASH_REMATCH[2]}\"\n  [[ \"$job_id\" == \"$check_id\" ]] || continue\n  [[ \"$run_id\" == \"$AUTHORITATIVE_RUN_ID\" ]] || continue\n\n  if [[ \"$run_id\" != \"$RUN_ID\" ]] || \\\n     [[ \"$check_status\" != \"$RUN_STATUS\" ]] || \\\n     [[ \"$check_conclusion\" != \"$RUN_CONCLUSION\" ]]; then\n    continue\n  fi\n\n  job_metadata=$(gh api \"repos/$REPO/actions/jobs/$job_id\" \\\n    --jq '[(.id | tostring), .name, .status, (.conclusion // \"null\"), .head_sha, (.run_id | tostring), (.run_attempt | tostring)] | @tsv') || continue\n  IFS=$'\\t' read -r observed_job_id job_name job_status job_conclusion \\\n    job_head_sha observed_job_run_id observed_job_run_attempt <<<\"$job_metadata\"\n  if [[ \"$observed_job_id\" != \"$check_id\" ]] || \\\n     [[ \"$job_name\" != \"$POSTGRESQL_N1_CHECK\" ]] || \\\n     [[ \"$job_status\" != \"$check_status\" ]] || \\\n     [[ \"$job_conclusion\" != \"$check_conclusion\" ]] || \\\n     [[ \"$job_head_sha\" != \"$SHA\" ]] || \\\n     [[ \"$observed_job_run_id\" != \"$run_id\" ]] || \\\n     [[ \"$observed_job_run_attempt\" != \"$AUTHORITATIVE_RUN_ATTEMPT\" ]]; then\n    continue\n  fi\n  TRUSTED_RUNS+=\"$run_id\"$'\\t'\"$check_status\"$'\\t'\"$check_conclusion\"$'\\n'\ndone <<<\"$N1_CANDIDATES\"\n\nLATEST_TRUSTED=$(printf '%s' \"$TRUSTED_RUNS\" | sort -t$'\\t' -k1,1nr | head -n1)\n[[ -n \"$LATEST_TRUSTED\" ]] || fail \"trusted verify-postgresql-n1 check is missing\"\nIFS=$'\\t' read -r latest_run_id latest_status latest_conclusion <<<\"$LATEST_TRUSTED\"\nif [[ \"$latest_status\" != \"completed\" ]] || [[ \"$latest_conclusion\" != \"success\" ]]; then\n  fail \"latest trusted verify-postgresql-n1 run $latest_run_id is not successful\"\nfi\n\necho \"Trusted PostgreSQL N-1 check accepted for PR #$PR at $SHA (run $latest_run_id).\"\n",
+  "log": "﻿2026-11-04T14:44:20.8725309Z Current runner version: '2.338.2'\n2026-11-04T14:44:20.8743713Z ##[group]Runner Image Provisioner\n2026-11-04T14:44:20.8744416Z Hosted Compute Agent\n2026-11-04T14:44:20.8744885Z Version: 20261028.624\n2026-11-04T14:44:20.8745274Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe\n2026-11-04T14:44:20.8745704Z Build Date: 2026-10-28T21:51:42Z\n2026-11-04T14:44:20.8746175Z Worker ID: {b06684ac-32b7-4c00-88a8-a9c9578e6f04}\n2026-11-04T14:44:20.8746606Z Region: centralus\n2026-11-04T14:44:20.8747052Z Cloud: Azure\n2026-11-04T14:44:20.8747395Z ##[endgroup]\n2026-11-04T14:44:20.8748174Z ##[group]Operating System\n2026-11-04T14:44:20.8748603Z Ubuntu\n2026-11-04T14:44:20.8748933Z 24.04.5\n2026-11-04T14:44:20.8749308Z LTS\n2026-11-04T14:44:20.8749653Z ##[endgroup]\n2026-11-04T14:44:20.8749996Z ##[group]Runner Image\n2026-11-04T14:44:20.8750400Z Image: ubuntu-24.04\n2026-11-04T14:44:20.8750755Z Version: 20261101.360.1\n2026-11-04T14:44:20.8751595Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md\n2026-11-04T14:44:20.8752488Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360\n2026-11-04T14:44:20.8753081Z ##[endgroup]\n2026-11-04T14:44:20.8754077Z ##[group]GITHUB_TOKEN Permissions\n2026-11-04T14:44:20.8755360Z Actions: read\n2026-11-04T14:44:20.8755715Z Contents: read\n2026-11-04T14:44:20.8756103Z Metadata: read\n2026-11-04T14:44:20.8756472Z PullRequests: read\n2026-11-04T14:44:20.8756865Z Statuses: write\n2026-11-04T14:44:20.8757246Z ##[endgroup]\n2026-11-04T14:44:20.8758571Z Secret source: Actions\n2026-11-04T14:44:20.8759187Z Cache mode: read\n2026-11-04T14:44:20.8759615Z Prepare workflow directory\n2026-11-04T14:44:20.8971852Z Prepare all required actions\n2026-11-04T14:44:20.9006101Z Getting action download info\n2026-11-04T14:44:21.1412649Z Download action repository 'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0' (SHA:9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0)\n2026-11-04T14:44:21.3923028Z Complete job name: evaluate\n2026-11-04T14:44:21.4496962Z ##[group]Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\n2026-11-04T14:44:21.4497519Z with:\n2026-11-04T14:44:21.4497895Z   ref: main\n2026-11-04T14:44:21.4498375Z   sparse-checkout: .github/actions/compat-smoke-saas-n1-gate\n2026-11-04T14:44:21.4498894Z   persist-credentials: false\n2026-11-04T14:44:21.4499186Z   repository: Dream1216/omnigent\n2026-11-04T14:44:21.4501365Z   token: ***\n2026-11-04T14:44:21.4501609Z   ssh-strict: true\n2026-11-04T14:44:21.4501858Z   ssh-user: git\n2026-11-04T14:44:21.4502099Z   clean: true\n2026-11-04T14:44:21.4502354Z   sparse-checkout-cone-mode: true\n2026-11-04T14:44:21.4502650Z   fetch-depth: 1\n2026-11-04T14:44:21.4502900Z   fetch-tags: false\n2026-11-04T14:44:21.4503157Z   show-progress: true\n2026-11-04T14:44:21.4503410Z   lfs: false\n2026-11-04T14:44:21.4503646Z   submodules: false\n2026-11-04T14:44:21.4503902Z   set-safe-directory: true\n2026-11-04T14:44:21.4504362Z   allow-unsafe-pr-checkout: false\n2026-11-04T14:44:21.4504867Z ##[endgroup]\n2026-11-04T14:44:21.6881515Z Syncing repository: Dream1216/omnigent\n2026-11-04T14:44:21.6883115Z ##[group]Getting Git version info\n2026-11-04T14:44:21.6883800Z Working directory is '/home/runner/work/omnigent/omnigent'\n2026-11-04T14:44:21.6884758Z [command]/usr/bin/git version\n2026-11-04T14:44:21.6958646Z git version 2.56.0\n2026-11-04T14:44:21.6971846Z ##[endgroup]\n2026-11-04T14:44:21.6981184Z Temporarily overriding HOME='/home/runner/work/_temp/4dbeb9d1-ba78-4b11-b632-bd9d1de068b5' before making global git config changes\n2026-11-04T14:44:21.6982763Z Adding repository directory to the temporary git global config as a safe directory\n2026-11-04T14:44:21.6986431Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/omnigent/omnigent\n2026-11-04T14:44:21.7036477Z Deleting the contents of '/home/runner/work/omnigent/omnigent'\n2026-11-04T14:44:21.7058209Z ##[group]Determining repository object format\n2026-11-04T14:44:21.9939384Z ##[endgroup]\n2026-11-04T14:44:21.9940441Z ##[group]Initializing the repository\n2026-11-04T14:44:21.9944457Z [command]/usr/bin/git init /home/runner/work/omnigent/omnigent\n2026-11-04T14:44:22.0066012Z hint: Using 'master' as the name for the initial branch. This default branch name\n2026-11-04T14:44:22.0066809Z hint: will change to \"main\" in Git 3.0. To configure the initial branch name\n2026-11-04T14:44:22.0067379Z hint: to use in all of your new repositories, which will suppress this warning,\n2026-11-04T14:44:22.0067827Z hint: call:\n2026-11-04T14:44:22.0068080Z hint:\n2026-11-04T14:44:22.0068438Z hint: \tgit config --global init.defaultBranch <name>\n2026-11-04T14:44:22.0068807Z hint:\n2026-11-04T14:44:22.0069175Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\n2026-11-04T14:44:22.0069729Z hint: 'development'. The just-created branch can be renamed via this command:\n2026-11-04T14:44:22.0070172Z hint:\n2026-11-04T14:44:22.0070491Z hint: \tgit branch -m <name>\n2026-11-04T14:44:22.0070960Z hint:\n2026-11-04T14:44:22.0071612Z hint: Disable this message with \"git config set advice.defaultBranchName false\"\n2026-11-04T14:44:22.0072291Z Initialized empty Git repository in /home/runner/work/omnigent/omnigent/.git/\n2026-11-04T14:44:22.0083125Z [command]/usr/bin/git remote add origin https://github.com/Dream1216/omnigent\n2026-11-04T14:44:22.0142862Z ##[endgroup]\n2026-11-04T14:44:22.0143533Z ##[group]Disabling automatic garbage collection\n2026-11-04T14:44:22.0146703Z [command]/usr/bin/git config --local gc.auto 0\n2026-11-04T14:44:22.0193771Z ##[endgroup]\n2026-11-04T14:44:22.0194688Z ##[group]Setting up auth\n2026-11-04T14:44:22.0195234Z Removing SSH command configuration\n2026-11-04T14:44:22.0199300Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-11-04T14:44:22.0259487Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-11-04T14:44:22.0613210Z Removing HTTP extra header\n2026-11-04T14:44:22.0619108Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-11-04T14:44:22.0668335Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-11-04T14:44:22.0880428Z Removing includeIf entries pointing to credentials config files\n2026-11-04T14:44:22.0884783Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-11-04T14:44:22.0931007Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-11-04T14:44:22.1152746Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config http.https://github.com/.extraheader AUTHORIZATION: basic ***\n2026-11-04T14:44:22.1203697Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/omnigent/omnigent/.git.path /home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:22.1248937Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/omnigent/omnigent/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:22.1301032Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:22.1373548Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:22.1424770Z ##[endgroup]\n2026-11-04T14:44:22.1425537Z ##[group]Fetching the repository\n2026-11-04T14:44:22.1432650Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --filter=blob:none --depth=1 origin +refs/heads/main*:refs/remotes/origin/main* +refs/tags/main*:refs/tags/main*\n2026-11-04T14:44:22.6814354Z From https://github.com/Dream1216/omnigent\n2026-11-04T14:44:22.6815488Z  * [new branch]      main       -> origin/main\n2026-11-04T14:44:22.6818083Z ##[endgroup]\n2026-11-04T14:44:22.6819129Z ##[group]Determining the checkout info\n2026-11-04T14:44:22.6821778Z [command]/usr/bin/git branch --list --remote origin/main\n2026-11-04T14:44:22.6866336Z   origin/main\n2026-11-04T14:44:22.6870045Z ##[endgroup]\n2026-11-04T14:44:22.6871243Z ##[group]Setting up sparse checkout\n2026-11-04T14:44:22.6873449Z [command]/usr/bin/git sparse-checkout set .github/actions/compat-smoke-saas-n1-gate\n2026-11-04T14:44:22.6945401Z ##[endgroup]\n2026-11-04T14:44:22.6946777Z ##[group]Checking out the ref\n2026-11-04T14:44:22.6948420Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main\n2026-11-04T14:44:23.3403302Z Switched to a new branch 'main'\n2026-11-04T14:44:23.3409731Z branch 'main' set up to track 'origin/main'.\n2026-11-04T14:44:23.3413877Z ##[endgroup]\n2026-11-04T14:44:23.3487600Z [command]/usr/bin/git log -1 --format=%H\n2026-11-04T14:44:23.3523730Z c724abb9d43c40717e83154a7da9270150f3d418\n2026-11-04T14:44:23.3532757Z ##[group]Removing auth\n2026-11-04T14:44:23.3533209Z Removing SSH command configuration\n2026-11-04T14:44:23.3536244Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-11-04T14:44:23.3588684Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-11-04T14:44:23.3828477Z Removing HTTP extra header\n2026-11-04T14:44:23.3828880Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-11-04T14:44:23.3879264Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-11-04T14:44:23.4096087Z Removing includeIf entries pointing to credentials config files\n2026-11-04T14:44:23.4098753Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-11-04T14:44:23.4149206Z includeif.gitdir:/home/runner/work/omnigent/omnigent/.git.path\n2026-11-04T14:44:23.4149633Z includeif.gitdir:/home/runner/work/omnigent/omnigent/.git/worktrees/*.path\n2026-11-04T14:44:23.4149873Z includeif.gitdir:/github/workspace/.git.path\n2026-11-04T14:44:23.4150069Z includeif.gitdir:/github/workspace/.git/worktrees/*.path\n2026-11-04T14:44:23.4158404Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/omnigent/omnigent/.git.path\n2026-11-04T14:44:23.4199171Z /home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4207302Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/omnigent/omnigent/.git.path /home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4253906Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/omnigent/omnigent/.git/worktrees/*.path\n2026-11-04T14:44:23.4289833Z /home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4296850Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/omnigent/omnigent/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4340171Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path\n2026-11-04T14:44:23.4376432Z /github/runner_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4382270Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4430289Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path\n2026-11-04T14:44:23.4466245Z /github/runner_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4472839Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config\n2026-11-04T14:44:23.4517844Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-11-04T14:44:23.4726166Z Removing credentials config '/home/runner/work/_temp/git-credentials-f8aa3a49-23c5-4400-a977-f25e9b755c3d.config'\n2026-11-04T14:44:23.4734659Z ##[endgroup]\n2026-11-04T14:44:23.4942311Z ##[group]Run set -euo pipefail\n2026-11-04T14:44:23.4942601Z \u001b[36;1mset -euo pipefail\u001b[0m\n2026-11-04T14:44:23.4942805Z \u001b[36;1mif [[ \"$EVENT_NAME\" == \"pull_request_target\" ]]; then\u001b[0m\n2026-11-04T14:44:23.4942998Z \u001b[36;1m  PR=\"$EVENT_PR\"\u001b[0m\n2026-11-04T14:44:23.4943145Z \u001b[36;1m  EXPECTED_SHA=\"$EVENT_HEAD_SHA\"\u001b[0m\n2026-11-04T14:44:23.4943312Z \u001b[36;1melse\u001b[0m\n2026-11-04T14:44:23.4943445Z \u001b[36;1m  EXPECTED_SHA=\"$WORKFLOW_HEAD_SHA\"\u001b[0m\n2026-11-04T14:44:23.4943642Z \u001b[36;1m  PR=$(jq -r '.[0].number // empty' <<<\"$WORKFLOW_PRS\")\u001b[0m\n2026-11-04T14:44:23.4943829Z \u001b[36;1m  if [[ -z \"$PR\" ]]; then\u001b[0m\n2026-11-04T14:44:23.4944209Z \u001b[36;1m    SEARCH=$(gh api \"search/issues?q=repo:$REPO+type:pr+state:open+sha:$EXPECTED_SHA\")\u001b[0m\n2026-11-04T14:44:23.4944470Z \u001b[36;1m    COUNT=$(jq '.items | length' <<<\"$SEARCH\")\u001b[0m\n2026-11-04T14:44:23.4944642Z \u001b[36;1m    [[ \"$COUNT\" -eq 1 ]] || {\u001b[0m\n2026-11-04T14:44:23.4944847Z \u001b[36;1m      echo \"::error::workflow head must resolve to exactly one open PR\"\u001b[0m\n2026-11-04T14:44:23.4945082Z \u001b[36;1m      exit 1\u001b[0m\n2026-11-04T14:44:23.4945200Z \u001b[36;1m    }\u001b[0m\n2026-11-04T14:44:23.4945335Z \u001b[36;1m    PR=$(jq -r '.items[0].number' <<<\"$SEARCH\")\u001b[0m\n2026-11-04T14:44:23.4945494Z \u001b[36;1m  fi\u001b[0m\n2026-11-04T14:44:23.4945601Z \u001b[36;1mfi\u001b[0m\n2026-11-04T14:44:23.4945705Z \u001b[36;1m\u001b[0m\n2026-11-04T14:44:23.4945836Z \u001b[36;1mMETA=$(gh api \"repos/$REPO/pulls/$PR\" \\\u001b[0m\n2026-11-04T14:44:23.4946047Z \u001b[36;1m  --jq '[.state, .base.ref, .base.sha, .head.sha] | @tsv')\u001b[0m\n2026-11-04T14:44:23.4946266Z \u001b[36;1mIFS=$'\\t' read -r STATE BASE_REF BASE_SHA SHA <<<\"$META\"\u001b[0m\n2026-11-04T14:44:23.4946469Z \u001b[36;1m[[ \"$STATE\" == \"open\" && \"$BASE_REF\" == \"main\" && \\\u001b[0m\n2026-11-04T14:44:23.4946712Z \u001b[36;1m   \"$BASE_SHA\" =~ ^[0-9a-f]{40}$ && \"$SHA\" =~ ^[0-9a-f]{40}$ ]] || {\u001b[0m\n2026-11-04T14:44:23.4946944Z \u001b[36;1m  echo \"::error::resolved PR is not an open main-targeting PR\"\u001b[0m\n2026-11-04T14:44:23.4947137Z \u001b[36;1m  exit 1\u001b[0m\n2026-11-04T14:44:23.4947244Z \u001b[36;1m}\u001b[0m\n2026-11-04T14:44:23.4947395Z \u001b[36;1m[[ -z \"$EXPECTED_SHA\" || \"$SHA\" == \"$EXPECTED_SHA\" ]] || {\u001b[0m\n2026-11-04T14:44:23.4947626Z \u001b[36;1m  echo \"::error::workflow run no longer matches the current PR head\"\u001b[0m\n2026-11-04T14:44:23.4947815Z \u001b[36;1m  exit 1\u001b[0m\n2026-11-04T14:44:23.4947924Z \u001b[36;1m}\u001b[0m\n2026-11-04T14:44:23.4948041Z \u001b[36;1mecho \"pr=$PR\" >>\"$GITHUB_OUTPUT\"\u001b[0m\n2026-11-04T14:44:23.4948218Z \u001b[36;1mecho \"base_sha=$BASE_SHA\" >>\"$GITHUB_OUTPUT\"\u001b[0m\n2026-11-04T14:44:23.4948392Z \u001b[36;1mecho \"sha=$SHA\" >>\"$GITHUB_OUTPUT\"\u001b[0m\n2026-11-04T14:44:23.4967281Z shell: /usr/bin/bash -e {0}\n2026-11-04T14:44:23.4967433Z env:\n2026-11-04T14:44:23.4968872Z   GH_TOKEN: ***\n2026-11-04T14:44:23.4968999Z   REPO: Dream1216/omnigent\n2026-11-04T14:44:23.4969134Z   EVENT_NAME: workflow_run\n2026-11-04T14:44:23.4969263Z   EVENT_PR: \n2026-11-04T14:44:23.4969394Z   EVENT_HEAD_SHA: \n2026-11-04T14:44:23.4969573Z   WORKFLOW_HEAD_SHA: 4e11681dd3809febeb42cb5d752d423b5f751f82\n2026-11-04T14:44:23.4970728Z   WORKFLOW_PRS: [\n  {\n    \"base\": {\n      \"ref\": \"codex/p18-a7-validation-base-20261102\",\n      \"repo\": {\n        \"id\": 1319241251,\n        \"name\": \"omnigent\",\n        \"url\": \"https://api.github.com/repos/Dream1216/omnigent\"\n      },\n      \"sha\": \"a7b5cf29294556084216e9e2746125ccafc9cda0\"\n    },\n    \"head\": {\n      \"ref\": \"codex/legacy-compat018-expat210-20261103\",\n      \"repo\": {\n        \"id\": 1319241251,\n        \"name\": \"omnigent\",\n        \"url\": \"https://api.github.com/repos/Dream1216/omnigent\"\n      },\n      \"sha\": \"4e11681dd3809febeb42cb5d752d423b5f751f82\"\n    },\n    \"id\": 5136844064,\n    \"number\": 223,\n    \"url\": \"https://api.github.com/repos/Dream1216/omnigent/pulls/223\"\n  }\n]\n2026-11-04T14:44:23.4971961Z ##[endgroup]\n2026-11-04T14:44:24.1734155Z ##[error]resolved PR is not an open main-targeting PR\n2026-11-04T14:44:24.1741590Z ##[error]Process completed with exit code 1.\n2026-11-04T14:44:24.1857971Z Post job cleanup.\n2026-11-04T14:44:24.2438146Z [command]/usr/bin/git version\n2026-11-04T14:44:24.2503819Z git version 2.56.0\n2026-11-04T14:44:24.2528216Z Temporarily overriding HOME='/home/runner/work/_temp/11c70ea1-c72d-49d0-931a-cd6168d05e91' before making global git config changes\n2026-11-04T14:44:24.2529006Z Adding repository directory to the temporary git global config as a safe directory\n2026-11-04T14:44:24.2532241Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/omnigent/omnigent\n2026-11-04T14:44:24.2572049Z Removing SSH command configuration\n2026-11-04T14:44:24.2573217Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-11-04T14:44:24.2609560Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-11-04T14:44:24.2836609Z Removing HTTP extra header\n2026-11-04T14:44:24.2841573Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-11-04T14:44:24.2880262Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-11-04T14:44:24.3104866Z Removing includeIf entries pointing to credentials config files\n2026-11-04T14:44:24.3109816Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-11-04T14:44:24.3147099Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-11-04T14:44:24.3505816Z Cleaning up orphan processes\n"
+}

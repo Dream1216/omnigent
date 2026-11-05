@@ -253,9 +253,15 @@ def _write_log_diagnostic(destination: Path, diagnostic: dict[str, Any]) -> None
         pass
 
 
-def _download_job_log_direct(job_id: int, destination: Path, *, http1: bool = False) -> None:
+def _download_job_log_direct(
+    job_id: int, destination: Path, *, http1: bool = False, maximum_bytes: int = 32 * 1024 * 1024
+) -> None:
     """Fetch a bounded native log directly; never follow an artifact-provided URL."""
     require(type(job_id) is int and job_id > 0, "invalid native job ID")
+    require(
+        type(maximum_bytes) is int and maximum_bytes in {32 * 1024 * 1024, 40 * 1024 * 1024},
+        "native job log bound is invalid",
+    )
     reserve_native_download(f"repos/{REPOSITORY}/actions/jobs/{job_id}/logs")
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     # Preserve raw evidence in the private pipe/file, never in a terminal.
@@ -333,7 +339,7 @@ def _download_job_log_direct(job_id: int, destination: Path, *, http1: bool = Fa
             while chunk := process.stdout.read(65536):
                 total += len(chunk)
                 require(
-                    total <= 32 * 1024 * 1024,
+                    total <= maximum_bytes,
                     "native job log exceeds its bounded input",
                 )
                 output.write(chunk)
@@ -459,6 +465,67 @@ def download_job_log(
         from saas.scripts.legacy_job_log_archive import recover_job_log
 
         recover_job_log(job_id, destination)
+
+
+def _recover_verified_source_build_log(job: dict[str, Any], destination: Path) -> None:
+    """Retain a capped read, then recover one already verified original OCI build log."""
+    require(
+        job.get("name") == "build-candidate"
+        and type(job.get("id")) is int
+        and job["id"] > 0
+        and job.get("status") == "completed"
+        and job.get("conclusion") == "success",
+        "source build log recovery requires a verified successful original build",
+    )
+    original = destination.read_bytes()
+    diagnostic = json.loads(
+        destination.with_name(destination.name + ".native-download.json").read_text()
+    )
+    require(
+        len(original) == 32 * 1024 * 1024
+        and diagnostic["stdout_bytes"] > len(original)
+        and not diagnostic["deadline_expired"]
+        and not diagnostic["http_statuses"],
+        "source build log recovery requires the original size-bound refusal",
+    )
+    endpoint = f"repos/{REPOSITORY}/actions/jobs/{job['id']}"
+    require(api(endpoint) == job, "source build job changed before log recovery")
+    recovered = destination.with_name(destination.name + ".verified-source-build")
+    _download_job_log_direct(job["id"], recovered, maximum_bytes=40 * 1024 * 1024)
+    data = recovered.read_bytes()
+    require(
+        len(data) > len(original) and data.startswith(original),
+        "source build log differs from retained bounded read",
+    )
+    data.decode("utf-8")
+    require(api(endpoint) == job, "source build job changed during log recovery")
+    failed = destination.with_name(destination.name + ".source-size-rejected")
+    require(not failed.exists(), "source build log custody already exists")
+    destination.rename(failed)
+    with os.fdopen(
+        os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+    ) as output:
+        output.write(data)
+    receipt = {
+        "kind": "verified_original_source_build_log_size_recovery/v1",
+        "job_id": job["id"],
+        "run_id": job["run_id"],
+        "attempt": job["run_attempt"],
+        "head_sha": job["head_sha"],
+        "log_bytes": len(data),
+        "log_sha256": hashlib.sha256(data).hexdigest(),
+        "retained_rejected_path": str(failed),
+        "retained_rejected_sha256": hashlib.sha256(original).hexdigest(),
+        "maximum_direct_reads": 2,
+        "default_bound_bytes": 32 * 1024 * 1024,
+        "verified_original_OCI_build_bound_bytes": 40 * 1024 * 1024,
+        "each_read_seconds": 45,
+        "source_checkout_matrix_and_qualification_assertions_unchanged": True,
+    }
+    path = destination.with_name(destination.name + ".source-size-recovery.json")
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+        json.dump(receipt, output, sort_keys=True)
+        output.write("\n")
 
 
 def _job_pages(run_id: int, attempt: int) -> list[dict[str, Any]]:
@@ -659,7 +726,16 @@ def collect_source_ci_bindings(control: Path, component: str, destination: Path)
             if not steps:
                 continue
             path = destination / f"job-{job['id']}.log"
-            download_job_log(job["id"], path)
+            try:
+                download_job_log(job["id"], path)
+            except ValueError as error:
+                if (
+                    str(error) != "native job log exceeds its bounded input"
+                    or specification["path"] != ".github/workflows/saas-image-candidate.yml"
+                    or job.get("name") != "build-candidate"
+                ):
+                    raise
+                _recover_verified_source_build_log(job, path)
             log = path.read_text()
             for required in steps:
                 actual = [

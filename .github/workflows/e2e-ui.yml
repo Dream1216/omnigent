@@ -49,6 +49,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Fix one official signed Ubuntu index view per job while Snapshot is unavailable.
+  OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
   # No SPA build during `uv sync`: this workflow builds the bundle in a
   # dedicated step, so the setup.py build would be a redundant npm hit.
   OMNIGENT_SKIP_WEB_UI: "true"

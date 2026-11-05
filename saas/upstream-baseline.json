@@ -115,7 +115,7 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 205,
-    "max_upstream_net_added_loc": 5439,
+    "max_upstream_net_added_loc": 5445,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -994,6 +994,21 @@
       "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
       "changed_official_path": "deploy/docker/Dockerfile",
       "reason": "Account for the accepted Main Docker consumer's nine net lines connecting signed-index package materialization before the existing offline install. The issuer correction has zero net lines. Preserve nine patches, .85 isolation, all trusted registrations and technical/signing/production requirements."
+    },
+    "cloud_final_Main6cc_official_CI_recovery": {
+      "accepted_main": "6cc0b5be7ed26193b1d6b341c246ba22b2b23902",
+      "Cloud_parent": "2cbdce0a9574a38550e7adf1933fcb3f4716bb3a",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "previous_max_direct_upstream_files": 205,
+      "max_direct_upstream_files": 205,
+      "previous_max_upstream_net_added_loc": 5439,
+      "max_upstream_net_added_loc": 5445,
+      "reason": "Exact engineering budget reconciliation for the accepted Main integration and official signed Ubuntu per-job CI dependency recovery; one final Cloud candidate, no production permissions or security/test gate waiver. Nine patches and .85 minimum isolation retained.",
+      "recorded_at": "2026-11-05"
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
