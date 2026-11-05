@@ -35,7 +35,54 @@ if snapshot != selected.strftime("%Y%m%dT%H0000Z") or not timedelta(0) < now - s
 print("https://snapshot.ubuntu.com/ubuntu/" + snapshot + "/")
 PY
 )
-printf 'Ubuntu CI snapshot: %s\n' "$snapshot_uri"
+archive_recovery=${OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY:-0}
+[[ "$archive_recovery" == 0 || "$archive_recovery" == 1 ]]
+export archive_recovery
+archive_index_state="$RUNNER_TEMP/omnigent-ubuntu-archive-index-state"
+export archive_index_state
+if [[ "$archive_recovery" == 1 ]]; then
+  repository_uri=https://archive.ubuntu.com/ubuntu/
+  security_uri=https://security.ubuntu.com/ubuntu/
+  printf 'Ubuntu CI recovery: official archive/security HTTPS; signed indexes fixed per job.\n'
+else
+  repository_uri=$snapshot_uri
+  security_uri=$snapshot_uri
+  printf 'Ubuntu CI snapshot: %s\n' "$snapshot_uri"
+fi
+
+verify_archive_index_state() {
+  [[ "$archive_recovery" == 1 ]] || return 0
+  local hashes
+  hashes=$(sudo sha256sum \
+    /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_InRelease \
+    /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-updates_InRelease \
+    /var/lib/apt/lists/security.ubuntu.com_ubuntu_dists_noble-security_InRelease)
+  python3 - "$archive_index_state" "$hashes" <<'STATE'
+import json
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+hashes = sys.argv[2].splitlines()
+if len(hashes) != 3 or any(re.fullmatch(r"[0-9a-f]{64}  /var/lib/apt/lists/[a-zA-Z0-9_.-]+", row) is None for row in hashes):
+    raise SystemExit("Refusing incomplete official Ubuntu index state")
+now = datetime.now(timezone.utc)
+if path.exists():
+    prior = json.loads(path.read_text())
+    age = now - datetime.fromisoformat(prior["captured_at"])
+    if prior["hashes"] != hashes or not timedelta(0) <= age <= timedelta(hours=24):
+        raise SystemExit("Refusing changed or stale official Ubuntu signed indexes")
+else:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        json.dump({"captured_at": now.isoformat(), "hashes": hashes}, stream, sort_keys=True)
+print("Ubuntu CI apt-verified signed index state: " + json.dumps(hashes))
+STATE
+}
+export -f verify_archive_index_state
 # Existing repository signing keys and third-party sources remain unchanged.
 sudo tee /etc/apt/apt.conf.d/99-omnigent-ci-network >/dev/null <<'NETWORK'
 Acquire::http::Timeout "20";
@@ -46,7 +93,24 @@ Acquire::IndexTargets::deb::CNF::DefaultEnabled "false";
 APT::Update::Error-Mode "any";
 NETWORK
 # By-hash can fall back to ordinary paths; both resolve inside this fixed view.
-sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<UBUNTU
+if [[ "$archive_recovery" == 1 ]]; then
+  sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<UBUNTU
+Types: deb
+URIs: $repository_uri
+Suites: noble noble-updates
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+By-Hash: force
+
+Types: deb
+URIs: $security_uri
+Suites: noble-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+By-Hash: force
+UBUNTU
+else
+  sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<UBUNTU
 Types: deb
 URIs: $snapshot_uri
 Suites: noble noble-updates noble-security
@@ -54,6 +118,7 @@ Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 By-Hash: force
 UBUNTU
+fi
 if [[ "$1" == --configure-only ]]; then
   [[ "$#" == 1 ]]
   exit 0
@@ -62,9 +127,9 @@ sources=$(mktemp "${RUNNER_TEMP:?}/omnigent-ubuntu-sources.XXXXXX")
 trap 'rm -f "$sources"' EXIT
 chmod 644 "$sources"
 cat > "$sources" <<SOURCES
-deb [by-hash=force signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $snapshot_uri noble main restricted universe multiverse
-deb [by-hash=force signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $snapshot_uri noble-updates main restricted universe multiverse
-deb [by-hash=force signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $snapshot_uri noble-security main restricted universe multiverse
+deb [by-hash=force signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $repository_uri noble main restricted universe multiverse
+deb [by-hash=force signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $repository_uri noble-updates main restricted universe multiverse
+deb [by-hash=force signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] $security_uri noble-security main restricted universe multiverse
 SOURCES
 options=(-o "Dir::Etc::sourcelist=$sources" -o Dir::Etc::sourceparts=-
   -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=2
@@ -106,17 +171,26 @@ install_ci_ubuntu_packages() {
   inputs=$(mktemp "${RUNNER_TEMP:?}/omnigent-ubuntu-package-inputs.XXXXXX")
   "$@" -o Acquire::ForceHash=SHA256 --print-uris > "$inputs" || return "$?"
   if grep -q "^'" "$inputs"; then
-    sudo python3 "$OMNIGENT_CI_PACKAGE_MATERIALIZER" --distribution ubuntu \
-      --inputs "$inputs" --output /var/cache/apt/archives || return "$?"
+    local -a recovery_args=(--distribution ubuntu --inputs "$inputs" --output /var/cache/apt/archives)
+    if [[ "$archive_recovery" == 1 ]]; then recovery_args+=(--allow-ubuntu-archive); fi
+    sudo python3 "$OMNIGENT_CI_PACKAGE_MATERIALIZER" "${recovery_args[@]}" || return "$?"
   fi
+  verify_archive_index_state || return "$?"
   "$@" --no-download
 }
 export -f install_ci_ubuntu_packages
 if [[ "$1" == --playwright-chromium ]]; then
   # The locked Playwright release owns its complete dependency list.
   timeout --kill-after=10s 360s bash -c 'run_ci_ubuntu_apt "$@"' -- uv run --no-sync playwright install-deps chromium
+  verify_archive_index_state
   exit 0
 fi
 # One deadline covers all transport attempts; neither operation gains extra time.
-timeout --kill-after=10s 180s bash -c 'run_ci_ubuntu_apt "$@"' -- sudo apt-get "${options[@]}" update
+if [[ "$archive_recovery" == 1 && -f "$archive_index_state" ]]; then
+  # Reuse this job's apt-verified view instead of resolving against newer indexes.
+  verify_archive_index_state
+else
+  timeout --kill-after=10s 180s bash -c 'run_ci_ubuntu_apt "$@"' -- sudo apt-get "${options[@]}" update
+  verify_archive_index_state
+fi
 timeout --kill-after=10s 180s bash -c 'run_ci_ubuntu_apt install_ci_ubuntu_packages "$@"' -- sudo apt-get "${options[@]}" install -y --no-install-recommends "$@"
