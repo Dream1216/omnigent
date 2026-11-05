@@ -997,8 +997,9 @@ def load_public_release_spec(
         or any(_ROLE_NAME.fullmatch(login) is None for login in service_logins.values())
         or any(login in base_roles for login in service_logins.values())
         or any(
-            fragment in login
-            for login in service_logins.values()
+            fragment
+            in (login.removesuffix("_preview_owner") if service == "preview_owner" else login)
+            for service, login in service_logins.items()
             for fragment in _FORBIDDEN_LOGIN_FRAGMENTS
         )
     ):

@@ -301,6 +301,53 @@ def test_release_rejects_mixed_or_unknown_target_identity(
     assert not (tmp_path / "rejected").exists()
 
 
+@pytest.mark.parametrize("login", ["v019_preview_owner", "qa_preview_owner"])
+def test_renderer_preserves_ordinary_preview_owner_login(tmp_path: Path, login: str) -> None:
+    source = _copy_sources(tmp_path)
+    original = {name: (source / name).read_bytes() for name in MANIFEST_NAMES}
+    document = _spec_document()
+    document["service_logins"]["preview_owner"] = login
+    path = tmp_path / "ordinary-preview-owner.json"
+    path.write_bytes(_canonical_json(document))
+    path.chmod(0o600)
+    output = tmp_path / "rendered"
+
+    assert render_kubernetes_release(path, source, output)["status"] == "pass"
+    production = _document(output / "kubernetes.production.yaml")
+    bindings = _resource(production, kind="ConfigMap", data_key="service-role-bindings.json")
+    rows = json.loads(bindings["data"]["service-role-bindings.json"])["bindings"]
+    assert next(row for row in rows if row["service"] == "preview_owner") == {
+        "service": "preview_owner",
+        "base_role": "saas_preview_owner",
+        "login": login,
+    }
+    assert {name: (source / name).read_bytes() for name in MANIFEST_NAMES} == original
+
+
+@pytest.mark.parametrize(
+    ("service", "login"),
+    [
+        ("app", "v019_preview_owner"),
+        ("preview_owner", "root_preview_owner"),
+        ("preview_owner", "admin_preview_owner"),
+        ("preview_owner", "migration_preview_owner"),
+        ("preview_owner", "postgres_preview_owner"),
+        ("preview_owner", "qa_owner_preview_owner"),
+        ("preview_owner", "saas_preview_owner"),
+    ],
+)
+def test_renderer_rejects_privileged_names_around_preview_owner_suffix(
+    tmp_path: Path, service: str, login: str
+) -> None:
+    document = _spec_document()
+    document["service_logins"][service] = login
+    path = tmp_path / "privileged-name.json"
+    path.write_bytes(_canonical_json(document))
+    path.chmod(0o600)
+    with pytest.raises(ReleaseRenderError, match="exact distinct narrow login roles"):
+        load_public_release_spec(path)
+
+
 def test_stage_renderer_binds_four_manifests_and_only_six_pending_receipts(
     tmp_path: Path,
 ) -> None:
