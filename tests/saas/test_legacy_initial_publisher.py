@@ -349,12 +349,32 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
                 )
 
 
+@pytest.mark.parametrize("source_ci", [False, True])
 @pytest.mark.parametrize(
-    "fault", [None, "traversal", "alias", "symlink", "special", "duplicate", "expansion"]
+    "fault",
+    [
+        None,
+        "traversal",
+        "alias",
+        "symlink",
+        "special",
+        "duplicate",
+        "expansion",
+        "many_members",
+        "too_many_members",
+    ],
 )
-def test_publication_zip_checks_all_members_before_extracting(tmp_path, fault):
+def test_publication_zip_checks_all_members_before_extracting(tmp_path, fault, source_ci):
     archive = tmp_path / "export.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
+        if source_ci:
+            for name in (
+                "source-qualification.json",
+                "native-api/receipt.json",
+                "native-api/response-000001.json",
+                "native-api/http-000001.PRIVATE.response",
+            ):
+                bundle.writestr(name, b"{}")
         name = (
             "../escape"
             if fault == "traversal"
@@ -369,14 +389,34 @@ def test_publication_zip_checks_all_members_before_extracting(tmp_path, fault):
         if fault == "duplicate":
             with pytest.warns(UserWarning):
                 bundle.writestr(entry, b"{}")
+        if fault in {"many_members", "too_many_members"}:
+            # Same shape/count as the actual successful qualification artifact.
+            members = 35865 if fault == "many_members" else 65537
+            for number in range(members - 1 - (4 if source_ci else 0)):
+                bundle.writestr(f"unneeded-ci/record-{number:06d}.json", b"{}")
     target = tmp_path / "extract"
-    if fault:
+    if fault and not (source_ci and fault == "many_members"):
         with pytest.raises(ValueError):
-            publisher.safe_extract(archive, target, max_bytes=1 if fault == "expansion" else 100)
+            publisher.safe_extract(
+                archive,
+                target,
+                max_bytes=1 if fault == "expansion" else 1024 * 1024,
+                source_ci=source_ci,
+            )
         assert not target.exists()
     else:
-        publisher.safe_extract(archive, target, max_bytes=100)
-        assert (target / "file.json").read_bytes() == b"{}"
+        publisher.safe_extract(archive, target, max_bytes=1024 * 1024, source_ci=source_ci)
+        if source_ci:
+            assert sorted(
+                str(p.relative_to(target)) for p in target.rglob("*") if p.is_file()
+            ) == [
+                "native-api/http-000001.PRIVATE.response",
+                "native-api/receipt.json",
+                "native-api/response-000001.json",
+                "source-qualification.json",
+            ]
+        else:
+            assert (target / "file.json").read_bytes() == b"{}"
 
 
 @pytest.mark.parametrize(

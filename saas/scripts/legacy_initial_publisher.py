@@ -274,11 +274,19 @@ def one_native_artifact(name: str, context: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
-def safe_extract(archive: Path, destination: Path, *, max_bytes: int) -> None:
+def safe_extract(
+    archive: Path, destination: Path, *, max_bytes: int, source_ci: bool = False
+) -> None:
     """Reject links, special files, duplicate paths and expansion before writing."""
+    require(type(source_ci) is bool, "source export selection must be boolean")
     with zipfile.ZipFile(archive) as bundle:
         entries = bundle.infolist()
-        require(0 < len(entries) <= 8192, "publication ZIP member count exceeds bound")
+        # Source exports also retain historical CI payloads; extraction below
+        # selects qualification/API files after validating the complete inventory.
+        require(
+            0 < len(entries) <= (65536 if source_ci else 8192),
+            "publication ZIP member count exceeds bound",
+        )
         names = set()
         total = 0
         for item in entries:
@@ -301,7 +309,20 @@ def safe_extract(archive: Path, destination: Path, *, max_bytes: int) -> None:
             total += item.file_size
             require(total <= max_bytes, "publication ZIP expansion exceeds bound")
         destination.mkdir(parents=True, exist_ok=False)
-        bundle.extractall(destination)
+        selected = (
+            [
+                item
+                for item in entries
+                if item.filename in {"source-qualification.json", "native-api/receipt.json"}
+                or re.fullmatch(
+                    r"native-api/(?:response-[0-9]{6}\.json|http-[0-9]{6}\.PRIVATE\.response)",
+                    item.filename,
+                )
+            ]
+            if source_ci
+            else entries
+        )
+        bundle.extractall(destination, members=selected)
 
 
 def validate_export_inventory(root: Path, role: str) -> None:
@@ -424,7 +445,7 @@ def collect_job_export(
         verify_native_control(control, context)
         verify_source_delta(product, profile)
         root = destination / "export"
-        safe_extract(archive, root, max_bytes=1024 * 1024 * 1024)
+        safe_extract(archive, root, max_bytes=1024 * 1024 * 1024, source_ci=role == "source-ci")
         validate_export_inventory(root, role)
         return root, artifact_coordinate(metadata, job)
 
@@ -556,7 +577,7 @@ def collect_qualified_source(
         and receipt.get("capture_failed") is False
         and receipt.get("pin_errors") == []
         and isinstance(receipt.get("records"), list)
-        and bool(receipt["records"]),
+        and 0 < len(receipt["records"]) <= 16384,
         "source producer native capture is not complete",
     )
     responses: dict[str, dict[str, Any]] = {}
