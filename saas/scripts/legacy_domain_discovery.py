@@ -7,6 +7,7 @@ discovery receipt cannot enable the frozen-legacy domain rule or waive a check.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -936,6 +937,17 @@ def _ordered_parallel(function: Callable[[_T], _R], items: list[_T]) -> list[_R]
     return results
 
 
+def _pr_stability_snapshot(pull: dict[str, Any]) -> dict[str, Any]:
+    """Retain every PR field except repository-wide storage accounting."""
+    snapshot = copy.deepcopy(pull)
+    for side in ("head", "base"):
+        branch = snapshot.get(side)
+        repository = branch.get("repo") if isinstance(branch, dict) else None
+        if isinstance(repository, dict):
+            repository.pop("size", None)
+    return snapshot
+
+
 def discover_main_domain(
     profile: dict[str, Any],
     identity: dict[str, Any],
@@ -1166,7 +1178,7 @@ def discover_main_domain(
     if not stable:
         blockers.append({"reason": "native workflow discovery sets changed"})
     final_pull = api(f"{_ROOT}/pulls/{number}")
-    if final_pull != pull:
+    if _pr_stability_snapshot(final_pull) != _pr_stability_snapshot(pull):
         blockers.append({"reason": "native PR changed during domain discovery"})
     related = [
         attempt
