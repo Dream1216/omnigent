@@ -318,12 +318,101 @@ jobs:
           echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
           echo "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
           echo "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
+      - name: Record first Server build inputs
+        continue-on-error: true
+        env:
+          PROGRESS_BUILDER: ${{ steps.candidate-builder.outputs.name }}
+        timeout-minutes: 2
+        run: |
+          python - <<'PYCODE'
+          import datetime, json, os, subprocess
+          from pathlib import Path
+          output = Path("artifacts/first-server-build-progress")
+          output.mkdir(parents=True, exist_ok=True)
+          builder = os.environ["PROGRESS_BUILDER"]
+          fields = ("CANDIDATE_REVISION", "PYTHON_IMAGE", "RUNTIME_IMAGE", "NODE_IMAGE",
+                    "GO_IMAGE", "SOURCE_DATE_EPOCH", "SOURCE_REVISION", "UPSTREAM_REVISION",
+                    "ADAPTER_CONTRACT_VERSION", "CONTROL_PLANE_SCHEMA_REVISION")
+          context = {"at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                     "builder": builder, "build_step_minutes": 90, "job_minutes": 240,
+                     "materials": {name: os.environ[name] for name in fields}}
+          (output / "context.json").write_text(json.dumps(context, indent=2) + "\n")
+          with (output / "buildx-version.log").open("wb") as log:
+              subprocess.run(["docker", "buildx", "version"], stdout=log,
+                             stderr=subprocess.STDOUT, check=True, timeout=15)
+          with (output / "history-before.json").open("wb") as log:
+              subprocess.run(["docker", "buildx", "--builder", builder, "history", "ls",
+                              "--format", "json"], stdout=log, check=True, timeout=30)
+          PYCODE
       - name: Build server candidate attempt 1
+        id: first_server_build
+        timeout-minutes: 90
+        env:
+          BUILDKIT_PROGRESS: plain
         uses: ./saas/actions/build-oci-candidate
         with:
           artifact: server
           target: runtime
           attempt: "1"
+      - name: Retain first Server build original plain progress
+        continue-on-error: true
+        if: ${{ always() && steps.first_server_build.outcome != 'skipped' }}
+        timeout-minutes: 5
+        env:
+          PROGRESS_BUILDER: ${{ steps.candidate-builder.outputs.name }}
+          BUILD_OUTCOME: ${{ steps.first_server_build.outcome }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, subprocess
+          from pathlib import Path
+          output = Path("artifacts/first-server-build-progress")
+          output.mkdir(parents=True, exist_ok=True)
+          builder = os.environ["PROGRESS_BUILDER"]
+          receipt = {"build_step_outcome": os.environ["BUILD_OUTCOME"],
+                     "origin": "original BuildKit history plain progress", "complete": False}
+          try:
+              with (output / "history-after.json").open("wb") as log:
+                  subprocess.run(["docker", "buildx", "--builder", builder, "history", "ls",
+                                  "--format", "json"], stdout=log, check=True, timeout=30)
+              def refs(path):
+                  remaining = path.read_text().strip()
+                  rows = []
+                  while remaining:
+                      value, consumed = json.JSONDecoder().raw_decode(remaining)
+                      rows.extend(value if isinstance(value, list) else [value])
+                      remaining = remaining[consumed:].lstrip()
+                  assert all(isinstance(row, dict) for row in rows), "Invalid history row"
+                  result = {row.get("ref") or row.get("ID") or row.get("Ref") for row in rows}
+                  assert all(isinstance(ref, str) and ref.strip() == ref and ref for ref in result), "Invalid build ref"
+                  return result
+              created = refs(output / "history-after.json") - refs(output / "history-before.json")
+              assert len(created) == 1 and None not in created, "Ambiguous build record"
+              ref = created.pop()
+              receipt["build_ref"] = ref
+              parts = ref.split("/")
+              assert len(parts) == 3 and parts[0] == builder and all(parts), "Unexpected builder/node/ref"
+              record_ref = parts[-1]
+              receipt["native_record_ref"] = record_ref
+              with (output / "server-1.progress.original.log").open("wb") as log:
+                  subprocess.run(["docker", "buildx", "--builder", builder, "history", "logs",
+                                  "--progress", "plain", record_ref], stdout=log,
+                                 stderr=subprocess.STDOUT, check=True, timeout=120)
+              receipt["complete"] = True
+          except BaseException as error:
+              receipt["capture_error_type"] = type(error).__name__
+              raise
+          finally:
+              (output / "capture.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PYCODE
+      - name: Upload first Server build original progress
+        continue-on-error: true
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-first-build-progress-${{ env.CANDIDATE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/first-server-build-progress/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Verify executable Server candidate SDK on both architectures
         run: |
           set -euo pipefail
