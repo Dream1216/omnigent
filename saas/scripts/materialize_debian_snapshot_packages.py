@@ -22,13 +22,17 @@ class AptPackageInput(TypedDict):
     sha256: str
 
 
-def parse_inputs(text: str, *, distribution: str = "debian") -> list[AptPackageInput]:
+def parse_inputs(
+    text: str, *, distribution: str = "debian", allow_ubuntu_archive: bool = False
+) -> list[AptPackageInput]:
     roots = {
         "debian": r"https://snapshot[.]debian[.]org/archive/(?:debian|debian-security)/",
         "ubuntu": r"https://snapshot[.]ubuntu[.]com/ubuntu/",
     }
     if distribution not in roots:
         raise ValueError("unsupported signed snapshot distribution")
+    if allow_ubuntu_archive and distribution != "ubuntu":
+        raise ValueError("official Ubuntu recovery requires the Ubuntu distribution")
     inputs: list[AptPackageInput] = []
     names: set[str] = set()
     for line in text.splitlines():
@@ -42,6 +46,12 @@ def parse_inputs(text: str, *, distribution: str = "debian") -> list[AptPackageI
             roots[distribution] + r"[0-9]{8}T[0-9]{6}Z/(pool/[A-Za-z0-9_./%+~:-]+[.]deb)",
             uri,
         )
+        if match is None and allow_ubuntu_archive:
+            match = re.fullmatch(
+                r"https://(?:archive|security)[.]ubuntu[.]com/ubuntu/"
+                r"(pool/[A-Za-z0-9_./%+~:-]+[.]deb)",
+                uri,
+            )
         if (
             match is None
             or ".." in urllib.parse.unquote(match[1]).split("/")
@@ -116,8 +126,13 @@ def main() -> None:
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--distribution", choices=("debian", "ubuntu"), default="debian")
+    parser.add_argument("--allow-ubuntu-archive", action="store_true")
     args = parser.parse_args()
-    inputs = parse_inputs(args.inputs.read_text(), distribution=args.distribution)
+    inputs = parse_inputs(
+        args.inputs.read_text(),
+        distribution=args.distribution,
+        allow_ubuntu_archive=args.allow_ubuntu_archive,
+    )
     args.output.mkdir(parents=True, exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         results = list(

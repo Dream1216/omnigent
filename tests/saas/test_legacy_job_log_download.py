@@ -156,6 +156,67 @@ def diagnostic(path):
     return json.loads(sidecar.read_text())
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [None, "changed-before", "changed-after", "too-large", "wrong-purpose", "changed-bytes"],
+)
+def test_verified_original_build_recovers_complete_log_with_default_bound_retained(
+    child, monkeypatch, tmp_path, fault
+):
+    job = {
+        "id": 123,
+        "run_id": 456,
+        "run_attempt": 2,
+        "head_sha": "a" * 40,
+        "name": "build-candidate",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    calls = []
+
+    def api(endpoint):
+        assert endpoint == f"repos/{reader.REPOSITORY}/actions/jobs/123"
+        calls.append(endpoint)
+        result = copy.deepcopy(job)
+        if fault == "changed-before" or (fault == "changed-after" and len(calls) == 2):
+            result["head_sha"] = "b" * 40
+        return result
+
+    monkeypatch.setattr(reader, "api", api)
+    size = 41 if fault == "too-large" else 33
+    script = (
+        f"import sys; sys.stdout.buffer.write(b'x' * ({size} * 1024 * 1024)"
+        " + b'complete native EOF\\n')"
+    )
+    second = script.replace("b'x'", "b'y'") if fault == "changed-bytes" else script
+    processes, _ = child([script, second])
+    path = tmp_path / "source-build.log"
+    with pytest.raises(ValueError, match="exceeds its bounded input"):
+        reader.download_job_log(123, path)
+    assert path.stat().st_size == 32 * 1024 * 1024
+    assert diagnostic(path)["deadline_expired"] is False
+    if fault == "wrong-purpose":
+        job["name"] = "unregistered-build"
+    if fault:
+        with pytest.raises(ValueError):
+            reader._recover_verified_source_build_log(job, path)
+        assert path.stat().st_size == 32 * 1024 * 1024
+        assert not path.with_name(path.name + ".source-size-recovery.json").exists()
+    else:
+        reader._recover_verified_source_build_log(job, path)
+        assert path.read_bytes() == b"x" * (33 * 1024 * 1024) + b"complete native EOF\n"
+        assert (
+            path.with_name(path.name + ".source-size-rejected").stat().st_size == 32 * 1024 * 1024
+        )
+        receipt = json.loads(path.with_name(path.name + ".source-size-recovery.json").read_text())
+        assert receipt["log_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert receipt["default_bound_bytes"] == 32 * 1024 * 1024
+        assert receipt["verified_original_OCI_build_bound_bytes"] == 40 * 1024 * 1024
+        assert receipt["maximum_direct_reads"] == 2
+    assert len(processes) == (1 if fault in {"changed-before", "wrong-purpose"} else 2)
+    assert all(process.poll() is not None for process in processes)
+
+
 def test_native_log_download_drains_stderr_without_persisting_secrets(child, tmp_path):
     secret = b"token=unit-fixture-secret https://unit.invalid/?sig=unit-fixture-SAS\n"
     prefix = b"gh: Forbidden (HTTP 403)\n"
