@@ -65,6 +65,7 @@ from saas.scripts.oci_promotion import (
 )
 from saas.scripts.protected_legacy_initial_build import (
     BASELINES,
+    COMPATIBILITY_COMPONENT,
     REPOSITORY,
     WORKFLOW,
     load_profile,
@@ -85,6 +86,13 @@ SYFT_SHA256 = "c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47"
 CHECKOUT = "Checkout exact main publication control"
 PRODUCT_CHECKOUT = "Checkout exact publication product"
 RUN_STEPS = {
+    "qualify-source": (
+        "Checkout exact main source verifier",
+        "Select registered source qualification product",
+        "Checkout exact source qualification product",
+        "Qualify complete reviewed source CI and original policy state",
+        "Retain original source CI bytes and refusal evidence",
+    ),
     "prepare-publication": (
         CHECKOUT,
         "Select registered publication product",
@@ -123,6 +131,7 @@ RUN_STEPS = {
     ),
 }
 UPLOAD_NAMES = {
+    "qualify-source": "Retain original source CI bytes and refusal evidence",
     "prepare-publication": "Retain publication preparation",
     "publish-exact-oci": "Retain exact publication receipt",
     "verify-published-runtime": "Retain independent runtime and SBOM evidence",
@@ -296,6 +305,15 @@ def safe_extract(archive: Path, destination: Path, *, max_bytes: int) -> None:
 
 
 def validate_export_inventory(root: Path, role: str) -> None:
+    if role == "source-ci":
+        for name in ("source-qualification.json", "native-api/receipt.json"):
+            path = root / name
+            require(
+                path.is_file() and path.stat().st_size <= 32 * 1024 * 1024,
+                "native source export is missing or oversized",
+            )
+            read_json(path)
+        return
     scan_files = {
         "scans/grype/candidate-scan-summary.json",
         *(
@@ -371,13 +389,12 @@ def collect_job_export(
         log_path = destination / "job.log"
         download_job_log(job["id"], log_path)
         log = log_path.read_text()
-        checkout_logs = _checkout_logs(
-            log, steps, (CHECKOUT, PRODUCT_CHECKOUT), job["steps"], workflow
-        )
+        checkout_names = (RUN_STEPS[job_name][0], RUN_STEPS[job_name][2])
+        checkout_logs = _checkout_logs(log, steps, checkout_names, job["steps"], workflow)
         require(
-            checkout_commit(checkout_logs[CHECKOUT], steps[CHECKOUT])
+            checkout_commit(checkout_logs[checkout_names[0]], steps[checkout_names[0]])
             == context["control_revision"]
-            and checkout_commit(checkout_logs[PRODUCT_CHECKOUT], steps[PRODUCT_CHECKOUT])
+            and checkout_commit(checkout_logs[checkout_names[1]], steps[checkout_names[1]])
             == profile["product_revision"],
             "native publication job actually checked out another control or product",
         )
@@ -507,6 +524,104 @@ def strict_qualification(result: dict[str, Any], profile: dict[str, Any], revisi
     )
 
 
+def collect_qualified_source(
+    control: Path,
+    product: Path,
+    profile: dict[str, Any],
+    context: dict[str, Any],
+    destination: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Revalidate the exact same-attempt producer instead of repeating its work."""
+    if profile["component"] != COMPATIBILITY_COMPONENT:
+        result = qualify_source_ci(
+            control, product, profile["component"], context["control_revision"], destination
+        )
+        return result, {"mode": "original-full-source-qualification"}
+    root, coordinate = collect_job_export(
+        control,
+        product,
+        profile,
+        context,
+        job_name="qualify-source",
+        role="source-ci",
+        destination=destination / "producer",
+    )
+    result = read_json(root / "source-qualification.json")
+    strict_qualification(result, profile, context["control_revision"])
+    receipt = read_json(root / "native-api/receipt.json")
+    require(
+        receipt.get("kind") == "legacy_native_api_evidence_receipt/v1"
+        and receipt.get("stage") == "pass"
+        and receipt.get("invocation_raised") is False
+        and receipt.get("capture_failed") is False
+        and receipt.get("pin_errors") == []
+        and isinstance(receipt.get("records"), list)
+        and bool(receipt["records"]),
+        "source producer native capture is not complete",
+    )
+    responses: dict[str, dict[str, Any]] = {}
+    seen = set()
+    for record in receipt["records"]:
+        name = record.get("path")
+        require(
+            isinstance(name, str)
+            and re.fullmatch(r"response-[0-9]{6}\.json", name) is not None
+            and name not in seen,
+            "source producer response path differs",
+        )
+        seen.add(name)
+        path = root / "native-api" / name
+        require(
+            path.is_file()
+            and path.stat().st_size == record.get("bytes")
+            and file_sha256(path) == record.get("sha256"),
+            "source producer response bytes differ",
+        )
+        prior = read_json(path)
+        endpoint = prior.get("endpoint")
+        require(
+            isinstance(endpoint, str)
+            and (endpoint.startswith(PREFIX + "/") or endpoint == "rate_limit")
+            and "response" in prior,
+            "source producer response is not native",
+        )
+        assert isinstance(endpoint, str)
+        if endpoint != "rate_limit":
+            responses[endpoint] = {**prior, "producer_record": record}
+    require(bool(responses), "source producer has no native inputs")
+    changed = False
+    with preserve_native_evidence(
+        destination / "revalidation-api", evidence_root=destination
+    ) as evidence:
+        evidence.stage = "same-attempt-qualified-source-current-origin-revalidation"
+        for endpoint, prior in responses.items():
+            http = prior.get("http_observation", {})
+            require(http.get("status") in {200, 304}, "source producer HTTP input failed")
+            etag = http.get("headers", {}).get("etag")
+            if etag is not None:
+                evidence.seed_verified_response(
+                    endpoint,
+                    prior["response"],
+                    etag,
+                    {
+                        "producer": coordinate,
+                        "record": prior["producer_record"],
+                    },
+                )
+            if api(endpoint) != prior["response"]:
+                changed = True
+    if changed:
+        result = qualify_source_ci(
+            control,
+            product,
+            profile["component"],
+            context["control_revision"],
+            destination / "changed-source-qualification",
+        )
+        strict_qualification(result, profile, context["control_revision"])
+    return result, {**coordinate, "current_inputs_required_full_requalification": changed}
+
+
 def collect_original_input(
     control: Path, profile: dict[str, Any], destination: Path
 ) -> dict[str, Any]:
@@ -551,8 +666,8 @@ def collect_inputs(
     destination.mkdir(parents=True, exist_ok=False)
     profile = load_profile(control, component)
     verify_source_delta(product, profile)
-    source = qualify_source_ci(
-        control, product, component, context["control_revision"], destination / "source"
+    source, source_producer = collect_qualified_source(
+        control, product, profile, context, destination / "source"
     )
     strict_qualification(source, profile, context["control_revision"])
     pg = collect_pg_receipts(
@@ -585,7 +700,11 @@ def collect_inputs(
         "transfer_profile": load_transfer_profile(control, component),
         "original_pr_oci": original,
         "fresh_control_wheel": fresh,
-        "source_qualification": {"sha256": digest(source), "result": source},
+        "source_qualification": {
+            "sha256": digest(source),
+            "result": source,
+            "native_producer": source_producer,
+        },
         "native_product_pg": {"sha256": digest(pg), "result": pg},
         "rebuild_in_publisher": False,
     }
