@@ -822,3 +822,28 @@ index fe64e5c..73bd1ec 100644
 +                conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
 +            if conv is None or conv.labels.get(STARTUP_LABEL) != "pending":
 +                return
+diff --git a/omnigent/inner/os_env.py b/omnigent/inner/os_env.py
+index 4e12ecfd97..807364aceb 100644
+--- a/omnigent/inner/os_env.py
++++ b/omnigent/inner/os_env.py
+@@ -263,0 +264,10 @@ def build_helper_env(
++def _constrain_linux_sandbox_locale(env: dict[str, str], sandbox: SandboxPolicy | None) -> None:
++    """Keep catalog overrides out of the Linux launcher while preserving UTF-8."""
++    if sandbox is None or not sandbox.active or sandbox.backend_type != "linux_bwrap":
++        return
++    env.pop("LANGUAGE", None)
++    env.pop("LOCPATH", None)
++    for name in ("LANG", "LC_ALL", "LC_MESSAGES"):
++        env[name] = "C.UTF-8"
++
++
+@@ -683,0 +694 @@ class _HelperProcessClient:
++        _constrain_linux_sandbox_locale(env, sandbox)
+diff --git a/omnigent/inner/terminal.py b/omnigent/inner/terminal.py
+index ba792c778f..636900147a 100644
+--- a/omnigent/inner/terminal.py
++++ b/omnigent/inner/terminal.py
+@@ -50,0 +51 @@ from .os_env import (
++    _constrain_linux_sandbox_locale,
+@@ -1795,0 +1797 @@ class TerminalInstance:
++            _constrain_linux_sandbox_locale(env, sandbox_for_launcher)

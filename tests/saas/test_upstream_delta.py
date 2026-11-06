@@ -130,8 +130,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 5450
-    assert budget["max_direct_upstream_files"] == 206
+    assert budget["max_upstream_net_added_loc"] == 5577
+    assert budget["max_direct_upstream_files"] == 210
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -141,8 +141,11 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert recovery["accepted_main"] == "6cc0b5be7ed26193b1d6b341c246ba22b2b23902"
     composition = revision["aliyun_Main1c2_composition_20261106"]
     assert composition["accepted_main"] == "1c2a98eb0a6fed8cd30d670e8086c3b208eb1798"
-    assert composition["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
-    assert composition["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert composition["max_upstream_net_added_loc"] == 5450
+    assert composition["max_direct_upstream_files"] == 206
+    locale_boundary = revision["linux_sandbox_locale_last_spawn_20261106"]
+    assert locale_boundary["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert locale_boundary["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153

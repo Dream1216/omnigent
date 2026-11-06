@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 206,
-    "max_upstream_net_added_loc": 5450,
+    "max_direct_upstream_files": 210,
+    "max_upstream_net_added_loc": 5577,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1084,6 +1084,28 @@
         }
       ],
       "generic_21_inputs_cardinality_1_to_2_retained": true
+    },
+    "linux_sandbox_locale_last_spawn_20261106": {
+      "accepted_main": "1c2a98eb0a6fed8cd30d670e8086c3b208eb1798",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "composition_parent": "8573e1d979fdbaef9ffa4c238ced3415bc4a9ff9",
+      "max_direct_upstream_files": 210,
+      "max_upstream_net_added_loc": 5577,
+      "previous_max_direct_upstream_files": 206,
+      "previous_max_upstream_net_added_loc": 5450,
+      "reason": "Bounded existing Linux active-sandbox last-spawn locale constraint after all environment overrides. Clear LANGUAGE/LOCPATH and force C.UTF-8 at actual helper/tmux exec boundaries; preserve other backends and inactive behavior. Extend existing owning process-boundary tests and existing patch0010, keeping nine patches/.85 isolation and all original raw High, review, native CI, signed-product and release gates. This source-scope record is not a glibc disposition or production admission.",
+      "recorded_at": "2026-11-06",
+      "scoped_upstream_paths": [
+        "omnigent/inner/os_env.py",
+        "omnigent/inner/terminal.py",
+        "tests/inner/test_os_env.py",
+        "tests/inner/test_terminal.py"
+      ],
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216"
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
