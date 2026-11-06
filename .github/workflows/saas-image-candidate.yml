@@ -77,7 +77,7 @@ on:
         required: false
         type: string
       diagnostic_host_only:
-        description: One unqualified Host build for fixed 514a2ce1; no signing or release
+        description: One unqualified standard Host build for fixed Main82019f14; no signing or release
         required: false
         type: boolean
         default: false
@@ -1151,9 +1151,9 @@ jobs:
     # Exact inputs recovered from both original Server provenance records.
     # This subject is diagnostic only; it cannot enter the ordinary seal/sign chain.
     env:
-      CANDIDATE_REVISION: 514a2ce1ae703869260c0e1eccf5a06767e7e4e3
-      SOURCE_REVISION: 514a2ce1ae703869260c0e1eccf5a06767e7e4e3
-      SOURCE_DATE_EPOCH: "1793934522"
+      CANDIDATE_REVISION: 82019f14c6ec7c8c844dbe067767d46e82144db3
+      SOURCE_REVISION: 82019f14c6ec7c8c844dbe067767d46e82144db3
+      SOURCE_DATE_EPOCH: "1793985842"
       UPSTREAM_REVISION: ee728a02004749e7f6971beee6c66d990bfbd216
       CONTROL_PLANE_SCHEMA_REVISION: p0s000000018
       ADAPTER_CONTRACT_VERSION: "0.2.0"
@@ -1169,9 +1169,12 @@ jobs:
           set -euo pipefail
           [[ "$PUBLISH_SIGNED" == "false" ]]
           [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]
+          [[ "$GITHUB_REPOSITORY" == "Dream1216/omnigent" ]]
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]
+          [[ "$GITHUB_REF" == "refs/heads/codex/021-main820-host-diagnostic" ]]
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: 514a2ce1ae703869260c0e1eccf5a06767e7e4e3
+          ref: 82019f14c6ec7c8c844dbe067767d46e82144db3
           persist-credentials: false
       - name: Verify diagnostic source and original epoch
         run: |
@@ -1181,27 +1184,55 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install the existing locked scanner environment
+        run: |
+          uv sync --frozen --extra saas
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
         with:
           version: v29.5.2
           daemon-config: '{"features":{"containerd-snapshotter":true}}'
       - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        id: diagnostic-builder
       - name: Build one unqualified Host using the original standard target and cache
         id: diagnostic-host
-        uses: Dream1216/omnigent/saas/actions/build-oci-candidate@514a2ce1ae703869260c0e1eccf5a06767e7e4e3
+        uses: Dream1216/omnigent/saas/actions/build-oci-candidate@82019f14c6ec7c8c844dbe067767d46e82144db3
         with:
           artifact: host
           target: host
           attempt: "1"
+      - name: Reclaim only the owned ephemeral Host builder cache
+        id: reclaim
+        env:
+          OWNED_BUILDER: ${{ steps.diagnostic-builder.outputs.name }}
+        run: |
+          python - <<'PYCODE'
+          import os, pathlib, re, stat, subprocess, json, shutil
+          root=pathlib.Path(os.environ["RUNNER_TEMP"])
+          archive=root/"host-1.tar"
+          metadata=archive.lstat()
+          assert stat.S_ISREG(metadata.st_mode) and metadata.st_size>0
+          before=(metadata.st_dev,metadata.st_ino,metadata.st_size,metadata.st_mtime_ns)
+          builder=os.environ["OWNED_BUILDER"]
+          assert re.fullmatch(r"builder-[a-zA-Z0-9][a-zA-Z0-9_-]{1,90}",builder)
+          subprocess.run(["docker","buildx","prune","--builder",builder,"--all","--force"],check=True,timeout=300)
+          after=archive.lstat()
+          assert before==(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns)
+          pathlib.Path("artifacts").mkdir(exist_ok=True)
+          pathlib.Path("artifacts/host-diagnostic-owned-cache.PUBLIC.json").write_text(json.dumps({"builder":builder,"owned_archive_unchanged":True,"archive_bytes":metadata.st_size,"free_bytes_after":shutil.disk_usage(root).free,"source_revision":"82019f14c6ec7c8c844dbe067767d46e82144db3","release_qualified":False})+"\n")
+          with open(os.environ["GITHUB_ENV"],"a") as stream:stream.write("TMPDIR="+str(root)+"\n")
+          PYCODE
       - name: Reuse the preserved original Server for the complete raw scan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: "13477415207"
-          run-id: "42156854379"
+          artifact-ids: "13528376529"
+          run-id: "42261289948"
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/diagnostic-server-original
       - name: Verify exact original Server archive
+        id: verify-server
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -1209,21 +1240,58 @@ jobs:
           candidates = list((Path(os.environ["RUNNER_TEMP"]) / "diagnostic-server-original").rglob("server-1.tar"))
           assert len(candidates) == 1 and candidates[0].is_file()
           with candidates[0].open("rb") as stream:
-              assert hashlib.file_digest(stream, "sha256").hexdigest() == "f5a8cc4165cdd0470ba60c3b51cf4fd4239b939471d23941810742e7c8a15ce9"
+              assert hashlib.file_digest(stream, "sha256").hexdigest() == "6ea96822e286b6902a26533d35fd533c31d65493bc844b56b2e609e21424cf15"
           with open(os.environ["GITHUB_ENV"], "a") as stream:
               stream.write("DIAGNOSTIC_SERVER_ARCHIVE=" + str(candidates[0]) + "\n")
           PY
+      - name: Record actual Main Host and Server subjects and installed source boundaries
+        run: |
+          python - <<'PYCODE'
+          from pathlib import Path
+          from datetime import datetime, UTC
+          import os,json,hashlib
+          from saas.scripts.sqlite_component_disposition import image_blobs,component_inventory
+          from saas.scripts.combined_runtime_disposition import RUNTIME_RULE
+          expected={'opt/venv/lib/python3.12/site-packages/saas/production/server.py': '0fbce786db76e432cb9645cd30f28e8808b4706f1d8fbc440f5f37a0407254de', 'opt/venv/lib/python3.12/site-packages/saas/production/worker.py': '6b350f48c46cc25d3f10cd19816cca377a7d2b782755bdedb858bfbb332dae25', 'opt/venv/lib/python3.12/site-packages/saas/production/runner_control.py': 'ace8b7227ee12efd5e3d01e19f64608954802a1086bc1068270d35d78669fbe0', 'opt/venv/lib/python3.12/site-packages/saas/production/runner_agent.py': 'ec2a1e3b8a4dc6527d584595ba8d40db1d272f0e6ae24174e718bde5bc4713c9', 'opt/venv/lib/python3.12/site-packages/saas/production/preview_edge.py': '349bbceebd2a00ce23291345fde24f282296fad6af5fa1dfcdb9dc3871263ee2', 'opt/venv/lib/python3.12/site-packages/saas/production/preview_owner.py': '40399d6e2d2836a19884569f3eea35c9dff69d8cab3311f63f73ece185f2ead0', 'opt/venv/lib/python3.12/site-packages/saas/production/runtime_locale.py': '89e54a498a2e2d11fe0b8ef64308ef144bc262b0754ff47fe0488faea80d60ec', 'opt/venv/lib/python3.12/site-packages/saas/production/runner_executor.py': '75281dd71d71a12c24e8e6a4f58b349b427eaed86014749f2de202581931a596', 'opt/venv/lib/python3.12/site-packages/omnigent/inner/os_env.py': 'e113566d883d43c060908b9b0a93b2defd168ebb0499e017c3cf336a2c443c43', 'opt/venv/lib/python3.12/site-packages/omnigent/inner/terminal.py': '86e529e7e20f9ed5d8795b9909b43a799031b67c8e385598dbfa7169d39b4985', 'opt/venv/lib/python3.12/site-packages/omnigent/inner/sandbox.py': '2c7faf6d85b6a02dcdffabddf1a5171e1b9bf1295fbf570c491778e2e303e8e8', 'opt/venv/lib/python3.12/site-packages/omnigent/inner/bwrap_sandbox.py': '7d60e0110298b8be6e1ad5d284321f52f7ca9628426881a75000876a4056fd2b', 'opt/venv/lib/python3.12/site-packages/saas/production/preview_readiness.py': '4691592d1717a02ea6e98cbea3c71e3bc92e0a322d6ccbc3afb578905e357068', 'opt/venv/lib/python3.12/site-packages/saas/production/preview_relay.py': 'cf51d1f217bc93c1f8025537311ee6168a362bdf21168d4fa0ac77aa9db6d66e', 'opt/venv/lib/python3.12/site-packages/saas/production/runner_readiness.py': 'bd3d174f440b85906d4b700564edf7589cf1631c702068ece70126d7f2838d40', 'opt/venv/lib/python3.12/site-packages/saas/runner_adapter/isolation.py': '832b8e04afb1f7020e38947acc4a4209cd3b16068fcd8c613008d9ab3c502aaa', 'opt/venv/lib/python3.12/site-packages/saas/control_plane/isolation.py': '99977b7d5d893d9d8c3b0a2428242ff44988ae06aabadb5cd513025d01557caf'}
+          rows=[]
+          for artifact,path in [("server",Path(os.environ["DIAGNOSTIC_SERVER_ARCHIVE"])),("host",Path(os.environ["RUNNER_TEMP"])/"host-1.tar")]:
+              with image_blobs(path) as blobs:
+                  for platform in ["linux/amd64","linux/arm64"]:
+                      digest,manifest=blobs.platform(platform)
+                      config=blobs.document(manifest["config"]["digest"])
+                      assert config["config"]["Labels"]["org.opencontainers.image.revision"]=="82019f14c6ec7c8c844dbe067767d46e82144db3"
+                      inventory=component_inventory(blobs,manifest,additional_paths=frozenset(expected) | {"usr/lib/libc.so.6"})
+                      observed={row["path"]:row.get("sha256") for row in inventory}
+                      assert all(observed.get(key)==value for key,value in expected.items())
+                      assert observed["usr/lib/libc.so.6"]==RUNTIME_RULE["libc_sha256"][platform]
+                      selected=[value for value in config["config"].get("Env",[]) if value.split("=",1)[0] in {"LANG","LC_ALL","LC_MESSAGES","LANGUAGE","LOCPATH"}]
+                      assert selected==[]
+                      rows.append({"artifact":artifact,"platform":platform,"manifest_digest":digest,"config_digest":manifest["config"]["digest"],"libc_sha256":observed["usr/lib/libc.so.6"],"actual_installed_source_sha256":{key:observed[key] for key in expected},"image_config_locale_five":"all absent; not an actual process/role environment observation","parent_process_or_lifecycle_observed":False,"High_or_runtime_or_release_qualified":False})
+          Path("artifacts").mkdir(exist_ok=True)
+          Path("artifacts/Main820-actual-standard-Host-and-Server-subjects.PUBLIC.json").write_text(json.dumps({"at_UTC":datetime.now(UTC).isoformat(),"source_revision":"82019f14c6ec7c8c844dbe067767d46e82144db3","control_revision":os.environ["GITHUB_SHA"],"run":os.environ["GITHUB_RUN_ID"],"attempt":os.environ["GITHUB_RUN_ATTEMPT"],"scope":"One standardHost target built once plus retained exactMainServer; unqualified diagnostic original subject/config/libc/17installedsource only, no native role execution or signature","images":rows,"release_qualified":False},sort_keys=True,indent=2)+"\n")
+          PYCODE
       - name: Retain complete original raw findings for both images and architectures
+        if: ${{ always() && !cancelled() && steps.diagnostic-host.outcome == 'success' && steps.reclaim.outcome == 'success' && steps.verify-server.outcome == 'success' }}
         run: >-
           python -m saas.scripts.scan_oci_candidates
           --image "server=${{ env.DIAGNOSTIC_SERVER_ARCHIVE }}"
           --image "host=${{ runner.temp }}/host-1.tar"
           --output artifacts/diagnostic-host-grype
+      - name: Retain small original diagnostic facts before the full Host archive
+        if: ${{ always() && !cancelled() && steps.diagnostic-host.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diagnostic-only-host-82019f14-small-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/*.json
+            artifacts/diagnostic-host-grype/*.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Retain unqualified Host OCI and original diagnostic reports
         if: ${{ always() && !cancelled() && steps.diagnostic-host.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: diagnostic-only-host-514a2ce1-${{ github.run_id }}-${{ github.run_attempt }}
+          name: diagnostic-only-host-82019f14-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/host-1.tar
             artifacts/diagnostic-host-grype/*.json
