@@ -694,6 +694,33 @@
       ],
       "accepted_main": "8c001134ed22bb4bc2d08cf68a497430b79c6aa4",
       "composition_note": "Original accepted Main inverse fragments are unchanged; their exact application restores the previously reviewed Cloud generic validator byte-for-byte."
+    },
+    "runtime_condition_admission_correction": {
+      "corrected_sha256": "a9baa6796fb592626da26f8498bbe77ba922cdd77c3a468acbf664cda588fe19",
+      "restored_sha256": "2443c231886448e270a59a9040c34d73f307a68cb9b5217548cb983c491d5784",
+      "context": "Exact inverse of independently reviewed finite runtime conditions, authenticated image graph and pinned compress security correction; restores every earlier generic source and function guard. Does not qualify any image or approve a release.",
+      "inverse_fragments": [
+        {
+          "before": "            \"runtime_contract\": {\n                \"architectures\": [\"amd64\", \"arm64\"],\n                \"go_toolchain\": \"go1.27.2\",\n                \"modules\": {\"golang.org/x/net\": \"v0.60.0\"},\n            },\n            \"resolved_vulnerabilities\": [\n                \"GO-2026-6603\",\n",
+          "after": "            \"runtime_contract\": {\n                \"architectures\": [\"amd64\", \"arm64\"],\n                \"go_toolchain\": \"go1.27.2\",\n                \"modules\": {\n                    \"golang.org/x/net\": \"v0.60.0\",\n                    \"github.com/klauspost/compress\": \"v1.20.2\",\n                },\n                \"module_checksums\": {\n                    \"github.com/klauspost/compress@v1.20.2\": (\n                        \"h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=\"\n                    ),\n                    \"github.com/klauspost/compress@v1.20.2/go.mod\": (\n                        \"h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=\"\n                    ),\n                },\n            },\n            \"resolved_vulnerabilities\": [\n                \"GO-2026-6603\",\n"
+        },
+        {
+          "before": "                \"GO-2026-6611\",\n                \"GO-2026-6612\",\n                \"GO-2026-6613\",\n            ],\n        }\n        if github_cli_lock != expected_github_cli_lock:\n",
+          "after": "                \"GO-2026-6611\",\n                \"GO-2026-6612\",\n                \"GO-2026-6613\",\n                \"GO-2026-6865\",\n            ],\n        }\n        if github_cli_lock != expected_github_cli_lock:\n"
+        },
+        {
+          "before": "        if set(vulnerabilities) not in (\n            _VULNERABILITY_POLICY_FIELDS,\n            _VULNERABILITY_POLICY_FIELDS | {\"component_not_applicable\"},\n        ):\n            violations.append(\"vulnerability policy fields do not match schema version 2\")\n        if \"component_not_applicable\" in vulnerabilities:\n",
+          "after": "        if set(vulnerabilities) not in (\n            _VULNERABILITY_POLICY_FIELDS,\n            _VULNERABILITY_POLICY_FIELDS | {\"component_not_applicable\"},\n            _VULNERABILITY_POLICY_FIELDS | {\"component_not_applicable\", \"runtime_mitigation\"},\n        ):\n            violations.append(\"vulnerability policy fields do not match schema version 2\")\n        if \"component_not_applicable\" in vulnerabilities:\n"
+        },
+        {
+          "before": "                violations.append(\n                    \"finite component disposition differs from the exact reviewed rule\"\n                )\n        if not _exact_integer(vulnerabilities.get(\"critical_allowed\"), 0) or not (\n            _exact_integer(vulnerabilities.get(\"high_allowed\"), 0)\n        ):\n",
+          "after": "                violations.append(\n                    \"finite component disposition differs from the exact reviewed rule\"\n                )\n        if \"runtime_mitigation\" in vulnerabilities:\n            from saas.scripts.combined_runtime_disposition import RUNTIME_RULE\n\n            if vulnerabilities[\"runtime_mitigation\"] != RUNTIME_RULE:\n                violations.append(\"finite runtime mitigation differs from the exact reviewed rule\")\n        if not _exact_integer(vulnerabilities.get(\"critical_allowed\"), 0) or not (\n            _exact_integer(vulnerabilities.get(\"high_allowed\"), 0)\n        ):\n"
+        },
+        {
+          "before": "    expected_product_revision: str | None,\n) -> list[str]:\n    violations: list[str] = []\n    if set(evidence) != _EVIDENCE_FIELDS:\n        violations.append(\"image evidence fields do not match schema version 2\")\n    if not _exact_integer(evidence.get(\"evidence_version\"), 2):\n        violations.append(\"image evidence version must be 2\")\n    completed_at = _parse_time(evidence.get(\"completed_at\"))\n",
+          "after": "    expected_product_revision: str | None,\n) -> list[str]:\n    violations: list[str] = []\n    if set(evidence) - {\"runtime_conditions\"} != _EVIDENCE_FIELDS:\n        violations.append(\"image evidence fields do not match schema version 2\")\n    if \"runtime_conditions\" in evidence:\n        from saas.scripts.runtime_evidence_intake import authenticated_runtime_graph\n\n        try:\n            revision = evidence.get(\"product_revision\")\n            if not isinstance(revision, str):\n                raise ValueError(\"runtime graph requires the exact product revision\")\n            authenticated = authenticated_runtime_graph(repo, product_revision=revision, now=now)\n            if authenticated != evidence[\"runtime_conditions\"]:\n                violations.append(\"runtime graph differs from authenticated image admission\")\n        except (OSError, ValueError, KeyError, TypeError):\n            violations.append(\"runtime graph lacks trusted signed image admission\")\n    if not _exact_integer(evidence.get(\"evidence_version\"), 2):\n        violations.append(\"image evidence version must be 2\")\n    completed_at = _parse_time(evidence.get(\"completed_at\"))\n"
+        }
+      ]
     }
   },
   "saas/scripts/scan_oci_candidates.py": {
@@ -764,6 +791,17 @@
         {
           "before": "            \"original reports, counts and scanner exit codes are retained.\"\n        )\n    return 2 if findings_present and not advisory else 0\n\n\n",
           "after": "            \"original reports, counts and scanner exit codes are retained.\"\n        )\n    return 2 if blocked and not advisory else 0\n\n\n"
+        }
+      ]
+    },
+    "runtime_condition_admission_correction": {
+      "corrected_sha256": "b8e193dd054f70ed856cfc0775352d8d49f0c3c34ef680667e833726e3aa0271",
+      "restored_sha256": "a58baecdc0efd28c25e4e06ef4d12d4150f4c78933c09ccfaea59978b1904830",
+      "context": "Exact inverse of independently reviewed finite runtime conditions, authenticated image graph and pinned compress security correction; restores every earlier generic source and function guard. Does not qualify any image or approve a release.",
+      "inverse_fragments": [
+        {
+          "before": "                findings_present |= present\n                disposition = None\n                if args.scope != \"aliyun-host\" and any(counts.values()) and result.returncode == 2:\n                    from saas.scripts.sqlite_component_disposition import inspect_disposition\n\n                    try:\n                        disposition = inspect_disposition(\n                            archive, output, platform=platform, now=datetime.now(UTC)\n                        )\n                    except ValueError as error:\n",
+          "after": "                findings_present |= present\n                disposition = None\n                if args.scope != \"aliyun-host\" and any(counts.values()) and result.returncode == 2:\n                    from saas.scripts.approved_disposition import inspect_approved_disposition\n\n                    try:\n                        disposition = inspect_approved_disposition(\n                            archive, output, platform=platform, now=datetime.now(UTC)\n                        )\n                    except ValueError as error:\n"
         }
       ]
     }

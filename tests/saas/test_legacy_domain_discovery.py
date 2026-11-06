@@ -659,6 +659,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "runtime_condition_admission_correction",
         "source_native_response_capacity_correction",
         "same_attempt_source_qualification_reuse_correction",
         "verified_source_build_log_correction",
@@ -693,21 +694,25 @@ def reviewed_source_bytes(root, relative, expected):
     [None, "unregistered-source", "duplicate", "missing", "wrong-before", "wrong-restored"],
 )
 @pytest.mark.parametrize(
-    "correction_name",
+    ("relative", "correction_name"),
     [
-        "source_native_response_capacity_correction",
-        "same_attempt_source_qualification_reuse_correction",
+        ("saas/scripts/legacy_initial_publisher.py", "source_native_response_capacity_correction"),
+        (
+            "saas/scripts/legacy_initial_publisher.py",
+            "same_attempt_source_qualification_reuse_correction",
+        ),
+        ("saas/scripts/check_image_supply_chain.py", "runtime_condition_admission_correction"),
+        ("saas/scripts/scan_oci_candidates.py", "runtime_condition_admission_correction"),
     ],
 )
 def test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged(
-    tmp_path, fault, correction_name
+    tmp_path, fault, relative, correction_name
 ):
     parent = json.loads(
         (RESOURCE.parent / "native-domain-discovery-parent-hashes.json").read_text()
     )
     root = Path(__file__).resolve().parents[2]
     if fault is not None:
-        relative = "saas/scripts/legacy_initial_publisher.py"
         expected = copy.deepcopy(parent[relative])
         correction = expected[correction_name]
         body = (root / relative).read_bytes()
