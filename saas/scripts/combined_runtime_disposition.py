@@ -1,9 +1,7 @@
-"""Finite raw-two-High composition, pending a protected native-evidence intake.
+"""Compose exact raw-two-High facts with existing signed image evidence.
 
-No existing caller uses this module and the current policy does not enable its
-rule. A protected caller must supply a native verifier with authenticated
-producer/independent-review/authorization and whole-role/last-override coverage.
-Parsing a candidate-provided JSON claim is not an implementation of that verifier.
+The runtime rule remains disabled until actual native origin, independent review
+and complete final subject coverage are admitted through protected release trust.
 """
 
 from __future__ import annotations
@@ -51,6 +49,7 @@ class VerifiedRuntimeCondition:
     native_evidence_sha256: str
     independent_review_sha256: str
     authority_reference_sha256: str
+    runtime_graph_sha256: str
     expires_at: datetime
 
 
@@ -139,12 +138,6 @@ def inspect_combined_disposition(
     APIs remain strict raw0C1H. This path never produces a filtered report.
     """
     repo = Path(__file__).resolve().parents[2]
-    if verify_runtime is None:
-        from saas.scripts.runtime_evidence_intake import registered_inventory_paths
-
-        extra_paths = registered_inventory_paths(repo)
-    else:
-        extra_paths = frozenset({"usr/lib/libc.so.6"})
     if (
         not runtime_rule_enabled()
         or not sqlite.rule_enabled()
@@ -177,11 +170,21 @@ def inspect_combined_disposition(
             or re.fullmatch(r"[0-9a-f]{40}", str(revision)) is None
         ):
             raise ValueError("finite runtime evidence does not bind the actual OCI subject")
+        graph = None
+        extra_paths = frozenset({"usr/lib/libc.so.6"})
+        if verify_runtime is None:
+            from saas.scripts.runtime_evidence_intake import (
+                authenticated_runtime_graph,
+                registered_inventory_paths,
+            )
+
+            graph = authenticated_runtime_graph(repo, product_revision=revision, now=now)
+            extra_paths = registered_inventory_paths(graph)
         inventory = sqlite.component_inventory(blobs, manifest, additional_paths=extra_paths)
-    if verify_runtime is None:
+    if graph is not None:
         from saas.scripts.runtime_evidence_intake import verifier_from_registered_inputs
 
-        verify_runtime = verifier_from_registered_inputs(repo, inventory)
+        verify_runtime = verifier_from_registered_inputs(graph, inventory)
     return disposition_receipt(
         raw,
         inventory,
@@ -262,6 +265,7 @@ def disposition_receipt(
         condition.native_evidence_sha256,
         condition.independent_review_sha256,
         condition.authority_reference_sha256,
+        condition.runtime_graph_sha256,
     ):
         if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
             raise ValueError("protected runtime proof lacks an authenticated input identity")

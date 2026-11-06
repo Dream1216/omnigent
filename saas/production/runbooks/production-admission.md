@@ -224,3 +224,40 @@ Complete the following after the source and trust root are frozen on protected m
 The exception cannot authorize another product, upstream, schema, actor commitment,
 expiry, workflow run or policy. Final admission still requires all eight signed
 evidence domains, all ten aggregate gates, the ledger and all phase decisions.
+
+## Finite runtime evidence graph
+
+The product source contains verification rules. Final source, OCI and raw-report
+identities belong in the separately admitted image evidence, avoiding a product
+commit that would have to contain its own future commit and image digests.
+Package independently reviewed original JSON records without changing their bytes:
+
+```sh
+uv run python -m saas.scripts.runtime_evidence_intake \
+  --materials-root /absolute/path/to/original-reviewed-materials \
+  --product-revision "$PRODUCT_REVISION" \
+  --image-evidence saas/acceptance/p0-production-image-evidence.json \
+  --output artifacts/image-evidence-with-runtime-conditions.json
+```
+
+The material root contains `saas/supply_chain/runtime-condition-inputs.json` and
+its exact contract, native observation, independent review and authority records.
+The command packages bytes; it provides no native-origin or signing authority.
+Admit the resulting image document through the existing two-phase production
+image receipt process and existing key. Never copy a final subject into product
+source or substitute an expected digest for an actual OCI observation.
+
+When a protected consumer uses a separate evidence checkout, set
+`OMNIGENT_RUNTIME_EVIDENCE_REPO` to its absolute path. This selects data only;
+the consumer pins policy and keys to product source, checks the image receipt's
+exact product revision and signature, then checks every graph coordinate and the
+actual OCI files. The complete graph hash is retained in the disposition receipt,
+so seal, promotion and final revalidation cannot silently substitute another graph.
+A local registry alone cannot authorize an image. Both original High findings stay
+in the raw report and all finite expiries remain fixed.
+
+The current empty approved registry and disabled runtime policy intentionally
+reject release use. Actual producer custody, complete role and platform coverage,
+protected workflow transfer of the admitted evidence, and current-report bindings
+must close before enabling the rule. This interface alone does not qualify the
+Server/Host pair or authorize signing or publication.

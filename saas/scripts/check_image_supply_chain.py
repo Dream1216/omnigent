@@ -2320,8 +2320,20 @@ def _validate_evidence(
     expected_product_revision: str | None,
 ) -> list[str]:
     violations: list[str] = []
-    if set(evidence) != _EVIDENCE_FIELDS:
+    if set(evidence) - {"runtime_conditions"} != _EVIDENCE_FIELDS:
         violations.append("image evidence fields do not match schema version 2")
+    if "runtime_conditions" in evidence:
+        from saas.scripts.runtime_evidence_intake import authenticated_runtime_graph
+
+        try:
+            revision = evidence.get("product_revision")
+            if not isinstance(revision, str):
+                raise ValueError("runtime graph requires the exact product revision")
+            authenticated = authenticated_runtime_graph(repo, product_revision=revision, now=now)
+            if authenticated != evidence["runtime_conditions"]:
+                violations.append("runtime graph differs from authenticated image admission")
+        except (OSError, ValueError, KeyError, TypeError):
+            violations.append("runtime graph lacks trusted signed image admission")
     if not _exact_integer(evidence.get("evidence_version"), 2):
         violations.append("image evidence version must be 2")
     completed_at = _parse_time(evidence.get("completed_at"))

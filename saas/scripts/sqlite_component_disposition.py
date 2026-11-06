@@ -344,7 +344,10 @@ def _validate_disposition_receipt(
         from saas.scripts.combined_runtime_disposition import (
             disposition_receipt as combined_receipt,
         )
-        from saas.scripts.runtime_evidence_intake import verifier_from_registered_inputs
+        from saas.scripts.runtime_evidence_intake import (
+            authenticated_runtime_graph,
+            verifier_from_registered_inputs,
+        )
 
         raw = report_path if isinstance(report_path, bytes) else report_path.read_bytes()
         expected = combined_receipt(
@@ -354,7 +357,14 @@ def _validate_disposition_receipt(
             now=now,
             scanner_exit=scanner_exit,
             verify_runtime=verifier_from_registered_inputs(
-                Path(__file__).resolve().parents[2], inventory
+                authenticated_runtime_graph(
+                    Path(__file__).resolve().parents[2],
+                    product_revision=json.loads(raw)["source"]["target"]["labels"][
+                        "org.opencontainers.image.revision"
+                    ],
+                    now=now,
+                ),
+                inventory,
             ),
         )
         if json.dumps(proof, sort_keys=True, allow_nan=False) != json.dumps(
@@ -469,31 +479,11 @@ def validate_release_dispositions(
 def require_admitted_image_inventory(
     repo: Path, evidence: dict[str, Any], image: dict[str, Any], *, now: datetime
 ) -> None:
-    from saas.production import admission
+    from saas.scripts.runtime_evidence_intake import authenticated_image_documents
 
-    policy_path = repo / "saas/production/evidence-admission-policy.json"
-    policy = json.loads(policy_path.read_text())
-    result = admission.validate_evidence_admission(
-        repo,
-        policy,
-        now=now,
-        expected_product_revision=image["labels"]["org.opencontainers.image.revision"],
-        include_authenticated_documents=True,
+    documents = authenticated_image_documents(
+        repo, product_revision=image["labels"]["org.opencontainers.image.revision"], now=now
     )
-    _, key_violations, _ = admission._load_keys(repo, policy, now=now)
-    if (
-        admission._validate_policy(repo, policy)
-        or key_violations
-        or result["kinds"]["image"]["status"] != "pass"
-        or result["kinds"]["image"]["production_readiness"] != "ready"
-    ):
-        raise ValueError("finite image inventory lacks trusted signed evidence admission")
-    documents = []
-    for relative, verified_sha256 in result["authenticated_documents"]["image"].items():
-        raw = (repo / relative).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != verified_sha256:
-            raise ValueError("finite image inventory bytes changed after verified admission")
-        documents.append(json.loads(raw))
     bodies = [document.get("release_evidence", document) for document in documents]
     if evidence not in bodies or image not in evidence.get("images", []):
         raise ValueError("finite image inventory differs from the authenticated evidence document")

@@ -15,12 +15,13 @@ from tests.saas.test_sqlite_component_disposition import NOW, candidate
 LIBC = b"\x7fELFsynthetic-libc-fixture"
 
 
-def combination(tmp_path, monkeypatch, *, extra=None):
+def combination(tmp_path, monkeypatch, *, extra=None, database_time=NOW):
     image, path, report = candidate(
         tmp_path,
         monkeypatch,
         extra={"usr/lib/libc.so.6": LIBC, **(extra or {})},
         config_os="linux",
+        database_time=database_time,
     )
     monkeypatch.setattr(combined, "runtime_rule_enabled", lambda: True)
     monkeypatch.setitem(
@@ -50,6 +51,7 @@ def combination(tmp_path, monkeypatch, *, extra=None):
         native_evidence_sha256="2" * 64,
         independent_review_sha256="3" * 64,
         authority_reference_sha256="4" * 64,
+        runtime_graph_sha256="5" * 64,
         expires_at=NOW + timedelta(hours=2),
     )
     return image, path, report, approved
@@ -179,6 +181,7 @@ def test_old_or_other_native_subject_cannot_be_transferred(tmp_path, monkeypatch
         "native_evidence_sha256",
         "independent_review_sha256",
         "authority_reference_sha256",
+        "runtime_graph_sha256",
     ],
 )
 def test_unidentified_protected_input_is_rejected(tmp_path, monkeypatch, field):
@@ -198,7 +201,7 @@ def test_expired_naive_or_overlong_conditions_are_rejected(tmp_path, monkeypatch
 
 def test_no_native_verifier_or_approval_cannot_enable_the_path(tmp_path, monkeypatch):
     image, path, _, approved = combination(tmp_path, monkeypatch)
-    with pytest.raises(ValueError, match="full-role contract"):
+    with pytest.raises(ValueError, match="signed evidence admission"):
         inspect(image, path, approved, verify_runtime=None)
     monkeypatch.setattr(combined, "runtime_rule_enabled", lambda: False)
     with pytest.raises(ValueError, match="unavailable"):
