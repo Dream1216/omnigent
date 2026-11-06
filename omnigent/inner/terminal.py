@@ -48,6 +48,7 @@ from .egress import EgressProxyHandle, apply_egress_env, start_egress_proxy
 from .git_ssh import GitSshBroker, apply_git_ssh_env, start_git_ssh_broker
 from .os_env import (
     OSEnvironment,
+    _constrain_linux_sandbox_locale,
     _copy_tree,
     create_os_environment,
 )
@@ -1793,6 +1794,7 @@ class TerminalInstance:
         try:
             if self._clipboard_bridge is not None:
                 self._clipboard_bridge.start()
+            _constrain_linux_sandbox_locale(env, sandbox_for_launcher)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,

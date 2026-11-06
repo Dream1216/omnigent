@@ -2935,6 +2935,65 @@ async def test_launch_default_env_unset_leaks_databricks_profile(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["linux_bwrap", "darwin_seatbelt", "none"])
+async def test_launch_constrains_linux_sandbox_locale_after_late_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    poison = {
+        "LANGUAGE": "../../workspace/catalog:fr",
+        "LOCPATH": "/workspace/locale",
+        "LANG": "fr_FR.UTF-8",
+        "LC_ALL": "fr_FR.UTF-8",
+        "LC_MESSAGES": "fr_FR.UTF-8",
+        "BENIGN_MARKER": "preserved",
+    }
+    captured = []
+
+    async def spawn(*_args, **kwargs):
+        captured.append(dict(kwargs["env"]))
+        return _SuccessfulProcess()
+
+    monkeypatch.setattr(
+        terminal_mod,
+        "asyncio",
+        SimpleNamespace(create_subprocess_exec=spawn, subprocess=asyncio.subprocess),
+    )
+    monkeypatch.setattr(
+        terminal_mod, "create_exec_launcher", lambda *_args, **_kwargs: "/sandbox/launcher"
+    )
+    instance = TerminalInstance(
+        name="bash",
+        session_key="locale",
+        socket_path=tmp_path / "tmux.sock",
+        private_dir=tmp_path,
+        env=dict(poison),
+        inherit_env=False,
+        sandbox_policy=terminal_mod.SandboxPolicy(
+            backend_type=backend,
+            active=backend != "none",
+            read_roots=None,
+            write_roots=[],
+            write_files=[],
+            allow_network=True,
+        ),
+    )
+    instance._clipboard_bridge = SimpleNamespace(
+        prepare_environment=lambda env: env.update(poison),
+        start=lambda: None,
+        close=lambda: None,
+    )
+    await instance.launch(cwd=tmp_path)
+    assert len(captured) == 1
+    actual = captured[0]
+    assert actual["BENIGN_MARKER"] == "preserved"
+    if backend == "linux_bwrap":
+        assert "LANGUAGE" not in actual and "LOCPATH" not in actual
+        assert {actual[key] for key in ("LANG", "LC_ALL", "LC_MESSAGES")} == {"C.UTF-8"}
+    else:
+        assert all(actual[key] == value for key, value in poison.items())
+
+
+@pytest.mark.asyncio
 async def test_launch_strips_runner_binding_token_from_tmux_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

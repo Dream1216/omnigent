@@ -8,7 +8,7 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (184 files, 4,655 net lines, nine patches, .85).
+`saas/upstream-baseline.json` (199 files, 4,576 net lines, nine patches, .85).
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
@@ -18,6 +18,20 @@ sub-agent, session override and loader implementation. Page ACLs and Agent rows
 are still read on every request; failed/missing results are not cached. This
 does not cache authorization or bypass execution-time path validation. Existing
 workspace, revision, override, artifact-failure and revocation assertions remain.
+
+## Linux sandbox launcher locale (2026-11-06)
+
+Patch 0010 also covers `omnigent/inner/os_env.py` and
+`omnigent/inner/terminal.py`. Immediately before the helper or tmux process
+starts an active `linux_bwrap` sandbox, clear `LANGUAGE` and `LOCPATH` and set
+`LANG`, `LC_ALL` and `LC_MESSAGES` to `C.UTF-8`. Apply this after all environment
+and backend adjustments so a later override cannot restore catalog traversal
+inputs. Other backends and inactive sandboxes retain their locale behavior.
+Tests capture both actual spawn boundaries after synthetic late overrides;
+they do not establish native libc behavior or final-image vulnerability
+acceptance. The raw glibc High finding and all release gates remain blocking.
+Remove this extension when upstream supplies an equivalent boundary constraint
+or a separately verified vendor fix makes it unnecessary.
 
 ## Historical pending cold-input regression correction (superseded by later approvals)
 

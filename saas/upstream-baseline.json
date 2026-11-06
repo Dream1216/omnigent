@@ -114,7 +114,7 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 195,
+    "max_direct_upstream_files": 199,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -896,6 +896,28 @@
         "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "reason": "Exact approved consumer/governance integration; retain nine patches, .85 isolation and 4576 LOC ceiling. Normal tests, native provenance and all release/security/data gates remain."
+    },
+    "linux_sandbox_locale_last_spawn_20261106": {
+      "accepted_main": "1c2a98eb0a6fed8cd30d670e8086c3b208eb1798",
+      "reviewed_runtime_source": "ed9a62c4325f04a5109cfed1095115370fd7f5a1",
+      "reviewed_production_source": "f78f63ce75dd496021c98bdb56f635fe3f011e38",
+      "recorded_at": "2026-11-06",
+      "previous_max_direct_upstream_files": 195,
+      "max_direct_upstream_files": 199,
+      "max_upstream_net_added_loc": 4576,
+      "measured_upstream_net_added_loc": 4225,
+      "scoped_upstream_paths": [
+        "omnigent/inner/os_env.py",
+        "omnigent/inner/terminal.py",
+        "tests/inner/test_os_env.py",
+        "tests/inner/test_terminal.py"
+      ],
+      "authorization_source": {
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "reason": "Adopt the independently reviewed exact four runtime/test postimages directly on accepted Main. Constrain only existing active linux_bwrap last-spawn helper/tmux locale after all overrides, preserve C.UTF-8 and other backends/inactive behavior. Extend existing0010 patch with no tenth patch and retain4576 LOC/.85 isolation/all original technical,raw High,signing,native business and release gates. No incoming Aliyun/Cloud implementation paths or High policy exception."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
