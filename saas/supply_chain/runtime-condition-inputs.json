@@ -1,16 +1,29 @@
 {
   "schema_version": 1,
   "approved_scopes": [],
+  "approved_native_observations": [
+    {
+      "operation": "host514-f5601779b357-launchers",
+      "native_record_sha256": "9c3c4c6c115951b32845db192872faa152ab85d814fb7dc45002b717dba98828",
+      "independent_review_sha256": "a5e6e46d21e30774c62e1e4ad4ce62aaaf91db2a3d3daf504d8d61abfa7bd660",
+      "installed_files": {
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/os_env.py": "e113566d883d43c060908b9b0a93b2defd168ebb0499e017c3cf336a2c443c43",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/terminal.py": "86e529e7e20f9ed5d8795b9909b43a799031b67c8e385598dbfa7169d39b4985",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/sandbox.py": "2c7faf6d85b6a02dcdffabddf1a5171e1b9bf1295fbf570c491778e2e303e8e8",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/bwrap_sandbox.py": "7d60e0110298b8be6e1ad5d284321f52f7ca9628426881a75000876a4056fd2b"
+      }
+    }
+  ],
   "pending_inputs": {
-    "reason": "The reviewed actual Server amd64 helper and ordinary Owner observations are bounded components. No exact final full-role subject is approved yet; all complete release-image combinations must reject.",
+    "reason": "The actual reviewed Host amd64 helper/terminal origin is registered for bounded component reuse. Server helper and ordinary Owner observations remain bounded supplementary evidence. No complete final-role contract is approved; unapproved image combinations must reject.",
     "helper_source": "514a2ce1ae703869260c0e1eccf5a06767e7e4e3",
     "helper_native_record_sha256": "a5383a7abe8555e8ec1521e72bde9d6d6012730ad8060a0d5a86bb7427530e32",
     "helper_independent_review_sha256": "4dcf676201ad48d3790fb6d82c58aba38557bf86fe4ed500357ab39ac26b68ea",
     "missing": [
       "exact final subject and original raw report",
       "complete deployed role/command/factory/profile and last-override contract",
-      "independently authenticated native producer with fixed expiry",
-      "Host and arm64 applicability and own raw components"
+      "admitted whole evidence graph with fixed expiry and approved component/entry bridge",
+      "arm64 applicability and own final raw components"
     ]
   }
 }

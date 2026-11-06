@@ -16,6 +16,10 @@ on:
         type: string
       receipt_request_json:
         description: Optional canonical receipt request JSON; empty runs final admission
+      runtime_evidence_revision:
+        description: Optional immutable evidence-only data revision for an image receipt
+        required: false
+        type: string
 
 permissions: {contents: read, actions: read}
 
@@ -41,6 +45,7 @@ jobs:
       PRODUCT_REVISION: ${{ inputs.product_revision }}
       REVIEW_EXCEPTION_REQUEST_JSON: ${{ inputs.review_exception_request_json }}
       RECEIPT_REQUEST_JSON: ${{ inputs.receipt_request_json }}
+      RUNTIME_EVIDENCE_REVISION: ${{ inputs.runtime_evidence_revision }}
       TRUSTED_REF: ${{ github.ref }}
       TRUSTED_REF_REVISION: ${{ github.sha }}
       WORKFLOW_IDENTITY: ${{ github.workflow_ref }}
@@ -51,6 +56,7 @@ jobs:
           set -euo pipefail
           [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]] && [[ "$EVIDENCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
           [[ -z "$REVIEW_EXCEPTION_REQUEST_JSON" || -z "$RECEIPT_REQUEST_JSON" ]]
+          [[ -z "$RUNTIME_EVIDENCE_REVISION" || -n "$RECEIPT_REQUEST_JSON" ]]
           [[ "$TRUSTED_REF" == "refs/heads/main" ]] && [[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -62,6 +68,12 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --extra saas
+      - name: Prepare separate immutable image receipt data
+        if: inputs.runtime_evidence_revision != '' && inputs.receipt_request_json != ''
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ inputs.product_revision }}
+          evidence-revision: ${{ inputs.runtime_evidence_revision }}
       - if: inputs.review_exception_request_json != ''
         run: >-
           uv run python -m saas.scripts.prepare_review_exception
@@ -95,6 +107,7 @@ jobs:
           --product-revision "$PRODUCT_REVISION"
           --workflow-identity "$WORKFLOW_IDENTITY"
           --output-directory artifacts/evidence-receipt
+          --evidence-repo "${OMNIGENT_RUNTIME_EVIDENCE_REPO:-$GITHUB_WORKSPACE}"
       - name: Upload immutable review authorization
         if: inputs.review_exception_request_json != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -6,15 +6,104 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from saas.production.admission import _regular_repo_file
-from saas.scripts.combined_runtime_disposition import RuntimeSubject, VerifiedRuntimeCondition
+from saas.scripts.combined_runtime_disposition import (
+    RUNTIME_RULE,
+    RuntimeSubject,
+    VerifiedRuntimeCondition,
+)
 
 REGISTRY = "saas/supply_chain/runtime-condition-inputs.json"
 ADMISSION_POLICY = "saas/production/evidence-admission-policy.json"
+COMPONENT_BRIDGE = "same-platform-installed-component-and-entry/v1"
+
+
+def native_evidence_from_operator(
+    record: dict[str, Any], *, original: dict[str, Any], review: dict[str, Any]
+) -> dict[str, Any]:
+    """Derive component facts from the existing operator's original safe receipt."""
+    facts, image = record["native_facts"], record["actual_image"]
+    native = facts["subject"]
+    expected = native["expected_original_subject"]
+    controls = record["actual_runtime_contract"]
+    if (
+        type(record.get("qualification_exit")) is not int
+        or record["qualification_exit"] != 0
+        or record.get("product_modules_modified") is not False
+        or record.get("owned_task_container_absent") is not True
+        or record.get("owned_network_namespace_absent") is not True
+        or record.get("cleanup_errors") != []
+        or record.get("DB_credentials_shared_PVC_external_network") is not False
+        or facts.get("mocked_exec") is not False
+        or facts.get("production_source_modified") is not False
+        or facts.get("source") != record["source"]
+        or image.get("all_selected_CAS_verified") is not True
+        or image.get("resolved_manifest_digest") != expected["manifest_digest"]
+        or image.get("resolved_config_digest") != expected["config_digest"]
+        or native["loaded_libc"]["sha256"] != expected["libc_sha256"]
+        or any(
+            controls.get(key) is not True
+            for key in (
+                "nonroot",
+                "no_new_privileges",
+                "all_capabilities_empty",
+                "rootfs_readonly",
+            )
+        )
+        or record["network"] != {"interfaces": ["lo"], "non_loopback_routes": 0}
+        or record["actual_task"]["id"] != record["operation"]
+        or facts.get("requested_roles") != ["helper", "terminal"]
+    ):
+        raise ValueError("original operator component receipt is incomplete or changed")
+    clean = {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_MESSAGES": "C.UTF-8",
+        "LANGUAGE": None,
+        "LOCPATH": None,
+    }
+    process_env = {key: [] if value is None else [value] for key, value in clean.items()}
+    for role, launchers in (
+        ("helper", ("trusted_launcher_process",)),
+        ("terminal", ("trusted_tmux_server_process", "pane_process")),
+    ):
+        child = facts[role]["actual_child"]
+        if (
+            child["five_locale_inputs"] != clean
+            or child["effective_LC_MESSAGES"] not in {"C.UTF-8", "C.utf8"}
+            or child["effective_encoding"].lower().replace("-", "") != "utf8"
+        ):
+            raise ValueError("actual native child locale is not constrained")
+        for name in launchers:
+            process = facts[role][name]
+            if (
+                type(process["pid"]) is not int
+                or process["pid"] <= 0
+                or not process["start_ticks"]
+                or process["five_locale_inputs"] != process_env
+            ):
+                raise ValueError("actual native launcher identity or locale differs")
+    return {
+        "producer": {"kind": "existing-native-operator", "operation": record["operation"]},
+        "subject": {
+            "source_revision": record["source"],
+            "platform": native["platform"],
+            "manifest_digest": expected["manifest_digest"],
+            "config_digest": expected["config_digest"],
+            "libc_sha256": expected["libc_sha256"],
+        },
+        "original_report_sha256": expected["original_report_sha256"],
+        "roles": facts["requested_roles"],
+        "expires_at": RUNTIME_RULE["expires_at"],
+        "original_operator_record": original,
+        "original_operator_review": review,
+    }
 
 
 def _material_file(repo: Path, relative: str) -> Path:
@@ -31,6 +120,63 @@ def _material_file(repo: Path, relative: str) -> Path:
     if path is None:
         raise ValueError("native input escaped the reviewed material root")
     return path
+
+
+def prepare_evidence_context(
+    repo: Path, *, product_revision: str, evidence_revision: str, destination: Path
+) -> Path:
+    """Fetch immutable data; execute only product code and preserve clean lineage."""
+    if (
+        any(
+            re.fullmatch(r"[0-9a-f]{40}", value) is None
+            for value in (product_revision, evidence_revision)
+        )
+        or not destination.is_absolute()
+        or destination.exists()
+    ):
+        raise ValueError("evidence context requires exact revisions and a fresh directory")
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "credential.helper=",
+            "-c",
+            "credential.helper=!gh auth git-credential",
+            "fetch",
+            "--no-tags",
+            "origin",
+            evidence_revision,
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(destination), evidence_revision],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    validate_evidence_context(repo, destination, product_revision=product_revision)
+    return destination
+
+
+def validate_evidence_context(repo: Path, evidence_repo: Path, *, product_revision: str) -> None:
+    from saas.production.readiness import validate_candidate_revision
+
+    lineage = validate_candidate_revision(product_revision, evidence_repo)
+    if lineage["status"] != "pass" or lineage["production_readiness"] != "ready":
+        raise ValueError("runtime data revision changed product source or has dirty lineage")
+    policy = json.loads(_material_file(repo, ADMISSION_POLICY).read_bytes())
+    for relative in (ADMISSION_POLICY, policy["trusted_key_registry"]):
+        if (
+            _material_file(repo, relative).read_bytes()
+            != _material_file(evidence_repo, relative).read_bytes()
+        ):
+            raise ValueError("runtime data changed protected admission policy or keys")
+    for source in policy["evidence_sources"]:
+        if source["kind"] == "image":
+            _material_file(evidence_repo, source["path"])
 
 
 def _coordinate(coordinate: dict[str, Any]) -> tuple[str, str]:
@@ -120,6 +266,32 @@ def authenticated_runtime_graph(
     ):
         raise ValueError("authenticated runtime graph subject or schema differs")
     _registry(graph)
+    for scope in graph["registry"]["approved_scopes"]:
+        contract, _ = _document(graph, scope["contract"])
+        native, _ = _document(graph, contract["native_evidence"])
+        original, review = (
+            native.get("original_operator_record"),
+            native.get("original_operator_review"),
+        )
+        if not isinstance(original, dict) or not isinstance(review, dict):
+            raise ValueError("native producer lacks its registered original operator receipt")
+        record, _ = _document(graph, original)
+        _document(graph, review)
+        boundaries = _registered_native_origin(repo, native).get("installed_files")
+        if (
+            not isinstance(boundaries, dict)
+            or not boundaries
+            or any(
+                contract.get("installed_files", {}).get(path) != sha
+                for path, sha in boundaries.items()
+            )
+        ):
+            raise ValueError(
+                "runtime contract omitted or changed a registered native code boundary"
+            )
+        expected = native_evidence_from_operator(record, original=original, review=review)
+        if native != expected:
+            raise ValueError("native wrapper differs from unchanged original operator facts")
     return graph
 
 
@@ -133,6 +305,23 @@ def _registry(graph: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ValueError("native input registry schema differs")
     return registry
+
+
+def _registered_native_origin(repo: Path, native: dict[str, Any]) -> dict[str, Any]:
+    catalog = json.loads(_material_file(repo, REGISTRY).read_bytes())
+    registration = {
+        "operation": native["producer"]["operation"],
+        "native_record_sha256": native["original_operator_record"]["sha256"],
+        "independent_review_sha256": native["original_operator_review"]["sha256"],
+    }
+    matches = [
+        entry
+        for entry in catalog.get("approved_native_observations", [])
+        if all(entry.get(key) == value for key, value in registration.items())
+    ]
+    if len(matches) != 1:
+        raise ValueError("native operator origin is not registered in protected product source")
+    return matches[0]
 
 
 def prepare_runtime_graph(repo: Path, *, product_revision: str) -> dict[str, Any]:
@@ -156,8 +345,16 @@ def prepare_runtime_graph(repo: Path, *, product_revision: str) -> dict[str, Any
         contract, _ = _document(graph, scope["contract"])
         relative, _ = _coordinate(contract["native_evidence"])
         graph["documents"][relative] = _material_file(repo, relative).read_bytes().decode("utf-8")
-        _document(graph, contract["native_evidence"])
-        if contract["subject"]["source_revision"] != product_revision:
+        native, _ = _document(graph, contract["native_evidence"])
+        for key in ("original_operator_record", "original_operator_review"):
+            if key in native:
+                relative, _ = _coordinate(native[key])
+                graph["documents"][relative] = (
+                    _material_file(repo, relative).read_bytes().decode("utf-8")
+                )
+                _document(graph, native[key])
+        target = contract.get("component_bridge", {}).get("target", contract["subject"])
+        if target["source_revision"] != product_revision:
             raise ValueError("native contract belongs to another product revision")
     return graph
 
@@ -168,15 +365,23 @@ def verifier_from_registered_inputs(graph: dict[str, Any], inventory: list[dict[
 
     def verify(subject: RuntimeSubject, *, now: datetime) -> VerifiedRuntimeCondition:
         matches = []
+        identity = {
+            "source_revision": subject.source_revision,
+            "platform": subject.platform,
+            "manifest_digest": subject.manifest_digest,
+            "config_digest": subject.config_digest,
+            "libc_sha256": subject.libc_sha256,
+        }
         for coordinate in registry["approved_scopes"]:
             contract, contract_sha = _document(graph, coordinate["contract"])
-            if contract.get("subject") == {
-                "source_revision": subject.source_revision,
-                "platform": subject.platform,
-                "manifest_digest": subject.manifest_digest,
-                "config_digest": subject.config_digest,
-                "libc_sha256": subject.libc_sha256,
-            }:
+            bridge = contract.get("component_bridge")
+            if contract.get("subject") == identity or (
+                isinstance(bridge, dict)
+                and bridge.get("kind") == COMPONENT_BRIDGE
+                and bridge.get("target")
+                == {key: identity[key] for key in ("source_revision", "platform", "libc_sha256")}
+                and graph["product_revision"] == subject.source_revision
+            ):
                 matches.append((contract, contract_sha, coordinate))
         if len(matches) != 1:
             raise ValueError(
@@ -212,11 +417,35 @@ def verifier_from_registered_inputs(graph: dict[str, Any], inventory: list[dict[
             or producer != review.get("verified_native_producer")
         ):
             raise ValueError("native producer origin is not independently registered")
-        if evidence.get("original_report_sha256") != subject.report_sha256:
+        bridge = contract.get("component_bridge")
+        if bridge is not None and (
+            not isinstance(bridge, dict)
+            or bridge.get("kind") != COMPONENT_BRIDGE
+            or bridge.get("target")
+            != {key: identity[key] for key in ("source_revision", "platform", "libc_sha256")}
+            or graph["product_revision"] != subject.source_revision
+            or bridge.get("native_subject") != contract["subject"]
+            or any(
+                contract["subject"].get(key) != identity[key]
+                for key in ("platform", "libc_sha256")
+            )
+            or bridge.get("native_report_sha256") != evidence.get("original_report_sha256")
+            or bridge.get("current_scan") != "fresh-unfiltered-exact-two-findings-same-OCI"
+            or bridge.get("native_roles") != evidence.get("roles")
+            or bridge.get("approved_roles") != contract.get("roles")
+            or review.get("verified_component_bridge") != bridge
+            or authority.get("approved_component_bridge") != bridge
+        ):
+            raise ValueError(
+                "native component bridge lacks exact review, authority or applicability"
+            )
+        if evidence.get("original_report_sha256") != subject.report_sha256 and bridge is None:
             raise ValueError("native evidence belongs to a different original raw report")
         if evidence.get("subject") != contract["subject"]:
             raise ValueError("native producer did not bind this exact subject")
-        if evidence.get("roles") != contract.get("roles") or not evidence.get("roles"):
+        if (bridge is None and evidence.get("roles") != contract.get("roles")) or not evidence.get(
+            "roles"
+        ):
             raise ValueError("native evidence role/command/factory/profile coverage differs")
         if (
             not isinstance(contract.get("last_merge_contract"), dict)
@@ -262,15 +491,49 @@ def registered_inventory_paths(graph: dict[str, Any]) -> frozenset[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--materials-root", required=True, type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--materials-root", type=Path)
+    mode.add_argument("--evidence-revision")
+    parser.add_argument("--evidence-directory", type=Path)
+    parser.add_argument("--operator-record")
+    parser.add_argument("--operator-review")
     parser.add_argument("--product-revision", required=True)
-    parser.add_argument("--image-evidence", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--image-evidence")
+    parser.add_argument("--output")
     args = parser.parse_args()
     from saas.scripts.prepare_evidence_receipt import _safe_output
 
     repo = Path(__file__).resolve().parents[2]
     try:
+        if args.evidence_revision:
+            if args.evidence_directory is None or args.output or args.image_evidence:
+                raise ValueError("evidence context requires only a fresh evidence directory")
+            prepare_evidence_context(
+                repo,
+                product_revision=args.product_revision,
+                evidence_revision=args.evidence_revision,
+                destination=args.evidence_directory,
+            )
+            return 0
+        if args.operator_record or args.operator_review:
+            if not args.operator_record or not args.operator_review or not args.output:
+                raise ValueError("native producer requires both original records and an output")
+            originals = []
+            for relative in (args.operator_record, args.operator_review):
+                raw = _material_file(args.materials_root, relative).read_bytes()
+                originals.append({"path": relative, "sha256": hashlib.sha256(raw).hexdigest()})
+            value = native_evidence_from_operator(
+                json.loads(_material_file(args.materials_root, args.operator_record).read_bytes()),
+                original=originals[0],
+                review=originals[1],
+            )
+            _registered_native_origin(repo, value)
+            _safe_output(args.materials_root, args.output).write_text(
+                json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n"
+            )
+            return 0
+        if not args.image_evidence or not args.output:
+            raise ValueError("graph packaging requires the image evidence and output paths")
         document = json.loads(_material_file(repo, args.image_evidence).read_bytes())
         body = document.get("release_evidence", document)
         if body.get("product_revision") != args.product_revision:
@@ -281,7 +544,7 @@ def main() -> int:
         _safe_output(repo, args.output).write_text(
             json.dumps(document, indent=2, sort_keys=True, allow_nan=False) + "\n"
         )
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     return 0
 
