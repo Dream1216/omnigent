@@ -24,11 +24,89 @@ ADMISSION_POLICY = "saas/production/evidence-admission-policy.json"
 COMPONENT_BRIDGE = "same-platform-installed-component-and-entry/v1"
 
 
+def _native_startup_evidence(
+    record: dict[str, Any], *, original: dict[str, Any], review: dict[str, Any]
+) -> dict[str, Any]:
+    facts, subject = record["native_facts"], record["subject"]
+    controls = record["actual_runtime_contract"]
+    roles = ["server", "worker", "runner_control", "runner_agent", "preview_edge", "preview_owner"]
+    clean = {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_MESSAGES": "C.UTF-8",
+        "LANGUAGE": None,
+        "LOCPATH": None,
+    }
+    if (
+        type(record.get("qualification_exit")) is not int
+        or record["qualification_exit"] != 0
+        or record.get("owned_container_absent") is not True
+        or record.get("DB_credentials_shared_PVC_external_network") is not False
+        or record.get("QEMU_used") is not False
+        or record.get("host_architecture") != "aarch64"
+        or record.get("control_attempt") != "1"
+        or record.get("High_disposition") is not False
+        or record.get("full_image_or_lifecycle_qualified") is not False
+        or facts.get("source_revision") != record["source_revision"]
+        or subject.get("source_revision") != record["source_revision"]
+        or facts.get("platform") != subject.get("platform")
+        or subject["platform"] != "linux/arm64"
+        or facts.get("actual_loaded_libc", {}).get("sha256") != subject["libc_sha256"]
+        or not facts.get("installed_files")
+        or facts.get("uid") != 1000
+        or facts.get("gid") != 1000
+        or type(facts.get("pid")) is not int
+        or facts["pid"] <= 0
+        or re.fullmatch(r"pid:\[\d+\]", facts.get("pid_namespace", "")) is None
+        or not str(facts.get("process_start_ticks", "")).isdigit()
+        or facts.get("mocked_exec") is not False
+        or facts.get("production_source_modified") is not False
+        or facts.get("whole_service_lifecycle_qualified") is not False
+        or facts.get("High_disposition") is not False
+        or facts.get("expires_at") != RUNTIME_RULE["expires_at"]
+        or controls.get("NetworkMode") != "none"
+        or controls.get("Privileged") is not False
+        or controls.get("ReadonlyRootfs") is not True
+        or controls.get("CapDrop") != ["ALL"]
+        or controls.get("CapAdd")
+        or controls.get("PidMode") == "host"
+        or "no-new-privileges:true" not in controls.get("SecurityOpt", [])
+        or facts.get("actual_controls")
+        != {
+            "no_new_privileges": True,
+            "all_capabilities_empty": True,
+            "rootfs_readonly": True,
+            "interfaces": ["lo"],
+            "non_loopback_routes": 0,
+        }
+        or [entry.get("role") for entry in facts.get("entries", [])] != roles
+        or any(
+            entry.get("five_locale_inputs") != clean
+            or entry.get("effective_LC_MESSAGES") not in {"C.UTF-8", "C.utf8"}
+            or entry.get("effective_encoding", "").lower().replace("-", "") != "utf8"
+            for entry in facts.get("entries", [])
+        )
+    ):
+        raise ValueError("original native startup component receipt is incomplete or changed")
+    return {
+        "producer": {"kind": "github-actions", "operation": record["operation"]},
+        "subject": dict(subject),
+        "original_report_sha256": record["original_report_sha256"],
+        "roles": roles,
+        "expires_at": RUNTIME_RULE["expires_at"],
+        "original_operator_record": original,
+        "original_operator_review": review,
+    }
+
+
 def native_evidence_from_operator(
     record: dict[str, Any], *, original: dict[str, Any], review: dict[str, Any]
 ) -> dict[str, Any]:
     """Derive component facts from the existing operator's original safe receipt."""
-    facts, image = record["native_facts"], record["actual_image"]
+    facts = record["native_facts"]
+    if facts.get("kind") == "installed-production-startup-locale/v1":
+        return _native_startup_evidence(record, original=original, review=review)
+    image = record["actual_image"]
     native = facts["subject"]
     expected = native["expected_original_subject"]
     controls = record["actual_runtime_contract"]

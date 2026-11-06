@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import asdict, replace
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -252,5 +253,15 @@ def test_noncanonical_boolean_integer_proof_cannot_compare_equal(tmp_path, monke
         )
 
 
-def test_actual_repository_policy_has_no_runtime_rule():
-    assert combined.runtime_rule_enabled() is False
+def test_actual_repository_policy_keeps_signed_full_role_approval_required():
+    from saas.scripts.runtime_evidence_intake import REGISTRY, prepare_runtime_graph
+
+    root = Path(__file__).resolve().parents[2]
+    policy = json.loads((root / "saas/supply_chain/release-policy.json").read_text())
+    assert combined.runtime_rule_enabled() is True
+    assert policy["vulnerability_policy"]["runtime_mitigation"] == combined.RUNTIME_RULE
+    assert policy["vulnerability_policy"]["critical_allowed"] == 0
+    assert policy["vulnerability_policy"]["high_allowed"] == 0
+    assert json.loads((root / REGISTRY).read_text())["approved_scopes"] == []
+    with pytest.raises(ValueError, match="no approved full-role contract"):
+        prepare_runtime_graph(root, product_revision="a" * 40)

@@ -7,6 +7,7 @@ import json
 import shutil
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -620,6 +621,140 @@ def test_native_producer_uses_actual_operator_values_and_fixed_expiry(tmp_path, 
     else:
         with pytest.raises(ValueError):
             produce()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "exit",
+        "cleanup",
+        "emulation",
+        "source",
+        "platform",
+        "libc",
+        "pid",
+        "namespace",
+        "roles",
+        "locale",
+        "encoding",
+        "mocked",
+        "lifecycle",
+        "High",
+        "expiry",
+        "network",
+        "privileges",
+        "writable",
+        "caps",
+        "NNP",
+    ],
+)
+def test_startup_producer_preserves_real_ARM_component_scope_and_rejects_changed_facts(fault):
+    from saas.scripts.runtime_evidence_intake import native_evidence_from_operator
+
+    raw = (Path(__file__).parent / "resources/native-arm-startup-operator.json").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == (
+        "c32ec8564c416e90f268d8d2e7c0e3f6d59f1c8509627dc1e0ca0376310fcd6a"
+    )
+    record = json.loads(raw)
+    facts, controls = record["native_facts"], record["actual_runtime_contract"]
+    if fault in {"exit", "cleanup", "emulation"}:
+        record[
+            {
+                "exit": "qualification_exit",
+                "cleanup": "owned_container_absent",
+                "emulation": "QEMU_used",
+            }[fault]
+        ] = fault == "emulation"
+    elif fault == "source":
+        facts["source_revision"] = "a" * 40
+    elif fault == "platform":
+        record["subject"]["platform"] = "linux/amd64"
+    elif fault == "libc":
+        facts["actual_loaded_libc"]["sha256"] = "a" * 64
+    elif fault == "pid":
+        facts["pid"] = False
+    elif fault == "namespace":
+        facts["pid_namespace"] = "host"
+    elif fault == "roles":
+        facts["entries"] = []
+    elif fault == "locale":
+        facts["entries"][0]["five_locale_inputs"]["LOCPATH"] = "/workspace"
+    elif fault == "encoding":
+        facts["entries"][0]["effective_encoding"] = "ASCII"
+    elif fault in {"mocked", "lifecycle", "High"}:
+        facts[
+            {
+                "mocked": "mocked_exec",
+                "lifecycle": "whole_service_lifecycle_qualified",
+                "High": "High_disposition",
+            }[fault]
+        ] = True
+    elif fault == "expiry":
+        facts["expires_at"] = "2026-11-12T10:40:00Z"
+    elif fault in {"network", "privileges", "writable", "caps", "NNP"}:
+        controls[
+            {
+                "network": "NetworkMode",
+                "privileges": "Privileged",
+                "writable": "ReadonlyRootfs",
+                "caps": "CapDrop",
+                "NNP": "SecurityOpt",
+            }[fault]
+        ] = {"network": "bridge", "privileges": True, "writable": False, "caps": [], "NNP": []}[
+            fault
+        ]
+
+    def produce():
+        return native_evidence_from_operator(
+            record,
+            original={"path": "original", "sha256": hashlib.sha256(raw).hexdigest()},
+            review={"path": "review", "sha256": "2" * 64},
+        )
+
+    if fault is not None:
+        with pytest.raises(ValueError, match="native startup component"):
+            produce()
+    else:
+        native = produce()
+        assert native["subject"] == record["subject"]
+        assert native["original_report_sha256"] == record["original_report_sha256"]
+        assert native["producer"] == {"kind": "github-actions", "operation": record["operation"]}
+        assert native["expires_at"] == EXPIRY
+        assert native["roles"] == [entry["role"] for entry in facts["entries"]]
+        assert "helper" not in native["roles"] and "terminal" not in native["roles"]
+
+
+@pytest.mark.parametrize("changed_review", [False, True])
+def test_real_ARM_origin_registration_does_not_approve_a_full_role_scope(changed_review):
+    from saas.scripts.runtime_evidence_intake import (
+        _registered_native_origin,
+        native_evidence_from_operator,
+    )
+
+    root = Path(__file__).resolve().parents[2]
+    raw = (Path(__file__).parent / "resources/native-arm-startup-operator.json").read_bytes()
+    record = json.loads(raw)
+    native = native_evidence_from_operator(
+        record,
+        original={"path": "original", "sha256": hashlib.sha256(raw).hexdigest()},
+        review={
+            "path": "review",
+            "sha256": "0" * 64
+            if changed_review
+            else "718d857daa3a13d04f584423dc9daaa22c5a35897ec8810d04d63eb714552dbb",
+        },
+    )
+    if changed_review:
+        with pytest.raises(ValueError, match="not registered"):
+            _registered_native_origin(root, native)
+    else:
+        registered = _registered_native_origin(root, native)
+        assert registered["installed_files"] == record["native_facts"]["installed_files"]
+        assert registered["classification_scope"] == (
+            "installed-production-startup-locale-component-only"
+        )
+        assert json.loads((root / REGISTRY).read_text())["approved_scopes"] == []
 
 
 @pytest.mark.parametrize(
