@@ -1,3 +1,28 @@
+diff --git a/omnigent/inner/os_env.py b/omnigent/inner/os_env.py
+index 4e12ecf..807364a 100644
+--- a/omnigent/inner/os_env.py
++++ b/omnigent/inner/os_env.py
+@@ -263,0 +264,10 @@ def build_helper_env(
++def _constrain_linux_sandbox_locale(env: dict[str, str], sandbox: SandboxPolicy | None) -> None:
++    """Keep catalog overrides out of the Linux launcher while preserving UTF-8."""
++    if sandbox is None or not sandbox.active or sandbox.backend_type != "linux_bwrap":
++        return
++    env.pop("LANGUAGE", None)
++    env.pop("LOCPATH", None)
++    for name in ("LANG", "LC_ALL", "LC_MESSAGES"):
++        env[name] = "C.UTF-8"
++
++
+@@ -683,0 +694 @@ class _HelperProcessClient:
++        _constrain_linux_sandbox_locale(env, sandbox)
+diff --git a/omnigent/inner/terminal.py b/omnigent/inner/terminal.py
+index ba792c7..6369001 100644
+--- a/omnigent/inner/terminal.py
++++ b/omnigent/inner/terminal.py
+@@ -50,0 +51 @@ from .os_env import (
++    _constrain_linux_sandbox_locale,
+@@ -1795,0 +1797 @@ class TerminalInstance:
++            _constrain_linux_sandbox_locale(env, sandbox_for_launcher)
 diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
 index b5f7867..a993827 100644
 --- a/omnigent/onboarding/harness_readiness.py
@@ -5,6 +30,265 @@ index b5f7867..a993827 100644
 @@ -352,0 +353,2 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
 +    "kiro-native": KIRO_KEY,
 +    "native-kiro": KIRO_KEY,
+diff --git a/omnigent/runner/_entry.py b/omnigent/runner/_entry.py
+index 44e3261..708d8f5 100644
+--- a/omnigent/runner/_entry.py
++++ b/omnigent/runner/_entry.py
+@@ -35,0 +36 @@ from omnigent.runner.identity import RUNNER_AUTH_REJECTED_EXIT_CODE
++from omnigent.runner.policy import REQUIRED_START_SANDBOX_ENV
+@@ -1661,0 +1663 @@ def create_app(
++        require_start_sandbox=(os.environ.get(REQUIRED_START_SANDBOX_ENV) == "1"),
+diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
+index bb4f578..08683e4 100644
+--- a/omnigent/runner/app.py
++++ b/omnigent/runner/app.py
+@@ -1201,0 +1202 @@ def create_runner_app(
++    require_start_sandbox: bool = False,
+@@ -1748,0 +1750,2 @@ def create_runner_app(
++    if require_start_sandbox:
++        resource_registry.require_sandbox_binding()
+@@ -2672 +2675,5 @@ def create_runner_app(
+-            from omnigent.runner.policy import AgentStartPolicyError
++            from omnigent.runner.policy import (
++                AgentStartPolicyError,
++                admin_start_os_env,
++                fetch_admin_start_sandbox,
++            )
+@@ -2675,0 +2683,15 @@ def create_runner_app(
++                if _start_data is not None:
++                    _apply_sandbox_override_from_start_data(spec, _start_data)
++                if require_start_sandbox:
++                    enforced = admin_start_os_env(
++                        await fetch_admin_start_sandbox(
++                            server_client,
++                            session_id,
++                            agent_name=spec.name or "",
++                            harness=harness_name,
++                        )
++                    )
++                    if enforced is None:
++                        raise AgentStartPolicyError("server", "did not supply a required sandbox")
++                    resource_registry.bind_required_os_env(session_id, enforced)
++                    spec.os_env = resource_registry.required_os_env(session_id)
+@@ -2698,3 +2719,0 @@ def create_runner_app(
+-            if _start_data is not None:
+-                _apply_sandbox_override_from_start_data(spec, _start_data)
+-
+@@ -7483,0 +7503,5 @@ def create_runner_app(
++                enforced = resource_registry.required_os_env(session_id)
++                if enforced is not None:
++                    resolved_spec = _unwrap_spec_entry(spec_entry)
++                    if resolved_spec is not None:
++                        resolved_spec.os_env = enforced
+@@ -8477,0 +8502,4 @@ def _build_spawn_env_from_spec(
++    if resource_registry is not None and session_id is not None:
++        enforced = resource_registry.required_os_env(session_id)
++        if enforced is not None:
++            spec = dataclasses.replace(spec, os_env=enforced)
+diff --git a/omnigent/runner/policy.py b/omnigent/runner/policy.py
+index 5443ce0..61f6e89 100644
+--- a/omnigent/runner/policy.py
++++ b/omnigent/runner/policy.py
+@@ -43 +43 @@ from dataclasses import dataclass, replace
+-from typing import Literal
++from typing import TYPE_CHECKING, Literal
+@@ -52,0 +53 @@ from omnigent.spec.types import (
++    PolicySpec,
+@@ -54,0 +56,5 @@ from omnigent.spec.types import (
++if TYPE_CHECKING:
++    import httpx
++
++    from omnigent.inner.datamodel import OSEnvSpec
++
+@@ -121,0 +128,113 @@ AGENT_START_TOOL = "sys_agent_start"
++REQUIRED_START_SANDBOX_ENV = "OMNIGENT_RUNNER_REQUIRE_START_SANDBOX"
++START_SANDBOX_HANDLER = "omnigent.policies.builtins.safety.enforce_sandbox"
++
++
++def admin_start_sandbox_policies(policies: list[PolicySpec]) -> list[FunctionPolicySpec]:
++    """Select the fixed built-in without resolving other tool policies."""
++    return [
++        policy
++        for policy in policies
++        if isinstance(policy, FunctionPolicySpec)
++        and policy.function is not None
++        and policy.function.path == START_SANDBOX_HANDLER
++    ]
++
++
++async def evaluate_admin_start_sandbox(
++    policies: list[PolicySpec],
++    *,
++    agent_name: str,
++    harness: str,
++) -> Mapping[str, object] | None:
++    """Evaluate only configured sandbox transforms, without tool approvals."""
++    from omnigent.spec.types import GuardrailsSpec
++
++    selected = admin_start_sandbox_policies(policies)
++    if not selected:
++        return None
++    start_policies: list[PolicySpec] = [*selected]
++    gate = RunnerToolPolicyGate.from_spec(
++        AgentSpec(spec_version=1, guardrails=GuardrailsSpec(policies=start_policies))
++    )
++    transformed = await gate.evaluate_agent_start(
++        {"agent_name": agent_name, "harness": harness, "sandbox": {}}
++    )
++    if transformed is None:
++        raise AgentStartPolicyError("server", "did not apply the required sandbox transform")
++    return transformed
++
++
++async def fetch_admin_start_sandbox(
++    server_client: httpx.AsyncClient,
++    session_id: str,
++    *,
++    agent_name: str,
++    harness: str,
++) -> object:
++    """Read the server-owned transform; managed launches fail closed."""
++    import httpx
++
++    try:
++        response = await server_client.post(
++            f"/v1/sessions/{session_id}/policies/evaluate",
++            json={
++                "agent_start": True,
++                "event": {
++                    "type": "PHASE_TOOL_CALL",
++                    "data": {
++                        "name": AGENT_START_TOOL,
++                        "arguments": {"agent_name": agent_name, "harness": harness},
++                    },
++                },
++            },
++            timeout=30.0,
++        )
++        response.raise_for_status()
++        result = response.json()
++        if (
++            not isinstance(result, dict)
++            or result.get("agent_start") is not True
++            or result.get("result") != "POLICY_ACTION_ALLOW"
++        ):
++            raise ValueError("missing startup policy response")
++        data = result.get("data")
++        if data is None:
++            raise ValueError("required startup sandbox is absent")
++        return data
++    except (httpx.HTTPError, ValueError, TypeError):
++        raise AgentStartPolicyError(
++            "server", "could not supply the required sandbox transform"
++        ) from None
++
++
++def admin_start_os_env(start_data: object) -> OSEnvSpec | None:
++    """Parse an isolated server transform without inheriting tenant grants."""
++    from pathlib import Path
++
++    from omnigent.inner.datamodel import OSEnvSpec
++    from omnigent.inner.loader import _parse_os_env_sandbox_spec
++
++    if start_data is None:
++        return None
++    if not isinstance(start_data, Mapping) or start_data.get("name") != AGENT_START_TOOL:
++        raise AgentStartPolicyError("server", "returned an invalid startup transform")
++    arguments = start_data.get("arguments")
++    sandbox = arguments.get("sandbox") if isinstance(arguments, Mapping) else None
++    if not isinstance(sandbox, dict):
++        raise AgentStartPolicyError("server", "returned an invalid sandbox")
++    try:
++        parsed = _parse_os_env_sandbox_spec(sandbox)
++        if parsed.type != "linux_bwrap" or parsed.allow_network is not False:
++            raise ValueError("managed startup requires the hard network-isolated backend")
++        if (
++            parsed.read_paths is None
++            or parsed.write_paths is None
++            or parsed.env_passthrough is None
++        ):
++            raise ValueError("managed startup requires explicit grants and environment scope")
++        roots = [*parsed.read_paths, *(grant.path for grant in parsed.write_path_specs)]
++        if any(not Path(root).is_absolute() for root in roots):
++            raise ValueError("managed startup grants must name approved absolute roots")
++    except (TypeError, ValueError):
++        raise AgentStartPolicyError("server", "returned an invalid hard sandbox scope") from None
++    return OSEnvSpec(type="caller_process", cwd=".", fork=False, sandbox=parsed)
+diff --git a/omnigent/runner/resource_registry.py b/omnigent/runner/resource_registry.py
+index 3896464..5c755ab 100644
+--- a/omnigent/runner/resource_registry.py
++++ b/omnigent/runner/resource_registry.py
+@@ -512,0 +513,2 @@ class SessionResourceRegistry:
++        self._required_os_envs: dict[str, OSEnvSpec] = {}
++        self._require_sandbox_binding = False
+@@ -1020,0 +1023,55 @@ class SessionResourceRegistry:
++    def required_os_env(self, session_id: str) -> OSEnvSpec | None:
++        """Return a private copy of the server-owned session sandbox."""
++        with self._lock:
++            spec = self._required_os_envs.get(session_id)
++            if self._require_sandbox_binding and spec is None:
++                from omnigent.runner.policy import AgentStartPolicyError
++
++                raise AgentStartPolicyError("server", "has not bound the required sandbox")
++            return deepcopy(spec)
++
++    def require_sandbox_binding(self) -> None:
++        """Fail closed on managed execution that bypasses session initialization."""
++        with self._lock:
++            self._require_sandbox_binding = True
++            if self._terminal_registry is not None:
++                self._terminal_registry.require_environment_binding = True
++
++    def bind_required_os_env(self, session_id: str, spec: OSEnvSpec) -> None:
++        """Bind before spawn; never reuse an older unqualified execution view."""
++        from omnigent.runner.policy import AgentStartPolicyError
++
++        enforced = self._effective_primary_spec(session_id, deepcopy(spec))
++        sandbox = enforced.sandbox
++        roots = (
++            [*(sandbox.read_paths or []), *(grant.path for grant in sandbox.write_path_specs)]
++            if sandbox is not None
++            else []
++        )
++        if enforced.cwd is None or not any(
++            Path(enforced.cwd).is_relative_to(Path(root).resolve()) for root in roots
++        ):
++            raise AgentStartPolicyError(
++                "server", "workspace is outside the approved sandbox roots"
++            )
++        with self._lock:
++            if self._required_os_envs.get(session_id) == enforced:
++                return
++            if session_id in self._primary_envs:
++                if self._primary_env_specs.get(session_id) is not None:
++                    raise AgentStartPolicyError(
++                        "server", "cannot replace a live execution sandbox"
++                    )
++            if self._terminal_registry is not None:
++                try:
++                    self._terminal_registry.bind_required_environment(session_id, enforced)
++                except ValueError:
++                    raise AgentStartPolicyError(
++                        "server", "cannot replace a live terminal sandbox"
++                    ) from None
++            if session_id in self._primary_envs:
++                # Only the filesystem panel's read view can precede first init.
++                self._primary_envs.pop(session_id).close()
++                self._primary_env_specs.pop(session_id, None)
++            self._required_os_envs[session_id] = enforced
++
+@@ -1034,0 +1092,11 @@ class SessionResourceRegistry:
++            enforced = self._required_os_envs.get(session_id)
++            if (
++                self._require_sandbox_binding
++                and enforced is None
++                and (agent_spec is not None or os_env_spec is not None)
++            ):
++                from omnigent.runner.policy import AgentStartPolicyError
++
++                raise AgentStartPolicyError("server", "has not bound the required sandbox")
++            if enforced is not None:
++                os_env_spec = deepcopy(enforced)
 diff --git a/omnigent/runtime/pending_inputs.py b/omnigent/runtime/pending_inputs.py
 index d2a1bc3..9527750 100644
 --- a/omnigent/runtime/pending_inputs.py
@@ -742,6 +1026,47 @@ index ad3f08c..ff3fd32 100644
 +                    "queued": True,
 +                    "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
 +                }
+diff --git a/omnigent/server/routes/sessions/routes_hooks.py b/omnigent/server/routes/sessions/routes_hooks.py
+index 686db3d..f37434f 100644
+--- a/omnigent/server/routes/sessions/routes_hooks.py
++++ b/omnigent/server/routes/sessions/routes_hooks.py
+@@ -921,0 +922,36 @@ def register_hooks_routes(
++        if payload.get("agent_start") is True:
++            from omnigent.runner.policy import (
++                AGENT_START_TOOL,
++                AgentStartPolicyError,
++                admin_start_os_env,
++                evaluate_admin_start_sandbox,
++            )
++
++            arguments = data.get("arguments") if isinstance(data, dict) else None
++            if (
++                phase != Phase.TOOL_CALL
++                or not isinstance(data, dict)
++                or data.get("name") != AGENT_START_TOOL
++                or not isinstance(arguments, dict)
++                or not isinstance(arguments.get("agent_name"), str)
++                or not isinstance(arguments.get("harness"), str)
++            ):
++                raise OmnigentError("Invalid agent-start probe", code=ErrorCode.INVALID_INPUT)
++            try:
++                transformed = await evaluate_admin_start_sandbox(
++                    _caps.default_policies,
++                    agent_name=arguments["agent_name"],
++                    harness=arguments["harness"],
++                )
++                admin_start_os_env(transformed)
++            except AgentStartPolicyError:
++                raise OmnigentError(
++                    "Required server startup sandbox is unavailable", code=ErrorCode.FORBIDDEN
++                ) from None
++            return Response(
++                content=json.dumps(
++                    {"result": "POLICY_ACTION_ALLOW", "agent_start": True, "data": transformed}
++                ),
++                media_type="application/json",
++            )
++
 diff --git a/omnigent/server/startup_inputs.py b/omnigent/server/startup_inputs.py
 index fe64e5c..73bd1ec 100644
 --- a/omnigent/server/startup_inputs.py
@@ -822,28 +1147,77 @@ index fe64e5c..73bd1ec 100644
 +                conv = await asyncio.to_thread(self.conversations.get_conversation, session_id)
 +            if conv is None or conv.labels.get(STARTUP_LABEL) != "pending":
 +                return
-diff --git a/omnigent/inner/os_env.py b/omnigent/inner/os_env.py
-index 4e12ecfd97..807364aceb 100644
---- a/omnigent/inner/os_env.py
-+++ b/omnigent/inner/os_env.py
-@@ -263,0 +264,10 @@ def build_helper_env(
-+def _constrain_linux_sandbox_locale(env: dict[str, str], sandbox: SandboxPolicy | None) -> None:
-+    """Keep catalog overrides out of the Linux launcher while preserving UTF-8."""
-+    if sandbox is None or not sandbox.active or sandbox.backend_type != "linux_bwrap":
-+        return
-+    env.pop("LANGUAGE", None)
-+    env.pop("LOCPATH", None)
-+    for name in ("LANG", "LC_ALL", "LC_MESSAGES"):
-+        env[name] = "C.UTF-8"
+diff --git a/omnigent/terminals/registry.py b/omnigent/terminals/registry.py
+index 978dd70..dc4f642 100644
+--- a/omnigent/terminals/registry.py
++++ b/omnigent/terminals/registry.py
+@@ -43 +43,2 @@ from collections.abc import Callable
+-from dataclasses import dataclass
++from copy import deepcopy
++from dataclasses import dataclass, replace
+@@ -232,0 +234,15 @@ class TerminalRegistry:
++        self._required_environments: dict[str, OSEnvSpec] = {}
++        self._pending_launches: dict[str, int] = {}
++        self.require_environment_binding = False
 +
++    def bind_required_environment(self, conversation_id: str, spec: OSEnvSpec) -> None:
++        """Install a session restriction before any terminal can start."""
++        with self._lock:
++            if self._required_environments.get(conversation_id) == spec:
++                return
++            if self._pending_launches.get(conversation_id) or any(
++                terminal.running
++                for terminal in self._by_conversation.get(conversation_id, {}).values()
++            ):
++                raise ValueError("Cannot replace a pending or live terminal sandbox")
++            self._required_environments[conversation_id] = deepcopy(spec)
+@@ -258,0 +275,36 @@ class TerminalRegistry:
++    ) -> TerminalInstance:
++        """Track a launch until registration so policy binding cannot race it."""
++        with self._lock:
++            self._pending_launches[conversation_id] = (
++                self._pending_launches.get(conversation_id, 0) + 1
++            )
++        try:
++            return await self._launch(
++                conversation_id,
++                terminal_name,
++                session_key,
++                spec,
++                parent_os_env=parent_os_env,
++                cwd_override=cwd_override,
++                sandbox_override=sandbox_override,
++                program_status_app=program_status_app,
++            )
++        finally:
++            with self._lock:
++                remaining = self._pending_launches[conversation_id] - 1
++                if remaining:
++                    self._pending_launches[conversation_id] = remaining
++                else:
++                    self._pending_launches.pop(conversation_id)
 +
-@@ -683,0 +694 @@ class _HelperProcessClient:
-+        _constrain_linux_sandbox_locale(env, sandbox)
-diff --git a/omnigent/inner/terminal.py b/omnigent/inner/terminal.py
-index ba792c778f..636900147a 100644
---- a/omnigent/inner/terminal.py
-+++ b/omnigent/inner/terminal.py
-@@ -50,0 +51 @@ from .os_env import (
-+    _constrain_linux_sandbox_locale,
-@@ -1795,0 +1797 @@ class TerminalInstance:
-+            _constrain_linux_sandbox_locale(env, sandbox_for_launcher)
++    async def _launch(
++        self,
++        conversation_id: str,
++        terminal_name: str,
++        session_key: str,
++        spec: TerminalEnvSpec,
++        *,
++        parent_os_env: OSEnvSpec | None = None,
++        cwd_override: str | None = None,
++        sandbox_override: str | None = None,
++        program_status_app: str | None = None,
+@@ -295,0 +348,12 @@ class TerminalRegistry:
++        with self._lock:
++            required = deepcopy(self._required_environments.get(conversation_id))
++            if self.require_environment_binding and required is None:
++                raise RuntimeError("Required server sandbox has not been bound")
++        if required is not None:
++            spec = replace(
++                spec,
++                os_env=required,
++                allow_cwd_override=False,
++                allow_sandbox_override=False,
++            )
++            parent_os_env = required

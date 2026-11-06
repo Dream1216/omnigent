@@ -1199,6 +1199,7 @@ def create_runner_app(
     auth_token: str | None = None,
     auth_token_factory: Callable[[], str | None] | None = None,
     native_pane_idle_timeout_s: float | None = None,
+    require_start_sandbox: bool = False,
 ) -> FastAPI:
     """Build a fresh runner FastAPI app.
 
@@ -1746,6 +1747,8 @@ def create_runner_app(
             runner_workspace=runner_workspace,
             per_session_workspace=per_session_workspace,
         )
+    if require_start_sandbox:
+        resource_registry.require_sandbox_binding()
     app.state.session_resource_registry = resource_registry
 
     def _publish_terminal_activity(session_id: str, terminal_id: str) -> None:
@@ -2669,10 +2672,29 @@ def create_runner_app(
             )
             harness_name = canonicalize_harness(raw_harness) or raw_harness
 
-            from omnigent.runner.policy import AgentStartPolicyError
+            from omnigent.runner.policy import (
+                AgentStartPolicyError,
+                admin_start_os_env,
+                fetch_admin_start_sandbox,
+            )
 
             try:
                 _start_data = await _evaluate_agent_start_gate(spec, harness_name)
+                if _start_data is not None:
+                    _apply_sandbox_override_from_start_data(spec, _start_data)
+                if require_start_sandbox:
+                    enforced = admin_start_os_env(
+                        await fetch_admin_start_sandbox(
+                            server_client,
+                            session_id,
+                            agent_name=spec.name or "",
+                            harness=harness_name,
+                        )
+                    )
+                    if enforced is None:
+                        raise AgentStartPolicyError("server", "did not supply a required sandbox")
+                    resource_registry.bind_required_os_env(session_id, enforced)
+                    spec.os_env = resource_registry.required_os_env(session_id)
             except AgentStartPolicyError as exc:
                 # The gate raises without logging; this is the single record of
                 # the failure. exc_info keeps any underlying policy traceback.
@@ -2695,9 +2717,6 @@ def create_runner_app(
                         "detail": str(exc),
                     },
                 )
-            if _start_data is not None:
-                _apply_sandbox_override_from_start_data(spec, _start_data)
-
             await _ensure_session_subagent_router(
                 session_id,
                 harness_name,
@@ -7481,6 +7500,11 @@ def create_runner_app(
                         spec_entry = sub_entry
                         _session_sub_agent_resolved[session_id] = True
             if _session_cache_generation_is_current(session_id, generation):
+                enforced = resource_registry.required_os_env(session_id)
+                if enforced is not None:
+                    resolved_spec = _unwrap_spec_entry(spec_entry)
+                    if resolved_spec is not None:
+                        resolved_spec.os_env = enforced
                 _session_spec_cache[session_id] = spec_entry
             return spec_entry
 
@@ -8475,6 +8499,10 @@ def _build_spawn_env_from_spec(
         )
     from omnigent.sandbox.copy_on_write import validate_copy_on_write_harness
 
+    if resource_registry is not None and session_id is not None:
+        enforced = resource_registry.required_os_env(session_id)
+        if enforced is not None:
+            spec = dataclasses.replace(spec, os_env=enforced)
     validate_copy_on_write_harness(getattr(spec, "os_env", None), harness)
     effective_spec = spec
     from omnigent.inference_config import load_runtime_inference_config, parse_inference_config

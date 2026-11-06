@@ -130,8 +130,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 5602
-    assert budget["max_direct_upstream_files"] == 210
+    assert budget["max_upstream_net_added_loc"] == 6244
+    assert budget["max_direct_upstream_files"] == 218
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -148,9 +148,14 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     current = revision["final_Main579_common_locale_cloud_composition_20261106"]
     assert current["max_upstream_net_added_loc"] == 5593
     vendor = revision["fixed_host_diagnostic_vendor_security_20261106"]
-    assert vendor["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
-    assert current["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
-    assert locale_boundary["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert vendor["max_upstream_net_added_loc"] == 5602
+    assert current["max_direct_upstream_files"] == 210
+    assert locale_boundary["max_direct_upstream_files"] == 210
+    managed_start = revision["managed_normal_start_sandbox_binding_20261107"]
+    assert managed_start["previous_max_upstream_net_added_loc"] == 5602
+    assert managed_start["previous_max_direct_upstream_files"] == 210
+    assert managed_start["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert managed_start["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153

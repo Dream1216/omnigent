@@ -1890,6 +1890,42 @@ def test_resolve_environment_creates_primary_lazily(
         os.environ.pop("OMNIGENT_RUNNER_OS_ENV_ROOT", None)
 
 
+def test_required_sandbox_replaces_only_early_read_view_and_cannot_be_mutated(
+    tmp_path: Path,
+) -> None:
+    """An early files-panel cache cannot defeat the first managed binding."""
+    from omnigent.runner.policy import AgentStartPolicyError
+
+    reg = SessionResourceRegistry(runner_workspace=tmp_path)
+    early = _FakeOSEnvironment(cwd=tmp_path, spec=OSEnvSpec())
+    reg._primary_envs["session"] = early
+    reg._primary_env_specs["session"] = None
+    reg.require_sandbox_binding()
+    with pytest.raises(AgentStartPolicyError):
+        reg.required_os_env("session")
+    required = OSEnvSpec(
+        fork=False,
+        sandbox=OSEnvSandboxSpec(
+            type="linux_bwrap",
+            allow_network=False,
+            read_paths=[str(tmp_path)],
+            write_paths=[str(tmp_path)],
+        ),
+    )
+    reg.bind_required_os_env("session", required)
+    assert early._closed
+    assert not reg.has_primary_env("session")
+    required.sandbox.type = "none"
+    assert reg.required_os_env("session").sandbox.type == "linux_bwrap"
+    outside = SessionResourceRegistry(runner_workspace=tmp_path.parent / "outside-approved-root")
+    with pytest.raises(AgentStartPolicyError, match="outside the approved"):
+        outside.bind_required_os_env("session", required)
+    reg._primary_envs["other"] = _FakeOSEnvironment(cwd=tmp_path, spec=OSEnvSpec())
+    reg._primary_env_specs["other"] = OSEnvSpec(sandbox=OSEnvSandboxSpec(type="none"))
+    with pytest.raises(AgentStartPolicyError, match="live execution"):
+        reg.bind_required_os_env("other", required)
+
+
 def test_resolve_environment_default_pins_none_sandbox_when_no_agent_spec(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

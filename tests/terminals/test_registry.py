@@ -29,6 +29,98 @@ from omnigent.terminals import TerminalRegistry
 from omnigent.terminals import registry as registry_mod
 from omnigent.terminals.registry import TerminalListEntry, conversation_link_for_id
 
+
+@pytest.mark.parametrize("override", [None, "none"])
+async def test_required_sandbox_overrides_native_none_and_rejects_late_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: str | None
+) -> None:
+    """All native and user terminal launches cross the same final restriction."""
+    from omnigent.inner.terminal import build_terminal_os_env_spec
+    from tests.runner.helpers import make_test_terminal_instance
+
+    reg = TerminalRegistry()
+    reg.require_environment_binding = True
+    original = TerminalEnvSpec(
+        command="bash",
+        args=["-i"],
+        os_env=OSEnvSpec(fork=True, sandbox=OSEnvSandboxSpec(type="none")),
+        allow_sandbox_override=True,
+        allow_cwd_override=True,
+        env={"KEEP": "value"},
+    )
+    with pytest.raises(RuntimeError, match="has not been bound"):
+        await reg.launch("session", "bash", "one", original)
+    required = OSEnvSpec(
+        cwd=str(tmp_path),
+        fork=False,
+        sandbox=OSEnvSandboxSpec(type="linux_bwrap", allow_network=False),
+    )
+    reg.bind_required_environment("session", required)
+    created = make_test_terminal_instance("bash", "one", tmp_path, running=False)
+
+    async def launch(*, cwd: Path) -> None:
+        created.running = True
+
+    monkeypatch.setattr(created, "launch", launch)
+    captured = []
+
+    def create(
+        name: str, key: str, spec: TerminalEnvSpec, **kwargs: object
+    ) -> TerminalCreateResult:
+        effective = build_terminal_os_env_spec(
+            spec,
+            parent_os_env_spec=kwargs["parent_os_env_spec"],
+            cwd_override=kwargs["cwd_override"],
+            sandbox_override=kwargs["sandbox_override"],
+        )
+        captured.append(effective)
+        assert spec.command == "bash" and spec.args == ["-i"] and spec.env["KEEP"] == "value"
+        return TerminalCreateResult(instance=created, cwd=tmp_path)
+
+    monkeypatch.setattr(registry_mod, "create_terminal_instance", create)
+    if override is not None:
+        with pytest.raises(ValueError):
+            await reg.launch("session", "bash", "one", original, sandbox_override=override)
+        assert captured == []
+    else:
+        assert await reg.launch("session", "bash", "one", original) is created
+        assert captured[0].sandbox.type == "linux_bwrap" and captured[0].fork is False
+        assert original.os_env.sandbox.type == "none"
+
+
+async def test_binding_cannot_race_an_unqualified_terminal_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A late binding refuses an in-flight spawn instead of blessing its cache."""
+    from tests.runner.helpers import make_test_terminal_instance
+
+    reg = TerminalRegistry()
+    started, resume = asyncio.Event(), asyncio.Event()
+    created = make_test_terminal_instance("bash", "one", tmp_path, running=False)
+
+    async def launch(*, cwd: Path) -> None:
+        started.set()
+        await resume.wait()
+        created.running = True
+
+    monkeypatch.setattr(created, "launch", launch)
+    monkeypatch.setattr(
+        registry_mod,
+        "create_terminal_instance",
+        lambda *a, **k: TerminalCreateResult(instance=created, cwd=tmp_path),
+    )
+    pending = asyncio.create_task(
+        reg.launch("session", "bash", "one", TerminalEnvSpec(command="bash"))
+    )
+    await started.wait()
+    try:
+        with pytest.raises(ValueError, match="pending or live"):
+            reg.bind_required_environment("session", OSEnvSpec())
+    finally:
+        resume.set()
+        await pending
+
+
 # ── Pure bookkeeping (no tmux) ────────────────────────────────
 
 

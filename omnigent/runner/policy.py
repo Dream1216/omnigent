@@ -40,7 +40,7 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from omnigent.debug_logging import runner_primary_session_id
 from omnigent.policies import FunctionPolicy, resolve_function_policy
@@ -50,7 +50,13 @@ from omnigent.spec.types import (
     FunctionPolicySpec,
     Phase,
     PolicyAction,
+    PolicySpec,
 )
+
+if TYPE_CHECKING:
+    import httpx
+
+    from omnigent.inner.datamodel import OSEnvSpec
 
 _logger = logging.getLogger(__name__)
 
@@ -119,6 +125,119 @@ _ALLOW: PolicyVerdict = PolicyVerdict(action="allow")
 # Synthetic tool name the runner probes before spawning an agent; start-aware
 # policies such as ``enforce_sandbox`` key on it to transform the launch.
 AGENT_START_TOOL = "sys_agent_start"
+REQUIRED_START_SANDBOX_ENV = "OMNIGENT_RUNNER_REQUIRE_START_SANDBOX"
+START_SANDBOX_HANDLER = "omnigent.policies.builtins.safety.enforce_sandbox"
+
+
+def admin_start_sandbox_policies(policies: list[PolicySpec]) -> list[FunctionPolicySpec]:
+    """Select the fixed built-in without resolving other tool policies."""
+    return [
+        policy
+        for policy in policies
+        if isinstance(policy, FunctionPolicySpec)
+        and policy.function is not None
+        and policy.function.path == START_SANDBOX_HANDLER
+    ]
+
+
+async def evaluate_admin_start_sandbox(
+    policies: list[PolicySpec],
+    *,
+    agent_name: str,
+    harness: str,
+) -> Mapping[str, object] | None:
+    """Evaluate only configured sandbox transforms, without tool approvals."""
+    from omnigent.spec.types import GuardrailsSpec
+
+    selected = admin_start_sandbox_policies(policies)
+    if not selected:
+        return None
+    start_policies: list[PolicySpec] = [*selected]
+    gate = RunnerToolPolicyGate.from_spec(
+        AgentSpec(spec_version=1, guardrails=GuardrailsSpec(policies=start_policies))
+    )
+    transformed = await gate.evaluate_agent_start(
+        {"agent_name": agent_name, "harness": harness, "sandbox": {}}
+    )
+    if transformed is None:
+        raise AgentStartPolicyError("server", "did not apply the required sandbox transform")
+    return transformed
+
+
+async def fetch_admin_start_sandbox(
+    server_client: httpx.AsyncClient,
+    session_id: str,
+    *,
+    agent_name: str,
+    harness: str,
+) -> object:
+    """Read the server-owned transform; managed launches fail closed."""
+    import httpx
+
+    try:
+        response = await server_client.post(
+            f"/v1/sessions/{session_id}/policies/evaluate",
+            json={
+                "agent_start": True,
+                "event": {
+                    "type": "PHASE_TOOL_CALL",
+                    "data": {
+                        "name": AGENT_START_TOOL,
+                        "arguments": {"agent_name": agent_name, "harness": harness},
+                    },
+                },
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if (
+            not isinstance(result, dict)
+            or result.get("agent_start") is not True
+            or result.get("result") != "POLICY_ACTION_ALLOW"
+        ):
+            raise ValueError("missing startup policy response")
+        data = result.get("data")
+        if data is None:
+            raise ValueError("required startup sandbox is absent")
+        return data
+    except (httpx.HTTPError, ValueError, TypeError):
+        raise AgentStartPolicyError(
+            "server", "could not supply the required sandbox transform"
+        ) from None
+
+
+def admin_start_os_env(start_data: object) -> OSEnvSpec | None:
+    """Parse an isolated server transform without inheriting tenant grants."""
+    from pathlib import Path
+
+    from omnigent.inner.datamodel import OSEnvSpec
+    from omnigent.inner.loader import _parse_os_env_sandbox_spec
+
+    if start_data is None:
+        return None
+    if not isinstance(start_data, Mapping) or start_data.get("name") != AGENT_START_TOOL:
+        raise AgentStartPolicyError("server", "returned an invalid startup transform")
+    arguments = start_data.get("arguments")
+    sandbox = arguments.get("sandbox") if isinstance(arguments, Mapping) else None
+    if not isinstance(sandbox, dict):
+        raise AgentStartPolicyError("server", "returned an invalid sandbox")
+    try:
+        parsed = _parse_os_env_sandbox_spec(sandbox)
+        if parsed.type != "linux_bwrap" or parsed.allow_network is not False:
+            raise ValueError("managed startup requires the hard network-isolated backend")
+        if (
+            parsed.read_paths is None
+            or parsed.write_paths is None
+            or parsed.env_passthrough is None
+        ):
+            raise ValueError("managed startup requires explicit grants and environment scope")
+        roots = [*parsed.read_paths, *(grant.path for grant in parsed.write_path_specs)]
+        if any(not Path(root).is_absolute() for root in roots):
+            raise ValueError("managed startup grants must name approved absolute roots")
+    except (TypeError, ValueError):
+        raise AgentStartPolicyError("server", "returned an invalid hard sandbox scope") from None
+    return OSEnvSpec(type="caller_process", cwd=".", fork=False, sandbox=parsed)
 
 
 class AgentStartPolicyError(RuntimeError):

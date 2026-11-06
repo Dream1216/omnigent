@@ -510,6 +510,8 @@ class SessionResourceRegistry:
         self._per_session_workspace = per_session_workspace
         self._primary_envs: dict[str, OSEnvironment] = {}
         self._primary_env_specs: dict[str, OSEnvSpec | None] = {}
+        self._required_os_envs: dict[str, OSEnvSpec] = {}
+        self._require_sandbox_binding = False
         self._client_surfaces: dict[str, str] = {}
         self._codex_skills_dirs: dict[str, tempfile.TemporaryDirectory[str]] = {}
         self._terminal_roles: dict[tuple[str, str], str] = {}
@@ -1018,6 +1020,61 @@ class SessionResourceRegistry:
         """Resolve the environment shared by inherited terminals and file tools."""
         return self._resolve_primary(session_id, None, os_env_spec=spec)
 
+    def required_os_env(self, session_id: str) -> OSEnvSpec | None:
+        """Return a private copy of the server-owned session sandbox."""
+        with self._lock:
+            spec = self._required_os_envs.get(session_id)
+            if self._require_sandbox_binding and spec is None:
+                from omnigent.runner.policy import AgentStartPolicyError
+
+                raise AgentStartPolicyError("server", "has not bound the required sandbox")
+            return deepcopy(spec)
+
+    def require_sandbox_binding(self) -> None:
+        """Fail closed on managed execution that bypasses session initialization."""
+        with self._lock:
+            self._require_sandbox_binding = True
+            if self._terminal_registry is not None:
+                self._terminal_registry.require_environment_binding = True
+
+    def bind_required_os_env(self, session_id: str, spec: OSEnvSpec) -> None:
+        """Bind before spawn; never reuse an older unqualified execution view."""
+        from omnigent.runner.policy import AgentStartPolicyError
+
+        enforced = self._effective_primary_spec(session_id, deepcopy(spec))
+        sandbox = enforced.sandbox
+        roots = (
+            [*(sandbox.read_paths or []), *(grant.path for grant in sandbox.write_path_specs)]
+            if sandbox is not None
+            else []
+        )
+        if enforced.cwd is None or not any(
+            Path(enforced.cwd).is_relative_to(Path(root).resolve()) for root in roots
+        ):
+            raise AgentStartPolicyError(
+                "server", "workspace is outside the approved sandbox roots"
+            )
+        with self._lock:
+            if self._required_os_envs.get(session_id) == enforced:
+                return
+            if session_id in self._primary_envs:
+                if self._primary_env_specs.get(session_id) is not None:
+                    raise AgentStartPolicyError(
+                        "server", "cannot replace a live execution sandbox"
+                    )
+            if self._terminal_registry is not None:
+                try:
+                    self._terminal_registry.bind_required_environment(session_id, enforced)
+                except ValueError:
+                    raise AgentStartPolicyError(
+                        "server", "cannot replace a live terminal sandbox"
+                    ) from None
+            if session_id in self._primary_envs:
+                # Only the filesystem panel's read view can precede first init.
+                self._primary_envs.pop(session_id).close()
+                self._primary_env_specs.pop(session_id, None)
+            self._required_os_envs[session_id] = enforced
+
     def _resolve_primary(
         self,
         session_id: str,
@@ -1032,6 +1089,17 @@ class SessionResourceRegistry:
         :returns: The primary :class:`OSEnvironment`.
         """
         with self._lock:
+            enforced = self._required_os_envs.get(session_id)
+            if (
+                self._require_sandbox_binding
+                and enforced is None
+                and (agent_spec is not None or os_env_spec is not None)
+            ):
+                from omnigent.runner.policy import AgentStartPolicyError
+
+                raise AgentStartPolicyError("server", "has not bound the required sandbox")
+            if enforced is not None:
+                os_env_spec = deepcopy(enforced)
             requested_spec = os_env_spec or getattr(agent_spec, "os_env", None)
             if requested_spec is not None:
                 requested_spec = self._effective_primary_spec(session_id, requested_spec)

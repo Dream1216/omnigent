@@ -18,6 +18,7 @@ from omnigent.host.frames import HarnessAvailability
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
 from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
+from omnigent.runner.policy import REQUIRED_START_SANDBOX_ENV
 from saas.production.platform_model_relay import PlatformModelRelay, validated_model_gateway_url
 from saas.runner_adapter.platform_model_gateway import (
     DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
@@ -121,6 +122,7 @@ class PlatformModelHostProcess(HostProcess):
             gateway_base_url=self._platform_model_gateway_base,
         )
         try:
+            env[REQUIRED_START_SANDBOX_ENV] = "1"
             env[PLATFORM_MODEL_RELAY_BASE_URL_ENV] = json.dumps(
                 {
                     "platform-deepseek": {"openai": relay.start()},

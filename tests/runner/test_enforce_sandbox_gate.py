@@ -31,6 +31,106 @@ from omnigent.spec.types import (
 )
 from tests.runner.helpers import NullServerClient
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reinitialize", [False, True])
+async def test_server_sandbox_wins_over_local_policy_and_recovery(
+    tmp_path: Any, reinitialize: bool
+) -> None:
+    """A managed session applies fresh admin restrictions after tenant transforms."""
+    from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
+    from omnigent.runner.policy import AGENT_START_TOOL
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+
+    spec = _spec_with_enforce_sandbox(sandbox_type="none", allow_network=True)
+    spec.os_env = OSEnvSpec(fork=True, sandbox=OSEnvSandboxSpec(type="none"))
+    sandbox = {
+        "type": "linux_bwrap",
+        "allow_network": False,
+        "read_paths": [str(tmp_path)],
+        "write_paths": [str(tmp_path)],
+        "env_passthrough": [],
+    }
+
+    class AdminServer(NullServerClient):
+        async def post(self, url: str, **kwargs: Any) -> Any:
+            if url.endswith("/policies/evaluate"):
+                assert kwargs["json"]["agent_start"] is True
+                return httpx.Response(
+                    200,
+                    request=httpx.Request("POST", "https://server" + url),
+                    json={
+                        "result": "POLICY_ACTION_ALLOW",
+                        "agent_start": True,
+                        "data": {"name": AGENT_START_TOOL, "arguments": {"sandbox": sandbox}},
+                    },
+                )
+            return await super().post(url, **kwargs)
+
+    async def resolver(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        return spec
+
+    pm = _FakeProcessManager(_ScriptedHarnessClient())
+    registry = SessionResourceRegistry(runner_workspace=tmp_path)
+    app = create_runner_app(
+        process_manager=pm,
+        spec_resolver=resolver,
+        server_client=AdminServer(),
+        resource_registry=registry,
+        require_start_sandbox=True,
+    )
+    async with _runner_client(app) as client:
+        for _ in range(2 if reinitialize else 1):
+            response = await client.post(
+                "/v1/sessions", json={"session_id": "conv_admin", "agent_id": "ag"}
+            )
+            assert response.status_code == 201, response.text
+            forced = registry.required_os_env("conv_admin")
+            assert forced is not None and forced.fork is False
+            assert forced.sandbox.type == "linux_bwrap"
+            assert forced.sandbox.allow_network is False
+            sent = json.loads(pm.get_client_calls[-1][2]["HARNESS_CLAUDE_SDK_OS_ENV"])
+            assert sent["sandbox"]["type"] == "linux_bwrap"
+            assert sent["fork"] is False
+            # A tenant mutation cannot change the registry's private snapshot.
+            forced.sandbox.type = "none"
+            spec.os_env.sandbox.type = "none"
+            assert registry.required_os_env("conv_admin").sandbox.type == "linux_bwrap"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"agent_start": True, "data": None}, {"agent_start": True, "data": {"name": "wrong"}}],
+)
+async def test_required_server_sandbox_failure_never_spawns(body: dict[str, Any]) -> None:
+    """A missing or malformed authoritative transform cannot start a managed agent."""
+    spec = _spec_with_enforce_sandbox(sandbox_type="none")
+
+    class AdminServer(NullServerClient):
+        async def post(self, url: str, **kwargs: Any) -> Any:
+            return httpx.Response(
+                200, request=httpx.Request("POST", "https://server" + url), json=body
+            )
+
+    async def resolver(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        return spec
+
+    pm = _FakeProcessManager(_ScriptedHarnessClient())
+    app = create_runner_app(
+        process_manager=pm,
+        spec_resolver=resolver,
+        server_client=AdminServer(),
+        require_start_sandbox=True,
+    )
+    async with _runner_client(app) as client:
+        response = await client.post(
+            "/v1/sessions", json={"session_id": "conv_admin", "agent_id": "ag"}
+        )
+    assert response.status_code == 403
+    assert pm.get_client_calls == []
+
+
 # ── Stubs ────────────────────────────────────────────────────────────────
 
 

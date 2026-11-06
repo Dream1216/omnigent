@@ -33,6 +33,7 @@ from omnigent._platform import IS_WINDOWS, normalize_interactive_shells
 from omnigent.debug_logging import debug_event, runner_primary_session_id
 from omnigent.inner import _proc
 from omnigent.runner.identity import RUNNER_AUTH_REJECTED_EXIT_CODE
+from omnigent.runner.policy import REQUIRED_START_SANDBOX_ENV
 from omnigent.runner.transports.ws_tunnel.serve import (
     RUNNER_TUNNEL_NO_CREDENTIAL_PREFIX,
     RUNNER_TUNNEL_REJECTION_PREFIX,
@@ -1659,6 +1660,7 @@ def create_app(
         mcp_manager=mcp_manager,
         auth_token=runner_auth_token,
         auth_token_factory=auth_token_factory,
+        require_start_sandbox=(os.environ.get(REQUIRED_START_SANDBOX_ENV) == "1"),
         native_pane_idle_timeout_s=resolve_native_pane_idle_timeout_s(
             _load_runner_idle_timeout_s_from_config()
         ),
