@@ -228,5 +228,26 @@ def test_candidate_json_is_not_a_verified_runtime_condition(tmp_path, monkeypatc
         inspect(image, path, approved, verify_runtime=lambda subject, *, now: {"mitigated": True})
 
 
+@pytest.mark.parametrize("fault", ["raw-critical-False", "inventory-False-as-zero"])
+def test_noncanonical_boolean_integer_proof_cannot_compare_equal(tmp_path, monkeypatch, fault):
+    image, path, _, approved = combination(tmp_path, monkeypatch)
+    proof = inspect(image, path, approved)
+    if fault == "raw-critical-False":
+        proof["raw_critical"] = False
+    else:
+        assert proof["inventory"][0]["shell"] is False
+        proof["inventory"][0]["shell"] = 0
+    with pytest.raises(ValueError, match="finite combination"):
+        combined.validate_combined_disposition(
+            image,
+            path,
+            proof,
+            platform="linux/amd64",
+            now=NOW,
+            scanner_exit=2,
+            verify_runtime=lambda subject, *, now: approved,
+        )
+
+
 def test_actual_repository_policy_has_no_runtime_rule():
     assert combined.runtime_rule_enabled() is False

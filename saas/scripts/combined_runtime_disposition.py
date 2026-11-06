@@ -241,6 +241,11 @@ def validate_combined_disposition(
     verify_runtime: NativeRuntimeVerifier | None = None,
 ) -> dict[str, Any]:
     """Every downstream intake recomputes the same subject and condition."""
+    if not isinstance(proof, dict) or any(
+        type(proof.get(field)) is not int or proof[field] != value
+        for field, value in (("raw_critical", 0), ("raw_high", 2), ("scanner_exit", 2))
+    ):
+        raise ValueError("finite combination requires exact integer raw counts and scanner exit")
     expected = inspect_combined_disposition(
         image,
         report_path,
@@ -249,6 +254,11 @@ def validate_combined_disposition(
         scanner_exit=scanner_exit,
         verify_runtime=verify_runtime,
     )
-    if proof != expected:
+    try:
+        actual_json = json.dumps(proof, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as error:
+        raise ValueError("finite combination proof is not strict JSON") from error
+    expected_json = json.dumps(expected, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    if actual_json != expected_json:
         raise ValueError("finite combination differs from original raw, OCI or native proof")
     return expected
