@@ -623,7 +623,18 @@ def test_native_producer_uses_actual_operator_values_and_fixed_expiry(tmp_path, 
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "review", "authority", "platform", "libc", "target", "scan"]
+    "fault",
+    [
+        None,
+        "review",
+        "authority",
+        "platform",
+        "libc",
+        "target",
+        "scan",
+        "empty-roles",
+        "invalid-role",
+    ],
 )
 def test_old_native_subject_requires_an_explicit_independently_approved_component_bridge(
     tmp_path, fault
@@ -642,6 +653,10 @@ def test_old_native_subject_requires_an_explicit_independently_approved_componen
     evidence["original_report_sha256"] = "4" * 64
     native_roles = copy.deepcopy(evidence["roles"])
     contract["roles"] = [{"role": "reviewed-final-role-and-entry-contract"}]
+    if fault == "empty-roles":
+        contract["roles"] = []
+    elif fault == "invalid-role":
+        contract["roles"] = [""]
     bridge = {
         "kind": COMPONENT_BRIDGE,
         "target": {

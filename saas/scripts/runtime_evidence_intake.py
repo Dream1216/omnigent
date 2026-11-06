@@ -388,9 +388,24 @@ def verifier_from_registered_inputs(graph: dict[str, Any], inventory: list[dict[
                 "final subject has no unique independently approved full-role contract"
             )
         contract, contract_sha, coordinate = matches[0]
+        roles = contract.get("roles")
+        role_ids = (
+            [
+                role
+                if isinstance(role, str)
+                else role.get("role")
+                if isinstance(role, dict)
+                else None
+                for role in roles
+            ]
+            if isinstance(roles, list)
+            else []
+        )
         if (
             contract.get("scope") != "full-release-image"
             or contract.get("uncovered_boundaries") != []
+            or not role_ids
+            or any(not isinstance(role, str) or not role.strip() for role in role_ids)
         ):
             raise ValueError(
                 "native evidence does not cover the complete approved image role scope"
