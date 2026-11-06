@@ -146,7 +146,9 @@ def test_fixed_host_diagnostic_cannot_enter_release_or_hide_raw_failures() -> No
     flag = workflow["on"]["workflow_dispatch"]["inputs"]["diagnostic_host_only"]
     assert flag["default"] == "false" and flag["type"] == "boolean"
     for name in ("verify-candidate-preflight", "verify-production-migration-replay"):
-        assert workflow["jobs"][name]["if"] == "${{ !inputs.diagnostic_host_only }}"
+        assert workflow["jobs"][name]["if"] == (
+            "${{ !inputs.diagnostic_host_only && !inputs.diagnostic_arm64_startup }}"
+        )
     for name in ("publish-signed", "verify-published-source"):
         assert "!inputs.diagnostic_host_only &&" in workflow["jobs"][name]["if"]
     assert diagnostic["permissions"] == {"contents": "read", "actions": "read"}

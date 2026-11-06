@@ -81,6 +81,11 @@ on:
         required: false
         type: boolean
         default: false
+      diagnostic_arm64_startup:
+        description: One native ARM installed-entry observation of retained 8d Server; no build or release
+        required: false
+        type: boolean
+        default: false
       runtime_evidence_revision:
         description: Optional immutable admitted runtime evidence data revision
         required: false
@@ -102,7 +107,7 @@ env:
 
 jobs:
   verify-candidate-preflight:
-    if: ${{ !inputs.diagnostic_host_only }}
+    if: ${{ !inputs.diagnostic_host_only && !inputs.diagnostic_arm64_startup }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -146,7 +151,7 @@ jobs:
         run: uv run python -m saas.scripts.check_image_supply_chain
 
   verify-production-migration-replay:
-    if: ${{ !inputs.diagnostic_host_only }}
+    if: ${{ !inputs.diagnostic_host_only && !inputs.diagnostic_arm64_startup }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -645,6 +650,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       !inputs.diagnostic_host_only &&
+      !inputs.diagnostic_arm64_startup &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
     needs: build-candidate
@@ -1031,6 +1037,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       !inputs.diagnostic_host_only &&
+      !inputs.diagnostic_arm64_startup &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
     needs: [build-candidate, publish-signed]
@@ -1139,8 +1146,58 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  diagnostic-arm64-startup:
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_arm64_startup
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require isolated first component observation
+        env:
+          PUBLISH_SIGNED: ${{ inputs.publish_signed }}
+          HOST_DIAGNOSTIC: ${{ inputs.diagnostic_host_only }}
+        run: |
+          set -euo pipefail
+          [[ "$PUBLISH_SIGNED" == "false" && "$HOST_DIAGNOSTIC" == "true" ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]
+          [[ "$GITHUB_REF" == "refs/heads/codex/021-arm64-locale-diagnostic" ]]
+          [[ "$(uname -m)" == "aarch64" ]]
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact diagnostic control revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - name: Observe installed ARM production startup component without application configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m saas.scripts.observe_arm64_startup \
+            --source-revision 8d864bff145fe81e1f1fd6eb6e45e1761c2dbac9 \
+            --source-run 42216529292 --artifact-id 13505357010 \
+            --output artifacts/arm-startup-native
+      - name: Retain original component observations and raw scan
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: arm64-startup-component-${{ github.sha }}-${{ github.run_id }}-1
+          path: |
+            artifacts/arm-startup-native/*.PUBLIC.json
+            artifacts/arm-startup-native/evidence/*.PUBLIC.json
+          if-no-files-found: warn
+          retention-days: 7
+
   diagnostic-host-only:
-    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_host_only
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_host_only && !inputs.diagnostic_arm64_startup
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
