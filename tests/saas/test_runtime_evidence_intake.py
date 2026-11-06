@@ -126,3 +126,23 @@ def test_component_only_does_not_approve_an_image_and_duplicate_subjects_reject(
     (tmp_path / REGISTRY).write_text(json.dumps(registry))
     with pytest.raises(ValueError, match="full-role contract"):
         verifier_from_registered_inputs(tmp_path, [])(subject, now=NOW)
+
+
+@pytest.mark.parametrize("fault", ["leaf", "material-root", "ancestor", "registry"])
+def test_registered_materials_and_their_anchor_reject_symbolic_links(tmp_path, fault):
+    subject, registry, *_ = registered(tmp_path)
+    if fault == "leaf":
+        original = tmp_path / registry["approved_scopes"][0]["contract"]["path"]
+    elif fault == "material-root":
+        original = tmp_path / "saas/supply_chain/runtime-conditions"
+    elif fault == "ancestor":
+        original = tmp_path / "saas/supply_chain"
+    else:
+        original = tmp_path / REGISTRY
+    destination = tmp_path.parent / (tmp_path.name + "-original")
+    original.rename(destination)
+    original.symlink_to(destination, target_is_directory=destination.is_dir())
+    with pytest.raises(ValueError, match="symbolic link"):
+        verifier_from_registered_inputs(tmp_path, [{"path": "trusted.py", "sha256": "f" * 64}])(
+            subject, now=NOW
+        )

@@ -13,19 +13,35 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from saas.production.admission import _regular_repo_file
 from saas.scripts.combined_runtime_disposition import RuntimeSubject, VerifiedRuntimeCondition
 
 REGISTRY = "saas/supply_chain/runtime-condition-inputs.json"
+
+
+def _material_file(repo: Path, relative: str) -> Path:
+    coordinate = Path(relative)
+    if coordinate.is_absolute() or ".." in coordinate.parts:
+        raise ValueError("native input escaped the reviewed material root")
+    anchor = repo.resolve(strict=True)
+    candidate = anchor
+    for part in coordinate.parts:
+        candidate /= part
+        if candidate.is_symlink():
+            raise ValueError("native input cannot use a symbolic link")
+    path = _regular_repo_file(anchor, coordinate)
+    if path is None:
+        raise ValueError("native input escaped the reviewed material root")
+    return path
 
 
 def _document(repo: Path, coordinate: dict[str, Any]) -> tuple[dict[str, Any], str]:
     relative, expected = coordinate.get("path"), coordinate.get("sha256")
     if not isinstance(relative, str) or not isinstance(expected, str):
         raise ValueError("native input lacks a registered identity")
-    root = (repo / "saas/supply_chain/runtime-conditions").resolve()
-    path = (repo / relative).resolve(strict=True)
-    if not path.is_relative_to(root) or path.is_symlink() or not path.is_file():
+    if not Path(relative).is_relative_to("saas/supply_chain/runtime-conditions"):
         raise ValueError("native input escaped the reviewed material root")
+    path = _material_file(repo, relative)
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != expected:
         raise ValueError("registered native input bytes changed")
@@ -43,7 +59,7 @@ def verifier_from_registered_inputs(repo: Path, inventory: list[dict[str, Any]])
     A helper-only experiment remains usable evidence, but cannot authorize a
     full Server/Host subject; absence of complete approved coverage rejects it.
     """
-    registry = json.loads((repo / REGISTRY).read_text())
+    registry = json.loads(_material_file(repo, REGISTRY).read_text())
     if (
         type(registry.get("schema_version")) is not int
         or registry["schema_version"] != 1
@@ -134,7 +150,7 @@ def verifier_from_registered_inputs(repo: Path, inventory: list[dict[str, Any]])
 
 
 def registered_inventory_paths(repo: Path) -> frozenset[str]:
-    registry = json.loads((repo / REGISTRY).read_text())
+    registry = json.loads(_material_file(repo, REGISTRY).read_text())
     paths = {"usr/lib/libc.so.6"}
     for coordinate in registry["approved_scopes"]:
         contract, _ = _document(repo, coordinate["contract"])
