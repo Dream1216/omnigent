@@ -1,5 +1,7 @@
 """Capacity guards for reproducible multi-architecture OCI candidates."""
 
+import os
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -56,6 +58,31 @@ def test_candidate_runs_cheap_compatibility_checks_before_browser_setup() -> Non
 
     assert names.index("Verify migrations and downstream compatibility") < names.index(
         "Install Chromium"
+    )
+
+
+def test_candidate_scan_can_import_admission_in_the_exported_locked_environment(tmp_path) -> None:
+    workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-image-candidate.yml").read_text())
+    steps = workflow["jobs"]["build-candidate"]["steps"]
+    install = next(s for s in steps if s.get("name") == "Install locked test dependencies")
+    sync, export = install["run"].strip().splitlines()
+    assert sync == "uv sync --frozen --extra all --group dev --extra saas --extra e2b"
+    path_file = tmp_path / "github-path"
+    subprocess.run(
+        ["bash", "-c", export],
+        cwd=_ROOT,
+        env={**os.environ, "GITHUB_PATH": str(path_file)},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "python",
+            "-c",
+            "from saas.scripts.runtime_evidence_intake import authenticated_runtime_graph",
+        ],
+        cwd=_ROOT,
+        env={**os.environ, "PATH": path_file.read_text().strip() + os.pathsep + os.defpath},
+        check=True,
     )
 
 

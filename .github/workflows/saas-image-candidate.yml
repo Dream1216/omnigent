@@ -247,7 +247,9 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
+        run: |
+          uv sync --frozen --extra all --group dev --extra saas --extra e2b
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Prepare immutable runtime evidence data for candidate
         if: inputs.runtime_evidence_revision != ''
         uses: ./saas/actions/runtime-evidence-context
