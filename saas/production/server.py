@@ -1616,6 +1616,9 @@ def _verify_postgresql_state(
 def main() -> None:
     """Load, verify, compose, and serve; no import or migration side effects."""
 
+    from saas.production.runtime_locale import initialize_production_locale
+
+    initialize_production_locale()
     config = load_production_server_config()
     # This check is intentionally first: a stale/wrong image must not open a
     # database connection merely to discover it cannot serve this release.

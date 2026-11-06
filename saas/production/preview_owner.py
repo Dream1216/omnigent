@@ -618,6 +618,9 @@ async def _run(config: ProductionPreviewOwnerConfig) -> None:
 
 
 def main(_argv: Sequence[str] | None = None) -> int:
+    from saas.production.runtime_locale import initialize_production_locale
+
+    initialize_production_locale()
     config = load_production_preview_owner_config()
     verify_installed_preview_owner_lineage(config)
     asyncio.run(_run(config))

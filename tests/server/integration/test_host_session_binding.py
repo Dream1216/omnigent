@@ -52,6 +52,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
 from tests._helpers.polling import poll_until_async
+from tests.budgets import Deadline
 from tests.server.helpers import (
     FakeSandboxLauncher,
     HostStartInvocation,
@@ -2213,14 +2214,15 @@ async def _report_runner_exited(
     """
     from omnigent.host.frames import HostRunnerExitedFrame
 
+    deadline = Deadline(5.0)
     comm = ApplicationCommunicator(app, _websocket_scope(f"/v1/hosts/{_HOST_ID}/tunnel"))
     await comm.send_input({"type": "websocket.connect"})
-    accepted = await comm.receive_output(timeout=5.0)
+    accepted = await comm.receive_output(timeout=deadline.remaining())
     assert accepted["type"] == "websocket.accept", f"tunnel refused: {accepted!r}"
     await comm.send_input({"type": "websocket.receive", "text": _make_hello()})
     # Exit reports describe an admitted Host; finish registration before reporting.
     await poll_until_async(
-        lambda: app.state.host_registry.get(_HOST_ID) is not None, timeout_s=5.0
+        lambda: app.state.host_registry.get(_HOST_ID) is not None, timeout_s=deadline.remaining()
     )
     report = json.loads(
         encode_host_frame(HostRunnerExitedFrame(runner_id=runner_id, error="exited with code 1"))
@@ -2236,10 +2238,13 @@ def _runner_exited_events(caplog: pytest.LogCaptureFixture) -> list[logging.LogR
     return [r for r in caplog.records if getattr(r, "event_name", None) == "runner_exited"]
 
 
+@pytest.mark.parametrize("registration_delay", [0.0, 5.25], ids=["immediate", "slow-CI-store"])
 async def test_runner_exited_logs_one_event_per_bound_session(
     db_uri: str,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    registration_delay: float,
 ) -> None:
     """
     A ``host.runner_exited`` report logs one ``runner_exited`` row per session
@@ -2249,6 +2254,17 @@ async def test_runner_exited_logs_one_event_per_bound_session(
     debug-table row has no ``session_id`` and cannot be joined to a session.
     """
     app, conv_store = _runner_exited_app(db_uri, tmp_path)
+    if registration_delay:
+        from tests import budgets
+
+        monkeypatch.setattr(budgets, "_TIMEOUT_SCALE", 4.0)
+        original_upsert = app.state.host_store.upsert_on_connect
+
+        def delayed_upsert(*args, **kwargs):
+            time.sleep(registration_delay)
+            return original_upsert(*args, **kwargs)
+
+        monkeypatch.setattr(app.state.host_store, "upsert_on_connect", delayed_upsert)
     parent = conv_store.create_conversation(agent_id=None, runner_id="runner_crashed")
     child = conv_store.create_conversation(
         agent_id=None,
