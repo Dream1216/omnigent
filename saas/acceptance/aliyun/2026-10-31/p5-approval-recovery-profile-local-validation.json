@@ -1,0 +1,137 @@
+{
+  "approval_matrix": {
+    "case_results": [
+      {
+        "action": "approve",
+        "checks_passed": 9,
+        "harness": "claude",
+        "observed_outage_s": 150.03,
+        "report_sha256": "7faca8edee95e677a8dce63432085f9f9568633ae7d578a8a3ae41b70745a055",
+        "requested_outage_s": 150
+      },
+      {
+        "action": "approve",
+        "checks_passed": 10,
+        "harness": "claude",
+        "observed_outage_s": 20.02,
+        "report_sha256": "3e46c20e712c04c7d7c4442a16719119c089236ac3327cd7c1bbe64aad6cd7cf",
+        "requested_outage_s": 20
+      },
+      {
+        "action": "approve",
+        "checks_passed": 9,
+        "harness": "codex",
+        "observed_outage_s": 150.01,
+        "report_sha256": "f313f02e588df165d1d3cf407902d23cbf08e53a69bb011f204dd4c3a2c8a8f0",
+        "requested_outage_s": 150
+      },
+      {
+        "action": "approve",
+        "checks_passed": 10,
+        "harness": "codex",
+        "observed_outage_s": 20.01,
+        "report_sha256": "23d04449d38c8569a7629933311b22dfd83949509e434fd55da7b5d522fcd789",
+        "requested_outage_s": 20
+      }
+    ],
+    "deselected": 8,
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "06cf4947712900fc99dad7059f3bd2fffc92cbe2297ae709d6dea01472bde355",
+    "seconds": 963.292,
+    "skipped": 0,
+    "tests": 4
+  },
+  "approval_profile": {
+    "aliyun_fixed_hook_hard_failure_retries": 12,
+    "arbitrary_managed_environment_passthrough_enabled": false,
+    "cloud_injection": "AliyunHostProcess._spawn_runner_proc",
+    "cloud_model_or_launch_authentication_exercised_by_lab": false,
+    "generic_hook_source_modified": false,
+    "generic_native_default": 8,
+    "local_lab_plugin": "tests.saas.aliyun_recovery_profile",
+    "outcome_assertions_weakened": false,
+    "runxfail": true
+  },
+  "base_revision": "50a4db09139531e2037a49b85dd6166fdfb9cf57",
+  "cli_versions": {
+    "claude_code": "2.1.266",
+    "codex": "0.139.0"
+  },
+  "cloud_host_acceptance": false,
+  "configuration_only_preliminary_experiment": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "0573deab053b3072c07a19bbfe5f8e8b91cfb7d86716ec12576eb75f5c4000aa",
+    "seconds": 380.349,
+    "skipped": 0,
+    "tests": 1
+  },
+  "default_profile_negative_control": {
+    "action": "approve",
+    "approval_http_status": 202,
+    "failed_checks": [
+      "interrupted_turn_finishes",
+      "final_reply_committed_once",
+      "tool_result_committed_once",
+      "tool_side_effect_happened",
+      "status_settles_idle",
+      "next_turn_round_trips"
+    ],
+    "harness": "claude",
+    "junit_sha256": "e2b815889f539f4f58e07abe4b5ecad0c5472102570bb4594b7e85d3f09b25e7",
+    "observed_outage_s": 150.01,
+    "requested_outage_s": 150
+  },
+  "managed_host_unit_regressions": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "c97721308c2427d1a391c60dc583fef34a1d80b18fc2c926a60604fac8c9ceec",
+    "seconds": 43.191,
+    "skipped": 0,
+    "tests": 70
+  },
+  "model": "local mock",
+  "model_gateway_and_host_launcher_regressions": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "3db3443e2d52fe8f3137086a232a60b68acaf5be9c2b0a138a3590deb77aff31",
+    "seconds": 28.979,
+    "skipped": 0,
+    "tests": 79
+  },
+  "observed_at": "2026-10-31T09:50:29.871134+00:00",
+  "p5_accepted": false,
+  "previous_send_stop_evidence": "p5-host-offline-control-local-validation.json",
+  "production_activated": false,
+  "profile_types": {
+    "errors": 0,
+    "log_sha256": "7f5e59adbab3afa8c93f23d4297e1c003ec37056a7862a8dc0354c5fe6f42634"
+  },
+  "real_local_server_host_runner_and_cli": true,
+  "remaining": [
+    "Source scope review and approval; final checks and exact-source CI",
+    "Qualified Host image, managed cloud Host/Runner/model integration",
+    "Cloud fault, capacity, isolation, canary and rollback acceptance"
+  ],
+  "single_combined_twelve_case_run": false,
+  "source_budget": {
+    "admitted": false,
+    "existing_files_limit": 182,
+    "existing_net_added_loc_limit": 4869,
+    "files": 184,
+    "limits_changed": false,
+    "net_added_loc": 5216
+  },
+  "source_patch_sha256": "b163cec5560145763163fe59cc5208adee660beae798abc885c189de585c9434",
+  "source_sha256": {
+    "omnigent/server/routes/_sessions/orchestration.py": "4a3998fd8dd845e4c632f4d344edca4f5d1d2f2a72acd18643fc0c632f7583fa",
+    "omnigent/server/routes/sessions/routes_events.py": "fb7b66f84dfddcb09d58343a95bef35c3cb0c3a6d866011aa8e979c07ce48ace",
+    "saas/production/aliyun_host.py": "e9fcf6fd0865b51d182e4db84fa2378fd25d214ef2d87098809bad9478749043",
+    "saas/production/platform_model_host.py": "24852b377a5021f817195d1425b6b2b8588aa5dab569bb649d851597159f2032",
+    "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py": "120f7c0264a67ea419d7e3ae73fff2912648c492f969d65b81abe3bdcc8855fa",
+    "tests/saas/aliyun_recovery_profile.py": "3178edf991f1ba92d742df755082ad8c18be7751f570d25d7ff14e9fd974e3a5",
+    "tests/saas/test_aliyun_host.py": "ef41586725458893c8229a292b06788ea647550f061561040625b66a0a423a0e",
+    "tests/server/integration/test_session_host_launch.py": "da57a275d73ef32ee287bb56f8c6c1734f566b2a488d5025462f82a99b97633e"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "started_at": "2026-10-30T20:00:27.995928+00:00",
+  "name": "omnigent-sdk-build-check-f3586f86",
+  "logs": [
+    {
+      "level": "info",
+      "message": "Requesting build for template: omnigent-sdk-build-check-f3586f86"
+    },
+    {
+      "level": "info",
+      "message": "Template created with ID: 90a28cf2w84opxn5546e, Build ID: 148fcd36-d4c6-44fa-985b-1ce48a8d3681"
+    },
+    {
+      "level": "info",
+      "message": "All file uploads completed"
+    },
+    {
+      "level": "info",
+      "message": "Starting building..."
+    }
+  ],
+  "purpose": "verify-E2B-template-API-on-public-image",
+  "submitted": true,
+  "build_info": {
+    "template_id": "90a28cf2w84opxn5546e",
+    "build_id": "148fcd36-d4c6-44fa-985b-1ce48a8d3681",
+    "name": "omnigent-sdk-build-check-f3586f86",
+    "alias": "omnigent-sdk-build-check-f3586f86",
+    "tags": []
+  },
+  "finished_at": "2026-10-30T20:00:28.438460+00:00",
+  "console_verified_state": "ready",
+  "console_verified_runtime_generation": 1,
+  "generation_editable": false,
+  "cleanup": {
+    "template_deleted": true,
+    "verified_by": "console template list contains only original omnigent-poc-base"
+  },
+  "production_acceptance": false
+}

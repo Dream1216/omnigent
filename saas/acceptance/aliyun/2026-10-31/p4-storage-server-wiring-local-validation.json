@@ -1,0 +1,56 @@
+{
+  "candidate_parent": "a4ba238ebcfc7e676bacf954e464ef72307cb254",
+  "file_sha256": {
+    "saas/actions/build-oci-candidate/action.yml": "6157977355f8e835a07c8bb0776173fd3e9858cacc4a1d496584892ed67e13c2",
+    "saas/production/aliyun_sandbox.py": "c812b69896b07dc3a61a2bf0f1650213084384ed65918596db2805449a98af3a",
+    "saas/production/aliyun_server_profile.py": "09ed1ef5c45a910ea1792748bc61e4a091bb5458c12804d9c6213227380b818d",
+    "saas/production/aliyun_storage.py": "da1073cb2ed89f01556510e5df55b0e2590fe6208275c242954f81bb724a648e",
+    "saas/production/aliyun_storage_admission.py": "15df97bb92667c90b9c24ec9aa893eb7623102d79254768edfdff837205b208a",
+    "saas/production/aliyun_tenant_sandbox.py": "b6890de483cd00d2db206187efcde0e3bd3aede7ceede93663b377cc6b25c714",
+    "saas/production/server.py": "80d468775b3bd236f0ce9e464b346ed839aafa4e0062547df6dd063dbd2b2aed",
+    "tests/saas/test_aliyun_storage_admission_postgresql.py": "235c2a8b72483780e3bd7ad3b1ce6a933a7012c03c8b9e8c38de27627b5de13f"
+  },
+  "frozen_python_lock": "passed, 305 packages",
+  "live_cloud_mount_verified": false,
+  "observed_at": "2026-10-31T02:18:56.800488+00:00",
+  "p4_accepted": false,
+  "persistent_artifact_download_implemented": false,
+  "postgresql_storage_inventory_local": "one skipped; live test service absent; CI acceptance pending",
+  "production_changed": false,
+  "production_ready": false,
+  "profile_v1_storage_enabled": false,
+  "profile_v2_server_launcher_wired": true,
+  "saas_type_errors": 0,
+  "source_identity": "Working-file SHA-256 values; no production release identity",
+  "static_guards": "upstream delta, patch queue, production baseline and image supply chain passed",
+  "status": "local-wired-candidate-only",
+  "sts_issuer_renewal_implemented": false,
+  "suites": [
+    {
+      "errors": 0,
+      "evidence": "storage-wiring-scoped-regression.junit.xml",
+      "failures": 0,
+      "skipped": 0,
+      "tests": 849
+    },
+    {
+      "errors": 0,
+      "evidence": "storage-wiring-composition-regression.junit.xml",
+      "failures": 0,
+      "skipped": 0,
+      "tests": 10
+    }
+  ],
+  "unique_successful_test_cases": 849,
+  "verified": [
+    "Real Session owner and fresh membership/Project/placement admission",
+    "Inactive, ambiguous, moved and uppercase UUID binding denial",
+    "Exact SDK mount maps and metadata; reject cross-Session VM use",
+    "Native repositories below local workspace/repos; preserve mount visibility",
+    "Real Server builder uses pinned control SDK against mocked cloud HTTP",
+    "Threaded managed Host failure cleans VM/Host record and retains Volumes",
+    "Cleanup remains possible without Session authorization or control STS",
+    "Candidate and protected OCI contracts require control SDK 1.2.0",
+    "Provider independently rejects a foreign-Space mount plan"
+  ]
+}

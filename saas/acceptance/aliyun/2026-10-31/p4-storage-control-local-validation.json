@@ -1,0 +1,59 @@
+{
+  "candidate_base_revision": "73b992158ecb1fa3f04db501ceb6e94613fba601",
+  "checks": [
+    {
+      "errors": 0,
+      "evidence": "storage-control-regression.junit.xml",
+      "failures": 0,
+      "tests": 54
+    },
+    {
+      "errors": 0,
+      "evidence": "storage-scoped-regression.junit.xml",
+      "failures": 0,
+      "tests": 750
+    }
+  ],
+  "cloud_resources_created": false,
+  "e2b": "2.31.0",
+  "file_sha256": {
+    "pyproject.toml": "4bd739d59b054da0066fe7518b37fe9753517d95209a0423ada8f2f81703e1c9",
+    "saas/production/aliyun_storage.py": "0717ebe3f246d72238bfd76b583a3942a0e7dd8047cd7f2c95c8968d9123feb8",
+    "saas/production/aliyun_volume_control.py": "5d9593c2abcb0370559f0dc49d7948375fac6928463e724885f8fe9844a792ee",
+    "tests/saas/test_aliyun_storage.py": "225200daaf0c5e30f42de77f7edf41d59c4e75d52e925d2e4f4b89e2964d762b",
+    "tests/saas/test_aliyun_volume_control.py": "9d734509fa8cf11423a7dab9deb28ada3368a5a75c0c8836012823552e2d202d",
+    "uv.lock": "97308df54ab125e33023d4b95d421ab86be37ac48bfcbecaaaec6a37a6182f84"
+  },
+  "live_cloud_calls": false,
+  "observed_at": "2026-10-31T01:22:25.897343+00:00",
+  "other_release_gates": "Known Host High findings and trusted-main input drift remain failed; local tests do not waive either gate.",
+  "p4_accepted": false,
+  "pending": [
+    "Authoritative Session and Project binding admission",
+    "Server profile and Host lifecycle integration",
+    "Least-privilege live Bucket and RAM role",
+    "STS issuer and renewal",
+    "Real mounts with cross-Session/Tenant denial",
+    "Durability after close and VM recreation",
+    "Authenticated artifact download and permission revocation",
+    "Actual complete Host/Runner mount visibility"
+  ],
+  "production_ready": false,
+  "ruff": "passed",
+  "sdk": "alibabacloud-sandbox20260820==1.2.0",
+  "server_launcher_wired": false,
+  "source_identity": "Exact working-file SHA-256 values below; not a production release identity.",
+  "status": "local-adapter-validation-only",
+  "typing_errors": 0,
+  "upstream_delta": "passed",
+  "verified_with_mocks": [
+    "Session/Tenant/Space prefixes and immutable cloud metadata",
+    "Read-only input and read-write output plan",
+    "Fresh runtime authorization before cloud operations and after readiness wait",
+    "Ambiguous create readback without mutation replay",
+    "Rotating private STS files; reject long-term keys and unsafe file identity",
+    "Actual SDK models and HMAC signature over outbound request",
+    "No ambient proxy/debug credentials or redirect token export",
+    "Bounded readiness, response size and sanitized errors"
+  ]
+}

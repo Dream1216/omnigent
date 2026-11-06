@@ -130,11 +130,19 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 4576
-    assert budget["max_direct_upstream_files"] == 195
+    assert budget["max_upstream_net_added_loc"] == 5450
+    assert budget["max_direct_upstream_files"] == 206
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
+    recovery = revision["cloud_final_Main6cc_official_CI_recovery"]
+    assert recovery["previous_max_upstream_net_added_loc"] == 5439
+    assert recovery["max_upstream_net_added_loc"] == 5445
+    assert recovery["accepted_main"] == "6cc0b5be7ed26193b1d6b341c246ba22b2b23902"
+    composition = revision["aliyun_Main1c2_composition_20261106"]
+    assert composition["accepted_main"] == "1c2a98eb0a6fed8cd30d670e8086c3b208eb1798"
+    assert composition["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert composition["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153
@@ -486,8 +494,14 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert dependency_revision["previous_revision"]["revision"] == "e2e-apt-index-refresh-v8"
     report = evaluate_delta(
         [
-            FileDelta("omnigent/stores/host_store.py", 4576 + extra_lines, 0),
-            FileDelta("saas/control_plane/service.py", 30000, 0),
+            FileDelta(
+                "omnigent/stores/host_store.py",
+                budget["max_upstream_net_added_loc"] + extra_lines,
+                0,
+            ),
+            FileDelta(
+                "saas/control_plane/service.py", budget["max_upstream_net_added_loc"] * 6, 0
+            ),
         ],
         manifest,
         active_patch_count=9,
@@ -541,3 +555,25 @@ def test_e2e_ui_governance_files_are_downstream_owned() -> None:
     assert report["metrics"]["direct_upstream_file_count"] == 0
     assert report["metrics"]["upstream_net_added_loc"] == 0
     assert report["metrics"]["isolated_custom_code_ratio"] == 1.0
+
+
+@pytest.mark.parametrize(("downstream_lines", "expected"), [(566, "fail"), (567, "pass")])
+def test_source_isolation_floor_remains_enforced_at_085(
+    downstream_lines: int,
+    expected: str,
+) -> None:
+    report = evaluate_delta(
+        [
+            FileDelta("omnigent/stores/host_store.py", 100, 0),
+            FileDelta("saas/control_plane/service.py", downstream_lines, 0),
+        ],
+        _manifest(),
+        active_patch_count=0,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+    )
+    assert report["status"] == expected
+    assert report["violations"] == (
+        ["isolated custom-code ratio is below budget"] if expected == "fail" else []
+    )

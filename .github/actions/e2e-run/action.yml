@@ -93,6 +93,8 @@ runs:
       # bubblewrap backs the linux_bwrap sandbox. Ubuntu 24.04 restricts
       # unprivileged user namespaces, so mirror ci.yml's AppArmor override.
       shell: bash
+      env:
+        OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
       run: |
         bash saas/scripts/ci_install_ubuntu_packages.sh tmux bubblewrap
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0

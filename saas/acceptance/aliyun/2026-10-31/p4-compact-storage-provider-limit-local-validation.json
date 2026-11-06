@@ -1,0 +1,92 @@
+{
+  "base_revision": "b3c559826d18d60befb56e35e30ce568b6642c48",
+  "change": "Fit actual OSS Bucket Path maximum without discarding UUID identity or namespace dimensions",
+  "cloud_mount_verified": false,
+  "cloud_observations": {
+    "compact_path": "dedicated Session-A input readonly and output read-write Volumes created in actual console",
+    "mount_probe": "source IP policy rejected API request before instance creation; no durability acceptance",
+    "original_text_uuid_path": "CreateVolume rejected Bucket Path >128; no volume created",
+    "ram_policy": "default v2 compact policy read back and normalized permission comparison passed"
+  },
+  "cross_vm_durability_verified": false,
+  "final_composition_slice": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "85035cba7afef56f7f0fff38129e90e7ccea97a49c271c781f08525a74555127",
+    "passed": 12,
+    "skipped": 0,
+    "tests": 12
+  },
+  "final_disjoint_coverage": {
+    "all_final_composition_cases_passed": 12,
+    "single_final_287_case_run_claimed": false,
+    "total_current_cases_covered": 287,
+    "unchanged_other_storage_cases_passed": 275
+  },
+  "final_test_formatting": {
+    "ast_unchanged": true,
+    "formatted_sha256": "9de4fbdb87052ae7e91bf3e3e8393caecf9de81dd3149fbe27318c69ca616a30",
+    "tested_preformat_sha256": "c12d32946716328e052a72ca10adc151d6e99455fc93e753f78595a7d07b6d91"
+  },
+  "fixture_correction": "Use explicit profile-v3 artifacts fixture for actual creation and failed-start cleanup; legacy profile produced paths that the real provider rejects. Preserve two-volume, ownership revocation and failed-launch cleanup assertions; assert emitted Bucket Path <=128.",
+  "initial_failed_cases": [
+    "test_storage_is_wired_into_the_actual_server_managed_launcher[storage]",
+    "test_real_managed_launch_failure_recycles_vm_and_host_but_retains_volumes[storage]"
+  ],
+  "initial_full_storage_slice": {
+    "errors": 0,
+    "failures": 2,
+    "junit_sha256": "b8fba8390fc66beedb54314f024b953b991d17ae7c1b9088109bcd22382cbcb5",
+    "passed": 285,
+    "skipped": 0,
+    "tests": 287
+  },
+  "namespace": {
+    "automatic_migration": false,
+    "dimensions": [
+      "tenant",
+      "space",
+      "project-or-unbound",
+      "session"
+    ],
+    "legacy_overlong_create": "rejected before SDK models, signing or network",
+    "legacy_v2_name_and_path_serialization": "unchanged",
+    "max_bucket_path_characters": 128,
+    "max_prefix_characters": 23,
+    "uuid_encoding": "full UUID128, canonical unpadded Base64URL22"
+  },
+  "observed_at": "2026-10-31T07:40:16.820621+00:00",
+  "p4_accepted": false,
+  "p5_accepted": false,
+  "production_activated": false,
+  "production_module_types": {
+    "errors": 0,
+    "log_sha256": "7f5e59adbab3afa8c93f23d4297e1c003ec37056a7862a8dc0354c5fe6f42634"
+  },
+  "security_or_release_gate_waived": false,
+  "source_budget": {
+    "active_patch_count": 9,
+    "direct_upstream_file_count": 182,
+    "forbidden_upstream_files": [],
+    "isolated_custom_code_ratio": 0.9833,
+    "reverse_dependencies": [],
+    "upstream_net_added_loc": 4869
+  },
+  "source_sha256": {
+    "saas/deployment/aliyun/storage.md": "0c5692bc0b542e1f0faddc9b1ede9d7884fff54923d023e9bb24a63bc16fa542",
+    "saas/production/aliyun_storage.py": "69473eb4e5744d9e354cd2451c84212cbf3761d6186aa6705a1c6dcd87bfbe51",
+    "saas/production/aliyun_volume_control.py": "9f116adc71ab325cc8c4ed089e25a7e5d9065f465e601eeb83652c8eceffa8e8",
+    "tests/saas/test_aliyun_artifacts.py": "29ebc857f8cf50bc49bec601d5e90498493938259556b905b5be027db9dfc3a9",
+    "tests/saas/test_aliyun_server_composition.py": "9de4fbdb87052ae7e91bf3e3e8393caecf9de81dd3149fbe27318c69ca616a30",
+    "tests/saas/test_aliyun_storage.py": "c2851fb9d8863b5a32e518134492ba162a09af6d9a1abb6a2abf1811e611437d",
+    "tests/saas/test_aliyun_volume_control.py": "12f0be8865aa958c43e4d83f5f2889a625065cb4ba6b35b8ac25c40a35d5e2d8"
+  },
+  "targeted_legacy_golden_vector": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "be0c52825bb3fe554553096a67e885ceaae98e8e000efae3462f9b606de27430",
+    "passed": 1,
+    "skipped": 0,
+    "tests": 1
+  }
+}

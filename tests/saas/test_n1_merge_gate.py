@@ -472,11 +472,11 @@ def test_unrelated_pr_passes_without_n1_check(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("path", "digest"),
     [
-        ("pyproject.toml", "7b7bfc95d45ac928bb91cf6b383c94c48792474adf967e34fcfddca15d0c58a6"),
-        ("uv.lock", "51412e72b0d0119f388ad9349025fb40f1f5458e55695b736f9e79ab99395b5b"),
+        ("pyproject.toml", "77ffd5d339656adfec3e7b15660599226ff29a527e05f75cdbbb386ad280550f"),
+        ("uv.lock", "d5f1d133221f33dca75e9e0a4e7c49b2bded0da5cfcabc2ae212f7e615681ce2"),
         (
             "tests/saas/test_image_supply_chain.py",
-            "109ac4d727d73b271613089acbb693944047f9705f10c33c4e676075fe52d4f7",
+            "07c305d43955deffe843de9e7f45a6ff38e59b95b07491231f64d19f8b2a1dd0",
         ),
         (
             "saas/scripts/compare_oci_rebuilds.py",

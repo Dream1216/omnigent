@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-10-30T19:41:07.644723+00:00",
+  "run_id": "aliyun-integration-af8f0bdc0ee641598de0af6c59527eb8",
+  "sdk_version": "2.31.0",
+  "template": "0mipsyhtqfvkegns0jbw",
+  "checks": {
+    "create": true,
+    "command": true,
+    "unicode_and_1mib_binary_files": true,
+    "connect_and_command": true,
+    "timeout_and_info": true,
+    "nonzero_exit": true,
+    "background_list_kill": true,
+    "host_inventory": true,
+    "kill_requested": true,
+    "kill_confirmed": true
+  },
+  "errors": {},
+  "production_acceptance": false,
+  "sandbox_id": "sbx-5ba179fc-9f54-44e2-a7e2-32b8e140bcb4",
+  "create_seconds": 0.671,
+  "host_inventory": {
+    "python": "3.13.13",
+    "python_executable": "/usr/local/bin/python3",
+    "uid": 1000,
+    "tools": {
+      "git": "/usr/bin/git",
+      "tmux": null,
+      "node": "/usr/local/bin/node",
+      "bwrap": null,
+      "curl": "/usr/bin/curl",
+      "systemctl": "/usr/bin/systemctl",
+      "sshd": "/usr/sbin/sshd",
+      "sudo": "/usr/bin/sudo",
+      "chronyd": "/usr/sbin/chronyd",
+      "ossfs2": "/usr/local/bin/ossfs2"
+    },
+    "omnigent_installed": false
+  },
+  "transport_passed": true,
+  "host_prerequisites_ready": false,
+  "finished_at": "2026-10-30T19:41:22.969626+00:00"
+}

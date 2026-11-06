@@ -21,7 +21,7 @@ import stat
 from collections.abc import Callable, Mapping, MutableMapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from threading import Lock
@@ -1149,6 +1149,7 @@ def build_official_runtime_dependencies(
             if tenant_model_bindings
             else None
         ),
+        aliyun=config.aliyun_profile.managed if config.aliyun_profile is not None else None,
     )
     cache = open_private_artifact_cache_directory(
         config.artifact_cache_dir,
@@ -1257,6 +1258,16 @@ def _production_router(
     return router
 
 
+def _runtime_compatibility_policy(config: ProductionServerConfig) -> RuntimeCompatibilityPolicy:
+    return RuntimeCompatibilityPolicy(
+        runtime_type="omnigent",
+        allowed_runtime_versions=frozenset({config.runtime_version}),
+        allowed_source_revisions=frozenset({config.upstream_revision}),
+        allowed_schema_revisions=frozenset({config.official_schema_revision}),
+        adapter_contract_version=config.adapter_contract_version,
+    )
+
+
 def build_production_saas_services(
     config: ProductionServerConfig,
     sessions: RoleSessionFactories,
@@ -1282,6 +1293,16 @@ def build_production_saas_services(
         f"database.{role}": _runtime_database_check(engine)
         for role, engine in sessions.readiness_engines.items()
     }
+    if config.aliyun_profile is not None:
+        profile = config.aliyun_profile
+        if (
+            profile.product_revision != config.product_revision
+            or profile.server_image_digest != config.image_digest
+            or profile.managed.server_url != config.public_origin
+            or "run" not in config.capabilities
+        ):
+            raise ProductionServerCompositionError("Aliyun profile release binding is invalid")
+        checks["external.aliyun_configuration"] = profile.assert_ready
     if delivery_client is not None:
         checks["external.delivery_contract"] = delivery_client.assert_ready
     for capability, adapter in (("runner", adapters.runner), ("preview", adapters.preview)):
@@ -1310,13 +1331,7 @@ def build_production_saas_services(
     lifecycle = MembershipLifecycleService(sessions.authenticator)
     identities = IdentityManagementService(sessions.authenticator)
     passwords = PasswordCredentialService(sessions.authenticator)
-    policy = RuntimeCompatibilityPolicy(
-        runtime_type="omnigent",
-        allowed_runtime_versions=frozenset({config.runtime_version}),
-        allowed_source_revisions=frozenset({config.upstream_revision}),
-        allowed_schema_revisions=frozenset({config.official_schema_revision}),
-        adapter_contract_version=config.adapter_contract_version,
-    )
+    policy = _runtime_compatibility_policy(config)
     context_resolver = SqlAlchemyContextResolver(sessions.app, policy)
     context_snapshots = ContextSnapshotService(
         ContextSnapshotPolicy(
@@ -1501,6 +1516,163 @@ def build_production_saas_services(
         raise
 
 
+def _install_aliyun_storage(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+) -> OfficialRuntimeDependencies:
+    profile = config.aliyun_profile
+    if profile is None:
+        return official
+    from omnigent.server.managed_hosts import ManagedSandboxDeployment
+    from saas.production.aliyun_storage_admission import (
+        AliyunCurrentSessionStorage,
+    )
+    from saas.production.aliyun_tenant_sandbox import build_aliyun_managed_config
+    from saas.production.aliyun_volume_control import AliyunVolumeControlClient
+
+    deployment = official.sandbox_config
+    if (
+        not isinstance(deployment, ManagedSandboxDeployment)
+        or sum(entry.provider == "e2b" for entry in deployment.configs) != 1
+    ):
+        raise ProductionServerCompositionError("Aliyun profile requires its managed provider")
+    authorizer = _aliyun_storage_authorizer(config, sessions, official)
+    storage = None
+    if profile.storage_configs:
+        if profile.storage_credential_file is None or {
+            (c.tenant_id, c.workspace_id) for c in profile.storage_configs
+        } != {(c.tenant_id, c.workspace_id) for c in profile.managed.scopes}:
+            raise ProductionServerCompositionError("Aliyun storage configuration is incomplete")
+        storage = AliyunCurrentSessionStorage(
+            profile.storage_configs,
+            AliyunVolumeControlClient(
+                team_id=profile.team_id, credential_file=profile.storage_credential_file
+            ),
+            authorize=authorizer.execution,
+        )
+    configured = replace(
+        deployment,
+        configs=tuple(
+            build_aliyun_managed_config(
+                profile.managed,
+                host_config=entry.host_config,
+                storage=storage,
+                authorize_execution=authorizer.current_execution,
+            )
+            if entry.provider == "e2b"
+            else entry
+            for entry in deployment.configs
+        ),
+    )
+    return replace(official, sandbox_config=configured)
+
+
+def _aliyun_storage_authorizer(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+):
+    from omnigent.db.utils import make_named_managed_session_maker
+    from saas.control_plane.authorization import ProjectAuthorizer
+    from saas.production.aliyun_storage_admission import AliyunStorageSessionAuthorizer
+
+    return AliyunStorageSessionAuthorizer(
+        sessions=make_named_managed_session_maker(
+            sessions.engines["app"], query_name_prefix="saas.aliyun_storage"
+        ),
+        resolver=SqlAlchemyContextResolver(
+            sessions.app,
+            _runtime_compatibility_policy(config),
+            project_authorizer=ProjectAuthorizer(sessions.app),
+        ),
+        conversations=official.conversation_store,
+        permissions=official.permission_store,
+    )
+
+
+def _install_aliyun_artifacts(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+    services: ProductionSaasServices,
+    router: APIRouter,
+) -> None:
+    profile = config.aliyun_profile
+    if profile is None or profile.artifact_credential_file is None:
+        return
+    from saas.production.aliyun_artifacts import (
+        AliyunArtifactReader,
+        create_aliyun_artifact_router,
+    )
+
+    authorizer = _aliyun_storage_authorizer(config, sessions, official)
+    reader = AliyunArtifactReader(
+        profile.storage_configs,
+        credential_file=profile.artifact_credential_file,
+        authorize=authorizer.read,
+    )
+    reader.prepare()
+    router.include_router(
+        create_aliyun_artifact_router(reader, services.integration.auth_provider)
+    )
+
+
+def _install_aliyun_model_broker(
+    config: ProductionServerConfig,
+    sessions: RoleSessionFactories,
+    official: OfficialRuntimeDependencies,
+    services: ProductionSaasServices,
+    router: APIRouter,
+) -> None:
+    profile = config.aliyun_profile
+    if profile is None:
+        return
+    from omnigent.server.managed_hosts import ManagedSandboxDeployment
+    from saas.control_plane.authorization import ProjectAuthorizer
+    from saas.production.aliyun_model_broker import (
+        AliyunHostModelBroker,
+        create_aliyun_host_model_router,
+    )
+    from saas.production.aliyun_model_ingress import (
+        MODEL_INGRESS_BASE_PATH,
+        AliyunModelIngress,
+    )
+
+    deployment = official.sandbox_config
+    if not isinstance(deployment, ManagedSandboxDeployment) or not any(
+        entry.provider == "e2b" for entry in deployment.configs
+    ):
+        raise ProductionServerCompositionError("Aliyun profile requires its managed provider")
+    broker = AliyunHostModelBroker(
+        leases=profile.managed.model_leases,
+        resolver=SqlAlchemyContextResolver(
+            sessions.app,
+            _runtime_compatibility_policy(config),
+            project_authorizer=ProjectAuthorizer(sessions.app),
+        ),
+        host_store=official.host_store,
+        conversation_store=official.conversation_store,
+        permission_store=official.permission_store,
+        authorities=profile.authorities,
+        workspaces={scope.tenant_id: scope.workspace_id for scope in profile.managed.scopes},
+        authorize_session=_aliyun_storage_authorizer(config, sessions, official).execution,
+    )
+    router.include_router(create_aliyun_host_model_router(broker))
+    ingress_enabled = (
+        profile.managed.model_gateway_url == f"{config.public_origin}{MODEL_INGRESS_BASE_PATH}"
+    )
+    if ingress_enabled:
+        services.integration.router.include_router(
+            AliyunModelIngress(profile.authorities).router()
+        )
+    services.integration = replace(
+        services.integration,
+        host_model_broker_enabled=True,
+        aliyun_model_ingress_enabled=ingress_enabled,
+    )
+
+
 def build_production_server(
     config: ProductionServerConfig,
     sessions: RoleSessionFactories,
@@ -1513,6 +1685,11 @@ def build_production_server(
     """Build the app only after every mandatory dependency passes readiness."""
 
     official_dependencies = official or build_official_runtime_dependencies(config)
+    try:
+        official_dependencies = _install_aliyun_storage(config, sessions, official_dependencies)
+    except Exception:
+        official_dependencies.close()
+        raise
     readiness_checks = dict(extra_readiness_checks or {})
     if "artifact_store" in readiness_checks:
         raise ProductionServerCompositionError(
@@ -1531,6 +1708,7 @@ def build_production_server(
         agent_cache=official_dependencies.agent_cache,
     )
     execution_readiness_router = APIRouter()
+    services = None
     try:
         services = build_production_saas_services(
             config,
@@ -1549,9 +1727,17 @@ def build_production_server(
                 host_store=official_dependencies.host_store,
             )
         )
+        _install_aliyun_model_broker(
+            config, sessions, official_dependencies, services, execution_readiness_router
+        )
+        _install_aliyun_artifacts(
+            config, sessions, official_dependencies, services, execution_readiness_router
+        )
     except Exception:
         official_dependencies.close()
-        if onboarding is not None:
+        if services is not None:
+            services.close()
+        elif onboarding is not None:
             onboarding.close()
         raise
     app_dependencies = official_dependencies.as_app_dependencies()

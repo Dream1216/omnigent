@@ -1,0 +1,62 @@
+{
+  "conclusion": "failure",
+  "failed_cases": [
+    {
+      "classname": "tests.saas.test_legacy_domain_discovery",
+      "name": "test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged"
+    },
+    {
+      "classname": "tests.saas.test_n1_merge_gate_candidate",
+      "name": "test_all_trusted_candidate_inputs_match_main_policy_hashes"
+    }
+  ],
+  "image_built": false,
+  "migration_replay": [
+    {
+      "artifact_relative_path": "production-migration-replay-0/production-migration-replay.xml",
+      "errors": 0,
+      "failures": 0,
+      "junit_sha256": "67743c79bb68ecbc85280ef7ab5b4047c0fb7987220d9ecda73533dd41451bf9",
+      "passed": 1,
+      "skipped": 0,
+      "tests": 1
+    },
+    {
+      "artifact_relative_path": "production-migration-replay-1/production-migration-replay.xml",
+      "errors": 0,
+      "failures": 0,
+      "junit_sha256": "2d11c9426d90d8489904a3e5bdf6e3daf987e19517e498e2ac149c63e3100849",
+      "passed": 1,
+      "skipped": 0,
+      "tests": 1
+    }
+  ],
+  "n1_pr_runs": [
+    {
+      "conclusion": "success",
+      "run_id": 41174543421,
+      "source_revision": "b3c559826d18d60befb56e35e30ce568b6642c48"
+    },
+    {
+      "conclusion": "success",
+      "run_id": 41174538788,
+      "source_revision": "b3c559826d18d60befb56e35e30ce568b6642c48"
+    }
+  ],
+  "observed_at": "2026-10-31T07:31:08.254705+00:00",
+  "preflight": "success",
+  "production_ready": false,
+  "published": false,
+  "regressions": {
+    "errors": 0,
+    "failures": 2,
+    "junit_sha256": "8d8822a0c637645fc96ef58653351e80ec79c1edc6b5cfee08bfefd3171f9aad",
+    "passed": 5103,
+    "skipped": 13,
+    "tests": 5118
+  },
+  "release_gates_waived": false,
+  "run_id": 41174543396,
+  "source_revision": "b3c559826d18d60befb56e35e30ce568b6642c48",
+  "status": "completed"
+}

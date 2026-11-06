@@ -374,6 +374,13 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
                     }
                     assert environment.get("OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY") == "1"
                 assert "sudo apt-get" not in command, (name, step.get("name"))
+                if name in paths[:5] and "ci_install_ubuntu_packages.sh" in command:
+                    environment = {
+                        **content.get("env", {}),
+                        **group.get("env", {}),
+                        **step.get("env", {}),
+                    }
+                    assert environment.get("OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY") == "1"
                 if "playwright install chromium" in command:
                     browser_installs += 1
                     assert command.index(

@@ -687,6 +687,15 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             '"opencode", "gemini", "devin", "jcode")'
         ),
         '"$PRODUCT_REVISION"',
+        'assert version("e2b") == "2.31.0"',
+        'assert version("alibabacloud-sandbox20260820") == "1.2.0"',
+        'assert version("alibabacloud-sts20150401") == "1.2.0"',
+        'assert version("alibabacloud-oss-v2") == "1.4.0"',
+        'assert version("defusedxml") == "0.7.1"',
+        "import saas.production.aliyun_artifacts",
+        "import saas.production.aliyun_server_profile",
+        "import saas.production.aliyun_storage_admission",
+        "import saas.production.aliyun_sts_issuer",
     }
     if (
         runtime_verification is None
@@ -697,6 +706,59 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append(
             "protected release must verify both published runtime revisions before signing"
         )
+
+    candidate_runtime = _named_workflow_step(
+        workflow, "Verify executable Server candidate SDK on both architectures"
+    )
+    if workflow.count("uv sync --frozen --extra all --group dev --extra saas --extra e2b") != 3:
+        violations.append("candidate test jobs must install the qualified sandbox SDK")
+    candidate_runtime_contract = {
+        '"server-1.tar"',
+        'inspect_oci_archive(archive, label_profile="executable")',
+        '"docker", "load", "-i", str(archive)',
+        'for arch in ("amd64", "arm64"):',
+        'actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]',
+        'actual["Descriptor"]["digest"] == root and actual["Id"] == root',
+        'actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]',
+        '"--network", "none"',
+        '"--pull", "never"',
+        '"--no-healthcheck"',
+        '"--user", "1000:1000"',
+        '"--cap-drop", "ALL"',
+        '"--security-opt", "no-new-privileges:true"',
+        '"--read-only"',
+        '"--memory", "512m", "--cpus", "1"',
+        "check=True, timeout=180",
+        "owner = secrets.token_hex(16)",
+        '"--filter", f"name=^/{name}$"',
+        '"--filter", f"label=io.omnigent.sdk-probe={owner}"',
+        'assert re.fullmatch(r"[0-9a-f]{64}", identifier)',
+        '"docker", "container", "rm", "--force", identifier',
+        '"docker", "image", "rm", root], check=True, timeout=30',
+        'raise BaseExceptionGroup("SDK verification and cleanup failed", errors)',
+        'assert version("e2b")=="2.31.0"',
+        'assert version("alibabacloud-sandbox20260820")=="1.2.0"',
+        'assert version("alibabacloud-sts20150401")=="1.2.0"',
+        'assert version("alibabacloud-oss-v2")=="1.4.0"',
+        'assert version("defusedxml")=="0.7.1"',
+        "import saas.production.aliyun_artifacts",
+        "import saas.production.aliyun_model_ingress",
+        "import saas.production.aliyun_storage_admission",
+        "import saas.production.aliyun_sts_issuer",
+        "assert _build_info.COMMIT_SHA==sys.argv[1]",
+        'Path("artifacts/server-candidate-runtime.json")',
+    }
+    if (
+        candidate_runtime is None
+        or any(fragment not in candidate_runtime for fragment in candidate_runtime_contract)
+        or (
+            workflow.index("name: Verify executable Server candidate SDK on both architectures")
+            > workflow.index("name: Preflight scan exact server candidate on both architectures")
+        )
+        or "artifacts/server-candidate-runtime.json"
+        not in workflow.partition("name: Upload candidate evidence")[2]
+    ):
+        violations.append("candidate workflow must verify the exact Server SDK on both platforms")
 
     action = _read_repository_contract(
         repo,
@@ -719,6 +781,10 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         ),
         "server:runtime|host:host",
         "1|2)",
+        (
+            "OMNIGENT_EXTRAS=${{ inputs.artifact == 'server' && "
+            "'kubernetes,e2b,aliyun-sandbox-control' || '' }}"
+        ),
     }
     if any(fragment not in action for fragment in required_action_fragments):
         violations.append("candidate composite build action weakens the approved build contract")

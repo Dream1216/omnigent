@@ -1,0 +1,82 @@
+{
+  "archive_sha256": "a7e23fa08097f9296ed0e69149ad980e636e3389f08390dbd457fd090e1e9626",
+  "conclusion": "failure",
+  "critical": 0,
+  "database_built_at": "2026-10-30T06:23:28Z",
+  "findings": [
+    {
+      "id": "CVE-2026-82560",
+      "package": "libperl5.42",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-82560",
+      "package": "perl",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-82560",
+      "package": "perl-base",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-82560",
+      "package": "perl-modules-5.42",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-113351",
+      "package": "libexpat1",
+      "severity": "High",
+      "version": "2.9.0-1"
+    },
+    {
+      "id": "CVE-2026-115506",
+      "package": "libexpat1",
+      "severity": "High",
+      "version": "2.9.0-1"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libgssapi-krb5-2",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libk5crypto3",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libkrb5-3",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libkrb5support0",
+      "severity": "High",
+      "version": "1.22.1-3"
+    }
+  ],
+  "high": 10,
+  "ignored": 0,
+  "image": "host",
+  "independent_builds_passed": 2,
+  "observed_at": "2026-10-31T02:50:10.977246+00:00",
+  "platform": "linux/amd64",
+  "production_ready": false,
+  "published": false,
+  "rebuild_equal": true,
+  "report_sha256": "5dbeb13f3186a63ec0174371344373800f5bff992a67461ff810f34be049cd41",
+  "run_id": 41160499171,
+  "runtime_checks_passed": true,
+  "source_revision": "466ec8bb67631eddd982064ba07cd7136d0c5460",
+  "status": "completed"
+}

@@ -1,4 +1,4 @@
-"""Scan both platforms of exact OCI candidate archives with a fresh Grype DB."""
+"""Scan exact OCI archives; Aliyun Host findings are advisory, other scopes block."""
 
 from __future__ import annotations
 
@@ -17,7 +17,17 @@ GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 SEVERITIES = ("Critical", "High")
-SCAN_SCOPES = {"complete": {"server", "host"}, "server-preflight": {"server"}}
+SCAN_SCOPES = {
+    "complete": {"server", "host"},
+    "server-preflight": {"server"},
+    "aliyun-host": {"host"},
+}
+
+
+def scan_platforms(scope: str) -> tuple[str, ...]:
+    if scope not in SCAN_SCOPES:
+        raise ValueError("Unsupported scan scope")
+    return ("linux/amd64",) if scope == "aliyun-host" else PLATFORMS
 
 
 class ScanReport(TypedDict):
@@ -143,10 +153,11 @@ def main() -> int:
         )
         database_built_at = parse_database_status(status, now=datetime.now(UTC))
         summaries = []
+        findings_present = False
         blocked = False
         for name, archive in sorted(images.items()):
             archive_digest = file_sha256(archive)
-            for platform in PLATFORMS:
+            for platform in scan_platforms(args.scope):
                 output = args.output / f"{name}-{platform.split('/')[-1]}-grype.json"
                 result = subprocess.run(
                     [
@@ -169,8 +180,10 @@ def main() -> int:
                     raise RuntimeError(f"Grype failed to scan {name} {platform}")
                 parsed = scan_report(json.loads(output.read_text()))
                 counts = parsed["counts"]
+                present = result.returncode == 2 or any(counts.values())
+                findings_present |= present
                 disposition = None
-                if any(counts.values()) and result.returncode == 2:
+                if args.scope != "aliyun-host" and any(counts.values()) and result.returncode == 2:
                     from saas.scripts.sqlite_component_disposition import inspect_disposition
 
                     try:
@@ -179,13 +192,14 @@ def main() -> int:
                         )
                     except ValueError as error:
                         print(f"Component disposition rejected: {error}")
-                blocked |= (result.returncode == 2 or any(counts.values())) and disposition is None
+                blocked |= present and disposition is None
                 summaries.append(
                     {
                         "image": name,
                         "platform": platform,
                         "archive_sha256": archive_digest,
                         "report_sha256": file_sha256(output),
+                        "scanner_returncode": result.returncode,
                         "critical": counts["Critical"],
                         "high": counts["High"],
                         "findings": parsed["findings"],
@@ -199,19 +213,28 @@ def main() -> int:
                         ),
                     }
                 )
+    advisory = args.scope == "aliyun-host"
     receipt = {
+        "scope": args.scope,
+        "vulnerability_policy": "advisory" if advisory else "blocking",
+        "vulnerability_findings_present": findings_present,
         "scanner": f"grype {GRYPE_VERSION}",
         "database_built_at": database_built_at,
         "exceptions": [],
         "images": summaries,
     }
-    summary_name = (
-        "server-preflight-scan-summary.json"
-        if args.scope == "server-preflight"
-        else "candidate-scan-summary.json"
-    )
+    summary_name = {
+        "complete": "candidate-scan-summary.json",
+        "server-preflight": "server-preflight-scan-summary.json",
+        "aliyun-host": "aliyun-host-scan-summary.json",
+    }[args.scope]
     (args.output / summary_name).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-    return 2 if blocked else 0
+    if advisory and findings_present:
+        print(
+            "::warning::Aliyun Host vulnerability findings are advisory; "
+            "original reports, counts and scanner exit codes are retained."
+        )
+    return 2 if blocked and not advisory else 0
 
 
 if __name__ == "__main__":

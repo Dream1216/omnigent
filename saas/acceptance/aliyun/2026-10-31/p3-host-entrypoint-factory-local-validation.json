@@ -1,0 +1,26 @@
+{
+  "absolute_lifetime_enforcement": "pending; rolling SDK timeout must not outlive credential authority",
+  "live_microvm_host": "not yet tested",
+  "phase": "P3 candidate composition",
+  "production_deployed": false,
+  "production_provider_enabled": false,
+  "public_model_gateway_route": "not yet admitted",
+  "pyrefly_errors": 0,
+  "registry_publish": false,
+  "schema_version": 1,
+  "server_broker_composition": "pending explicit release-profile admission",
+  "source_code_sha256": {
+    "saas/production/aliyun_host.py": "0f9d06cf23fee30c439b4b7783f540feaad2c4b40e32aea8ec5a7a8d813266c7",
+    "saas/production/aliyun_sandbox.py": "1749f354d450701f054102436626cff953d6f4bb0a3b72d74ef532e7d0e8e84b",
+    "saas/production/aliyun_tenant_sandbox.py": "d490e88c0b1cb5a2e35d051e019a7f1c38fa5e3f5330a844319c968aa186a909",
+    "saas/production/tenant_sandbox.py": "23721f84f5642b47561d08ab4c8b41a0d4a81f5e96824314ac0f6f9006523ebe"
+  },
+  "source_state": "working tree tested; frozen source must be rechecked by CI",
+  "unit_and_regression_tests": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 463
+  },
+  "upstream_files_modified": 0
+}

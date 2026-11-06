@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites><testsuite name="aliyun_storage_postgresql_inventory" tests="1" failures="0" errors="0" skipped="0"><testcase classname="tests.saas.test_aliyun_storage_admission_postgresql" name="test_real_app_login_sees_project_binding_inventory_only_in_its_space" time="6.256" /></testsuite></testsuites>

@@ -45,6 +45,7 @@ import { type ChangedSort, FlatFileList } from "./FlatFileList";
 import { FolderTree } from "./FolderTree";
 import { RunnerAsleepHint } from "./RunnerAsleepHint";
 import { useScrollRestore } from "./useScrollRestore";
+import { SavedOutputs } from "./SavedOutputs";
 
 interface FilesPanelProps {
   conversationId?: string;
@@ -566,6 +567,7 @@ export function FilesPanel({
       </div>
       {/* Content */}
       <div className="workspace-panel-header-divider shrink-0 border-t border-border" />
+      <SavedOutputs key={conversationId} sessionId={conversationId} />
       {/* Search toolbar — the Changed | All scope switch leads, then the
               search field, then the per-view trailing control (Sort for the
               changed list, glob filters for the tree). Lives outside the
