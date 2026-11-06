@@ -1,0 +1,27 @@
+name: Prepare immutable runtime evidence data
+description: Fetch an evidence-only revision while executing protected product code
+inputs:
+  product-revision:
+    required: true
+    description: Exact product source revision
+  evidence-revision:
+    required: true
+    description: Exact evidence-only data revision
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PRODUCT_SOURCE: ${{ inputs.product-revision }}
+        EVIDENCE_DATA: ${{ inputs.evidence-revision }}
+      run: |
+        set -euo pipefail
+        uv sync --frozen --extra saas --inexact
+        data_root="${RUNNER_TEMP}/runtime-evidence-data"
+        uv run --no-sync python -m saas.scripts.runtime_evidence_intake \
+          --product-revision "$PRODUCT_SOURCE" --evidence-revision "$EVIDENCE_DATA" \
+          --evidence-directory "$data_root"
+        printf '%s\n' "OMNIGENT_RUNTIME_EVIDENCE_REPO=$data_root" >> "$GITHUB_ENV"
+        printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"

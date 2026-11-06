@@ -555,6 +555,9 @@ async def _run(config: ProductionPreviewEdgeConfig) -> int:
 
 
 def main() -> int:
+    from saas.production.runtime_locale import initialize_production_locale
+
+    initialize_production_locale()
     config = load_production_preview_edge_config()
     verify_installed_preview_lineage(config)
     return asyncio.run(_run(config))

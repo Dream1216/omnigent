@@ -144,7 +144,12 @@ def image_blobs(source: Path) -> Iterator[ImageBlobs]:
         yield ImageBlobs(source, archive)
 
 
-def component_inventory(blobs: ImageBlobs, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+def component_inventory(
+    blobs: ImageBlobs,
+    manifest: dict[str, Any],
+    *,
+    additional_paths: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
     for descriptor in manifest["layers"]:
         additions, overwritten, whiteouts = {}, set(), []
@@ -165,7 +170,11 @@ def component_inventory(blobs: ImageBlobs, manifest: dict[str, Any]) -> list[dic
                     continue
                 if not member.isdir():
                     overwritten.add(name)
-                selected = "sqlite" in name.lower() or "recover" in path.name.lower()
+                selected = (
+                    "sqlite" in name.lower()
+                    or "recover" in path.name.lower()
+                    or name in additional_paths
+                )
                 facts: dict[str, Any] = {
                     "path": name,
                     "type": member.type.decode(),
@@ -256,8 +265,30 @@ def disposition_receipt(
     revision = target.get("labels", {}).get("org.opencontainers.image.revision")
     if re.fullmatch(r"[0-9a-f]{40}", str(revision)) is None:
         raise ValueError("component disposition requires exact source revision")
+    component = sqlite_component_facts(inventory, platform=platform)
+    return {
+        "rule_sha256": RULE_SHA256,
+        "id": RULE["id"],
+        "justification": RULE["justification"],
+        "owner": RULE["owner"],
+        "expires_at": RULE["expires_at"],
+        "platform": platform,
+        "manifest_digest": target["manifestDigest"],
+        "config_digest": target["imageID"],
+        "source_revision": revision,
+        "report_sha256": hashlib.sha256(raw).hexdigest(),
+        **component,
+        "inventory": inventory,
+        "raw_critical": 0,
+        "raw_high": 1,
+    }
+
+
+def sqlite_component_facts(inventory: list[dict[str, Any]], *, platform: str) -> dict[str, str]:
+    """Validate component bytes/absence only; this does not classify a finding."""
     if (
-        not isinstance(inventory, list)
+        platform not in RULE["library_sha256"]
+        or not isinstance(inventory, list)
         or not inventory
         or len({item["path"] for item in inventory}) != len(inventory)
     ):
@@ -285,23 +316,10 @@ def disposition_receipt(
         ):
             raise ValueError("additional unapproved SQLite library is present")
     return {
-        "rule_sha256": RULE_SHA256,
-        "id": RULE["id"],
-        "justification": RULE["justification"],
-        "owner": RULE["owner"],
-        "expires_at": RULE["expires_at"],
-        "platform": platform,
-        "manifest_digest": target["manifestDigest"],
-        "config_digest": target["imageID"],
-        "source_revision": revision,
-        "report_sha256": hashlib.sha256(raw).hexdigest(),
         "library_sha256": libraries[0]["sha256"],
         "inventory_sha256": hashlib.sha256(
             json.dumps(inventory, sort_keys=True).encode()
         ).hexdigest(),
-        "inventory": inventory,
-        "raw_critical": 0,
-        "raw_high": 1,
     }
 
 
@@ -319,6 +337,43 @@ def _validate_disposition_receipt(
     inventory, platform = proof.get("inventory"), proof.get("platform")
     if not isinstance(inventory, list) or not isinstance(platform, str):
         raise ValueError("finite component disposition inventory or platform is missing")
+    if proof.get("classification") == "mitigated_by_verified_runtime_conditions":
+        scanner_exit = proof.get("scanner_exit")
+        if type(scanner_exit) is not int or scanner_exit != 2:
+            raise ValueError("finite combination requires original integer scanner exit 2")
+        from saas.scripts.combined_runtime_disposition import (
+            disposition_receipt as combined_receipt,
+        )
+        from saas.scripts.runtime_evidence_intake import (
+            authenticated_runtime_graph,
+            verifier_from_registered_inputs,
+        )
+
+        raw = report_path if isinstance(report_path, bytes) else report_path.read_bytes()
+        expected = combined_receipt(
+            raw,
+            inventory,
+            platform=platform,
+            now=now,
+            scanner_exit=scanner_exit,
+            verify_runtime=verifier_from_registered_inputs(
+                authenticated_runtime_graph(
+                    Path(__file__).resolve().parents[2],
+                    product_revision=json.loads(raw)["source"]["target"]["labels"][
+                        "org.opencontainers.image.revision"
+                    ],
+                    now=now,
+                ),
+                inventory,
+            ),
+        )
+        if json.dumps(proof, sort_keys=True, allow_nan=False) != json.dumps(
+            expected, sort_keys=True, allow_nan=False
+        ):
+            raise ValueError(
+                "finite combination differs from unchanged raw and registered native proof"
+            )
+        return expected
     expected = disposition_receipt(report_path, inventory, platform=platform, now=now)
     if proof != expected:
         raise ValueError("finite component disposition differs from original raw report or rule")
@@ -331,13 +386,18 @@ def validate_disposition(
     receipt = _validate_disposition_receipt(report_path, proof, now=now)
     if image is None:
         raise ValueError("finite component disposition requires actual verified OCI input")
-    actual = inspect_disposition(image, report_path, platform=receipt["platform"], now=now)
+    from saas.scripts.approved_disposition import inspect_approved_disposition
+
+    actual = inspect_approved_disposition(
+        image, report_path, platform=receipt["platform"], now=now
+    )
     if receipt != actual:
         raise ValueError("finite component inventory differs from actual OCI contents")
     return actual
 
 
 def main() -> None:
+    from saas.scripts.approved_disposition import inspect_approved_disposition
     from saas.scripts.scan_oci_candidates import scan_report
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -354,7 +414,9 @@ def main() -> None:
     ):
         raise ValueError("unexpected actual scanner exit")
     proof = (
-        inspect_disposition(args.image, args.report, platform=args.platform, now=datetime.now(UTC))
+        inspect_approved_disposition(
+            args.image, args.report, platform=args.platform, now=datetime.now(UTC)
+        )
         if any(parsed["counts"].values())
         else None
     )
@@ -392,7 +454,7 @@ def validate_release_dispositions(
         or type(scan.get("critical")) is not int
         or scan["critical"] != 0
         or type(scan.get("high")) is not int
-        or scan["high"] != len(bundle)
+        or scan["high"] != sum(item.get("proof", {}).get("raw_high", 0) for item in bundle)
     ):
         raise ValueError("release raw counts do not bind finite component dispositions")
     if hashlib.sha256(json.dumps(bundle, sort_keys=True).encode()).hexdigest() != scan.get(
@@ -417,31 +479,11 @@ def validate_release_dispositions(
 def require_admitted_image_inventory(
     repo: Path, evidence: dict[str, Any], image: dict[str, Any], *, now: datetime
 ) -> None:
-    from saas.production import admission
+    from saas.scripts.runtime_evidence_intake import authenticated_image_documents
 
-    policy_path = repo / "saas/production/evidence-admission-policy.json"
-    policy = json.loads(policy_path.read_text())
-    result = admission.validate_evidence_admission(
-        repo,
-        policy,
-        now=now,
-        expected_product_revision=image["labels"]["org.opencontainers.image.revision"],
-        include_authenticated_documents=True,
+    documents = authenticated_image_documents(
+        repo, product_revision=image["labels"]["org.opencontainers.image.revision"], now=now
     )
-    _, key_violations, _ = admission._load_keys(repo, policy, now=now)
-    if (
-        admission._validate_policy(repo, policy)
-        or key_violations
-        or result["kinds"]["image"]["status"] != "pass"
-        or result["kinds"]["image"]["production_readiness"] != "ready"
-    ):
-        raise ValueError("finite image inventory lacks trusted signed evidence admission")
-    documents = []
-    for relative, verified_sha256 in result["authenticated_documents"]["image"].items():
-        raw = (repo / relative).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != verified_sha256:
-            raise ValueError("finite image inventory bytes changed after verified admission")
-        documents.append(json.loads(raw))
     bodies = [document.get("release_evidence", document) for document in documents]
     if evidence not in bodies or image not in evidence.get("images", []):
         raise ValueError("finite image inventory differs from the authenticated evidence document")

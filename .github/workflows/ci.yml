@@ -40,6 +40,8 @@ permissions:
   contents: read
 
 env:
+  # Fix one official signed Ubuntu index view per job while Snapshot is unavailable.
+  OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
   # No web SPA build during `uv sync`; this job never serves the bundle.
   OMNIGENT_SKIP_WEB_UI: "true"
   UV_INDEX_URL: https://pypi.org/simple

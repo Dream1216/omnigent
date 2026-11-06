@@ -1,0 +1,23 @@
+{
+  "config_digest": "sha256:37fbaadc207f42c027e7f817fe82e1ce96af37a87ca85ee7c3bdfd12626e74fe",
+  "ignored_match_count": 929,
+  "manifest_digest": "sha256:121e01303aba2fa44b38363d2d5e018e41d245fbddb417ed6cb6e47d445be40b",
+  "p2_accepted": false,
+  "policy_changed": false,
+  "production_deployed": false,
+  "raw_grype_report_sha256": "9fe44adf0b4e44103efe5aaf196ac92f981c82c54d3413403ba752ff8241c917",
+  "rebuild_comparison_status": "pass",
+  "registry_published": false,
+  "schema_version": 1,
+  "severity_match_counts": {
+    "Critical": 24,
+    "High": 233,
+    "Low": 43,
+    "Medium": 207,
+    "Negligible": 741,
+    "Unknown": 36
+  },
+  "source_revision": "3d284ffe19c1672f7168148da2ae89e341dfef90",
+  "workflow_run_id": 41137386035,
+  "workflow_url": "https://github.com/Dream1216/omnigent/actions/runs/41137386035"
+}

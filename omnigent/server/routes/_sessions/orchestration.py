@@ -4319,21 +4319,7 @@ async def _wait_for_host_reconnect(
     runner_id: str | None,
     timeout_s: float,
 ) -> HostConnection | None:
-    """Wait for an absent host or its surviving runner to reconnect.
-
-    Only reads the local registries; no database or network polling. A runner
-    reconnect ends the host grace too, so a surviving runner can serve the
-    input even while its host daemon remains offline. Callers re-resolve the
-    runner before launching a replacement. Remote reconnects and changed
-    runner bindings are resolved after this grace and can take the full timeout.
-
-    :param host_id: Host whose tunnel must return before a launch is possible.
-    :param host_registry: Workspace-scoped registry of host connections.
-    :param tunnel_registry: Registry of locally connected runners, if configured.
-    :param runner_id: Existing runner binding, or ``None`` before the first launch.
-    :param timeout_s: Maximum host grace, separate from runner startup time.
-    :returns: The reconnected host, or ``None`` on runner recovery or timeout.
-    """
+    """Wait boundedly for the host or its surviving runner in local registries."""
     deadline = time.monotonic() + timeout_s
     while True:
         host_conn = host_registry.get(host_id)
@@ -4365,8 +4351,9 @@ async def _wait_for_host_bound_runner_client(
     host_conn: HostConnection,
     host_registry: HostRegistry,
     conversation_store: ConversationStore | None = None,
+    preserve_live_runner_s: float | None = None,
 ) -> httpx.AsyncClient | None:
-    """Wait for this runner, extending startup only for an explicit pending sign-in.
+    """Wait for this runner, preserving bounded startup and sign-in recovery.
 
     Host liveness can end the ordinary grace early for a dead or untracked
     process. A bounded sign-in wait keeps the same binding and input until
@@ -4412,6 +4399,7 @@ async def _wait_for_host_bound_runner_client(
     status_task = asyncio.create_task(query_status())
     sign_in_deadline: float | None = None
     waiting_for_sign_in = False
+    known_status: str | None = None
     try:
         while True:
             done, _pending = await asyncio.wait(
@@ -4432,15 +4420,39 @@ async def _wait_for_host_bound_runner_client(
                     return None
                 if host_registry.get(host_conn.host_id) is not host_conn:
                     return None
-                if status_task not in done:
+                if status_task not in done and not (
+                    known_status == "alive" and preserve_live_runner_s is not None
+                ):
                     # A responsive host may have entered sign-in between polls.
                     status_task.cancel()
                     await asyncio.gather(status_task, return_exceptions=True)
                     status_task = asyncio.create_task(query_status())
                     await status_task
-                if status_task.result() != "sign_in_pending":
+                status = status_task.result() if status_task.done() else known_status
+                if status is not None:
+                    known_status = status
+                if known_status != "sign_in_pending":
+                    last_seen = session_live_state.last_liveness_stamp(runner_id)
+                    if (
+                        known_status == "alive"
+                        and preserve_live_runner_s is not None
+                        and (last_seen is None or last_seen < int(host_conn.connected_at))
+                    ):
+                        if preserve_live_runner_s > 0:
+                            client = await wait_for_connection(preserve_live_runner_s)
+                            if client is not None:
+                                return client
+                        raise OmnigentError(
+                            f"Runner {runner_id} is alive on the host but "
+                            f"{'never connected' if last_seen is None else 'has not reconnected'} "
+                            "to the server. Your message was not accepted; "
+                            "retry when it connects.",
+                            code=ErrorCode.RUNNER_UNAVAILABLE,
+                        )
                     return None
             status = status_task.result()
+            if status is not None:
+                known_status = status
             if status in ("dead", "unknown"):
                 return None
             if sign_in_deadline is None and status not in {"alive", "sign_in_pending"}:

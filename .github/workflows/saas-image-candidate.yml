@@ -76,6 +76,15 @@ on:
         description: Exact 40-character main revision; required when publish_signed is enabled
         required: false
         type: string
+      diagnostic_host_only:
+        description: One unqualified Host build for fixed 514a2ce1; no signing or release
+        required: false
+        type: boolean
+        default: false
+      runtime_evidence_revision:
+        description: Optional immutable admitted runtime evidence data revision
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -87,10 +96,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # Fix one official signed Ubuntu index view per job while Snapshot is unavailable.
+  OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   verify-candidate-preflight:
+    if: ${{ !inputs.diagnostic_host_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -111,7 +123,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked preflight dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Set up crane for exact OCI transfer regression
@@ -134,6 +146,7 @@ jobs:
         run: uv run python -m saas.scripts.check_image_supply_chain
 
   verify-production-migration-replay:
+    if: ${{ !inputs.diagnostic_host_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -176,7 +189,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Verify full four-authority fresh replay and predecessor upgrade
         run: >-
           uv run pytest tests/saas/test_production_migration_replay.py
@@ -234,7 +247,15 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: |
+          uv sync --frozen --extra all --group dev --extra saas --extra e2b
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Prepare immutable runtime evidence data for candidate
+        if: inputs.runtime_evidence_revision != ''
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ env.CANDIDATE_REVISION }}
+          evidence-revision: ${{ inputs.runtime_evidence_revision }}
       - name: Configure exact PostgreSQL 18 runner contract
         env:
           PGPASSWORD: postgres
@@ -281,6 +302,13 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
+          --junitxml=artifacts/server-regressions.junit.xml
+      - name: Set up isolated candidate Docker runtime
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
@@ -311,13 +339,181 @@ jobs:
           echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
           echo "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
           echo "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
+      - name: Record first Server build inputs
+        continue-on-error: true
+        env:
+          PROGRESS_BUILDER: ${{ steps.candidate-builder.outputs.name }}
+        timeout-minutes: 2
+        run: |
+          python - <<'PYCODE'
+          import datetime, json, os, subprocess
+          from pathlib import Path
+          output = Path("artifacts/first-server-build-progress")
+          output.mkdir(parents=True, exist_ok=True)
+          builder = os.environ["PROGRESS_BUILDER"]
+          fields = ("CANDIDATE_REVISION", "PYTHON_IMAGE", "RUNTIME_IMAGE", "NODE_IMAGE",
+                    "GO_IMAGE", "SOURCE_DATE_EPOCH", "SOURCE_REVISION", "UPSTREAM_REVISION",
+                    "ADAPTER_CONTRACT_VERSION", "CONTROL_PLANE_SCHEMA_REVISION")
+          context = {"at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                     "builder": builder, "build_step_minutes": 90, "job_minutes": 240,
+                     "materials": {name: os.environ[name] for name in fields}}
+          (output / "context.json").write_text(json.dumps(context, indent=2) + "\n")
+          with (output / "buildx-version.log").open("wb") as log:
+              subprocess.run(["docker", "buildx", "version"], stdout=log,
+                             stderr=subprocess.STDOUT, check=True, timeout=15)
+          with (output / "history-before.json").open("wb") as log:
+              subprocess.run(["docker", "buildx", "--builder", builder, "history", "ls",
+                              "--format", "json"], stdout=log, check=True, timeout=30)
+          PYCODE
       - name: Build server candidate attempt 1
         id: first_server_build
+        timeout-minutes: 90
+        env:
+          BUILDKIT_PROGRESS: plain
         uses: ./saas/actions/build-oci-candidate
         with:
           artifact: server
           target: runtime
           attempt: "1"
+      - name: Retain first Server build original plain progress
+        continue-on-error: true
+        if: ${{ always() && steps.first_server_build.outcome != 'skipped' }}
+        timeout-minutes: 5
+        env:
+          PROGRESS_BUILDER: ${{ steps.candidate-builder.outputs.name }}
+          BUILD_OUTCOME: ${{ steps.first_server_build.outcome }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, subprocess
+          from pathlib import Path
+          output = Path("artifacts/first-server-build-progress")
+          output.mkdir(parents=True, exist_ok=True)
+          builder = os.environ["PROGRESS_BUILDER"]
+          receipt = {"build_step_outcome": os.environ["BUILD_OUTCOME"],
+                     "origin": "original BuildKit history plain progress", "complete": False}
+          try:
+              with (output / "history-after.json").open("wb") as log:
+                  subprocess.run(["docker", "buildx", "--builder", builder, "history", "ls",
+                                  "--format", "json"], stdout=log, check=True, timeout=30)
+              def refs(path):
+                  remaining = path.read_text().strip()
+                  rows = []
+                  while remaining:
+                      value, consumed = json.JSONDecoder().raw_decode(remaining)
+                      rows.extend(value if isinstance(value, list) else [value])
+                      remaining = remaining[consumed:].lstrip()
+                  assert all(isinstance(row, dict) for row in rows), "Invalid history row"
+                  result = {row.get("ref") or row.get("ID") or row.get("Ref") for row in rows}
+                  assert all(isinstance(ref, str) and ref.strip() == ref and ref for ref in result), "Invalid build ref"
+                  return result
+              created = refs(output / "history-after.json") - refs(output / "history-before.json")
+              assert len(created) == 1 and None not in created, "Ambiguous build record"
+              ref = created.pop()
+              receipt["build_ref"] = ref
+              parts = ref.split("/")
+              assert len(parts) == 3 and parts[0] == builder and all(parts), "Unexpected builder/node/ref"
+              record_ref = parts[-1]
+              receipt["native_record_ref"] = record_ref
+              with (output / "server-1.progress.original.log").open("wb") as log:
+                  subprocess.run(["docker", "buildx", "--builder", builder, "history", "logs",
+                                  "--progress", "plain", record_ref], stdout=log,
+                                 stderr=subprocess.STDOUT, check=True, timeout=120)
+              receipt["complete"] = True
+          except BaseException as error:
+              receipt["capture_error_type"] = type(error).__name__
+              raise
+          finally:
+              (output / "capture.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PYCODE
+      - name: Upload first Server build original progress
+        continue-on-error: true
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-first-build-progress-${{ env.CANDIDATE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/first-server-build-progress/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Verify executable Server candidate SDK on both architectures
+        id: first_server_sdk
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, secrets, subprocess, tarfile
+          from pathlib import Path
+          from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+          archive = Path(os.environ["RUNNER_TEMP"]) / "server-1.tar"
+          revision = os.environ["CANDIDATE_REVISION"]
+          facts = inspect_oci_archive(archive, label_profile="executable")
+          with tarfile.open(archive) as stream:
+              descriptors = json.load(stream.extractfile("index.json"))["manifests"]
+          assert len(descriptors) == 1
+          root = descriptors[0]["digest"]
+          subprocess.run(["docker", "load", "-i", str(archive)], check=True)
+          verified = []
+          owner = secrets.token_hex(16)
+          probe_names = []
+          errors = []
+          try:
+              actual = json.loads(subprocess.check_output([
+                  "docker", "image", "inspect", root,
+              ]))[0]
+              assert actual["Descriptor"]["digest"] == root and actual["Id"] == root
+              for arch in ("amd64", "arm64"):
+                  platform = f"linux/{arch}"
+                  actual = json.loads(subprocess.check_output([
+                      "docker", "image", "inspect", "--platform", platform, root,
+                  ]))[0]
+                  expected = facts["platforms"][platform]
+                  assert actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]
+                  assert actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]
+                  name = f"omnigent-sdk-{owner}-{arch}"
+                  probe_names.append(name)
+                  subprocess.run([
+                      "docker", "run", "--pull", "never", "--platform", platform,
+                      "--name", name, "--label", f"io.omnigent.sdk-probe={owner}",
+                      "--no-healthcheck",
+                      "--network", "none", "--user", "1000:1000", "--cap-drop", "ALL",
+                      "--security-opt", "no-new-privileges:true", "--read-only",
+                      "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
+                      "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
+                      "--entrypoint", "/opt/venv/bin/python", root, "-B", "-I", "-c",
+                      'import os,sys,kubernetes;from pathlib import Path;from importlib.metadata import version;from omnigent import _build_info;import saas.production.aliyun_server_profile as profile;import saas.production.aliyun_model_ingress;assert version("e2b")=="2.31.0";assert version("alibabacloud-sandbox20260820")=="1.2.0";assert version("alibabacloud-sts20150401")=="1.2.0";assert version("alibabacloud-oss-v2")=="1.4.0";assert version("defusedxml")=="0.7.1";import saas.production.aliyun_artifacts;import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert Path(profile.__file__).resolve().is_relative_to(Path("/opt/venv"))',
+                      revision,
+                  ], check=True, timeout=180)
+                  verified.append({"platform": platform, "config_digest": expected["config_digest"], "manifest_digest": expected["manifest_digest"]})
+          except BaseException as error:
+              errors.append(error)
+          finally:
+              for name in probe_names:
+                  try:
+                      identifiers = subprocess.check_output([
+                          "docker", "container", "ls", "--all", "--no-trunc",
+                          "--filter", f"name=^/{name}$",
+                          "--filter", f"label=io.omnigent.sdk-probe={owner}",
+                          "--format", "{{.ID}}",
+                      ], text=True, timeout=30).splitlines()
+                      for identifier in identifiers:
+                          assert re.fullmatch(r"[0-9a-f]{64}", identifier)
+                          subprocess.run(["docker", "container", "rm", "--force", identifier], check=True, timeout=30)
+                  except BaseException as error:
+                      errors.append(error)
+              try:
+                  subprocess.run(["docker", "image", "rm", root], check=True, timeout=30)
+              except BaseException as error:
+                  errors.append(error)
+              if len(errors) == 1:
+                  raise errors[0]
+              if errors:
+                  raise BaseExceptionGroup("SDK verification and cleanup failed", errors)
+          with archive.open("rb") as stream:
+              archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          Path("artifacts/server-candidate-runtime.json").write_text(json.dumps({
+              "schema_version": 1, "source_revision": revision,
+              "archive_sha256": archive_sha256, "root_digest": root,
+              "e2b_version": "2.31.0", "platforms": verified, "passed": True,
+          }, sort_keys=True, indent=2) + "\n")
+          PY
       - name: Preflight scan exact server candidate on both architectures
         id: server_preflight
         run: >-
@@ -328,6 +524,7 @@ jobs:
       - name: Retain failed Server preflight OCI for diagnosis
         if: >-
           ${{ failure() && !cancelled() && steps.first_server_build.outcome == 'success' &&
+              steps.first_server_sdk.outcome == 'success' &&
               steps.server_preflight.outcome == 'failure' &&
               ((github.event_name == 'pull_request' &&
                 github.event.pull_request.head.repo.full_name == github.repository) ||
@@ -339,6 +536,7 @@ jobs:
           name: failed-server-preflight-oci-${{ env.CANDIDATE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/server-1.tar
+            artifacts/server-candidate-runtime.json
             artifacts/grype-preflight/*.json
           compression-level: 0
           if-no-files-found: error
@@ -434,7 +632,9 @@ jobs:
         with:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
+            artifacts/server-regressions.junit.xml
             artifacts/saas-image-candidate.json
+            artifacts/server-candidate-runtime.json
             artifacts/oci-promotion-manifest.json
             artifacts/oci-layer-drift.json
             artifacts/candidate-storage-reclamation.json
@@ -446,6 +646,7 @@ jobs:
   publish-signed:
     if: >-
       github.event_name == 'workflow_dispatch' &&
+      !inputs.diagnostic_host_only &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
     needs: build-candidate
@@ -486,6 +687,12 @@ jobs:
           python-version: "3.12"
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Prepare immutable runtime evidence data for signing
+        if: inputs.runtime_evidence_revision != ''
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ inputs.product_revision }}
+          evidence-revision: ${{ inputs.runtime_evidence_revision }}
       - name: Download and validate original admitted OCI artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -634,7 +841,7 @@ jobs:
           done
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$SERVER_IMAGE" -B -I -c \
-            'import kubernetes; import saas.production.platform_model_sandbox_host'
+            'import kubernetes; from importlib.metadata import version; assert version("e2b") == "2.31.0"; assert version("alibabacloud-sandbox20260820") == "1.2.0"; assert version("alibabacloud-sts20150401") == "1.2.0"; assert version("alibabacloud-oss-v2") == "1.4.0"; assert version("defusedxml") == "0.7.1"; import saas.production.aliyun_artifacts; import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer; import saas.production.aliyun_server_profile; import saas.production.platform_model_sandbox_host'
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'import saas.production.platform_model_sandbox_host'
@@ -825,6 +1032,7 @@ jobs:
   verify-published-source:
     if: >-
       github.event_name == 'workflow_dispatch' &&
+      !inputs.diagnostic_host_only &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
     needs: [build-candidate, publish-signed]
@@ -847,6 +1055,12 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
+      - name: Prepare immutable runtime evidence data for independent readback
+        if: inputs.runtime_evidence_revision != ''
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ inputs.product_revision }}
+          evidence-revision: ${{ inputs.runtime_evidence_revision }}
       - name: Download immutable signed release facts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -926,3 +1140,98 @@ jobs:
           path: release-facts/independent-oci-readback.json
           if-no-files-found: error
           retention-days: 90
+
+  diagnostic-host-only:
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_host_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    # Exact inputs recovered from both original Server provenance records.
+    # This subject is diagnostic only; it cannot enter the ordinary seal/sign chain.
+    env:
+      CANDIDATE_REVISION: 514a2ce1ae703869260c0e1eccf5a06767e7e4e3
+      SOURCE_REVISION: 514a2ce1ae703869260c0e1eccf5a06767e7e4e3
+      SOURCE_DATE_EPOCH: "1793934522"
+      UPSTREAM_REVISION: ee728a02004749e7f6971beee6c66d990bfbd216
+      CONTROL_PLANE_SCHEMA_REVISION: p0s000000018
+      ADAPTER_CONTRACT_VERSION: "0.2.0"
+      PYTHON_IMAGE: python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54
+      RUNTIME_IMAGE: cgr.dev/chainguard/wolfi-base@sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e
+      NODE_IMAGE: node:22-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
+      GO_IMAGE: golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d
+    steps:
+      - name: Require the one fixed diagnostic invocation
+        env:
+          PUBLISH_SIGNED: ${{ inputs.publish_signed }}
+        run: |
+          set -euo pipefail
+          [[ "$PUBLISH_SIGNED" == "false" ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: 514a2ce1ae703869260c0e1eccf5a06767e7e4e3
+          persist-credentials: false
+      - name: Verify diagnostic source and original epoch
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_REVISION" ]]
+          [[ "$(git show -s --format=%ct HEAD)" == "$SOURCE_DATE_EPOCH" ]]
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build one unqualified Host using the original standard target and cache
+        id: diagnostic-host
+        uses: Dream1216/omnigent/saas/actions/build-oci-candidate@514a2ce1ae703869260c0e1eccf5a06767e7e4e3
+        with:
+          artifact: host
+          target: host
+          attempt: "1"
+      - name: Reuse the preserved original Server for the complete raw scan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: "13477415207"
+          run-id: "42156854379"
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/diagnostic-server-original
+      - name: Verify exact original Server archive
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, os
+          candidates = list((Path(os.environ["RUNNER_TEMP"]) / "diagnostic-server-original").rglob("server-1.tar"))
+          assert len(candidates) == 1 and candidates[0].is_file()
+          with candidates[0].open("rb") as stream:
+              assert hashlib.file_digest(stream, "sha256").hexdigest() == "f5a8cc4165cdd0470ba60c3b51cf4fd4239b939471d23941810742e7c8a15ce9"
+          with open(os.environ["GITHUB_ENV"], "a") as stream:
+              stream.write("DIAGNOSTIC_SERVER_ARCHIVE=" + str(candidates[0]) + "\n")
+          PY
+      - name: Retain complete original raw findings for both images and architectures
+        run: >-
+          python -m saas.scripts.scan_oci_candidates
+          --image "server=${{ env.DIAGNOSTIC_SERVER_ARCHIVE }}"
+          --image "host=${{ runner.temp }}/host-1.tar"
+          --output artifacts/diagnostic-host-grype
+      - name: Retain unqualified Host OCI and original diagnostic reports
+        if: ${{ always() && !cancelled() && steps.diagnostic-host.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diagnostic-only-host-514a2ce1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/host-1.tar
+            artifacts/diagnostic-host-grype/*.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Mark diagnostic output as unqualified
+        if: ${{ always() && !cancelled() }}
+        run: |
+          echo "Diagnostic OCI and raw reports are retained; this run cannot qualify a release." >&2
+          exit 1

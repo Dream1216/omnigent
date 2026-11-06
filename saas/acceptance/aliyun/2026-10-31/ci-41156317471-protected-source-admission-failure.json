@@ -1,0 +1,22 @@
+{
+  "conclusion": "failure",
+  "image_built": false,
+  "observed_at": "2026-10-31T02:18:56.800488+00:00",
+  "postgresql_16_18_replay": "passed, one real compound case per version, zero skipped",
+  "preflight": "passed",
+  "production_ready": false,
+  "published": false,
+  "regressions": {
+    "failed": 2,
+    "failed_tests": [
+      "tests/saas/test_legacy_domain_discovery.py::test_existing_source_qualifier_hard_closure_and_generic_parser_are_unchanged",
+      "tests/saas/test_n1_merge_gate_candidate.py::test_all_trusted_candidate_inputs_match_main_policy_hashes"
+    ],
+    "passed": 4909,
+    "skipped": 13
+  },
+  "required_next_step": "Review the qualified source extensions and pinned candidate inputs separately; preserve the protected checks and administrator gate.",
+  "run_id": 41156317471,
+  "source_revision": "a4ba238ebcfc7e676bacf954e464ef72307cb254",
+  "status": "completed"
+}

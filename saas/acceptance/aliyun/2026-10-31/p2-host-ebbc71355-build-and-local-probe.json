@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-30T20:39:09.735956+00:00",
+  "source_revision": "ebbc713557467cc54795d9ea0560606c4602eb15",
+  "build_exit_code": 0,
+  "archive_bytes": 501780480,
+  "archive_sha256": "667af223d3067ac336f86f28d342152fa9ae44147908e103a2d871366db3e6b1",
+  "verified_oci_blobs": 15,
+  "metadata": {
+    "buildx.build.provenance": {
+      "builder": {
+        "id": ""
+      },
+      "buildType": "https://mobyproject.org/buildkit@v1",
+      "materials": [
+        {
+          "uri": "pkg:oci/node-runtime?digest=sha256:9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2&platform=linux%2Famd64",
+          "digest": {
+            "sha256": "9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2"
+          }
+        },
+        {
+          "uri": "pkg:docker/fc-e2b-registry.cn-hangzhou.cr.aliyuncs.com/runtime-v2/base?digest=sha256:1ff61a87eeef4ebcc1285741465a434973c70c814fa20a55bfd6915022150cf6&platform=linux%2Famd64",
+          "digest": {
+            "sha256": "1ff61a87eeef4ebcc1285741465a434973c70c814fa20a55bfd6915022150cf6"
+          }
+        }
+      ],
+      "invocation": {
+        "configSource": {},
+        "parameters": {
+          "frontend": "dockerfile.v0",
+          "args": {
+            "build-arg:SOURCE_DATE_EPOCH": "1793391800",
+            "build-arg:SOURCE_REVISION": "ebbc713557467cc54795d9ea0560606c4602eb15",
+            "context:node-runtime": "oci-layout://w365g37pfglv4rm42mvsqdh4q@sha256:9f0dde62d10e7ff7a310ecaebd66225f6b46c17e6cb778449a77b05d3541bea2",
+            "frontend.caps": "moby.buildkit.frontend.contexts+forward",
+            "target": "host"
+          },
+          "locals": [
+            {
+              "name": "context"
+            },
+            {
+              "name": "dockerfile"
+            }
+          ]
+        },
+        "environment": {
+          "platform": "linux/amd64"
+        }
+      }
+    },
+    "buildx.build.ref": "omnigent-aliyun-01a18d5f/omnigent-aliyun-01a18d5f0/q7heeawyi3c21pkpy9osi6otr",
+    "containerimage.descriptor": {
+      "mediaType": "application/vnd.oci.image.index.v1+json",
+      "digest": "sha256:f7a8ee09af87aba20fdeb51efb12f5e46ef224a2328efbe7482f40445a172138",
+      "size": 856,
+      "annotations": {
+        "org.opencontainers.image.created": "2026-10-30T20:23:20Z"
+      }
+    },
+    "containerimage.digest": "sha256:f7a8ee09af87aba20fdeb51efb12f5e46ef224a2328efbe7482f40445a172138",
+    "image.name": "docker.io/library/omnigent-aliyun-host:ebbc71355"
+  },
+  "local_inventory": {
+    "revision": "ebbc713557467cc54795d9ea0560606c4602eb15",
+    "uid": 1000,
+    "tools": {
+      "omnigent": "/opt/venv/bin/omnigent",
+      "node": "/usr/local/bin/node",
+      "tmux": "/usr/bin/tmux",
+      "bwrap": "/usr/bin/bwrap",
+      "git": "/usr/bin/git",
+      "systemctl": "/usr/bin/systemctl",
+      "sshd": "/usr/sbin/sshd",
+      "chronyd": "/usr/sbin/chronyd",
+      "iptables": "/usr/sbin/iptables",
+      "ossfs2": "/usr/local/bin/ossfs2"
+    },
+    "ssh_host_key_count": 0,
+    "machine_id_bytes": 0,
+    "node": "v22.23.4"
+  },
+  "production_acceptance": false,
+  "qualification_gaps": [
+    "current local BuildKit 0.23.2 provenance is SLSA v0.2, not the required v1",
+    "SPDX SBOM and policy scan missing",
+    "independent rebuild comparison missing",
+    "registry and actual Host template missing",
+    "real Host/model/tenant integration missing"
+  ]
+}

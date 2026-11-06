@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "approved_scopes": [],
+  "approved_native_observations": [
+    {
+      "operation": "host514-f5601779b357-launchers",
+      "native_record_sha256": "9c3c4c6c115951b32845db192872faa152ab85d814fb7dc45002b717dba98828",
+      "independent_review_sha256": "a5e6e46d21e30774c62e1e4ad4ce62aaaf91db2a3d3daf504d8d61abfa7bd660",
+      "installed_files": {
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/os_env.py": "e113566d883d43c060908b9b0a93b2defd168ebb0499e017c3cf336a2c443c43",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/terminal.py": "86e529e7e20f9ed5d8795b9909b43a799031b67c8e385598dbfa7169d39b4985",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/sandbox.py": "2c7faf6d85b6a02dcdffabddf1a5171e1b9bf1295fbf570c491778e2e303e8e8",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/bwrap_sandbox.py": "7d60e0110298b8be6e1ad5d284321f52f7ca9628426881a75000876a4056fd2b"
+      }
+    },
+    {
+      "operation": "omnigent-arm-startup-7194b126dba5ac229b4a55cf",
+      "native_record_sha256": "c32ec8564c416e90f268d8d2e7c0e3f6d59f1c8509627dc1e0ca0376310fcd6a",
+      "independent_review_sha256": "718d857daa3a13d04f584423dc9daaa22c5a35897ec8810d04d63eb714552dbb",
+      "classification_scope": "installed-production-startup-locale-component-only",
+      "installed_files": {
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/bwrap_sandbox.py": "7d60e0110298b8be6e1ad5d284321f52f7ca9628426881a75000876a4056fd2b",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/os_env.py": "e113566d883d43c060908b9b0a93b2defd168ebb0499e017c3cf336a2c443c43",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/sandbox.py": "2c7faf6d85b6a02dcdffabddf1a5171e1b9bf1295fbf570c491778e2e303e8e8",
+        "opt/venv/lib/python3.12/site-packages/omnigent/inner/terminal.py": "86e529e7e20f9ed5d8795b9909b43a799031b67c8e385598dbfa7169d39b4985",
+        "opt/venv/lib/python3.12/site-packages/saas/production/preview_edge.py": "349bbceebd2a00ce23291345fde24f282296fad6af5fa1dfcdb9dc3871263ee2",
+        "opt/venv/lib/python3.12/site-packages/saas/production/preview_owner.py": "40399d6e2d2836a19884569f3eea35c9dff69d8cab3311f63f73ece185f2ead0",
+        "opt/venv/lib/python3.12/site-packages/saas/production/preview_readiness.py": "4691592d1717a02ea6e98cbea3c71e3bc92e0a322d6ccbc3afb578905e357068",
+        "opt/venv/lib/python3.12/site-packages/saas/production/preview_relay.py": "cf51d1f217bc93c1f8025537311ee6168a362bdf21168d4fa0ac77aa9db6d66e",
+        "opt/venv/lib/python3.12/site-packages/saas/production/runner_agent.py": "ec2a1e3b8a4dc6527d584595ba8d40db1d272f0e6ae24174e718bde5bc4713c9",
+        "opt/venv/lib/python3.12/site-packages/saas/production/runner_control.py": "ace8b7227ee12efd5e3d01e19f64608954802a1086bc1068270d35d78669fbe0",
+        "opt/venv/lib/python3.12/site-packages/saas/production/runner_executor.py": "75281dd71d71a12c24e8e6a4f58b349b427eaed86014749f2de202581931a596",
+        "opt/venv/lib/python3.12/site-packages/saas/production/runner_readiness.py": "bd3d174f440b85906d4b700564edf7589cf1631c702068ece70126d7f2838d40",
+        "opt/venv/lib/python3.12/site-packages/saas/production/runtime_locale.py": "89e54a498a2e2d11fe0b8ef64308ef144bc262b0754ff47fe0488faea80d60ec",
+        "opt/venv/lib/python3.12/site-packages/saas/production/server.py": "0fbce786db76e432cb9645cd30f28e8808b4706f1d8fbc440f5f37a0407254de",
+        "opt/venv/lib/python3.12/site-packages/saas/production/worker.py": "6b350f48c46cc25d3f10cd19816cca377a7d2b782755bdedb858bfbb332dae25"
+      }
+    }
+  ],
+  "pending_inputs": {
+    "reason": "Reviewed Host amd64 helper/terminal and actual current8d ARM six-entry startup origins are registered for bounded component reuse. No complete final-role contract is approved; signed full-role data and explicit same-platform entry/lifecycle applicability remain required.",
+    "helper_source": "514a2ce1ae703869260c0e1eccf5a06767e7e4e3",
+    "helper_native_record_sha256": "a5383a7abe8555e8ec1521e72bde9d6d6012730ad8060a0d5a86bb7427530e32",
+    "helper_independent_review_sha256": "4dcf676201ad48d3790fb6d82c58aba38557bf86fe4ed500357ab39ac26b68ea",
+    "missing": [
+      "exact final subject and original raw report",
+      "complete deployed role/command/factory/profile and last-override contract",
+      "admitted whole evidence graph with fixed expiry and approved component/entry bridge",
+      "exact final raw components and independently approved ARM entry/lifecycle applicability"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "observed_at": "2026-10-30T21:07:36.309370+00:00",
+  "run_id": 41127064896,
+  "source_revision": "5c39063c99731bba3eb5f523c1b3697ead1a7a61",
+  "conclusion": "failure",
+  "verify": "success",
+  "build_jobs": "both failed in npm install of pinned pnpm",
+  "local_reproduction": "TypeError: Class extends value undefined is not a constructor or null, in npm/node_modules/minizlib/dist/commonjs/index.js",
+  "root_cause": "COPY merged pinned npm into the existing base npm tree, leaving stale dependencies",
+  "repair": "remove the old npm tree and npm/npx links before copying; share the clean Node stage between builder and Host",
+  "local_node_base_build_exit_code": 0,
+  "local_install_module_require": "passed",
+  "npm_version": "10.9.9",
+  "full_pnpm_install_and_host_qualification": "pending new frozen CI build",
+  "production_acceptance": false
+}

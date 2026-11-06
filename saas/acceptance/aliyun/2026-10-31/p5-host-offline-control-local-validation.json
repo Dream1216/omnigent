@@ -1,0 +1,70 @@
+{
+  "base_revision": "50a4db09139531e2037a49b85dd6166fdfb9cf57",
+  "cloud_host_acceptance": false,
+  "live_local_server_host_runner": true,
+  "matrix": {
+    "cases": [
+      "test_s5_host_offline_user_acts[claude-send-20s]",
+      "test_s5_host_offline_user_acts[claude-send-150s]",
+      "test_s5_host_offline_user_acts[claude-stop-20s]",
+      "test_s5_host_offline_user_acts[claude-stop-150s]",
+      "test_s5_host_offline_user_acts[codex-send-20s]",
+      "test_s5_host_offline_user_acts[codex-send-150s]",
+      "test_s5_host_offline_user_acts[codex-stop-20s]",
+      "test_s5_host_offline_user_acts[codex-stop-150s]"
+    ],
+    "deselected": 4,
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "cd408a1160340be8047740c465672a67eeb1786bfab1a1a7c5d4d36b8b0d0ec2",
+    "passed": 8,
+    "seconds": 1818.355,
+    "skipped": 0,
+    "tests": 8
+  },
+  "model": "local mock",
+  "native_patch_sha256": "13f078a398ae21dfbc7a73fc0100ddc5e0a39582bae509084c10afdce9aad184",
+  "native_ruff_format_and_check": "four files passed",
+  "observed_at": "2026-10-31T08:28:12.252060+00:00",
+  "p5_accepted": false,
+  "patch_replay": {
+    "all_replayed_official_source_bytes_match": true,
+    "content_mismatches": [],
+    "patch_count": 9,
+    "report_sha256": "e0ad976746e06d888714d6f727206dca822fcf77940aa46a95da242ba15726f2",
+    "status": "pass"
+  },
+  "production_activated": false,
+  "production_types": {
+    "errors": 0,
+    "log_sha256": "7f575b5947702668587e1db72fc77459ad374bd2a0848a05688dd9526472f9ca"
+  },
+  "remaining": [
+    "Source budget expansion and exact candidate review",
+    "Final candidate all-file checks and own CI",
+    "Actual Aliyun Host/Runner/model execution, capacity, canary and rollback"
+  ],
+  "service_regression_source_identity": "Same four native source hashes on b3c55982 before base advance; hashes verified unchanged on 50a4db091.",
+  "service_regressions": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "59dd13a36ec93b008b2669a28440cc9752a4371c449215b42e83b1c38de9659a",
+    "passed": 116,
+    "skipped": 0,
+    "tests": 116
+  },
+  "source_budget": {
+    "admitted": false,
+    "direct_upstream_files": 184,
+    "limits_changed": false,
+    "net_added_loc": 5212
+  },
+  "source_sha256": {
+    "omnigent/server/routes/_sessions/orchestration.py": "4a3998fd8dd845e4c632f4d344edca4f5d1d2f2a72acd18643fc0c632f7583fa",
+    "omnigent/server/routes/sessions/routes_events.py": "fb7b66f84dfddcb09d58343a95bef35c3cb0c3a6d866011aa8e979c07ce48ace",
+    "saas/production/aliyun_storage.py": "69473eb4e5744d9e354cd2451c84212cbf3761d6186aa6705a1c6dcd87bfbe51",
+    "saas/production/aliyun_volume_control.py": "9f116adc71ab325cc8c4ed089e25a7e5d9065f465e601eeb83652c8eceffa8e8",
+    "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py": "b9917df9b446818eb32ad5de4d99e19a12bec6fda8ae4067ece3f0ea0e57c75e",
+    "tests/server/integration/test_session_host_launch.py": "da57a275d73ef32ee287bb56f8c6c1734f566b2a488d5025462f82a99b97633e"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "cloud_transport_report": "p3-lifetime-after-server-profile-live.json",
+  "files_sha256": {
+    ".github/workflows/saas-image-candidate.yml": "41bc2e94a0999c9cb9e66263842da8165e5318b4720c8dedacf92092f85a82f9",
+    "saas/actions/build-oci-candidate/action.yml": "92fc9e53c2cd015f52be926a0334f8adcf091fcd0cecde05d1603a2efeb14d22",
+    "saas/production/aliyun_model_broker.py": "d82bc37806e4244409527aa0379bc60d2385b444f767c8515bf340915bfb4f00",
+    "saas/production/aliyun_sandbox.py": "cbe5919828cfdb562177454f46c811667af054669406ef279adc37321ad50566",
+    "saas/production/aliyun_server_profile.py": "966b335e8593cecf9dff94f48d4c36de18f56cc03eaf63e5a1387afe2a01aba8",
+    "saas/production/server.py": "d17f00dc3590afd12ab1073e8f542b996978bd6f2eddae42a7836264262015eb",
+    "saas/production/server_config.py": "cabb9110eab85d198da79006814514107789473fa7be2ccdf3894e98c300a759"
+  },
+  "junit_report": "server-profile-regression.junit.xml",
+  "p2_accepted": false,
+  "p3_accepted": false,
+  "production_deployed": false,
+  "regression": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 695
+  },
+  "remaining": [
+    "qualified signed images and actual Server image SDK verification",
+    "production credential copies and explicit profile",
+    "public TLS callback/model route",
+    "actual MicroVM Host, isolated Runner and model task",
+    "OSS and P5 operations/canary/rollback"
+  ],
+  "schema_version": 1,
+  "scope": "canonical Server profile, production-builder composition with SQLite/test app factory, authorization, bound lease, existing regressions; real cloud transport only",
+  "scoped_pyrefly_errors": 0,
+  "source_context": "candidate snapshot before commit; hashes bind tested source"
+}

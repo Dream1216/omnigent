@@ -1,0 +1,37 @@
+{
+  "files_sha256": {
+    "pnpm-lock.yaml": "8a12d8fbc500d465c1093c2765e86506a2eff3842f9dc9fd0c2432776450c674",
+    "pnpm-workspace.yaml": "4ee4a74878d954f5e2f84febf0fd204287ba0192dfe132cc357376a69d85ffbf",
+    "saas/deployment/aliyun/Dockerfile.host": "e3b17c12def3bdf3cad7b2ba4beab71d3966f54b40f6be656b68322127829dd7",
+    "saas/production/aliyun_sandbox.py": "2f2ea1ece2afc831508bd8de63ba736d77abf28658abb2ee28002d2eb221c1bc",
+    "saas/production/aliyun_sdk.py": "30539612dc4b87dee2c26b010d7bdf693e36805b1dc43e46f6078c26ab51131c",
+    "saas/supply_chain/npm-122-security-lock.json": "ec4caa21f7a0719869f37597c9232f74f8ee09dd7895242eab0f64755c14740c",
+    "uv.lock": "6b3970c45a1296d2b76cc3b6f26500e33f4f5eed5b5eaeca1b960c10343f8ede",
+    "uv.toml": "9fa2c2087b63f1d1b54e63ae3816ab9d2c6c474025f7f7a2a1b26bc585f995bf"
+  },
+  "junit_report": "security-and-lifetime-regression.junit.xml",
+  "live_transport_report": "p3-absolute-lifetime-live.json",
+  "p2_accepted": false,
+  "p3_accepted": false,
+  "precommit_all_files": "passed after frozen pnpm 12.10.1 installation",
+  "precommit_log_sha256": "7a14b2af96963dc36011de5c7cb483e2a61e7e33f8b2bee4379306f88a35284c",
+  "production_deployed": false,
+  "regression": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 541
+  },
+  "remaining": [
+    "complete Host image security qualification",
+    "production Server/profile/broker composition",
+    "public TLS callback and model ingress",
+    "real Host/Runner/model business acceptance",
+    "OSS mounts and authorization",
+    "P5 canary, operations and rollback"
+  ],
+  "schema_version": 1,
+  "scoped_pyrefly_errors": 0,
+  "source_context": "uncommitted candidate snapshot before commit; hashes bind tested inputs",
+  "upstream_delta_status": "pass"
+}

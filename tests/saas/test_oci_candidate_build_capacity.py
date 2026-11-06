@@ -1,5 +1,7 @@
 """Capacity guards for reproducible multi-architecture OCI candidates."""
 
+import os
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -59,12 +61,37 @@ def test_candidate_runs_cheap_compatibility_checks_before_browser_setup() -> Non
     )
 
 
+def test_candidate_scan_can_import_admission_in_the_exported_locked_environment(tmp_path) -> None:
+    workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-image-candidate.yml").read_text())
+    steps = workflow["jobs"]["build-candidate"]["steps"]
+    install = next(s for s in steps if s.get("name") == "Install locked test dependencies")
+    sync, export = install["run"].strip().splitlines()
+    assert sync == "uv sync --frozen --extra all --group dev --extra saas --extra e2b"
+    path_file = tmp_path / "github-path"
+    subprocess.run(
+        ["bash", "-c", export],
+        cwd=_ROOT,
+        env={**os.environ, "GITHUB_PATH": str(path_file)},
+        check=True,
+    )
+    subprocess.run(
+        [
+            "python",
+            "-c",
+            "from saas.scripts.runtime_evidence_intake import authenticated_runtime_graph",
+        ],
+        cwd=_ROOT,
+        env={**os.environ, "PATH": path_file.read_text().strip() + os.pathsep + os.defpath},
+        check=True,
+    )
+
+
 def test_compatibility_typecheck_is_early_and_not_duplicated_on_pr_branches() -> None:
     """A PR should fail type-checking before starting its expensive acceptance suite."""
     source = (_ROOT / ".github/workflows/saas-upstream-compat.yml").read_text()
     workflow = yaml.safe_load(source)
     events = yaml.load(source, Loader=yaml.BaseLoader)["on"]
-    names = [step.get("name") for step in workflow["jobs"]["compatibility-gate"]["steps"]]
+    names = [step.get("name") for step in workflow["jobs"]["compatibility-tests"]["steps"]]
 
     assert events["push"]["branches"] == ["main"]
     assert names.index("Type-check SaaS compatibility code") < names.index(

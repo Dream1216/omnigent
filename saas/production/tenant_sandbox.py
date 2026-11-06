@@ -13,6 +13,10 @@ from omnigent.onboarding.sandboxes.agent_sandbox_warm_pool import AgentSandboxWa
 from omnigent.onboarding.sandboxes.kubernetes import KubernetesSandboxLauncher
 from omnigent.server.managed_hosts import ManagedSandboxDeployment, parse_sandbox_config
 from saas.compatibility.runtime_partition import current_runtime_context
+from saas.production.aliyun_tenant_sandbox import (
+    AliyunManagedSandbox,
+    build_aliyun_managed_config,
+)
 from saas.production.tenant_model_keys import TenantModelKeyBinding
 
 _WORKSPACE_ENV = "OMNIGENT_HOST_WORKSPACE_ID"
@@ -90,11 +94,14 @@ def parse_tenant_sandbox_config(
     *,
     model_bindings: tuple[TenantModelKeyBinding, ...] = (),
     legacy_tenant_id: UUID | None = None,
+    aliyun: AliyunManagedSandbox | None = None,
 ) -> ManagedSandboxDeployment | None:
     """Compose an already production-reviewed profile with scoped launchers."""
 
     parsed = parse_sandbox_config(raw)
     if parsed is None:
+        if aliyun is not None:
+            raise ValueError("Aliyun requires the reviewed Sandbox deployment")
         return None
     kwargs = deepcopy(raw.get("kubernetes"))
     if not isinstance(kwargs, dict) or kwargs.get("env") != list(_IDENTITY_ENV):
@@ -116,4 +123,6 @@ def parse_tenant_sandbox_config(
                 ),
             )
         )
+    if aliyun is not None:
+        configs.append(build_aliyun_managed_config(aliyun, host_config=parsed.default.host_config))
     return replace(parsed, configs=tuple(configs))

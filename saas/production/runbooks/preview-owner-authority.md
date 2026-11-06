@@ -81,6 +81,79 @@ that catalog digest. Publish the final protected receipt/hash to all consumers
 through the existing configuration rollout; the original receipt must fail as
 stale. Do not hand-edit the receipt or install the test fixture SQL.
 
+## Runner source and pool transition
+
+A fleet stage must match the selected pool's source, schema, protocol and
+adapter contract as well as its active placement. Changing only a StageSpec
+from the old product to the new SHA fails before mutation. Use the existing
+`SchedulingControlPlane.create_pool` entry point in
+`saas/control_plane/scheduling.py` to create a new logical pool for the final
+qualified product, on the existing active placement and its actual D0 schema.
+Copy the approved queue class, capacity/reservations, protocol and adapter
+contract from the verified current pool. Record the returned pool UUID; retain
+the old pool and historical records. No new physical placement is required.
+
+Pool and Runner source pins identify the final fork product. In contrast, the
+existing RuntimePartition `source_revision` identifies upstream
+`ee728a02004749e7f6971beee6c66d990bfbd216` and runtime
+`0.21.0.dev20261031`; retain those actual placement/partition compatibility
+facts. Do not replace every field named `source_revision` with the fork SHA.
+
+In the existing approved zero-replica window, the sole runtime writer performs
+this sequence with the matching qualified CLI and protected credentials:
+
+1. Read the current two Runner UUIDs, pool, placement, source, generations,
+   active leases and promoted admission epoch. Fence/drain or stop their old
+   incarnations through the existing lifecycle. Both must be drained/offline
+   with zero leases before staging; reconcile any old queued dispatches through
+   their existing lifecycle, retaining historical data.
+2. Create the new source-pinned pool through `create_pool`, with enough capacity
+   for both retained members. Recreate each required tenant's reviewed queue
+   share through `SchedulingControlPlane.configure_tenant_share`, using the new
+   pool UUID and the existing weight, max concurrency and burst limit.
+3. Reconcile business routing, execution bindings and rendered configuration.
+   `RunDispatchProjector._resolve_pool` selects the single active pool by
+   placement, tenant queue share, queue class, Run product revision, D0 schema
+   and adapter contract. New Runs must carry the final product revision and
+   select the new pool. `ExecutionProfileRecord` has no pool column: retain its
+   UUID/config hash when its security policy is unchanged; update any external
+   execution-profile or manifest pool references that actually exist. Do not
+   invent a profile field or rewrite old dispatch rows.
+4. Render the canonical A/B StageSpecs with
+   `render_runner_database_fleet_stage_specs`: keep both original Runner UUIDs,
+   instance keys, placement/failure domain, PVCs and actual capabilities, but
+   bind both to the new pool and product. Run the existing
+   `python -m saas.scripts.stage_runner_database_fleet` owner entry point. It
+   locks the fleet and atomically advances each existing generation, updates
+   its pool/source, issues fresh tokens and revokes old capabilities. Ordinary
+   registration does not replace this same-UUID transition. Seal its one-time
+   output in the existing fresh protected 0400 file; do not edit generations,
+   source, pool or connection tokens with SQL.
+5. Use the returned generations for the new Runner LOGIN/DSN and identity
+   Secrets. Converge the existing narrow roles, issue/activate source- and
+   generation-bound purpose leaves, revoke old incarnations, and complete the
+   existing artifact-recovery and repository/mirror receipts. Retain PVC data
+   and repository identities where their contracts permit; verify the new
+   generation's actual bindings rather than relabelling old receipts.
+6. Render the fleet, environment snapshot/context, trust pins, attestations and
+   manifests from those actual results. Use the next admission epoch after the
+   actual promoted maximum, then perform existing signature verification,
+   admission and `promote_runner_database_fleet_after_admission`. Read back
+   both original UUIDs with their new pool/source/generation and the accepted
+   epoch. Do not hand-edit the old g3/epoch2 document or revive old credentials.
+7. Keep the five migration-receipt consumers and two signed-fleet consumers
+   distinct. Server, Worker, primary Owner, Edge and provider Edge consume the
+   matching migration receipt; Runner A/B consume their signed fleet admission
+   and context. The provider Edge keeps a separate gateway identity and does
+   not become a third Runner registration.
+8. After all final image/receipt bindings are ready, register a fresh matching
+   primary Owner and prove its real active lease and renewals. Start the retained
+   A/B Agents through the existing rollout, then prove heartbeat, Preview and
+   actual business execution with the new routing. The old signed product,
+   pool/manifests and independent restore evidence remain available for the
+   existing qualified rollback procedure; no epoch decrement or token reuse
+   is introduced by this transition.
+
 ## Native acceptance
 
 As the exact service login, prove both active client/server leaves, self/peer

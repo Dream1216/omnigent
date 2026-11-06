@@ -126,7 +126,9 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
         "evidence_revision",
         "receipt_request_json",
         "review_exception_request_json",
+        "runtime_evidence_revision",
     }
+    assert inputs["runtime_evidence_revision"]["required"] == "false"
     job = workflow["jobs"]["production-admission"]
     assert job["environment"] == "production-evidence"
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
@@ -138,6 +140,20 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     )
     assert "refs/heads/main" in preflight
     assert '"$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION"' in preflight
+    assert '[[ -z "$RUNTIME_EVIDENCE_REVISION" || -n "$RECEIPT_REQUEST_JSON" ]]' in preflight
+    context = next(
+        step
+        for step in job["steps"]
+        if step.get("uses") == "./saas/actions/runtime-evidence-context"
+    )
+    assert (
+        context["if"]
+        == "inputs.runtime_evidence_revision != '' && inputs.receipt_request_json != ''"
+    )
+    assert context["with"] == {
+        "product-revision": "${{ inputs.product_revision }}",
+        "evidence-revision": "${{ inputs.runtime_evidence_revision }}",
+    }
     checkout = next(step for step in job["steps"] if "actions/checkout@" in step.get("uses", ""))
     assert checkout["with"]["ref"] == "${{ github.sha }}"
     assert checkout["with"]["fetch-depth"] == "0"

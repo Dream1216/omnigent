@@ -224,3 +224,73 @@ Complete the following after the source and trust root are frozen on protected m
 The exception cannot authorize another product, upstream, schema, actor commitment,
 expiry, workflow run or policy. Final admission still requires all eight signed
 evidence domains, all ten aggregate gates, the ledger and all phase decisions.
+
+## Finite runtime evidence graph
+
+The product source contains verification rules. Final source, OCI and raw-report
+identities belong in the separately admitted image evidence, avoiding a product
+commit that would have to contain its own future commit and image digests.
+First derive the native node from the immutable operator execution and its
+existing independent review, whose hashes are registered in product source:
+
+```sh
+uv run python -m saas.scripts.runtime_evidence_intake \
+  --materials-root /absolute/path/to/original-reviewed-materials \
+  --product-revision "$PRODUCT_REVISION" \
+  --operator-record saas/supply_chain/runtime-conditions/original-operator.json \
+  --operator-review saas/supply_chain/runtime-conditions/original-review.json \
+  --output saas/supply_chain/runtime-conditions/native.json
+```
+
+This preserves the actual old source, subject, roles and raw-report identity.
+It does not execute another experiment or qualify the final image. A mutable
+status wrapper is not a substitute for the exact registered original execution.
+Package independently reviewed original JSON records without changing their bytes:
+
+```sh
+uv run python -m saas.scripts.runtime_evidence_intake \
+  --materials-root /absolute/path/to/original-reviewed-materials \
+  --product-revision "$PRODUCT_REVISION" \
+  --image-evidence saas/acceptance/p0-production-image-evidence.json \
+  --output artifacts/image-evidence-with-runtime-conditions.json
+```
+
+The material root contains `saas/supply_chain/runtime-condition-inputs.json` and
+its exact contract, native observation, independent review and authority records.
+The command packages bytes; it provides no native-origin or signing authority.
+The graph digest binds parsed registry semantics and the original document text;
+it is not a digest of the original registry file's formatting.
+Admit the resulting image document through the existing two-phase production
+image receipt process and existing key. Never copy a final subject into product
+source or substitute an expected digest for an actual OCI observation.
+
+When a protected consumer uses a separate evidence checkout, set
+`OMNIGENT_RUNTIME_EVIDENCE_REPO` to its absolute path. This selects data only;
+the consumer pins policy and keys to product source, checks the image receipt's
+exact product revision and signature, then checks every graph coordinate and the
+actual OCI files. The complete graph hash is retained in the disposition receipt,
+so seal, promotion and final revalidation cannot silently substitute another graph.
+A local registry alone cannot authorize an image. Both original High findings stay
+in the raw report and all finite expiries remain fixed.
+
+Both existing workflows accept optional `runtime_evidence_revision`. For image
+receipt preparation/finalization, the production-admission workflow fetches that
+exact evidence-only revision while executing its original protected main code.
+The image candidate, signer and independent verifier use the same data revision
+containing the finalized receipt. Source, policy/key changes, dirty data and
+symlinked image evidence reject. The original protected environments, workflow
+identity, product revision and external signing key stay in force.
+
+Reusing old component observations requires an explicit `component_bridge` in
+the contract, exact independent review and authority approval. It retains the old
+native subject/report and separately binds the target product, same platform,
+same libc and exact installed code boundaries. The trusted consumer then binds
+each final manifest/config and fresh unfiltered raw-two-High report to its own
+receipt. A changed platform, libc, unknown finding or missing bridge rejects;
+revalidation never extends the approved expiry.
+
+The registered Host amd64 observation is a bounded component. Approved complete
+image scopes remain empty and runtime policy remains disabled. Complete final
+role/entry/lifecycle contracts, arm64 applicability and final signed image evidence
+remain required before enablement. These interfaces alone do not qualify the
+Server/Host pair or authorize publication.

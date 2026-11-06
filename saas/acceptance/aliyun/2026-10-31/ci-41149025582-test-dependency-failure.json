@@ -1,0 +1,24 @@
+{
+  "candidate_remediation": [
+    "Pin e2b 2.31.0 in the repository test dependency group",
+    "Explicitly select e2b in SaaS CI dependency steps",
+    "Execute exact Server OCI candidate on both architectures before scan"
+  ],
+  "cause": "SDK-backed test collection failed because the test environment did not install the optional e2b package",
+  "completed": {
+    "candidate_preflight": true,
+    "postgres_16_migration_replay": true,
+    "postgres_18_migration_replay": true
+  },
+  "conclusion": "failure",
+  "failed_step": "Run current-revision OSS and SaaS regressions",
+  "failure_log_sha256": "80c3d86d6a61df8d61aa6f70f9bd87e1e3a8e8e392b3fc0dc777a3e4308fdac4",
+  "production_deployed": false,
+  "publication_attempted": false,
+  "remediation_ci_verified": false,
+  "schema_version": 1,
+  "server_image_built": false,
+  "source_revision": "1f19ebd3af8ed6bea91cee686cd51c06b677e43b",
+  "url": "https://github.com/Dream1216/omnigent/actions/runs/41149025582",
+  "workflow_run": 41149025582
+}

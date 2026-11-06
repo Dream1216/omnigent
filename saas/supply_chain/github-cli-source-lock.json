@@ -15,7 +15,12 @@
     ],
     "go_toolchain": "go1.27.2",
     "modules": {
-      "golang.org/x/net": "v0.60.0"
+      "golang.org/x/net": "v0.60.0",
+      "github.com/klauspost/compress": "v1.20.2"
+    },
+    "module_checksums": {
+      "github.com/klauspost/compress@v1.20.2": "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+      "github.com/klauspost/compress@v1.20.2/go.mod": "h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI="
     }
   },
   "resolved_vulnerabilities": [
@@ -27,6 +32,7 @@
     "GO-2026-6610",
     "GO-2026-6611",
     "GO-2026-6612",
-    "GO-2026-6613"
+    "GO-2026-6613",
+    "GO-2026-6865"
   ]
 }

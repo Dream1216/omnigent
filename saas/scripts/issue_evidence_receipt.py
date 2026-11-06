@@ -109,6 +109,7 @@ def process_evidence_receipt_request(
     product_revision: str,
     workflow_identity: str,
     policy: Mapping[str, Any] | None = None,
+    evidence_repo: Path | None = None,
     enforce_lineage: bool = True,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -155,8 +156,19 @@ def process_evidence_receipt_request(
             )
         else:
             loaded_policy = policy
+        if evidence_repo is not None:
+            from saas.scripts.runtime_evidence_intake import validate_evidence_context
+
+            if (
+                evidence_repo.resolve() != repo.resolve()
+                and request.get("evidence_kind") != "image"
+            ):
+                raise ValueError(
+                    "separate runtime data may prepare only the existing image receipt"
+                )
+            validate_evidence_context(repo, evidence_repo, product_revision=product_revision)
         result = issue_evidence_receipt(
-            repo,
+            evidence_repo or repo,
             loaded_policy,
             request,
             product_revision=product_revision,
@@ -177,6 +189,7 @@ def main() -> int:
     parser.add_argument("--product-revision", required=True)
     parser.add_argument("--workflow-identity", required=True)
     parser.add_argument("--output-directory", default="artifacts/evidence-receipt")
+    parser.add_argument("--evidence-repo", type=Path)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     directory = Path(args.output_directory)
@@ -187,9 +200,22 @@ def main() -> int:
         args.request_json,
         product_revision=args.product_revision,
         workflow_identity=args.workflow_identity,
+        evidence_repo=args.evidence_repo,
     )
     try:
         if result is not None:
+            receipt_subject = result["preparation"]["receipt"]
+            if receipt_subject["evidence_kind"] == "image":
+                from saas.scripts.runtime_evidence_intake import _material_file
+
+                raw = _material_file(
+                    args.evidence_repo or repo, receipt_subject["evidence_path"]
+                ).read_bytes()
+                if hashlib.sha256(raw).hexdigest() != receipt_subject["evidence_sha256"]:
+                    raise ValueError("image document changed after receipt preparation")
+                _safe_output(
+                    repo, (directory / "image-evidence-document.json").as_posix()
+                ).write_bytes(raw)
             preparation = json.dumps(result["preparation"], indent=2, sort_keys=True) + "\n"
             _safe_output(repo, (directory / "receipt-preparation.json").as_posix()).write_text(
                 preparation, encoding="utf-8"
