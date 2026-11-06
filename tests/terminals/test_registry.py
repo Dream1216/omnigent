@@ -396,7 +396,8 @@ async def test_launch_replaces_stale_running_entry(
     assert created.lifecycle_trace.session_id == "conv_x"
 
 
-def test_transfer_moves_terminal_without_closing_tmux(tmp_path: Path) -> None:
+@pytest.mark.parametrize("managed", [False, True])
+def test_transfer_moves_terminal_without_closing_tmux(tmp_path: Path, managed: bool) -> None:
     """
     Terminal transfer changes ownership without touching the instance.
 
@@ -406,6 +407,11 @@ def test_transfer_moves_terminal_without_closing_tmux(tmp_path: Path) -> None:
     that still contains the live Claude process.
     """
     reg = TerminalRegistry()
+    if managed:
+        reg.require_environment_binding = True
+        required = OSEnvSpec(cwd=str(tmp_path), fork=False)
+        reg.bind_required_environment("conv_old", required)
+        reg.bind_required_environment("conv_new", required)
     instance = TerminalInstance(
         name="claude",
         session_key="main",
@@ -426,6 +432,85 @@ def test_transfer_moves_terminal_without_closing_tmux(tmp_path: Path) -> None:
     assert reg.get_instance_lock("conv_old", "claude", "main") is None
     assert reg.get_instance_lock("conv_new", "claude", "main") is lock
     assert reg.active_conversation_ids() == ["conv_new"]
+    if managed:
+        reg.bind_required_environment("conv_new", required)
+        with pytest.raises(ValueError, match="pending or live"):
+            reg.bind_required_environment("conv_new", OSEnvSpec(cwd="/different"))
+
+
+@pytest.mark.parametrize("target", ["unbound", "different", "cross_layer"])
+def test_transfer_refuses_unapproved_target_without_moving(tmp_path: Path, target: str) -> None:
+    """No caller can move a live pane into a missing or different restriction."""
+    from tests.runner.helpers import make_test_terminal_instance
+
+    reg = TerminalRegistry()
+    required = OSEnvSpec(cwd=str(tmp_path), fork=False)
+    reg.bind_required_environment("source", required)
+    if target != "unbound":
+        reg.bind_required_environment(
+            "target", required if target == "cross_layer" else OSEnvSpec(cwd="/different")
+        )
+    instance = make_test_terminal_instance("claude", "main", tmp_path)
+    reg._by_conversation["source"] = {("claude", "main"): instance}
+    with pytest.raises(RuntimeError, match="same approved target"):
+        reg.transfer(
+            "source",
+            "target",
+            "claude",
+            "main",
+            expected_environment=OSEnvSpec(cwd="/other-layer")
+            if target == "cross_layer"
+            else required,
+        )
+    assert reg.get("source", "claude", "main") is instance
+    assert reg.get("target", "claude", "main") is None
+    assert instance.running
+
+
+@pytest.mark.parametrize("pending_session", ["source", "target"])
+async def test_transfer_refuses_pending_launch_until_it_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pending_session: str
+) -> None:
+    """Transfer and policy replacement cannot overtake an asynchronous spawn."""
+    from tests.runner.helpers import make_test_terminal_instance
+
+    reg = TerminalRegistry()
+    reg.require_environment_binding = True
+    required = OSEnvSpec(cwd=str(tmp_path), fork=False)
+    for session in ("source", "target"):
+        reg.bind_required_environment(session, required)
+    instance = make_test_terminal_instance("claude", "main", tmp_path)
+    reg._by_conversation["source"] = {("claude", "main"): instance}
+    started, resume = asyncio.Event(), asyncio.Event()
+    created = make_test_terminal_instance("bash", "extra", tmp_path, running=False)
+
+    async def launch(*, cwd: Path) -> None:
+        started.set()
+        await resume.wait()
+        created.running = True
+
+    monkeypatch.setattr(created, "launch", launch)
+    monkeypatch.setattr(
+        registry_mod,
+        "create_terminal_instance",
+        lambda *a, **k: TerminalCreateResult(instance=created, cwd=tmp_path),
+    )
+    pending = asyncio.create_task(
+        reg.launch(pending_session, "bash", "extra", TerminalEnvSpec(command="bash"))
+    )
+    await started.wait()
+    try:
+        with pytest.raises(RuntimeError, match="launch is pending"):
+            reg.transfer("source", "target", "claude", "main", expected_environment=required)
+        with pytest.raises(ValueError, match="pending or live"):
+            reg.bind_required_environment(pending_session, OSEnvSpec(cwd="/different"))
+        assert reg.get("source", "claude", "main") is instance
+        assert reg.get("target", "claude", "main") is None
+    finally:
+        resume.set()
+        await pending
+    assert reg.transfer("source", "target", "claude", "main", expected_environment=required)
+    assert reg.get("target", "claude", "main") is instance
 
 
 def test_transfer_rejects_target_collision_without_moving_source(tmp_path: Path) -> None:

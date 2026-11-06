@@ -576,6 +576,8 @@ class TerminalRegistry:
         target_conversation_id: str,
         terminal_name: str,
         session_key: str,
+        *,
+        expected_environment: OSEnvSpec | None = None,
     ) -> bool:
         """Move one terminal registry entry without closing tmux.
 
@@ -604,6 +606,26 @@ class TerminalRegistry:
             instance = source_slot.get(key)
             if instance is None:
                 return False
+            source_policy = self._required_environments.get(source_conversation_id)
+            target_policy = self._required_environments.get(target_conversation_id)
+            if (
+                self.require_environment_binding
+                or source_policy is not None
+                or target_policy is not None
+                or expected_environment is not None
+            ):
+                if (
+                    source_policy is None
+                    or source_policy != target_policy
+                    or (expected_environment is not None and source_policy != expected_environment)
+                ):
+                    raise RuntimeError(
+                        "Terminal transfer requires the same approved target sandbox"
+                    )
+                if self._pending_launches.get(
+                    source_conversation_id
+                ) or self._pending_launches.get(target_conversation_id):
+                    raise RuntimeError("Cannot transfer a terminal while a launch is pending")
             target_slot = self._by_conversation.setdefault(target_conversation_id, {})
             if key in target_slot:
                 raise RuntimeError(

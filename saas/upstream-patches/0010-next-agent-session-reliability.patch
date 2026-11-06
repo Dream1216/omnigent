@@ -39,7 +39,7 @@ index 44e3261..708d8f5 100644
 @@ -1661,0 +1663 @@ def create_app(
 +        require_start_sandbox=(os.environ.get(REQUIRED_START_SANDBOX_ENV) == "1"),
 diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
-index bb4f578..08683e4 100644
+index bb4f578..5449669 100644
 --- a/omnigent/runner/app.py
 +++ b/omnigent/runner/app.py
 @@ -1201,0 +1202 @@ def create_runner_app(
@@ -47,40 +47,47 @@ index bb4f578..08683e4 100644
 @@ -1748,0 +1750,2 @@ def create_runner_app(
 +    if require_start_sandbox:
 +        resource_registry.require_sandbox_binding()
-@@ -2672 +2675,5 @@ def create_runner_app(
--            from omnigent.runner.policy import AgentStartPolicyError
-+            from omnigent.runner.policy import (
-+                AgentStartPolicyError,
-+                admin_start_os_env,
-+                fetch_admin_start_sandbox,
+@@ -1750,0 +1754,21 @@ def create_runner_app(
++    async def _bind_server_start_sandbox(
++        session_id: str, agent_name: str = "", harness: str = ""
++    ) -> None:
++        """Authorize the target session before either launch or pane transfer."""
++        if not require_start_sandbox:
++            return
++        from omnigent.runner.policy import (
++            AgentStartPolicyError,
++            admin_start_os_env,
++            fetch_admin_start_sandbox,
++        )
++
++        enforced = admin_start_os_env(
++            await fetch_admin_start_sandbox(
++                server_client, session_id, agent_name=agent_name, harness=harness
 +            )
-@@ -2675,0 +2683,15 @@ def create_runner_app(
++        )
++        if enforced is None:
++            raise AgentStartPolicyError("server", "did not supply a required sandbox")
++        resource_registry.bind_required_os_env(session_id, enforced)
++
+@@ -2675,0 +2700,5 @@ def create_runner_app(
 +                if _start_data is not None:
 +                    _apply_sandbox_override_from_start_data(spec, _start_data)
 +                if require_start_sandbox:
-+                    enforced = admin_start_os_env(
-+                        await fetch_admin_start_sandbox(
-+                            server_client,
-+                            session_id,
-+                            agent_name=spec.name or "",
-+                            harness=harness_name,
-+                        )
-+                    )
-+                    if enforced is None:
-+                        raise AgentStartPolicyError("server", "did not supply a required sandbox")
-+                    resource_registry.bind_required_os_env(session_id, enforced)
++                    await _bind_server_start_sandbox(session_id, spec.name or "", harness_name)
 +                    spec.os_env = resource_registry.required_os_env(session_id)
-@@ -2698,3 +2719,0 @@ def create_runner_app(
+@@ -2698,3 +2726,0 @@ def create_runner_app(
 -            if _start_data is not None:
 -                _apply_sandbox_override_from_start_data(spec, _start_data)
 -
-@@ -7483,0 +7503,5 @@ def create_runner_app(
+@@ -7483,0 +7510,5 @@ def create_runner_app(
 +                enforced = resource_registry.required_os_env(session_id)
 +                if enforced is not None:
 +                    resolved_spec = _unwrap_spec_entry(spec_entry)
 +                    if resolved_spec is not None:
 +                        resolved_spec.os_env = enforced
-@@ -8477,0 +8502,4 @@ def _build_spawn_env_from_spec(
+@@ -7540,0 +7572 @@ def create_runner_app(
++        _bind_server_start_sandbox=_bind_server_start_sandbox,
+@@ -8477,0 +8510,4 @@ def _build_spawn_env_from_spec(
 +    if resource_registry is not None and session_id is not None:
 +        enforced = resource_registry.required_os_env(session_id)
 +        if enforced is not None:
@@ -215,7 +222,7 @@ index 5443ce0..61f6e89 100644
 +        raise AgentStartPolicyError("server", "returned an invalid hard sandbox scope") from None
 +    return OSEnvSpec(type="caller_process", cwd=".", fork=False, sandbox=parsed)
 diff --git a/omnigent/runner/resource_registry.py b/omnigent/runner/resource_registry.py
-index 3896464..5c755ab 100644
+index 3896464..a1119c6 100644
 --- a/omnigent/runner/resource_registry.py
 +++ b/omnigent/runner/resource_registry.py
 @@ -512,0 +513,2 @@ class SessionResourceRegistry:
@@ -289,6 +296,54 @@ index 3896464..5c755ab 100644
 +                raise AgentStartPolicyError("server", "has not bound the required sandbox")
 +            if enforced is not None:
 +                os_env_spec = deepcopy(enforced)
+@@ -2129,8 +2196,0 @@ class SessionResourceRegistry:
+-            moved = self._terminal_registry.transfer(
+-                source_session_id,
+-                target_session_id,
+-                entry.terminal_name,
+-                entry.session_key,
+-            )
+-            if not moved:
+-                return None
+@@ -2137,0 +2198,30 @@ class SessionResourceRegistry:
++                source_policy = self._required_os_envs.get(source_session_id)
++                target_policy = self._required_os_envs.get(target_session_id)
++                managed = (
++                    self._require_sandbox_binding
++                    or source_policy is not None
++                    or target_policy is not None
++                )
++                if managed:
++                    if source_policy is None or source_policy != target_policy:
++                        raise RuntimeError(
++                            "Terminal transfer requires the same approved target sandbox"
++                        )
++                    if target_session_id in self._primary_envs:
++                        raise RuntimeError("Terminal target already owns an execution environment")
++                moved = self._terminal_registry.transfer(
++                    source_session_id,
++                    target_session_id,
++                    entry.terminal_name,
++                    entry.session_key,
++                    expected_environment=source_policy if managed else None,
++                )
++                if not moved:
++                    return None
++                if managed and source_session_id in self._primary_envs:
++                    self._primary_envs[target_session_id] = self._primary_envs.pop(
++                        source_session_id
++                    )
++                    self._primary_env_specs[target_session_id] = self._primary_env_specs.pop(
++                        source_session_id
++                    )
+diff --git a/omnigent/runner/resource_routes.py b/omnigent/runner/resource_routes.py
+index e79975d..a602fd9 100644
+--- a/omnigent/runner/resource_routes.py
++++ b/omnigent/runner/resource_routes.py
+@@ -115,0 +116 @@ def register_resource_routes(
++    _bind_server_start_sandbox: Callable[[str], Awaitable[None]],
+@@ -842,0 +844 @@ def register_resource_routes(
++            await _bind_server_start_sandbox(target_session_id)
 diff --git a/omnigent/runtime/pending_inputs.py b/omnigent/runtime/pending_inputs.py
 index d2a1bc3..9527750 100644
 --- a/omnigent/runtime/pending_inputs.py
@@ -1148,7 +1203,7 @@ index fe64e5c..73bd1ec 100644
 +            if conv is None or conv.labels.get(STARTUP_LABEL) != "pending":
 +                return
 diff --git a/omnigent/terminals/registry.py b/omnigent/terminals/registry.py
-index 978dd70..dc4f642 100644
+index 978dd70..6a0d588 100644
 --- a/omnigent/terminals/registry.py
 +++ b/omnigent/terminals/registry.py
 @@ -43 +43,2 @@ from collections.abc import Callable
@@ -1221,3 +1276,27 @@ index 978dd70..dc4f642 100644
 +                allow_sandbox_override=False,
 +            )
 +            parent_os_env = required
+@@ -514,0 +579,2 @@ class TerminalRegistry:
++        *,
++        expected_environment: OSEnvSpec | None = None,
+@@ -542,0 +609,20 @@ class TerminalRegistry:
++            source_policy = self._required_environments.get(source_conversation_id)
++            target_policy = self._required_environments.get(target_conversation_id)
++            if (
++                self.require_environment_binding
++                or source_policy is not None
++                or target_policy is not None
++                or expected_environment is not None
++            ):
++                if (
++                    source_policy is None
++                    or source_policy != target_policy
++                    or (expected_environment is not None and source_policy != expected_environment)
++                ):
++                    raise RuntimeError(
++                        "Terminal transfer requires the same approved target sandbox"
++                    )
++                if self._pending_launches.get(
++                    source_conversation_id
++                ) or self._pending_launches.get(target_conversation_id):
++                    raise RuntimeError("Cannot transfer a terminal while a launch is pending")

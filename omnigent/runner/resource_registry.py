@@ -2194,15 +2194,37 @@ class SessionResourceRegistry:
                 continue
             if terminal_resource_id(entry.terminal_name, entry.session_key) != terminal_id:
                 continue
-            moved = self._terminal_registry.transfer(
-                source_session_id,
-                target_session_id,
-                entry.terminal_name,
-                entry.session_key,
-            )
-            if not moved:
-                return None
             with self._lock:
+                source_policy = self._required_os_envs.get(source_session_id)
+                target_policy = self._required_os_envs.get(target_session_id)
+                managed = (
+                    self._require_sandbox_binding
+                    or source_policy is not None
+                    or target_policy is not None
+                )
+                if managed:
+                    if source_policy is None or source_policy != target_policy:
+                        raise RuntimeError(
+                            "Terminal transfer requires the same approved target sandbox"
+                        )
+                    if target_session_id in self._primary_envs:
+                        raise RuntimeError("Terminal target already owns an execution environment")
+                moved = self._terminal_registry.transfer(
+                    source_session_id,
+                    target_session_id,
+                    entry.terminal_name,
+                    entry.session_key,
+                    expected_environment=source_policy if managed else None,
+                )
+                if not moved:
+                    return None
+                if managed and source_session_id in self._primary_envs:
+                    self._primary_envs[target_session_id] = self._primary_envs.pop(
+                        source_session_id
+                    )
+                    self._primary_env_specs[target_session_id] = self._primary_env_specs.pop(
+                        source_session_id
+                    )
                 role = self._terminal_roles.pop((source_session_id, terminal_id), None)
                 if role is not None:
                     self._terminal_roles[(target_session_id, terminal_id)] = role

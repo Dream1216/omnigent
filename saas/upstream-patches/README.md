@@ -8,7 +8,7 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (218 files, 6,244 net lines, nine patches, .85).
+`saas/upstream-baseline.json` (220 files, 6,528 net lines, nine patches, .85).
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
@@ -427,3 +427,10 @@ after its Host tunnel from a previously connected Runner that has become
 unresponsive. The latter remains eligible for replacement and superseded-process
 reaping after the ordinary connect grace; live startup and Host reconnect cases
 retain their bounded preservation behavior. Patch 0010 carries this distinction.
+
+The managed startup binding also covers native `/clear`: the existing transfer
+route obtains the target session policy before an atomic same-scope move.
+Pending launches, incompatible policies and target execution-state overwrite
+refuse without losing the source pane or workspace. Source owns this bounded
+patch until upstream provides equivalent mandatory startup and transfer binding;
+coverage remains in the existing Runner gate/resource and TerminalRegistry suites.

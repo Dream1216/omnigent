@@ -134,6 +134,93 @@ async def test_required_server_sandbox_failure_never_spawns(body: dict[str, Any]
 # ── Stubs ────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_policy", ["same", "denied", "different"])
+async def test_managed_clear_authorizes_target_before_moving_live_terminal(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, target_policy: str
+) -> None:
+    """The real transfer route preserves a pane only inside its approved scope."""
+    from unittest.mock import AsyncMock
+
+    from omnigent.runner.policy import AGENT_START_TOOL
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+    from omnigent.terminals import TerminalRegistry
+    from tests.runner.helpers import make_test_terminal_instance
+
+    spec = _spec_with_enforce_sandbox(sandbox_type="none")
+    calls = []
+
+    class AdminServer(NullServerClient):
+        async def post(self, url: str, **kwargs: Any) -> Any:
+            if not url.endswith("/policies/evaluate"):
+                return await super().post(url, **kwargs)
+            calls.append(url)
+            is_target = "/conv_new/" in url
+            sandbox = {
+                "type": "linux_bwrap",
+                "allow_network": False,
+                "read_paths": [str(tmp_path)],
+                "write_paths": [str(tmp_path)],
+                "env_passthrough": ["DIFFERENT"]
+                if is_target and target_policy == "different"
+                else [],
+            }
+            return httpx.Response(
+                403 if is_target and target_policy == "denied" else 200,
+                request=httpx.Request("POST", "https://server" + url),
+                json={
+                    "result": "POLICY_ACTION_ALLOW",
+                    "agent_start": True,
+                    "data": {"name": AGENT_START_TOOL, "arguments": {"sandbox": sandbox}},
+                },
+            )
+
+    async def resolver(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        return spec
+
+    pm = _FakeProcessManager(_ScriptedHarnessClient())
+    terminals = TerminalRegistry()
+    registry = SessionResourceRegistry(
+        terminal_registry=terminals, runner_workspace=tmp_path, per_session_workspace=False
+    )
+    app = create_runner_app(
+        process_manager=pm,
+        spec_resolver=resolver,
+        server_client=AdminServer(),
+        resource_registry=registry,
+        terminal_registry=terminals,
+        require_start_sandbox=True,
+    )
+    async with _runner_client(app) as client:
+        response = await client.post(
+            "/v1/sessions", json={"session_id": "conv_old", "agent_id": "ag"}
+        )
+        assert response.status_code == 201, response.text
+        instance = make_test_terminal_instance("claude", "main", tmp_path)
+        monkeypatch.setattr(instance, "set_conversation_link", AsyncMock())
+        terminals._by_conversation["conv_old"] = {("claude", "main"): instance}
+        response = await client.post(
+            "/v1/sessions/conv_old/resources/terminals/terminal_claude_main/transfer",
+            json={"target_session_id": "conv_new"},
+        )
+        assert calls[-1] == "/v1/sessions/conv_new/policies/evaluate"
+        if target_policy != "same":
+            assert response.status_code == 409, response.text
+            assert terminals.get("conv_old", "claude", "main") is instance
+            assert terminals.get("conv_new", "claude", "main") is None
+            assert len(pm.get_client_calls) == 1
+        else:
+            assert response.status_code == 200, response.text
+            assert terminals.get("conv_new", "claude", "main") is instance
+            response = await client.post(
+                "/v1/sessions", json={"session_id": "conv_new", "agent_id": "ag"}
+            )
+            assert response.status_code == 201, response.text
+            assert registry.required_os_env("conv_new") == registry.required_os_env("conv_old")
+            assert terminals.get("conv_new", "claude", "main") is instance
+        assert instance.running
+
+
 class _ScriptedHarnessClient:
     """Minimal harness client stub — never called in these tests.
 

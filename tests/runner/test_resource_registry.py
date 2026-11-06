@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, call
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
@@ -1924,6 +1924,59 @@ def test_required_sandbox_replaces_only_early_read_view_and_cannot_be_mutated(
     reg._primary_env_specs["other"] = OSEnvSpec(sandbox=OSEnvSandboxSpec(type="none"))
     with pytest.raises(AgentStartPolicyError, match="live execution"):
         reg.bind_required_os_env("other", required)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["same", "unbound", "different", "occupied"])
+async def test_managed_transfer_preserves_environment_and_requires_target_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    """A valid clear preserves data; conflicting target ownership changes nothing."""
+    terminals = TerminalRegistry()
+    registry = SessionResourceRegistry(
+        terminal_registry=terminals, runner_workspace=tmp_path, per_session_workspace=False
+    )
+    registry.require_sandbox_binding()
+    required = OSEnvSpec(
+        fork=False,
+        sandbox=OSEnvSandboxSpec(
+            type="linux_bwrap",
+            allow_network=False,
+            read_paths=[str(tmp_path)],
+            write_paths=[str(tmp_path)],
+        ),
+    )
+    registry.bind_required_os_env("source", required)
+    if target != "unbound":
+        from copy import deepcopy
+
+        target_policy = deepcopy(required)
+        if target == "different":
+            target_policy.sandbox.env_passthrough = ["DIFFERENT"]
+        registry.bind_required_os_env("target", target_policy)
+    instance = make_test_terminal_instance("claude", "main", tmp_path)
+    monkeypatch.setattr(instance, "set_conversation_link", AsyncMock())
+    terminals._by_conversation["source"] = {("claude", "main"): instance}
+    primary = _FakeOSEnvironment(cwd=tmp_path, spec=required)
+    registry._primary_envs["source"] = primary
+    registry._primary_env_specs["source"] = registry.required_os_env("source")
+    if target == "occupied":
+        registry._primary_envs["target"] = _FakeOSEnvironment(cwd=tmp_path, spec=required)
+        registry._primary_env_specs["target"] = registry.required_os_env("target")
+    if target != "same":
+        with pytest.raises(RuntimeError, match=r"same approved target|already owns"):
+            await registry.transfer_terminal("source", "target", "terminal_claude_main")
+        assert terminals.get("source", "claude", "main") is instance
+        assert terminals.get("target", "claude", "main") is None
+        assert registry._primary_envs["source"] is primary
+    else:
+        assert await registry.transfer_terminal("source", "target", "terminal_claude_main")
+        assert terminals.get("target", "claude", "main") is instance
+        assert registry._primary_envs["target"] is primary
+        assert not registry.has_primary_env("source")
+        registry.bind_required_os_env("target", required)
+        assert registry.required_os_env("target").sandbox.type == "linux_bwrap"
+    assert instance.running and not primary._closed
 
 
 def test_resolve_environment_default_pins_none_sandbox_when_no_agent_spec(

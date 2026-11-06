@@ -1751,6 +1751,27 @@ def create_runner_app(
         resource_registry.require_sandbox_binding()
     app.state.session_resource_registry = resource_registry
 
+    async def _bind_server_start_sandbox(
+        session_id: str, agent_name: str = "", harness: str = ""
+    ) -> None:
+        """Authorize the target session before either launch or pane transfer."""
+        if not require_start_sandbox:
+            return
+        from omnigent.runner.policy import (
+            AgentStartPolicyError,
+            admin_start_os_env,
+            fetch_admin_start_sandbox,
+        )
+
+        enforced = admin_start_os_env(
+            await fetch_admin_start_sandbox(
+                server_client, session_id, agent_name=agent_name, harness=harness
+            )
+        )
+        if enforced is None:
+            raise AgentStartPolicyError("server", "did not supply a required sandbox")
+        resource_registry.bind_required_os_env(session_id, enforced)
+
     def _publish_terminal_activity(session_id: str, terminal_id: str) -> None:
         if process_manager is not None:
             process_manager.note_activity(session_id)
@@ -2672,28 +2693,14 @@ def create_runner_app(
             )
             harness_name = canonicalize_harness(raw_harness) or raw_harness
 
-            from omnigent.runner.policy import (
-                AgentStartPolicyError,
-                admin_start_os_env,
-                fetch_admin_start_sandbox,
-            )
+            from omnigent.runner.policy import AgentStartPolicyError
 
             try:
                 _start_data = await _evaluate_agent_start_gate(spec, harness_name)
                 if _start_data is not None:
                     _apply_sandbox_override_from_start_data(spec, _start_data)
                 if require_start_sandbox:
-                    enforced = admin_start_os_env(
-                        await fetch_admin_start_sandbox(
-                            server_client,
-                            session_id,
-                            agent_name=spec.name or "",
-                            harness=harness_name,
-                        )
-                    )
-                    if enforced is None:
-                        raise AgentStartPolicyError("server", "did not supply a required sandbox")
-                    resource_registry.bind_required_os_env(session_id, enforced)
+                    await _bind_server_start_sandbox(session_id, spec.name or "", harness_name)
                     spec.os_env = resource_registry.required_os_env(session_id)
             except AgentStartPolicyError as exc:
                 # The gate raises without logging; this is the single record of
@@ -7562,6 +7569,7 @@ def create_runner_app(
 
     _resource_routes = register_resource_routes(
         app,
+        _bind_server_start_sandbox=_bind_server_start_sandbox,
         _antigravity_terminal_ensure_locks=_antigravity_terminal_ensure_locks,
         _claude_terminal_ensure_locks=_claude_terminal_ensure_locks,
         _codex_terminal_ensure_locks=_codex_terminal_ensure_locks,
