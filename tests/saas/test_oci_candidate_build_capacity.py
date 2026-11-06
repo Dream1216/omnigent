@@ -64,7 +64,7 @@ def test_compatibility_typecheck_is_early_and_not_duplicated_on_pr_branches() ->
     source = (_ROOT / ".github/workflows/saas-upstream-compat.yml").read_text()
     workflow = yaml.safe_load(source)
     events = yaml.load(source, Loader=yaml.BaseLoader)["on"]
-    names = [step.get("name") for step in workflow["jobs"]["compatibility-gate"]["steps"]]
+    names = [step.get("name") for step in workflow["jobs"]["compatibility-tests"]["steps"]]
 
     assert events["push"]["branches"] == ["main"]
     assert names.index("Type-check SaaS compatibility code") < names.index(
