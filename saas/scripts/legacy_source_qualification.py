@@ -1012,7 +1012,19 @@ def _qualify_source_ci(
     )
     evidence.stage = "final-main-domain-native-eligibility"
     require(
-        collector(profile, identity, policy, destination / "main-domain-after")
+        collector(
+            profile,
+            identity,
+            policy,
+            destination / "main-domain-after",
+            **(
+                {"previous": domain_eligibility}
+                if not bootstrap
+                and isinstance(domain_eligibility, DomainEligibility)
+                and domain_eligibility._closing_capture is not None
+                else {}
+            ),
+        )
         == domain_eligibility,
         "native main-domain contexts changed during source qualification",
     )

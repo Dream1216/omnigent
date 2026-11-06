@@ -505,6 +505,7 @@ exclude = ["saas.login_web*"]
   "postgresql_runner_agent_cluster.sql",
   "postgresql_roles.psql",
   "postgresql_roles.sql",
+  "postgresql_preview_authority.sql",
 ]
 "saas.control_plane.migrations" = ["script.py.mako"]
 "saas" = ["upstream-baseline.json", "openapi-v1.json"]

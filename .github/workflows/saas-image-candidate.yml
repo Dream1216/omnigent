@@ -312,17 +312,37 @@ jobs:
           echo "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
           echo "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
       - name: Build server candidate attempt 1
+        id: first_server_build
         uses: ./saas/actions/build-oci-candidate
         with:
           artifact: server
           target: runtime
           attempt: "1"
       - name: Preflight scan exact server candidate on both architectures
+        id: server_preflight
         run: >-
           python -m saas.scripts.scan_oci_candidates
           --scope server-preflight
           --image server=${{ runner.temp }}/server-1.tar
           --output artifacts/grype-preflight
+      - name: Retain failed Server preflight OCI for diagnosis
+        if: >-
+          ${{ failure() && !cancelled() && steps.first_server_build.outcome == 'success' &&
+              steps.server_preflight.outcome == 'failure' &&
+              ((github.event_name == 'pull_request' &&
+                github.event.pull_request.head.repo.full_name == github.repository) ||
+               ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+                github.ref == 'refs/heads/main')) }}
+        timeout-minutes: 10
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: failed-server-preflight-oci-${{ env.CANDIDATE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/server-1.tar
+            artifacts/grype-preflight/*.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
       - name: Build server candidate attempt 2
         uses: ./saas/actions/build-oci-candidate
         with:

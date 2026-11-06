@@ -37,10 +37,12 @@ from saas.control_plane.preview_tunnel_registration import (
 from saas.preview_relay_transport import PreviewRelayTransportError
 from saas.preview_tunnel import LocalRunnerTunnelBindings, RunnerTunnelBinding
 from saas.production.preview_relay import (
+    ProductionPreviewRelayError,
     ProductionPreviewRelayOwner,
     ProductionPreviewRelayOwnerConfig,
     build_production_preview_relay_owner,
     load_production_preview_relay_owner_config,
+    read_preview_gateway_registration_token,
 )
 
 _HOST = re.compile(
@@ -438,14 +440,11 @@ def load_production_preview_owner_config(
 
 def _gateway_token(path: Path) -> str:
     try:
-        token = path.read_text(encoding="ascii").rstrip("\r\n")
-    except (OSError, UnicodeError) as error:
+        return read_preview_gateway_registration_token(path)
+    except (ProductionPreviewRelayError, ValueError) as error:
         raise ProductionPreviewOwnerError(
             "Preview Owner gateway credential is unavailable"
         ) from error
-    if not 32 <= len(token) <= 512 or token != token.strip() or "\x00" in token:
-        raise ProductionPreviewOwnerError("Preview Owner gateway credential is unavailable")
-    return token
 
 
 def _assert_tunnel_server_certificate(config: ProductionPreviewOwnerConfig) -> None:
@@ -576,11 +575,14 @@ def build_production_preview_owner(
     *, config: ProductionPreviewOwnerConfig | None = None
 ) -> ProductionPreviewOwner:
     owner_config = config or load_production_preview_owner_config()
-    relay = build_production_preview_relay_owner(config=owner_config.relay)
+    gateway_token = _gateway_token(owner_config.gateway_registration_token_path)
+    relay = build_production_preview_relay_owner(
+        config=owner_config.relay, gateway_registration_token=gateway_token
+    )
     authority = PreviewTunnelOwnerAuthority(
         relay.session_factory,
         gateway_instance_id=owner_config.relay.gateway_instance_id,
-        gateway_registration_token=_gateway_token(owner_config.gateway_registration_token_path),
+        gateway_registration_token=gateway_token,
     )
     return ProductionPreviewOwner(owner_config, relay, authority)
 

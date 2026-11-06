@@ -92,11 +92,28 @@ def add_run(scenario, data, attachment, *, source=None, event="workflow_run", ot
 @pytest.mark.parametrize("attachment", ["head", "base", "default", "merge"])
 @pytest.mark.parametrize("event", ["pull_request_target", "workflow_run"])
 def test_exact_typed_native_refusal_can_qualify_only_legacy_source(
-    scenario, discovery_case, tmp_path, attachment, event
+    scenario, discovery_case, tmp_path, attachment, event, monkeypatch
 ):
     data = discovery_case
     current_refusal(scenario, data, attachment, event)
+    full_discoveries = []
+    original_discovery = domain.discover_main_domain
+
+    def counted_discovery(*args, **kwargs):
+        full_discoveries.append(args[3])
+        return original_discovery(*args, **kwargs)
+
+    monkeypatch.setattr(domain, "discover_main_domain", counted_discovery)
     result = invoke(scenario, tmp_path)
+    assert len(full_discoveries) == 3
+    checkpoint = (
+        tmp_path / "qualified/main-domain-after/discovery-before/closing-discovery-reuse.json"
+    )
+    reuse = json.loads(checkpoint.read_text())
+    assert reuse["full_proof_recollection"] is False
+    assert reuse["final_full_discovery_required"] is True
+    assert reuse["fresh_native_identity_sha256"]
+    assert not checkpoint.with_name("domain-discovery.json").exists()
     assert result["status"] == "pass" and result["source_ci_pass"] is True
     assert result["domain_qualification_kind"] == "legacy_authenticated_domain_eligibility/v2"
     assert result["complete_domain_discovery"] is True and result["domain_discovery_sha256"]
@@ -255,6 +272,103 @@ def test_authenticated_history_keeps_original_failure_without_becoming_current_s
     )
     assert record["original_run_conclusion"] == run["conclusion"]
     assert record["technical_gate_waiver"] is False and check["conclusion"] == "failure"
+
+
+@pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "artifact",
+        "policy",
+        "profile",
+        "identity",
+        "report",
+        "proof",
+        "domain_identity",
+        "related_status",
+        "consumed",
+        "foreign_invocation",
+        "final_proof",
+        "native403",
+    ],
+)
+def test_closing_reuse_rejects_changed_context_and_still_recollects_final_proof(
+    scenario, discovery_case, tmp_path, monkeypatch, fault
+):
+    from saas.scripts import legacy_native_evidence
+
+    data = discovery_case
+    current_refusal(scenario, data, "head", "pull_request_target")
+    profile, identity, policy = (scenario[key] for key in ("profile", "identity", "policy"))
+    with legacy_native_evidence.preserve_native_evidence(
+        tmp_path / "native", evidence_root=tmp_path
+    ):
+        previous = domain.collect_domain_eligibility(profile, identity, policy, tmp_path / "first")
+        assert previous._closing_capture is not None
+        if fault == "foreign_invocation":
+            pass
+        else:
+            if fault == "artifact":
+                previous = json.loads((tmp_path / "first/domain-eligibility.json").read_text())
+            elif fault in {"policy", "profile", "identity"}:
+                {"policy": policy, "profile": profile, "identity": identity}[fault][
+                    "reuse_nonce"
+                ] = "changed"
+            elif fault == "report":
+                previous._closing_capture.report.write_text("{}")
+            elif fault == "proof":
+                previous._closing_capture.result["records"][0]["classification"] = "old-source"
+            elif fault == "domain_identity":
+                data["run"]["head_sha"] = "b" * 40
+            elif fault == "related_status":
+                data["run"]["conclusion"] = "success"
+            elif fault == "consumed":
+                assert (
+                    domain.collect_domain_eligibility(
+                        profile, identity, policy, tmp_path / "second", previous=previous
+                    )
+                    == previous
+                )
+            elif fault == "final_proof":
+                original_discovery = domain.discover_main_domain
+
+                def changed_final(*args, **kwargs):
+                    data["log"] += "unframed extra proof bytes\n"
+                    return original_discovery(*args, **kwargs)
+
+                monkeypatch.setattr(domain, "discover_main_domain", changed_final)
+            elif fault == "native403":
+                native_calls = []
+
+                def refused_native(endpoint):
+                    native_calls.append(endpoint)
+                    raise legacy_native_evidence.NativeEvidenceFailure("original native HTTP403")
+
+                monkeypatch.setattr(discovery, "api", refused_native)
+            destination = tmp_path / ("third" if fault == "consumed" else "second")
+            expected = (
+                legacy_native_evidence.NativeEvidenceFailure
+                if fault == "native403"
+                else ValueError
+            )
+            with pytest.raises(expected):
+                domain.collect_domain_eligibility(
+                    profile, identity, policy, destination, previous=previous
+                )
+            assert not (destination / "domain-eligibility.json").exists()
+            if fault == "native403":
+                assert len(native_calls) == 1
+    if fault == "foreign_invocation":
+        with (
+            legacy_native_evidence.preserve_native_evidence(
+                tmp_path / "other-native", evidence_root=tmp_path
+            ),
+            pytest.raises(ValueError, match="same native invocation"),
+        ):
+            domain.collect_domain_eligibility(
+                profile, identity, policy, tmp_path / "foreign", previous=previous
+            )
+        assert not (tmp_path / "foreign/domain-eligibility.json").exists()
 
 
 def test_source_qualifier_rejects_artifact_boolean_instead_of_typed_native_proof(

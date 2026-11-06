@@ -32,7 +32,14 @@ def _set_local(connection: sa.Connection, setting: str, value: str) -> None:
     )
 
 
-def _seed_ready_preview(connection: sa.Connection) -> dict[str, Any]:
+def _seed_ready_preview(
+    connection: sa.Connection,
+    *,
+    gateway_id: str = "preview-owner-a",
+    gateway_token_hash: str = "7" * 64,
+    gateway_host: str = "preview-owner.omnigent.svc.cluster.local",
+    gateway_server_name: str = "preview-owner.omnigent.svc.cluster.local",
+) -> dict[str, Any]:
     now = datetime.now(UTC)
     identifiers: dict[str, Any] = {
         "execution_id": uuid4(),
@@ -50,8 +57,10 @@ def _seed_ready_preview(connection: sa.Connection) -> dict[str, Any]:
         "placement_id": uuid4(),
         "pool_id": uuid4(),
         "tunnel_placement_id": uuid4(),
-        "gateway_id": "preview-owner-a",
-        "gateway_token": "7" * 64,
+        "gateway_id": gateway_id,
+        "gateway_token": gateway_token_hash,
+        "gateway_host": gateway_host,
+        "gateway_server_name": gateway_server_name,
         "exchange_hash": "1" * 64,
         "now": now,
         "expires_at": now + timedelta(hours=1),
@@ -78,8 +87,8 @@ def _seed_ready_preview(connection: sa.Connection) -> dict[str, Any]:
             "source_revision, adapter_contract_version, registration_token_hash, "
             "status, registered_at, activated_at, last_heartbeat_at, lease_expires_at, "
             "created_at, updated_at) VALUES ("
-            ":gateway_id, 'preview-owner.omnigent.svc.cluster.local', 9443, "
-            "'preview-owner.omnigent.svc.cluster.local', 'zone-a', :revision, 'v1', "
+            ":gateway_id, :gateway_host, 9443, "
+            ":gateway_server_name, 'zone-a', :revision, 'v1', "
             ":gateway_token, 'active', :now, :now, :now, :expires_at, :now, :now)"
         ),
         {**identifiers, "revision": "a" * 64},

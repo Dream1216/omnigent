@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, cast
 
 from saas.scripts import legacy_domain_native as native
 from saas.scripts import legacy_domain_non_execution as nonexecution
+from saas.scripts import legacy_native_evidence as native_evidence
 from saas.scripts.legacy_domain_discovery import discover_main_domain
 from saas.scripts.legacy_native_evidence import api
 from saas.scripts.legacy_pr_candidate import VALIDATION_REFS
@@ -370,6 +373,100 @@ class DomainEligibility:
         | nonexecution.RefusalCancellationObservation,
         ...,
     ] = ()
+    _closing_capture: _ClosingDiscoveryCapture | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
+
+
+@dataclass
+class _ClosingDiscoveryCapture:
+    recorder: native_evidence.NativeEvidence
+    context_sha256: str
+    result: nonexecution.DomainDiscovery
+    report: Path
+    report_sha256: str
+    consumed: bool = False
+
+
+def _discovery_context(profile, identity, policy) -> str:
+    return native_digest({"profile": profile, "identity": identity, "policy": policy})
+
+
+def _reuse_closing_discovery(profile, identity, policy, previous, destination):
+    from saas.scripts import legacy_domain_discovery as discovery
+
+    capture = previous._closing_capture if isinstance(previous, DomainEligibility) else None
+    recorder = native_evidence._ACTIVE.get()
+    require(
+        isinstance(capture, _ClosingDiscoveryCapture)
+        and recorder is not None
+        and capture.recorder is recorder
+        and capture.context_sha256 == _discovery_context(profile, identity, policy),
+        "closing discovery reuse requires the same native invocation and exact context",
+    )
+    assert capture is not None and recorder is not None
+    with recorder._lock:
+        recorder.check()
+        require(not capture.consumed, "closing discovery capture was already consumed")
+        capture.consumed = True
+    report = capture.report.read_bytes()
+    require(
+        capture.report.resolve().is_relative_to(recorder.evidence_root.resolve())
+        and hashlib.sha256(report).hexdigest() == capture.report_sha256
+        and native_digest(json.loads(report)) == native_digest(capture.result)
+        and _discovery_binding(capture.result) == previous.discovery_sha256,
+        "closing discovery native proof or original report changed",
+    )
+    pull = discovery.api(f"{discovery._ROOT}/pulls/{identity['validation_pr']}")
+    commit = discovery.api(f"{discovery._ROOT}/git/commits/{pull.get('merge_commit_sha')}")
+    discovery.verify_pr_tree(
+        pull,
+        commit,
+        profile,
+        number=identity["validation_pr"],
+        base_ref=identity["validation_base_ref"],
+    )
+    require(
+        pull.get("created_at") == capture.result["PR_created_at"],
+        "closing discovery native PR creation identity changed",
+    )
+    rows = discovery.discover_runs(discovery._instant(pull["created_at"]))
+    identity_sha256 = native_digest(discovery._discovery_projection(rows))
+    by_id = {row["id"]: row for row in rows}
+    require(
+        identity_sha256 == capture.result["native_identity_sha256"]
+        and all(
+            record["classification"] in {"other-pr", "old-source"}
+            or (
+                by_id[record["run_id"]].get("status") == record["original_run_status"]
+                and by_id[record["run_id"]].get("conclusion") == record["original_run_conclusion"]
+            )
+            for record in capture.result["records"]
+        ),
+        "native domain identities or related run states changed before closing proof reuse",
+    )
+    (destination / "closing-discovery-reuse.json").write_text(
+        json.dumps(
+            {
+                "kind": "legacy_same_invocation_closing_discovery_reuse/v1",
+                "scope": (
+                    "fresh native PR/domain identities and related run states; "
+                    "prior full closing proof"
+                ),
+                "source_report": str(capture.report.relative_to(recorder.evidence_root)),
+                "source_report_sha256": capture.report_sha256,
+                "context_sha256": capture.context_sha256,
+                "fresh_native_identity_sha256": identity_sha256,
+                "reused_discovery_binding_sha256": previous.discovery_sha256,
+                "full_proof_recollection": False,
+                "final_full_discovery_required": True,
+                "production_admission": False,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return copy.deepcopy(capture.result)
 
 
 def _discovery_binding(result: dict[str, Any]) -> str:
@@ -549,6 +646,8 @@ def collect_domain_eligibility(
     identity: dict[str, Any],
     policy: dict[str, Any],
     destination: Path,
+    *,
+    previous: DomainEligibility | None = None,
 ) -> DomainEligibility:
     """Join complete authenticated discovery with every exact original refusal."""
     validate_domain_rules(policy, identity)
@@ -586,7 +685,9 @@ def collect_domain_eligibility(
     first_path = destination / "discovery-before"
     first_path.mkdir(mode=0o700)
     before = (
-        discover_main_domain(
+        _reuse_closing_discovery(profile, identity, policy, previous, first_path)
+        if previous is not None
+        else discover_main_domain(
             profile,
             identity,
             rules,
@@ -697,7 +798,22 @@ def collect_domain_eligibility(
         ),
         "native audit lacks an independent same-PR/base/tree/product main guard refusal",
     )
-    result = DomainEligibility(*coordinates, tuple(results), binding, observations)
+    recorder = native_evidence._ACTIVE.get()
+    report = final_path / "domain-discovery.json"
+    capture = (
+        _ClosingDiscoveryCapture(
+            recorder,
+            _discovery_context(profile, identity, policy),
+            copy.deepcopy(after),
+            report,
+            hashlib.sha256(report.read_bytes()).hexdigest(),
+        )
+        if recorder is not None
+        and isinstance(after, nonexecution.DomainDiscovery)
+        and report.is_file()
+        else None
+    )
+    result = DomainEligibility(*coordinates, tuple(results), binding, observations, capture)
     (destination / "domain-eligibility.json").write_text(
         json.dumps(
             {

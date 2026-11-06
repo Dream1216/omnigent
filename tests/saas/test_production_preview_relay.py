@@ -72,7 +72,9 @@ def _free_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def _certificate_files(root: Path, gateway_instance_id: str) -> dict[str, Path]:
+def _certificate_files(
+    root: Path, gateway_instance_id: str, *, include_loopback_ip: bool = True
+) -> dict[str, Path]:
     now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Preview Production CA")])
@@ -115,7 +117,11 @@ def _certificate_files(root: Path, gateway_instance_id: str) -> dict[str, Path]:
             san_names.extend(
                 [
                     x509.DNSName("localhost"),
-                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                    *(
+                        [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+                        if include_loopback_ip
+                        else []
+                    ),
                 ]
             )
         certificate = (
@@ -178,9 +184,13 @@ def _certificate_files(root: Path, gateway_instance_id: str) -> dict[str, Path]:
     }
 
 
-def _owner_config(tmp_path: Path) -> ProductionPreviewRelayOwnerConfig:
+def _owner_config(
+    tmp_path: Path, *, include_loopback_ip: bool = True
+) -> ProductionPreviewRelayOwnerConfig:
     gateway_instance_id = "gateway-owner-a"
-    certificates = _certificate_files(tmp_path, gateway_instance_id)
+    certificates = _certificate_files(
+        tmp_path, gateway_instance_id, include_loopback_ip=include_loopback_ip
+    )
     return ProductionPreviewRelayOwnerConfig(
         source_revision="a" * 40,
         product_revision="a" * 40,
@@ -372,3 +382,16 @@ def test_production_relay_owner_rejects_other_service_database_authority(
 
     with pytest.raises(ProductionPreviewRelayError, match="must not receive"):
         load_production_preview_relay_owner_config(source)
+
+
+@pytest.mark.parametrize(
+    "value", ["short", " " + "t" * 48, "t" * 48 + " ", "t" * 48 + "\x00", "é" * 48]
+)
+def test_gateway_registration_file_rejects_invalid_or_unreadable_credentials(tmp_path, value):
+    path = tmp_path / "registration-token"
+    path.write_text(value)
+    with pytest.raises(ProductionPreviewRelayError, match="credential is unavailable"):
+        preview_relay.read_preview_gateway_registration_token(path)
+    path.unlink()
+    with pytest.raises(ProductionPreviewRelayError, match="credential is unavailable"):
+        preview_relay.read_preview_gateway_registration_token(path)

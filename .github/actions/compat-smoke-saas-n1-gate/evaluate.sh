@@ -16,7 +16,7 @@ POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
 POSTGRESQL_N1_TRUSTED_INPUTS=(
-  "pyproject.toml|2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9,24fe2762769bbd06e8da179caf64140a5869e3c33ee875c83bb3a51f266ba322"
+  "pyproject.toml|2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9,3df60bf721d1df8558df6e569ff26a34d628c6590df7ac306a07f890cd9b1411"
   "uv.lock|8c4aef4e0da8a83415effabc4f9b4e946756145729a88ee43c466f994a35730f,a307dcaca4909b33b5fcce4846d03b2beebbda62a42d1c7148f708042bc70866"
   "tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   "tests/_model_pools.py|d25fda757b12bffbaa6a42e468f625f715cc3ee37df7f9b5af4b8d70af781362"
@@ -46,6 +46,13 @@ POSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS=(
   "tests/saas/test_image_supply_chain.py|109ac4d727d73b271613089acbb693944047f9705f10c33c4e676075fe52d4f7"
   "saas/scripts/compare_oci_rebuilds.py|fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732"
 )
+
+# Retain the previous 0.21 input beside the newly reviewed resource-only packaging hash.
+POSTGRESQL_N1_PREVIEW_PREVIOUS_PYPROJECT_SHA256="24fe2762769bbd06e8da179caf64140a5869e3c33ee875c83bb3a51f266ba322"
+
+is_reviewed_preview_authority_input() {
+  [[ "$1" == "pyproject.toml" && "$2" == "$POSTGRESQL_N1_PREVIEW_PREVIOUS_PYPROJECT_SHA256" ]]
+}
 
 POSTGRESQL_N1_PATHS=(
   ".github/actions/compat-smoke-saas-n1-gate/**"
@@ -204,7 +211,8 @@ for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}"; do
     "repos/$REPO/contents/$trusted_path?ref=$SHA" \
     | shasum -a 256 | awk '{print $1}')
   if [[ ",$trusted_sha256s," != *",$observed_sha256,"* ]] && \
-    ! is_reviewed_aliyun_input "$trusted_path" "$observed_sha256"; then
+    ! is_reviewed_aliyun_input "$trusted_path" "$observed_sha256" && \
+    ! is_reviewed_preview_authority_input "$trusted_path" "$observed_sha256"; then
     fail "PostgreSQL N-1 trusted input drift: $trusted_path"
   fi
 done

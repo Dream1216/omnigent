@@ -114,7 +114,7 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 194,
+    "max_direct_upstream_files": 195,
     "max_upstream_net_added_loc": 4576,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -872,6 +872,30 @@
       "max_upstream_net_added_loc": 4576,
       "max_active_patches": 9,
       "min_isolated_custom_code_ratio": 0.85
+    },
+    "native_preview_domain_retention_governance_20261106": {
+      "recorded_at": "2026-11-06",
+      "parent_source": "be55dfc960cce7f2288609a4287ab292e32525d9",
+      "accepted_Main": "3d3829f23cb8004234d51d658046280cbdac970e",
+      "previous_max_direct_upstream_files": 194,
+      "max_direct_upstream_files": 195,
+      "unchanged_max_upstream_net_added_loc": 4576,
+      "new_official_path": ".github/workflows/integration.yml",
+      "approved_reuse": "a3c86eb92f89a924c34d2b122b8e5b04b97347fa: bounded signed Ubuntu archive-recovery callers and failed diagnostic OCI retention",
+      "main_caller_adaptation": "Current Main has no Server SDK verification step or runtime JSON; require the existing first Server build success and original server-preflight failure, retain original TAR/raw reports without inventing a new SDK gate. Existing qualified archive/seal/publish controls unchanged.",
+      "N1_trusted_input_registration": {
+        "path": "pyproject.toml",
+        "sha256": "3df60bf721d1df8558df6e569ff26a34d628c6590df7ac306a07f890cd9b1411",
+        "reviewed_source": "be55dfc960cce7f2288609a4287ab292e32525d9",
+        "review_receipt_sha256": "90bbb43c019fd3ad8a54571e16799314fb6a7f85773ce14cdeb70baa157c9aaa",
+        "delta": "one packaged SQL resource; dependencies, lockfile, pytest configuration and all original assertions unchanged"
+      },
+      "authorization_source": {
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "reason": "Exact approved consumer/governance integration; retain nine patches, .85 isolation and 4576 LOC ceiling. Normal tests, native provenance and all release/security/data gates remain."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -609,86 +611,6 @@ def _startup_config(
     return config, {service: sa.create_engine(url) for service, url in urls.items()}
 
 
-def _preview_catalog(plan: migration.ProductionPostgreSqlPlan) -> tuple[tuple[int, str, str], str]:
-    engine = sa.create_engine(plan.official_owner.url)
-    try:
-        with engine.connect() as connection:
-            major = (
-                int(connection.exec_driver_sql("SHOW server_version_num").scalar_one()) // 10000
-            )
-            inventory = migration._public_schema_inventory(
-                connection,
-                official_owner=plan.official_owner.login,
-                saas_owner=plan.saas_owner.login,
-            )
-            key = (major, migration._expected_head("official"), migration._expected_head("saas"))
-            inventory_digest = hashlib.sha256(
-                json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
-            print(f"CLEAN_REPLAY_PREVIEW_INVENTORY_PG{major}={inventory_digest}")
-            inventory_predecessor = migration._project_identity_guard_inventory_predecessor(
-                inventory
-            )
-            assert inventory_predecessor is not None
-            assert (
-                migration._verify_public_schema_inventory_digest(inventory, key=key)
-                == inventory_digest
-            )
-            assert hashlib.sha256(
-                json.dumps(inventory_predecessor, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest() == migration._PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key)
-            catalog = {
-                "official_head": key[1],
-                "saas_head": key[2],
-                "ownership": migration._verify_object_ownership(
-                    connection,
-                    connection,
-                    official_owner=plan.official_owner.login,
-                    saas_owner=plan.saas_owner.login,
-                ),
-                "runtime_acls": migration._verify_runtime_acl(connection),
-                "runtime_rls_tables": [
-                    contract.table_name for contract in migration.load_runtime_rls_contract()
-                ],
-                "official_security": migration._official_security_catalog(
-                    connection, official_owner=plan.official_owner.login
-                ),
-                "control_plane_security": migration._control_plane_security_catalog(
-                    connection, saas_owner=plan.saas_owner.login
-                ),
-            }
-            aliases = migration._source_catalog_role_aliases(
-                principal_operator=plan.principal_operator.login,
-                database_owner=plan.database_owner.login,
-                official_owner=plan.official_owner.login,
-                saas_owner=plan.saas_owner.login,
-                bootstrap_name="postgres",
-                bindings=plan.service_role_graph,
-            )
-            normalized = migration._sort_normalized_source_catalog_rows(
-                migration._normalize_source_catalog(catalog, role_aliases=aliases)
-            )
-            digest = hashlib.sha256(
-                json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
-            print(f"CLEAN_REPLAY_PREVIEW_SECURITY_PG{major}={digest}")
-            predecessor = migration._source_catalog_project_lock_predecessor(normalized)
-            assert predecessor is not None
-            anchor_digest = hashlib.sha256(
-                json.dumps(predecessor, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
-            assert anchor_digest != digest
-            expected_security = (
-                migration._PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256
-                if plan.model_projection_service_role_bindings is not None
-                else migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256
-            )
-            assert anchor_digest == expected_security.get(key)
-            return key, digest
-    finally:
-        engine.dispose()
-
-
 def _verify_preview_deployment_and_startup(
     plan: migration.ProductionPostgreSqlPlan,
     clean_receipt: migration.PostgreSqlMigrationReceipt,
@@ -702,20 +624,28 @@ def _verify_preview_deployment_and_startup(
     )
     try:
         migration.verify_production_postgresql_state(engines=engines, config=config)
-        with admin.begin() as connection:
-            connection.exec_driver_sql(
-                (
-                    Path(__file__).parent / "fixtures" / "production_preview_authority.sql"
-                ).read_text()
+        preview_plan = replace(plan, install_preview_authority=True)
+        preview_receipt = migration.run_production_postgresql_migration(preview_plan)
+        assert "preview_authority:applied" in preview_receipt.phases
+        assert not any("alembic:applied" in phase for phase in preview_receipt.phases)
+        with admin.connect() as connection:
+            key = (
+                int(connection.exec_driver_sql("SHOW server_version_num").scalar_one()) // 10000,
+                preview_receipt.official_head,
+                preview_receipt.saas_head,
             )
-        key, _digest = _preview_catalog(plan)
         with pytest.raises(migration.PostgreSqlMigrationError) as stale:
             migration.verify_production_postgresql_state(engines=engines, config=config)
         assert stale.value.code == "service_catalog_receipt_mismatch"
-        preview_receipt = migration.run_production_postgresql_migration(plan, verify_only=True)
         assert preview_receipt.catalog_sha256 != clean_receipt.catalog_sha256
-        reapplied = migration.run_production_postgresql_migration(plan)
+        reapplied = migration.run_production_postgresql_migration(preview_plan)
         assert reapplied.catalog_sha256 == preview_receipt.catalog_sha256
+        assert (
+            migration.run_production_postgresql_migration(
+                preview_plan, verify_only=True
+            ).catalog_sha256
+            == preview_receipt.catalog_sha256
+        )
         config, refreshed = _startup_config(plan, preview_receipt, tmp_path)
         try:
             migration.verify_production_postgresql_state(engines=refreshed, config=config)
@@ -728,6 +658,38 @@ def _verify_preview_deployment_and_startup(
                 ),
             )
             sessions.close()
+            saas_engine = sa.create_engine(plan.saas_owner.url)
+            try:
+                with saas_engine.begin() as connection:
+                    original_guard = connection.scalar(
+                        sa.text(
+                            "SELECT pg_get_functiondef("
+                            "'public.saas_preview_owner_scope_is_current_v1()'::regprocedure)"
+                        )
+                    )
+                    connection.exec_driver_sql(
+                        "CREATE OR REPLACE FUNCTION "
+                        "public.saas_preview_owner_scope_is_current_v1() "
+                        "RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER "
+                        "SET search_path=pg_catalog,pg_temp AS 'SELECT true'"
+                    )
+                with pytest.raises(migration.PostgreSqlMigrationError) as body_drift:
+                    migration.run_production_postgresql_migration(preview_plan)
+                assert body_drift.value.code == "source_security_catalog_drifted"
+                with saas_engine.begin() as connection:
+                    assert (
+                        connection.scalar(
+                            sa.text(
+                                "SELECT prosrc FROM pg_proc WHERE "
+                                "oid='public.saas_preview_owner_scope_is_current_v1()'::regprocedure"
+                            )
+                        )
+                        == "SELECT true"
+                    )
+                    connection.exec_driver_sql(original_guard)
+            finally:
+                saas_engine.dispose()
+            _verify_native_preview_owner(plan, admin, tmp_path)
             _verify_runner_deployment_and_startup(plan, preview_receipt, config, refreshed, admin)
             with admin.begin() as connection:
                 connection.exec_driver_sql(
@@ -737,6 +699,19 @@ def _verify_preview_deployment_and_startup(
             with pytest.raises(migration.PostgreSqlMigrationError) as widened:
                 migration.verify_production_postgresql_state(engines=refreshed, config=config)
             assert widened.value.code == "source_security_catalog_drifted"
+            with pytest.raises(migration.PostgreSqlMigrationError) as repair:
+                migration.run_production_postgresql_migration(preview_plan)
+            assert repair.value.code == "source_security_catalog_drifted"
+            with admin.connect() as connection:
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT pg_get_expr(polqual,polrelid) FROM pg_policy WHERE "
+                            "polname='rls_preview_gateway_instances_preview_edge'"
+                        )
+                    )
+                    == "true"
+                )
             print(
                 f"PREVIEW_PRODUCTION_STARTUP_PG{key[0]}=pass; "
                 "stale_receipt=rejected; widened_policy=rejected; reapply=unchanged"
@@ -748,6 +723,242 @@ def _verify_preview_deployment_and_startup(
         admin.dispose()
         for engine in engines.values():
             engine.dispose()
+
+
+def _verify_native_preview_owner(
+    plan: migration.ProductionPostgreSqlPlan, admin: sa.Engine, tmp_path: Path
+) -> None:
+    from sqlalchemy.orm import sessionmaker
+
+    from omnigent.runner.identity import token_bound_runner_id
+    from saas.control_plane import PreviewGatewayCertificateAuthority, PreviewGatewayLifecycleError
+    from saas.control_plane.preview_tunnel_registration import (
+        PreviewTunnelOwnerAuthority,
+        PreviewTunnelRegistrationError,
+    )
+    from saas.production.preview_relay import (
+        ProductionPreviewRelayError,
+        ProductionPreviewRelayOwner,
+        build_production_preview_relay_owner,
+    )
+    from tests.saas.test_preview_gateway_authority import _gateway_certificate
+    from tests.saas.test_preview_p0s9_postgresql import _seed_ready_preview
+    from tests.saas.test_production_preview_relay import _owner_config
+
+    relay_config = _owner_config(tmp_path, include_loopback_ip=False)
+    raw_gateway_token = "native-owner-registration-" + "g" * 32
+    raw_registration = "native-runner-registration-" + "r" * 32
+    official_runner = token_bound_runner_id(raw_registration)
+    gateway = relay_config.gateway_instance_id
+    owner_url = plan.saas_owner.url.set(
+        username=plan.service_role_graph.login_for("preview_owner")
+    )
+    relay_config = replace(
+        relay_config,
+        source_revision=plan.product_revision,
+        product_revision=plan.product_revision,
+        expected_preview_login=owner_url.username,
+        preview_database_url=owner_url.render_as_string(hide_password=False),
+    )
+    with admin.begin() as connection:
+        facts = _seed_ready_preview(
+            connection,
+            gateway_id=gateway,
+            gateway_token_hash=hashlib.sha256(raw_gateway_token.encode()).hexdigest(),
+            gateway_host="127.0.0.1",
+            gateway_server_name="localhost",
+        )
+        connection.exec_driver_sql("SET LOCAL session_replication_role=replica")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_runner_certificates (id,runner_id,runner_connection_generation,"
+                "purpose,fingerprint_sha256,spki_sha256,serial_hex,spiffe_id,trust_bundle_version,"
+                "rotation_generation,certificate_not_before,certificate_not_after,status,activated_at,"
+                "created_at,updated_at) VALUES (:id,:runner_id,4,'runner_control',"
+                ":fingerprint,:spki,"
+                "'01',:spiffe,'test-bundle',1,:now,:expires_at,'active',:now,:now,:now)"
+            ),
+            {
+                **facts,
+                "id": uuid4(),
+                "fingerprint": "a" * 64,
+                "spki": "b" * 64,
+                "spiffe": f"spiffe://omnigent/runner/{facts['runner_id']}",
+            },
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_preview_tunnel_registrations (id,runner_id,placement_id,"
+                "connection_generation,gateway_instance_id,certificate_fingerprint_sha256,audience,"
+                "jti_hash,token_hash,official_runner_id,status,expires_at,created_at,updated_at) "
+                "VALUES (:id,:runner_id,:placement_id,4,:gateway_id,:fingerprint,'localhost',:jti,"
+                ":token,:official_runner,'issued',:expires_at,:now,:now)"
+            ),
+            {
+                **facts,
+                "id": uuid4(),
+                "fingerprint": "a" * 64,
+                "jti": "c" * 64,
+                "token": hashlib.sha256(raw_registration.encode()).hexdigest(),
+                "official_runner": official_runner,
+            },
+        )
+        connection.exec_driver_sql("SET LOCAL session_replication_role=origin")
+        connection.execute(
+            sa.text(
+                "INSERT INTO saas_preview_gateway_instances (id,connect_host,connect_port,"
+                "server_name,failure_domain,source_revision,adapter_contract_version,"
+                "registration_token_hash,status,registered_at,activated_at,last_heartbeat_at,"
+                "lease_expires_at,released_at,release_reason,created_at,updated_at) "
+                "SELECT 'gateway-owner-peer',connect_host,"
+                "connect_port,server_name,failure_domain,source_revision,adapter_contract_version,"
+                "repeat('e',64),status,registered_at,activated_at,last_heartbeat_at,"
+                "lease_expires_at,released_at,release_reason,created_at,updated_at "
+                "FROM saas_preview_gateway_instances WHERE id=:gateway"
+            ),
+            {"gateway": gateway},
+        )
+    admin_certificates = PreviewGatewayCertificateAuthority(
+        sessionmaker(admin), accepted_trust_bundle_versions=("test-bundle",)
+    )
+    for purpose, path in (
+        ("preview_relay_client", relay_config.relay_client_certificate_path),
+        ("preview_relay_server", relay_config.relay_server_certificate_path),
+    ):
+        der = x509.load_pem_x509_certificate(path.read_bytes()).public_bytes(
+            serialization.Encoding.DER
+        )
+        admin_certificates.activate_certificate(
+            gateway_instance_id=gateway,
+            purpose=purpose,
+            certificate_der=der,
+            trust_bundle_version="test-bundle",
+        )
+    peer_der = _gateway_certificate(
+        "gateway-owner-peer", purpose="preview_relay_server", now=datetime.now(UTC)
+    )
+    peer_certificate = admin_certificates.activate_certificate(
+        gateway_instance_id="gateway-owner-peer",
+        purpose="preview_relay_server",
+        certificate_der=peer_der,
+        trust_bundle_version="test-bundle",
+    )
+    token_path = tmp_path / "native-owner-registration-token"
+    token_path.write_text(raw_gateway_token + "\n")
+    token_path.chmod(0o400)
+    relay_config = replace(relay_config, gateway_registration_token_path=token_path)
+    from saas.production.preview_edge import ProductionPreviewEdgeError
+
+    edge_url = owner_url.set(username=plan.service_role_graph.login_for("preview_edge"))
+    with pytest.raises(ProductionPreviewEdgeError):
+        build_production_preview_relay_owner(
+            config=replace(
+                relay_config,
+                preview_database_url=edge_url.render_as_string(hide_password=False),
+                expected_preview_login=edge_url.username,
+            )
+        )
+    owner = build_production_preview_relay_owner(config=relay_config)
+    wrong = ProductionPreviewRelayOwner(
+        relay_config,
+        sa.create_engine(owner_url, hide_parameters=True),
+        gateway_registration_token="wrong-" + "x" * 48,
+    )
+    authority = PreviewTunnelOwnerAuthority(
+        owner._sessions, gateway_instance_id=gateway, gateway_registration_token=raw_gateway_token
+    )
+    try:
+
+        async def start_and_stop() -> None:
+            await owner.start()
+            owner.assert_production_ready()
+            await owner.aclose()
+
+        asyncio.run(start_and_stop())
+        assert owner._directory.resolve(SimpleNamespace(gateway_instance_id="gateway-owner-peer"))
+        assert owner._certificates.is_preview_gateway_certificate_authorized(
+            gateway_instance_id="gateway-owner-peer",
+            certificate_der=peer_der,
+            purpose="preview_relay_server",
+        )
+        assert not owner._certificates.is_preview_gateway_certificate_authorized(
+            gateway_instance_id=gateway, certificate_der=peer_der, purpose="preview_relay_server"
+        )
+        assert not owner._certificates.is_preview_gateway_certificate_authorized(
+            gateway_instance_id="gateway-owner-peer",
+            certificate_der=peer_der,
+            purpose="preview_relay_client",
+        )
+        with pytest.raises(ProductionPreviewRelayError):
+            wrong.assert_production_ready()
+        with wrong._sessions.begin() as db:
+            assert db.scalar(sa.text("SELECT count(*) FROM saas_runner_tunnel_placements")) == 0
+        with owner._sessions.begin() as db:
+            assert db.scalar(sa.text("SELECT count(*) FROM saas_runner_tunnel_placements")) == 1
+            db.execute(
+                sa.text("SELECT set_config('app.preview_gateway_instance_id', :peer, true)"),
+                {"peer": "gateway-owner-peer"},
+            )
+            assert db.scalar(sa.text("SELECT count(*) FROM saas_runner_tunnel_placements")) == 0
+        with owner._sessions.begin() as db:
+            assert db.scalar(sa.text("SELECT count(*) FROM saas_runner_tunnel_placements")) == 1
+        for statement in (
+            "UPDATE saas_preview_gateway_instances SET status='released'",
+            "SELECT registration_token_hash FROM saas_preview_gateway_instances",
+            "DELETE FROM saas_preview_tunnel_registrations",
+        ):
+            with pytest.raises(sa.exc.ProgrammingError), owner._sessions.begin() as db:
+                db.execute(sa.text(statement))
+        assert authority.heartbeat_gateway()
+        assert (
+            authority.preauthorize(
+                official_runner_id=official_runner, registration_token=raw_registration
+            )
+            is not None
+        )
+        grant = authority.redeem(
+            official_runner_id=official_runner, registration_token=raw_registration
+        )
+        assert grant.runner_id == facts["runner_id"]
+        with pytest.raises(PreviewTunnelRegistrationError):
+            authority.redeem(
+                official_runner_id=official_runner, registration_token=raw_registration
+            )
+        assert authority.heartbeat(
+            official_runner_id=official_runner, registration_token=raw_registration
+        )
+        assert authority.disconnect(
+            official_runner_id=official_runner, registration_token=raw_registration
+        )
+        assert admin_certificates.revoke_certificate(
+            fingerprint_sha256=peer_certificate.fingerprint_sha256, reason="native-test"
+        )
+        assert not owner._certificates.is_preview_gateway_certificate_authorized(
+            gateway_instance_id="gateway-owner-peer",
+            certificate_der=peer_der,
+            purpose="preview_relay_server",
+        )
+        with admin.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL session_replication_role=replica")
+            connection.execute(
+                sa.text(
+                    "UPDATE saas_preview_gateway_instances "
+                    "SET registered_at=CURRENT_TIMESTAMP-INTERVAL '2 minutes', "
+                    "activated_at=CURRENT_TIMESTAMP-INTERVAL '2 minutes', "
+                    "lease_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=:gateway"
+                ),
+                {"gateway": gateway},
+            )
+        assert not authority.heartbeat_gateway()
+        with pytest.raises(ProductionPreviewRelayError):
+            owner._assert_authority_ready()
+        with pytest.raises(PreviewGatewayLifecycleError):
+            owner._directory.resolve(SimpleNamespace(gateway_instance_id="gateway-owner-peer"))
+        assert authority.release_gateway()
+        assert not authority.release_gateway()
+    finally:
+        wrong.close()
+        owner.close()
 
 
 def _verify_runner_deployment_and_startup(

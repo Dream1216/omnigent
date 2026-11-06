@@ -58,6 +58,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
+
 jobs:
   # ── Fast smoke: both compat configs against the latest stable release ──────
   # Runs on every PR that touches the server↔runner contract surface (paths
