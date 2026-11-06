@@ -102,9 +102,21 @@ def test_github_cli_security_fix_source_is_closed_and_pinned() -> None:
     assert source["runtime_contract"] == {
         "architectures": ["amd64", "arm64"],
         "go_toolchain": "go1.27.2",
-        "modules": {"golang.org/x/net": "v0.60.0"},
+        "modules": {
+            "golang.org/x/net": "v0.60.0",
+            "github.com/klauspost/compress": "v1.20.2",
+        },
+        "module_checksums": {
+            "github.com/klauspost/compress@v1.20.2": (
+                "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo="
+            ),
+            "github.com/klauspost/compress@v1.20.2/go.mod": (
+                "h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI="
+            ),
+        },
     }
     assert "GO-2026-6612" in source["resolved_vulnerabilities"]
+    assert "GO-2026-6865" in source["resolved_vulnerabilities"]
 
 
 def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
