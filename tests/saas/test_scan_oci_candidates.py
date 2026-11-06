@@ -118,6 +118,49 @@ def test_preflight_blocks_rebuilds_but_keeps_final_scan() -> None:
     assert "artifacts/grype/*.json" in upload
 
 
+def test_fixed_host_diagnostic_cannot_enter_release_or_hide_raw_failures() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    workflow = yaml.load(
+        (repo / ".github/workflows/saas-image-candidate.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    diagnostic = workflow["jobs"]["diagnostic-host-only"]
+    flag = workflow["on"]["workflow_dispatch"]["inputs"]["diagnostic_host_only"]
+    assert flag["default"] == "false" and flag["type"] == "boolean"
+    for name in ("verify-candidate-preflight", "verify-production-migration-replay"):
+        assert workflow["jobs"][name]["if"] == "${{ !inputs.diagnostic_host_only }}"
+    for name in ("publish-signed", "verify-published-source"):
+        assert "!inputs.diagnostic_host_only &&" in workflow["jobs"][name]["if"]
+    assert diagnostic["permissions"] == {"contents": "read", "actions": "read"}
+    assert "environment" not in diagnostic and "services" not in diagnostic
+    assert (
+        "workflow_dispatch" in diagnostic["if"]
+        and "inputs.diagnostic_host_only" in diagnostic["if"]
+    )
+    fixed = "514a2ce1ae703869260c0e1eccf5a06767e7e4e3"
+    assert diagnostic["env"]["SOURCE_REVISION"] == fixed
+    assert diagnostic["env"]["CANDIDATE_REVISION"] == fixed
+    steps = diagnostic["steps"]
+    assert '[[ "$PUBLISH_SIGNED" == "false" ]]' in steps[0]["run"]
+    assert '[[ "$GITHUB_RUN_ATTEMPT" == "1" ]]' in steps[0]["run"]
+    builds = [s for s in steps if "build-oci-candidate@" in s.get("uses", "")]
+    assert len(builds) == 1
+    assert builds[0]["uses"] == "Dream1216/omnigent/saas/actions/build-oci-candidate@" + fixed
+    assert builds[0]["with"] == {"artifact": "host", "target": "host", "attempt": "1"}
+    scans = [s for s in steps if "python -m saas.scripts.scan_oci_candidates" in s.get("run", "")]
+    assert len(scans) == 1 and "--scope" not in scans[0]["run"]
+    assert '--image "server=' in scans[0]["run"] and '--image "host=' in scans[0]["run"]
+    assert "continue-on-error" not in scans[0]
+    retained = steps[-2]
+    assert (
+        "always()" in retained["if"] and "diagnostic-host.outcome == 'success'" in retained["if"]
+    )
+    assert retained["with"]["name"].startswith("diagnostic-only-host-")
+    assert "host-1.tar" in retained["with"]["path"]
+    assert "diagnostic-host-grype/*.json" in retained["with"]["path"]
+    assert "always()" in steps[-1]["if"] and "exit 1" in steps[-1]["run"]
+    assert not any("continue-on-error" in step for step in steps)
+
+
 def test_signed_release_checks_raw_findings_before_signing() -> None:
     workflow_path = (
         Path(__file__).resolve().parents[2] / ".github/workflows/saas-image-candidate.yml"
