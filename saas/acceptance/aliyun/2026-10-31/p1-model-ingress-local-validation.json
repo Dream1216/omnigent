@@ -1,0 +1,56 @@
+{
+  "actual_server_oci_runtime_check_executed": false,
+  "checks": [
+    "short bearer only and explicit tenant authorities",
+    "fixed internal model service and protocol routes",
+    "mixed credentials, query and duplicate auth rejected",
+    "request body/error bounds and sanitized headers/errors",
+    "no redirects or request replay after ambiguous submission",
+    "stream expiry/disconnect closes upstream and HTTP client",
+    "opt-in production-builder model ingress and default disabled",
+    "partial stream errors abort with sanitized failure and no replay"
+  ],
+  "files_sha256": {
+    ".github/workflows/saas-aliyun-host-candidate.yml": "a1388ca595e5ca3f2ef62ea1b513855de1f0ce279b1353edd67f30e8e58c11b8",
+    ".github/workflows/saas-image-candidate.yml": "8d2560c99eb8883057ca2ae6808f147dee917ed592d0622ecbf34e808eef03d9",
+    ".github/workflows/saas-upstream-compat.yml": "cfb3a3ab5f641aa190aeea18ecfe5e4346848adf347b19e1808f15847ac2f7f5",
+    "pyproject.toml": "aed9c48d726dabe128c68036e79019128b629c137a966a007e2efa86fdde585a",
+    "saas/control_plane/http_auth.py": "1fb14072bcb85425f2065f86f469065939c091efe72278fc5f65364fe1c54419",
+    "saas/production/aliyun_model_ingress.py": "c49e8a60b14a3353370fc01f7d52d8e45f058fbe7cf1dc113594329a8c868c5a",
+    "saas/production/server.py": "e20065d93a632e932c954e98c2393d5397d4be2ff862a76c2c4b2931dd267a48",
+    "saas/scripts/check_image_supply_chain.py": "c154c9926b4a3ba503427899bc84e2545e06ef8523d4eb0047fd9715bf002b75",
+    "tests/saas/test_aliyun_model_ingress.py": "f55ca481acd1575ed359f7fa2dfc944c70e41be37ef3624ee735e4a9961b63d4",
+    "tests/saas/test_aliyun_server_composition.py": "db930beee802f8c21b29a96e928ab6d6016a0d8396fec7a2592182523e6a585c",
+    "tests/saas/test_image_supply_chain.py": "49f8890b6051a17a96994a4447fc233d2553908eda4affe88df835c2e52c06e9",
+    "uv.lock": "c8b6f67855dc88a7e158c107c35d509ebd4eb16de8bccad8c32c8dc5d00e7e60"
+  },
+  "junit_report": "model-ingress-regression.junit.xml",
+  "mainline_integration_complete": false,
+  "model_stream_limit_seconds": 300,
+  "observed_main_revision": "038812da9e93199620aaed5314604eb53749ac63",
+  "p1_accepted": false,
+  "p3_accepted": false,
+  "production_deployed": false,
+  "public_tls_ingress_deployed": false,
+  "regression": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 696
+  },
+  "remaining": [
+    "integrate the advanced mainline and repeat release qualification",
+    "execute candidate Server OCI runtime check in CI",
+    "image scan qualification and signed publication",
+    "actual Server profile/credential delivery",
+    "public front streaming, timeout, cancellation and intended workload tests",
+    "actual MicroVM Host/Runner/model task",
+    "P4 and P5 acceptance"
+  ],
+  "schema_version": 1,
+  "scope": "candidate same-origin model ingress, production-builder opt-in and CI SDK dependency/runtime qualification contracts; no cloud model traffic",
+  "scoped_pyrefly_errors": 0,
+  "source_context": "candidate snapshot before commit; hashes bind tested source",
+  "supply_chain_contract_status": "pass",
+  "upstream_boundary_status": "pass"
+}

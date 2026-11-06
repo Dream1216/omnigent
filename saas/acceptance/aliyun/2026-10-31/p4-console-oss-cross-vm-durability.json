@@ -1,0 +1,58 @@
+{
+  "allow_public_inbound": false,
+  "cleanup": {
+    "active_count_before_reader": 0,
+    "final_active_instance_count": 0,
+    "reader_delete_acknowledged": true,
+    "two_original_volumes_retained": true,
+    "verified_via": "Actual console deletion receipt and active-instance list, not SDK get_info",
+    "writer_delete_acknowledged": true
+  },
+  "cross_session_or_tenant_negative_cloud_test": false,
+  "deployed_saas_download_authorization_accepted": false,
+  "instance_count": 2,
+  "max_concurrent_instances": 1,
+  "method": "Actual logged-in Aliyun console RAM-authenticated creation and WebShell, not E2B API-key admission",
+  "observed_at": "2026-10-31T08:32:14.816973+00:00",
+  "p4_accepted": false,
+  "p5_accepted": false,
+  "private_evidence_digests": {
+    "all_probe_vms_released_screenshot": "fc9e7603c86df6c2933f03320048a42a4b86518554a2070a15d0a0fd4d2c6b02",
+    "console_probe_plan": "b91831451cc767c043404808fe78b188d51ac96625694b1e3596bc312b5309bf",
+    "reader_terminal_screenshot": "22e0fcc2cb25e46ca6bbc05947e8749a65076a5cf68b48ac389c928b9c207b45",
+    "writer_terminal_screenshot": "154d4a153fe94af981831bb787b608766c5a4fb3c1bd7f6771c279c163cc3efc"
+  },
+  "production_changed": false,
+  "reader": {
+    "complete_payload_and_digest_asserted": true,
+    "different_instance_id": true,
+    "input_write_errno": 30,
+    "inputs_actual_mount": true,
+    "output_bytes": 84,
+    "output_sha256": "defac49431cb3a4fc59b5b81cc9147197013812d2301890e11c01ffb2411096d",
+    "outputs_actual_mount": true,
+    "unprivileged_uid": 1000
+  },
+  "role_scope": "Only one synthetic Session-A input readonly and output read-write/multipart prefixes in the dedicated private encrypted test Bucket",
+  "same_precreated_input_and_output_volumes": true,
+  "scope": "Real vendor Base-template OSS plumbing with synthetic Session-A identity; not SaaS authorization or complete Host execution",
+  "sdk_api_key_mount_probe": "Still rejected by source-IP policy; separate proxy routing issue, no alternate IP grant applied",
+  "server_read_sts_rotation_accepted": false,
+  "source_revision": "50a4db09139531e2037a49b85dd6166fdfb9cf57",
+  "template": "0mipsyhtqfvkegns0jbw",
+  "ttl_seconds_each": 300,
+  "volume_control_sts_rotation_accepted": false,
+  "writer": {
+    "complete_payload_readback_asserted": true,
+    "input_write_errno": 30,
+    "input_write_error": "EROFS",
+    "inputs_actual_mount": true,
+    "inputs_readonly_flag": true,
+    "output_bytes": 84,
+    "output_sha256": "defac49431cb3a4fc59b5b81cc9147197013812d2301890e11c01ffb2411096d",
+    "outputs_actual_mount": true,
+    "outputs_readonly_flag": false,
+    "unprivileged_uid": 1000
+  },
+  "writer_destroyed_before_reader": true
+}

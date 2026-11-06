@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "approved_scopes": [],
+  "pending_inputs": {
+    "reason": "The reviewed actual Server amd64 helper and ordinary Owner observations are bounded components. No exact final full-role subject is approved yet; all complete release-image combinations must reject.",
+    "helper_source": "514a2ce1ae703869260c0e1eccf5a06767e7e4e3",
+    "helper_native_record_sha256": "a5383a7abe8555e8ec1521e72bde9d6d6012730ad8060a0d5a86bb7427530e32",
+    "helper_independent_review_sha256": "4dcf676201ad48d3790fb6d82c58aba38557bf86fe4ed500357ab39ac26b68ea",
+    "missing": [
+      "exact final subject and original raw report",
+      "complete deployed role/command/factory/profile and last-override contract",
+      "independently authenticated native producer with fixed expiry",
+      "Host and arm64 applicability and own raw components"
+    ]
+  }
+}

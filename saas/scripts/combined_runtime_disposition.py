@@ -138,12 +138,18 @@ def inspect_combined_disposition(
     Both policy and a protected verifier are mandatory. Existing sole-SQLite
     APIs remain strict raw0C1H. This path never produces a filtered report.
     """
+    repo = Path(__file__).resolve().parents[2]
+    if verify_runtime is None:
+        from saas.scripts.runtime_evidence_intake import registered_inventory_paths
+
+        extra_paths = registered_inventory_paths(repo)
+    else:
+        extra_paths = frozenset({"usr/lib/libc.so.6"})
     if (
         not runtime_rule_enabled()
         or not sqlite.rule_enabled()
         or not _unexpired(now, RUNTIME_RULE["expires_at"])
         or not _unexpired(now, sqlite.RULE["expires_at"])
-        or verify_runtime is None
         or platform not in RUNTIME_RULE["libc_sha256"]
         or type(scanner_exit) is not int
         or scanner_exit != 2
@@ -171,9 +177,57 @@ def inspect_combined_disposition(
             or re.fullmatch(r"[0-9a-f]{40}", str(revision)) is None
         ):
             raise ValueError("finite runtime evidence does not bind the actual OCI subject")
-        inventory = sqlite.component_inventory(
-            blobs, manifest, additional_paths=frozenset({"usr/lib/libc.so.6"})
+        inventory = sqlite.component_inventory(blobs, manifest, additional_paths=extra_paths)
+    if verify_runtime is None:
+        from saas.scripts.runtime_evidence_intake import verifier_from_registered_inputs
+
+        verify_runtime = verifier_from_registered_inputs(repo, inventory)
+    return disposition_receipt(
+        raw,
+        inventory,
+        platform=platform,
+        now=now,
+        scanner_exit=scanner_exit,
+        verify_runtime=verify_runtime,
+    )
+
+
+def disposition_receipt(
+    raw: bytes,
+    inventory: list[dict[str, Any]],
+    *,
+    platform: str,
+    now: datetime,
+    scanner_exit: int,
+    verify_runtime: NativeRuntimeVerifier | None = None,
+) -> dict[str, Any]:
+    """Recheck original report and authenticated inventory without rewriting either."""
+    if (
+        not runtime_rule_enabled()
+        or not sqlite.rule_enabled()
+        or not _unexpired(now, RUNTIME_RULE["expires_at"])
+        or not _unexpired(now, sqlite.RULE["expires_at"])
+        or verify_runtime is None
+        or platform not in RUNTIME_RULE["libc_sha256"]
+        or type(scanner_exit) is not int
+        or scanner_exit != 2
+    ):
+        raise ValueError("finite runtime rule or protected native verifier is unavailable")
+    report = json.loads(raw)
+    _exact_two_findings(report, now=now)
+    target = report.get("source", {}).get("target", {})
+    revision = target.get("labels", {}).get("org.opencontainers.image.revision")
+    digest, config_digest = target.get("manifestDigest"), target.get("imageID")
+    if (
+        target.get("os") != "linux"
+        or target.get("architecture") != platform.split("/")[1]
+        or re.fullmatch(r"[0-9a-f]{40}", str(revision)) is None
+        or any(
+            re.fullmatch(r"sha256:[0-9a-f]{64}", str(value)) is None
+            for value in (digest, config_digest)
         )
+    ):
+        raise ValueError("finite runtime subject identity is incomplete")
     component = sqlite.sqlite_component_facts(inventory, platform=platform)
     libc = [row for row in inventory if row["path"] == "usr/lib/libc.so.6"]
     if (

@@ -31,6 +31,18 @@ _API_PATH = re.compile(r"^/(?:v1(?:/|$)|health(?:\?|$))")
 _NETWORK_RESOURCE_TYPES = {"fetch", "xhr", "eventsource"}
 
 
+@dataclass
+class AttachmentFixture:
+    body: bytes
+    headers: dict[str, str]
+    requests: list[str] = field(default_factory=list)
+
+
+@pytest.fixture(scope="session")
+def _attachments() -> dict[str, AttachmentFixture]:
+    return {}
+
+
 def pytest_configure(config: pytest.Config) -> None:
     # Under xdist each worker keeps its failure traces in its own output directory.
     isolate_playwright_output(config)
@@ -68,12 +80,24 @@ class _SpaHandler(SimpleHTTPRequestHandler):
         self,
         *args: Any,
         static_paths: frozenset[str],
+        attachments: dict[str, AttachmentFixture],
         **kwargs: Any,
     ) -> None:
         self._static_paths = static_paths
+        self._attachments = attachments
         super().__init__(*args, **kwargs)
 
     def do_GET(self) -> None:
+        attachment = self._attachments.get(self.path)
+        if attachment is not None:
+            attachment.requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(attachment.body)))
+            for name, value in attachment.headers.items():
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(attachment.body)
+            return
         path = urlparse(self.path).path
         if path in self._static_paths:
             super().do_GET()
@@ -89,7 +113,9 @@ class _SpaHandler(SimpleHTTPRequestHandler):
 
 
 @pytest.fixture(scope="session")
-def browser_base_url(_built_spa: None) -> Iterator[str]:
+def browser_base_url(
+    _built_spa: None, _attachments: dict[str, AttachmentFixture]
+) -> Iterator[str]:
     static_paths = frozenset(
         f"/{path.relative_to(_BUILD_OUTPUT).as_posix()}"
         for path in _BUILD_OUTPUT.rglob("*")
@@ -99,6 +125,7 @@ def browser_base_url(_built_spa: None) -> Iterator[str]:
         _SpaHandler,
         directory=str(_BUILD_OUTPUT),
         static_paths=static_paths,
+        attachments=_attachments,
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -122,6 +149,7 @@ class BrowserContract:
 
     context: BrowserContext
     base_url: str
+    attachments: dict[str, AttachmentFixture] = field(default_factory=dict)
     violations: list[str] = field(default_factory=list)
 
     def _matcher(self, path: str | re.Pattern[str]) -> re.Pattern[str]:
@@ -187,6 +215,22 @@ class BrowserContract:
         """Register an in-page WebSocket mock."""
         self.context.route_web_socket(url, handler)
 
+    def attachment(self, path: str, body: bytes, *, headers: dict[str, str]) -> AttachmentFixture:
+        """Serve one exact registered URL to Chromium's native download process."""
+        if not path.startswith("/v1/") or path in self.attachments:
+            raise ValueError("Attachment URL must be unique and application-relative")
+        value = AttachmentFixture(body, headers)
+        self.attachments[path] = value
+
+        def allow_registered(route: Route) -> None:
+            if route.request.method == "GET" and route.request.url == self.base_url + path:
+                route.continue_()
+            else:
+                route.fallback()
+
+        self.route(self._matcher(path), allow_registered)
+        return value
+
 
 def _same_origin(url: str, base_url: str) -> bool:
     parsed = urlparse(url)
@@ -198,8 +242,11 @@ def _same_origin(url: str, base_url: str) -> bool:
 def browser_contract(
     context: BrowserContext,
     browser_base_url: str,
+    _attachments: dict[str, AttachmentFixture],
 ) -> Iterator[BrowserContract]:
-    contract = BrowserContract(context=context, base_url=browser_base_url)
+    contract = BrowserContract(
+        context=context, base_url=browser_base_url, attachments=_attachments
+    )
 
     def deny_http(route: Route, request: Request) -> None:
         parsed = urlparse(request.url)
@@ -229,10 +276,18 @@ def browser_contract(
     # so tests can add concise explicit mocks on top of these catch-alls.
     context.route("**/*", deny_http)
     context.route_web_socket("**/*", deny_websocket)
+    contract.json(
+        re.compile(
+            rf"^{re.escape(browser_base_url)}/v1/sessions/[^/]+/artifacts/availability(?:\?.*)?$"
+        ),
+        {"error": {"code": "not_found"}},
+        status=404,
+    )
     try:
         yield contract
     finally:
         context.unroute_all(behavior="wait")
+        _attachments.clear()
         assert not contract.violations, "Unregistered browser dependencies:\n" + "\n".join(
             contract.violations
         )

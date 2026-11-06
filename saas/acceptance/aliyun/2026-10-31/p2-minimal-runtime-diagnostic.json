@@ -1,0 +1,180 @@
+{
+  "counts": {
+    "High": 10,
+    "Low": 7,
+    "Medium": 25,
+    "Negligible": 134
+  },
+  "database_built": "2026-10-30T06:23:28Z",
+  "dockerfile_sha256_at_diagnostic": "e3b17c12def3bdf3cad7b2ba4beab71d3966f54b40f6be656b68322127829dd7",
+  "excluded_layers": [
+    "application venv",
+    "Node",
+    "npm",
+    "Pi/Codex harness"
+  ],
+  "ignored": 0,
+  "image_config": "sha256:6e1b574340bdd4f3b1ea0bd17340616ec754831943aa7db128cb7a4a9f8ea19e",
+  "image_manifest": "sha256:b245e5f531b671f461d8249ea5c4b48ddfadcfed271ea721eedaa8d5243ae9a4",
+  "p2_accepted": false,
+  "packages": [
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-82560",
+          "severity": "High"
+        }
+      ],
+      "package": "libperl5.42",
+      "version": "5.42.3-1"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-82560",
+          "severity": "High"
+        }
+      ],
+      "package": "perl",
+      "version": "5.42.3-1"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-82560",
+          "severity": "High"
+        }
+      ],
+      "package": "perl-base",
+      "version": "5.42.3-1"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-82560",
+          "severity": "High"
+        }
+      ],
+      "package": "perl-modules-5.42",
+      "version": "5.42.3-1"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-113351",
+          "severity": "High"
+        },
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-115506",
+          "severity": "High"
+        }
+      ],
+      "package": "libexpat1",
+      "version": "2.9.0-1"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-107778",
+          "severity": "High"
+        }
+      ],
+      "package": "libgssapi-krb5-2",
+      "version": "1.22.1-3"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-107778",
+          "severity": "High"
+        }
+      ],
+      "package": "libk5crypto3",
+      "version": "1.22.1-3"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-107778",
+          "severity": "High"
+        }
+      ],
+      "package": "libkrb5-3",
+      "version": "1.22.1-3"
+    },
+    {
+      "findings": [
+        {
+          "fix": {
+            "state": "not-fixed",
+            "versions": []
+          },
+          "id": "CVE-2026-107778",
+          "severity": "High"
+        }
+      ],
+      "package": "libkrb5support0",
+      "version": "1.22.1-3"
+    }
+  ],
+  "production_deployed": false,
+  "qualified_release": false,
+  "raw_grype_report_sha256": "d8e1c566f9dacd0f4420bc34c508b18941a4ae21f3d6cfb9aae17c00cfe4136c",
+  "references": [
+    "https://security-tracker.debian.org/tracker/source-package/expat",
+    "https://security-tracker.debian.org/tracker/source-package/krb5",
+    "https://explore.alas.aws.amazon.com/CVE-2026-82560.html"
+  ],
+  "registry_published": false,
+  "runtime_probe": {
+    "capabilities": "all dropped",
+    "machine_id": "empty",
+    "network": "none",
+    "ossfs2": "2.0.10",
+    "python": "3.13.18",
+    "rootfs": "read-only",
+    "ssh_host_keys": "absent",
+    "status": "passed",
+    "uid": 1000
+  },
+  "schema_version": 1,
+  "scope": "minimal-runtime-diagnostic-only",
+  "security_gate": "failed",
+  "source_context": "uncommitted diagnostic; no product revision claim"
+}

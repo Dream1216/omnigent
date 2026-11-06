@@ -198,7 +198,7 @@ def test_expired_naive_or_overlong_conditions_are_rejected(tmp_path, monkeypatch
 
 def test_no_native_verifier_or_approval_cannot_enable_the_path(tmp_path, monkeypatch):
     image, path, _, approved = combination(tmp_path, monkeypatch)
-    with pytest.raises(ValueError, match="unavailable"):
+    with pytest.raises(ValueError, match="full-role contract"):
         inspect(image, path, approved, verify_runtime=None)
     monkeypatch.setattr(combined, "runtime_rule_enabled", lambda: False)
     with pytest.raises(ValueError, match="unavailable"):

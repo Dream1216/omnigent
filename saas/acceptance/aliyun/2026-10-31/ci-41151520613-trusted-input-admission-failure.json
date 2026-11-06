@@ -1,0 +1,72 @@
+{
+  "conclusion": "failure",
+  "image_built": false,
+  "image_runtime_verified": false,
+  "jobs": [
+    {
+      "conclusion": "success",
+      "failed_steps": [],
+      "name": "verify-candidate-preflight",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "failed_steps": [],
+      "name": "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "failed_steps": [],
+      "name": "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...",
+      "status": "completed"
+    },
+    {
+      "conclusion": "failure",
+      "failed_steps": [
+        {
+          "conclusion": "failure",
+          "name": "Run current-revision OSS and SaaS regressions",
+          "number": 14
+        },
+        {
+          "conclusion": "failure",
+          "name": "Upload candidate evidence",
+          "number": 32
+        }
+      ],
+      "name": "build-candidate",
+      "status": "completed"
+    },
+    {
+      "conclusion": "skipped",
+      "failed_steps": [],
+      "name": "publish-signed",
+      "status": "completed"
+    },
+    {
+      "conclusion": "skipped",
+      "failed_steps": [],
+      "name": "verify-published-source",
+      "status": "completed"
+    }
+  ],
+  "observed_at": "2026-10-31T01:20:45.255396+00:00",
+  "production_ready": false,
+  "publish_signed": false,
+  "published": false,
+  "regressions": {
+    "failed": 1,
+    "failed_test": "tests/saas/test_n1_merge_gate_candidate.py::test_all_trusted_candidate_inputs_match_main_policy_hashes",
+    "file": "pyproject.toml",
+    "observed_sha256": "aed9c48d726dabe128c68036e79019128b629c137a966a007e2efa86fdde585a",
+    "passed": 3669,
+    "skipped": 10
+  },
+  "required_next_step": "Review dependency changes and integrate a separately approved trusted-main policy update; do not remove the assertion or bypass the gate.",
+  "run_id": 41151520613,
+  "run_url": "https://github.com/Dream1216/omnigent/actions/runs/41151520613",
+  "secondary_failure": "Evidence upload found no image evidence because regression failed before image build; the candidate now retains regression JUnit separately.",
+  "source_revision": "73b992158ecb1fa3f04db501ceb6e94613fba601",
+  "status": "completed"
+}

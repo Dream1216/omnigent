@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-10-30T20:33:46.163212+00:00",
+  "template": "0mipsyhtqfvkegns0jbw",
+  "scope": "real Aliyun SDK transport with synthetic tenant identity; SaaS request/Host/model integration not yet admitted",
+  "checks": {
+    "create_with_explicit_endpoint": true,
+    "nonroot_command": true,
+    "scoped_unicode_file": true,
+    "reconnect_and_bounded_renewal": true,
+    "cross_tenant_termination_rejected": true,
+    "owner_can_still_use_after_denial": true,
+    "kill_requested": true,
+    "kill_confirmed": true
+  },
+  "production_acceptance": false,
+  "sandbox_id": "sbx-2397af25-76fb-4962-8b3e-2aee73fc599a",
+  "finished_at": "2026-10-30T20:33:52.381893+00:00",
+  "transport_passed": true
+}

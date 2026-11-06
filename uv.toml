@@ -60,4 +60,6 @@ exclude-newer = "P7D"
 #   Drop once aged past P7D (2026-10-24).
 # - virtualenv: 21.14.13 fixes bash prompt execution and temporary cache links.
 #   Drop once aged past P7D (2026-10-29).
-exclude-newer-package = { cwsandbox = "2026-06-12T00:00:00Z", google-antigravity = "2026-06-12T00:00:00Z", nimble-python = "2026-07-29T00:00:00Z", mlflow = "2026-10-21T02:08:46Z", mlflow-skinny = "2026-10-21T02:08:46Z", mlflow-tracing = "2026-10-21T02:08:46Z", pillow = "2026-10-17T00:00:00Z", certifi = "2026-10-21T00:00:00Z", brotli = "2026-10-22T14:00:13Z", filelock = "2026-10-17T16:48:15Z", virtualenv = "2026-10-22T20:10:17Z", pyasn1 = "2026-10-27T06:32:50Z" }
+# - oauthlib: 4.0.1 fixes invalid device-code bearer issuance (CVE-2026-49272).
+#   Official uploads verified; cutoff ends immediately after that release only.
+exclude-newer-package = { cwsandbox = "2026-06-12T00:00:00Z", google-antigravity = "2026-06-12T00:00:00Z", nimble-python = "2026-07-29T00:00:00Z", mlflow = "2026-10-21T02:08:46Z", mlflow-skinny = "2026-10-21T02:08:46Z", mlflow-tracing = "2026-10-21T02:08:46Z", pillow = "2026-10-17T00:00:00Z", certifi = "2026-10-21T00:00:00Z", brotli = "2026-10-22T14:00:13Z", filelock = "2026-10-17T16:48:15Z", virtualenv = "2026-10-22T20:10:17Z", pyasn1 = "2026-10-27T06:32:50Z", oauthlib = "2026-10-31T09:53:00Z" }

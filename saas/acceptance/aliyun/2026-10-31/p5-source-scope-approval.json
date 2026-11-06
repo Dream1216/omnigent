@@ -1,0 +1,48 @@
+{
+  "approved_at": "2026-10-31T10:42:58.402497+00:00",
+  "approved_ceilings_patch_sha256": "671ab69266a282db0b9ea267ec7c2933203a18c24377ac547baceccfe62be31d",
+  "approved_limits": {
+    "files": 184,
+    "net_added_loc": 5216
+  },
+  "approved_source_patch_sha256": "b163cec5560145763163fe59cc5208adee660beae798abc885c189de585c9434",
+  "authorizer": "human user in this chat",
+  "budget_regressions": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "93fdbdd2ee93ba466af65a02e733500dc8f29ddc9b8edccb40f8d7ea230c5162",
+    "seconds": 26.895,
+    "skipped": 0,
+    "tests": 10
+  },
+  "image_scan_gate_waived": false,
+  "p5_cloud_accepted": false,
+  "patch_replay": {
+    "all_official_source_changes_covered": true,
+    "patch_count": 9,
+    "status": "pass",
+    "verified_by_test": "tests/saas/test_upstream_delta.py::test_patch_queue_replays_and_covers_every_official_source_change"
+  },
+  "previous_limits": {
+    "files": 182,
+    "net_added_loc": 4869
+  },
+  "production_activated": false,
+  "production_deployment_authorized_by_this_specific_approval": false,
+  "scope": "Only two source ceilings and corresponding two static budget assertions; numeric patch applied exactly",
+  "signing_or_release_gate_waived": false,
+  "source_guard": {
+    "metrics": {
+      "active_patch_count": 9,
+      "direct_upstream_file_count": 184,
+      "forbidden_upstream_files": [],
+      "isolated_custom_code_ratio": 0.9825,
+      "reverse_dependencies": [],
+      "upstream_net_added_loc": 5216
+    },
+    "status": "pass",
+    "violations": []
+  },
+  "trusted_hash_gate_waived": false,
+  "user_answer": "批准这两个上限及对应断言"
+}

@@ -1,0 +1,25 @@
+{
+  "builder": "omnigent-aliyun-01a18d5f",
+  "controls": [
+    "SHA-512-verified npm release",
+    "existing production security overlay lock",
+    "clean replacement of previous npm tree",
+    "npm install module load",
+    "npm version and Node engine floor checks",
+    "build-time Node compilation cache disabled"
+  ],
+  "export": "cacheonly; no runnable Host image or production admission claimed",
+  "input_sha256": {
+    "saas/deployment/aliyun/Dockerfile.host": "0f3007268616c85719912214a580f66799175ef739d15bc19ee6d9226aba240f",
+    "saas/scripts/materialize_npm_release.py": "5c24f8955fdc36eb4845f7d7291450209554083275703c947de3eae889a4f3c6",
+    "saas/supply_chain/npm-122-security-lock.json": "9ce06f8045a6837aecffc9019c956a0c719a27f88952101a013a5d03e7428f7a"
+  },
+  "node_version": "22.23.4",
+  "npm_version": "12.2.0",
+  "production_deployed": false,
+  "remaining": "complete candidate build, runtime verification, independent comparison and raw vulnerability admission",
+  "schema_version": 1,
+  "terminal_exit_code": 0,
+  "validation": "actual node-base BuildKit target",
+  "vulnerability_scan_passed": false
+}

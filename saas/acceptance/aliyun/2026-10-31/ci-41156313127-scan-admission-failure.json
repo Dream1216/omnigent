@@ -1,0 +1,80 @@
+{
+  "archive_sha256": "97b3871064160440bc8258ea3d645d445ac22e9759b053b1d720938c4006ff1f",
+  "conclusion": "failure",
+  "critical": 0,
+  "database_built_at": "2026-10-30T06:23:28Z",
+  "findings": [
+    {
+      "id": "CVE-2026-82560",
+      "package": "libperl5.42",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-82560",
+      "package": "perl",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-82560",
+      "package": "perl-base",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-82560",
+      "package": "perl-modules-5.42",
+      "severity": "High",
+      "version": "5.42.3-1"
+    },
+    {
+      "id": "CVE-2026-113351",
+      "package": "libexpat1",
+      "severity": "High",
+      "version": "2.9.0-1"
+    },
+    {
+      "id": "CVE-2026-115506",
+      "package": "libexpat1",
+      "severity": "High",
+      "version": "2.9.0-1"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libgssapi-krb5-2",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libk5crypto3",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libkrb5-3",
+      "severity": "High",
+      "version": "1.22.1-3"
+    },
+    {
+      "id": "CVE-2026-107778",
+      "package": "libkrb5support0",
+      "severity": "High",
+      "version": "1.22.1-3"
+    }
+  ],
+  "high": 10,
+  "ignored": 0,
+  "independent_builds_passed": 2,
+  "observed_at": "2026-10-31T02:18:56.800488+00:00",
+  "production_ready": false,
+  "published": false,
+  "rebuild_equal": true,
+  "report_sha256": "8ee8a073eaa06abc2f9a35af06160db4a30412f4dba83ed36d65006e1ceeba7d",
+  "run_id": 41156313127,
+  "runtime_checks_passed": true,
+  "source_revision": "a4ba238ebcfc7e676bacf954e464ef72307cb254",
+  "status": "completed"
+}

@@ -1,12 +1,12 @@
 diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
-index b5f7867a68330fcfd0d62aff277567dbf9eef0e6..a99382773bcb8241b4251f0d623a05f7aee0d49c 100644
+index b5f7867..a993827 100644
 --- a/omnigent/onboarding/harness_readiness.py
 +++ b/omnigent/onboarding/harness_readiness.py
 @@ -352,0 +353,2 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
 +    "kiro-native": KIRO_KEY,
 +    "native-kiro": KIRO_KEY,
 diff --git a/omnigent/runtime/pending_inputs.py b/omnigent/runtime/pending_inputs.py
-index d2a1bc37d96c58474f5e26f031c89c82d03af4a5..952775086bf112abc3a9d603259cb9d44f49061e 100644
+index d2a1bc3..9527750 100644
 --- a/omnigent/runtime/pending_inputs.py
 +++ b/omnigent/runtime/pending_inputs.py
 @@ -338,0 +339,7 @@ _lock = threading.Lock()
@@ -53,7 +53,7 @@ index d2a1bc37d96c58474f5e26f031c89c82d03af4a5..952775086bf112abc3a9d603259cb9d4
 @@ -1169,0 +1209 @@ def reset_for_tests() -> None:
 +        _committed.clear()
 diff --git a/omnigent/server/API.md b/omnigent/server/API.md
-index f6a959c47a01ca9eb0273454a468eba786865c4e..b503feee6ffc9f1f5e9036abd6215dca751565f9 100644
+index f6a959c..b503fee 100644
 --- a/omnigent/server/API.md
 +++ b/omnigent/server/API.md
 @@ -617,0 +618,10 @@ already uploaded or registered an agent. The response is the full
@@ -71,7 +71,7 @@ index f6a959c47a01ca9eb0273454a468eba786865c4e..b503feee6ffc9f1f5e9036abd6215dca
 -    A failure before submission retains the saved input for `retry_session`.
 +    Other failures before submission retain the saved input for `retry_session`.
 diff --git a/omnigent/server/app.py b/omnigent/server/app.py
-index 6ab05f8ee6533e8fa5b3b405076980d343408f73..ad2d1b4b723e55a52152d3c755e36d43c24dd151 100644
+index 6ab05f8..ad2d1b4 100644
 --- a/omnigent/server/app.py
 +++ b/omnigent/server/app.py
 @@ -14,0 +15 @@ from contextlib import asynccontextmanager, suppress
@@ -113,7 +113,7 @@ index 6ab05f8ee6533e8fa5b3b405076980d343408f73..ad2d1b4b723e55a52152d3c755e36d43
 +                index_file.read_text(encoding="utf-8"), base_path, app_name
 +            )
 diff --git a/omnigent/server/managed_hosts.py b/omnigent/server/managed_hosts.py
-index 7985ce96b8d2d87672553d662fc586386ef6e371..1a00d9d9433bf0c33987e1ca5f71cc4c8493073f 100644
+index 7985ce9..1a00d9d 100644
 --- a/omnigent/server/managed_hosts.py
 +++ b/omnigent/server/managed_hosts.py
 @@ -1887,0 +1888 @@ def _parse_single_provider_sandbox_config(raw: dict[str, object]) -> ManagedSand
@@ -163,7 +163,7 @@ index 7985ce96b8d2d87672553d662fc586386ef6e371..1a00d9d9433bf0c33987e1ca5f71cc4c
 @@ -3724,0 +3764 @@ def _kubernetes_launcher_factory(
 +            host_command=host_command,
 diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
-index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638020ee321 100644
+index 7597f25..e00311a 100644
 --- a/omnigent/server/routes/_sessions/orchestration.py
 +++ b/omnigent/server/routes/_sessions/orchestration.py
 @@ -3251,0 +3252,2 @@ async def _persist_external_conversation_item_unlocked(
@@ -172,19 +172,74 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 @@ -3261,0 +3264,2 @@ async def _persist_external_conversation_item_unlocked(
 +        if skipped.stable_id is not None:
 +            pending_inputs.remember_committed(session_id, skipped.stable_id, persisted_user.id)
-@@ -6236,0 +6241 @@ async def _persist_native_terminal_failure(
+@@ -4318,15 +4322 @@ async def _wait_for_host_reconnect(
+-    """Wait for an absent host or its surviving runner to reconnect.
+-
+-    Only reads the local registries; no database or network polling. A runner
+-    reconnect ends the host grace too, so a surviving runner can serve the
+-    input even while its host daemon remains offline. Callers re-resolve the
+-    runner before launching a replacement. Remote reconnects and changed
+-    runner bindings are resolved after this grace and can take the full timeout.
+-
+-    :param host_id: Host whose tunnel must return before a launch is possible.
+-    :param host_registry: Workspace-scoped registry of host connections.
+-    :param tunnel_registry: Registry of locally connected runners, if configured.
+-    :param runner_id: Existing runner binding, or ``None`` before the first launch.
+-    :param timeout_s: Maximum host grace, separate from runner startup time.
+-    :returns: The reconnected host, or ``None`` on runner recovery or timeout.
+-    """
++    """Wait boundedly for the host or its surviving runner in local registries."""
+@@ -4363,0 +4354 @@ async def _wait_for_host_bound_runner_client(
++    preserve_live_runner_s: float | None = None,
+@@ -4365 +4356 @@ async def _wait_for_host_bound_runner_client(
+-    """Wait for this runner, extending startup only for an explicit pending sign-in.
++    """Wait for this runner, preserving bounded startup and sign-in recovery.
+@@ -4410,0 +4402 @@ async def _wait_for_host_bound_runner_client(
++    known_status: str | None = None
+@@ -4431 +4423,3 @@ async def _wait_for_host_bound_runner_client(
+-                if status_task not in done:
++                if status_task not in done and not (
++                    known_status == "alive" and preserve_live_runner_s is not None
++                ):
+@@ -4437 +4431,21 @@ async def _wait_for_host_bound_runner_client(
+-                if status_task.result() != "sign_in_pending":
++                status = status_task.result() if status_task.done() else known_status
++                if status is not None:
++                    known_status = status
++                if known_status != "sign_in_pending":
++                    last_seen = session_live_state.last_liveness_stamp(runner_id)
++                    if (
++                        known_status == "alive"
++                        and preserve_live_runner_s is not None
++                        and (last_seen is None or last_seen < int(host_conn.connected_at))
++                    ):
++                        if preserve_live_runner_s > 0:
++                            client = await wait_for_connection(preserve_live_runner_s)
++                            if client is not None:
++                                return client
++                        raise OmnigentError(
++                            f"Runner {runner_id} is alive on the host but "
++                            f"{'never connected' if last_seen is None else 'has not reconnected'} "
++                            "to the server. Your message was not accepted; "
++                            "retry when it connects.",
++                            code=ErrorCode.RUNNER_UNAVAILABLE,
++                        )
+@@ -4439,0 +4454,2 @@ async def _wait_for_host_bound_runner_client(
++            if status is not None:
++                known_status = status
+@@ -6236,0 +6253 @@ async def _persist_native_terminal_failure(
 +    startup_input: StartupInputContext | None = None,
-@@ -6269,0 +6275,2 @@ async def _persist_native_terminal_failure(
+@@ -6269,0 +6287,2 @@ async def _persist_native_terminal_failure(
 +    if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
 +        return startup_input.input_id
-@@ -6271 +6278,5 @@ async def _persist_native_terminal_failure(
+@@ -6271 +6290,5 @@ async def _persist_native_terminal_failure(
 -    user_item = _build_new_item(body, turn_id, created_by=created_by)
 +    user_item = _build_new_item(
 +        body, turn_id, created_by=created_by, adopt_stable_id=startup_input is not None
 +    )
 +    if startup_input is not None:
 +        user_item = user_item.model_copy(update={"replaces_pending_id": startup_input.input_id})
-@@ -6292 +6303,9 @@ async def _persist_native_terminal_failure(
+@@ -6292 +6315,9 @@ async def _persist_native_terminal_failure(
 -    _publish_input_consumed(session_id, consumed)
 +    _publish_input_consumed(
 +        session_id,
@@ -195,19 +250,19 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 +            else None
 +        ),
 +    )
-@@ -6324,0 +6344 @@ async def _persist_host_launch_failure_turn(
+@@ -6324,0 +6356 @@ async def _persist_host_launch_failure_turn(
 +    startup_input: StartupInputContext | None = None,
-@@ -6371,0 +6392,2 @@ async def _persist_host_launch_failure_turn(
+@@ -6371,0 +6404,2 @@ async def _persist_host_launch_failure_turn(
 +    if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
 +        return startup_input.input_id
-@@ -6373 +6395,5 @@ async def _persist_host_launch_failure_turn(
+@@ -6373 +6407,5 @@ async def _persist_host_launch_failure_turn(
 -    user_item = _build_new_item(body, turn_id, created_by=created_by)
 +    user_item = _build_new_item(
 +        body, turn_id, created_by=created_by, adopt_stable_id=startup_input is not None
 +    )
 +    if startup_input is not None:
 +        user_item = user_item.model_copy(update={"replaces_pending_id": startup_input.input_id})
-@@ -6386 +6412,9 @@ async def _persist_host_launch_failure_turn(
+@@ -6386 +6424,9 @@ async def _persist_host_launch_failure_turn(
 -    _publish_input_consumed(session_id, consumed)
 +    _publish_input_consumed(
 +        session_id,
@@ -218,12 +273,12 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 +            else None
 +        ),
 +    )
-@@ -7213,0 +7248,4 @@ async def _forward_event_to_runner(
+@@ -7213,0 +7260,4 @@ async def _forward_event_to_runner(
 +    elif item.stable_id is not None and persisted_items[0].deduplicated:
 +        # The same logical web submission already reached this persist-before-
 +        # forward boundary. Re-dispatching it would execute the turn twice.
 +        return persisted_items[0].id
-@@ -8154,0 +8193,21 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -8154,0 +8205,21 @@ async def _dispatch_session_event_to_runner_impl(
 +        raw_stable_id = body.data.get("stable_id")
 +        web_stable_id = (
 +            raw_stable_id
@@ -245,22 +300,22 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 +                    attributes=pending_inputs.delivery_attributes_for(session_id, live_pending_id),
 +                )
 +                return _SessionEventDispatchResult(item_id=None, pending_id=live_pending_id)
-@@ -8166,2 +8224,0 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -8166,2 +8236,0 @@ async def _dispatch_session_event_to_runner_impl(
 -            if startup_input is not None:
 -                raise OmnigentError(str(ensure_outcome.error), code=ErrorCode.RUNNER_UNAVAILABLE)
-@@ -8176,0 +8234 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -8176,0 +8246 @@ async def _dispatch_session_event_to_runner_impl(
 +                startup_input=startup_input,
-@@ -8192,6 +8249,0 @@ async def _dispatch_session_event_to_runner_impl(
+@@ -8192,6 +8261,0 @@ async def _dispatch_session_event_to_runner_impl(
 -        raw_stable_id = body.data.get("stable_id")
 -        web_stable_id = (
 -            raw_stable_id
 -            if isinstance(raw_stable_id, str) and re.fullmatch(r"[0-9a-f]{32}", raw_stable_id)
 -            else None
 -        )
-@@ -11113 +11165 @@ async def _routing_host_for_create(
+@@ -11113 +11177 @@ async def _routing_host_for_create(
 -    body: SessionCreateInput,
 +    body: SessionCreateInput | SessionCreateMetadata,
-@@ -11175,0 +11228,56 @@ def _create_resolved_harness(
+@@ -11175,0 +11240,56 @@ def _create_resolved_harness(
 +def _reported_harness_failure(host: Host, harness: str) -> str | None:
 +    """Return an actionable failure only when a Host supplied readiness data."""
 +    from omnigent.harness_availability import harness_launch_availability
@@ -317,7 +372,7 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 +            raise OmnigentError(failure, code=ErrorCode.INVALID_INPUT)
 +
 +
-@@ -11461,0 +11570,13 @@ async def _resolve_native_smart_routing(
+@@ -11461,0 +11582,13 @@ async def _resolve_native_smart_routing(
 +_CLIENT_CREATE_TOKEN_LABEL = "omnigent.client_create_token"
 +
 +
@@ -331,7 +386,7 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 +    return None
 +
 +
-@@ -11884,8 +12005,16 @@ async def _create_session_from_existing_agent(
+@@ -11884,8 +12017,16 @@ async def _create_session_from_existing_agent(
 -        canonical_workspace = await _validate_session_workspace(
 -            user_id=user_id,
 -            host_id=body.host_id,
@@ -356,12 +411,12 @@ index 7597f257c527f79c2cf81f2b652cead79ec1d678..5236f6ac22b3ebbf0df230a48f773638
 +                    code=ErrorCode.INVALID_INPUT,
 +                ) from exc
 +            raise
-@@ -11922,0 +12052 @@ async def _create_session_from_existing_agent(
+@@ -11922,0 +12064 @@ async def _create_session_from_existing_agent(
 +    await _reject_unavailable_harness_for_create(body, request, user_id, selected_harness)
-@@ -12145,0 +12276 @@ async def _create_session_from_existing_agent(
+@@ -12145,0 +12288 @@ async def _create_session_from_existing_agent(
 +                conversation_id=_client_create_token(body),
 diff --git a/omnigent/server/routes/sessions/routes_core.py b/omnigent/server/routes/sessions/routes_core.py
-index 83b04a080c..0a82dc9c85 100644
+index 83b04a0..0a82dc9 100644
 --- a/omnigent/server/routes/sessions/routes_core.py
 +++ b/omnigent/server/routes/sessions/routes_core.py
 @@ -9,0 +10 @@ import secrets
@@ -537,34 +592,110 @@ index 83b04a080c..0a82dc9c85 100644
 -        comments_fingerprints = await _comments_fingerprints_for(conv_ids)
 -        pull_requests = await _pull_requests_for(conv_ids)
 diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
-index ad3f08c8103e9135e2d61ce344eaca8c36929340..f15ab6d578f5b590c2d3921321358aa5f361d81d 100644
+index ad3f08c..ff3fd32 100644
 --- a/omnigent/server/routes/sessions/routes_events.py
 +++ b/omnigent/server/routes/sessions/routes_events.py
-@@ -168,0 +169 @@
+@@ -168,0 +169 @@ from omnigent.server.routes._sessions.common import (
 +    _RUNNER_SESSION_INIT_TIMEOUT_S,
-@@ -336,0 +338,3 @@
+@@ -336,0 +338,3 @@ from omnigent.util.session_lifecycle import (
 +# A caller may leave a shared native bootstrap running after this total wait.
 +_NATIVE_BOOTSTRAP_CALLER_WAIT_S = _RUNNER_SESSION_INIT_TIMEOUT_S
 +
-@@ -1777 +1781 @@
+@@ -1777 +1781 @@ def register_events_routes(
 -                await startup.cancel(session_id)
 +                await startup.cancel(session_id, conversation=conv)
-@@ -1838,0 +1843 @@
+@@ -1838,0 +1843 @@ def register_events_routes(
 +                conversation=conv if target_session_id == session_id else None,
-@@ -2886,0 +2892 @@
+@@ -2886,0 +2892 @@ def register_events_routes(
 +                    startup_input=request if isinstance(request, StartupInputContext) else None,
-@@ -3026 +3032,3 @@
+@@ -2893,0 +2900 @@ def register_events_routes(
++        relaunch_connect_timeout_s = _HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S
+@@ -2928,0 +2936 @@ def register_events_routes(
++            reconnect_started = time.monotonic()
+@@ -2948,0 +2957 @@ def register_events_routes(
++                        preserve_live_runner_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
+@@ -2964,0 +2974 @@ def register_events_routes(
++                binding_changed_during_host_grace = False
+@@ -2980,0 +2991,4 @@ def register_events_routes(
++                        host_grace_remaining = max(
++                            0.0,
++                            _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started),
++                        )
+@@ -2983 +2997 @@ def register_events_routes(
+-                            _sf._HOST_RECONNECT_GRACE_S,
++                            host_grace_remaining,
+@@ -2992 +3006 @@ def register_events_routes(
+-                            timeout_s=_sf._HOST_RECONNECT_GRACE_S,
++                            timeout_s=host_grace_remaining,
+@@ -3000,0 +3015 @@ def register_events_routes(
++                        binding_changed_during_host_grace = fresh_conv.runner_id != conv.runner_id
+@@ -3007,0 +3023,28 @@ def register_events_routes(
++                if (
++                    runner_client is None
++                    and _host_conn is not None
++                    and _grace_host_conn is None
++                    and not binding_changed_during_host_grace
++                    and conv.runner_id is not None
++                ):
++                    remaining = max(
++                        0.0, _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started)
++                    )
++                    if remaining <= 0:
++                        raise OmnigentError(
++                            "The host has only just reconnected. Your message was not accepted; "
++                            "retry when the runner reconnects.",
++                            code=ErrorCode.RUNNER_UNAVAILABLE,
++                        )
++                    runner_client = await _wait_for_host_bound_runner_client(
++                        session_id,
++                        runner_router,
++                        _tunnel_registry,
++                        runner_id=conv.runner_id,
++                        timeout_s=remaining,
++                        runner_exit_reports=runner_exit_reports,
++                        host_conn=_host_conn,
++                        host_registry=_host_reg,
++                        conversation_store=conversation_store,
++                        preserve_live_runner_s=0.0,
++                    )
+@@ -3026 +3069,3 @@ def register_events_routes(
 -                        if isinstance(request, StartupInputContext):
 +                        if isinstance(
 +                            request, StartupInputContext
 +                        ) and not _is_native_terminal_session(conv):
-@@ -3043,0 +3052,3 @@
+@@ -3043,0 +3089,3 @@ def register_events_routes(
 +                            startup_input=request
 +                            if isinstance(request, StartupInputContext)
 +                            else None,
-@@ -3246,0 +3258 @@
+@@ -3072,0 +3121,8 @@ def register_events_routes(
++                if _grace_host_conn is None:
++                    relaunch_connect_timeout_s = min(
++                        relaunch_connect_timeout_s,
++                        max(
++                            0.0,
++                            _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started),
++                        ),
++                    )
+@@ -3210,0 +3267,10 @@ def register_events_routes(
++                if (
++                    not exit_cause
++                    and not relaunched_launch_refused
++                    and _client_holds_host_offline_sends(request.headers)
++                ):
++                    raise OmnigentError(
++                        "The runner has not connected. Your message was not accepted; "
++                        "retry when it connects.",
++                        code=ErrorCode.RUNNER_UNAVAILABLE,
++                    )
+@@ -3246,0 +3313 @@ def register_events_routes(
 +                    startup_input=request if isinstance(request, StartupInputContext) else None,
-@@ -3402,9 +3414,38 @@
+@@ -3307 +3374 @@ def register_events_routes(
+-                        f"{_relaunch_connect_timeout_s(acknowledged=True):.0f}s — the "
++                        f"{relaunch_connect_timeout_s:.0f}s — the "
+@@ -3322 +3389 @@ def register_events_routes(
+-                        f"{_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S:.0f}s. "
++                        f"{relaunch_connect_timeout_s:.0f}s. "
+@@ -3402,8 +3469,9 @@ def register_events_routes(
 -            native_terminal_ready = await _ensure_runner_session_initialized(
 -                session_id,
 -                conv,
@@ -573,7 +704,6 @@ index ad3f08c8103e9135e2d61ce344eaca8c36929340..f15ab6d578f5b590c2d3921321358aa5
 -                initializer=initializer,
 -                suppress_recovery_turn=True,
 -                trigger="web_message",
--            )
 +            cold_input = (
 +                not isinstance(request, (StartupInputContext, _RunnerEventContext))
 +                and startup is not None
@@ -583,7 +713,7 @@ index ad3f08c8103e9135e2d61ce344eaca8c36929340..f15ab6d578f5b590c2d3921321358aa5
 +                and _is_native_terminal_session(conv)
 +                and conv.host_id is not None
 +                and startup.hosts.get(conv.host_id) is not None
-+            )
+@@ -3410,0 +3479,28 @@ def register_events_routes(
 +            caller_wait = asyncio.timeout(_NATIVE_BOOTSTRAP_CALLER_WAIT_S if cold_input else None)
 +            try:
 +                async with caller_wait:
@@ -613,7 +743,7 @@ index ad3f08c8103e9135e2d61ce344eaca8c36929340..f15ab6d578f5b590c2d3921321358aa5
 +                    "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
 +                }
 diff --git a/omnigent/server/startup_inputs.py b/omnigent/server/startup_inputs.py
-index fe64e5c8d8f64050747be134ddee98dc1a9f50a3..73bd1ecfa398611ba33e6ac3f7d3748e769a3c05 100644
+index fe64e5c..73bd1ec 100644
 --- a/omnigent/server/startup_inputs.py
 +++ b/omnigent/server/startup_inputs.py
 @@ -29,0 +30 @@ from omnigent.server.host_registry import HostConnection, HostRegistry

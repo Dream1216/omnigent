@@ -92,6 +92,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # Fix one official signed Ubuntu index view per job while Snapshot is unavailable.
+  OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
@@ -117,7 +119,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked preflight dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Set up crane for exact OCI transfer regression
@@ -183,7 +185,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Verify full four-authority fresh replay and predecessor upgrade
         run: >-
           uv run pytest tests/saas/test_production_migration_replay.py
@@ -241,7 +243,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas
+        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
       - name: Configure exact PostgreSQL 18 runner contract
         env:
           PGPASSWORD: postgres
@@ -288,6 +290,13 @@ jobs:
           tests/server/test_managed_hosts.py
           tests/server/integration/test_sessions_archive.py
           tests/saas
+          --junitxml=artifacts/server-regressions.junit.xml
+      - name: Set up isolated candidate Docker runtime
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up Buildx
@@ -318,13 +327,181 @@ jobs:
           echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
           echo "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
           echo "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
+      - name: Record first Server build inputs
+        continue-on-error: true
+        env:
+          PROGRESS_BUILDER: ${{ steps.candidate-builder.outputs.name }}
+        timeout-minutes: 2
+        run: |
+          python - <<'PYCODE'
+          import datetime, json, os, subprocess
+          from pathlib import Path
+          output = Path("artifacts/first-server-build-progress")
+          output.mkdir(parents=True, exist_ok=True)
+          builder = os.environ["PROGRESS_BUILDER"]
+          fields = ("CANDIDATE_REVISION", "PYTHON_IMAGE", "RUNTIME_IMAGE", "NODE_IMAGE",
+                    "GO_IMAGE", "SOURCE_DATE_EPOCH", "SOURCE_REVISION", "UPSTREAM_REVISION",
+                    "ADAPTER_CONTRACT_VERSION", "CONTROL_PLANE_SCHEMA_REVISION")
+          context = {"at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                     "builder": builder, "build_step_minutes": 90, "job_minutes": 240,
+                     "materials": {name: os.environ[name] for name in fields}}
+          (output / "context.json").write_text(json.dumps(context, indent=2) + "\n")
+          with (output / "buildx-version.log").open("wb") as log:
+              subprocess.run(["docker", "buildx", "version"], stdout=log,
+                             stderr=subprocess.STDOUT, check=True, timeout=15)
+          with (output / "history-before.json").open("wb") as log:
+              subprocess.run(["docker", "buildx", "--builder", builder, "history", "ls",
+                              "--format", "json"], stdout=log, check=True, timeout=30)
+          PYCODE
       - name: Build server candidate attempt 1
         id: first_server_build
+        timeout-minutes: 90
+        env:
+          BUILDKIT_PROGRESS: plain
         uses: ./saas/actions/build-oci-candidate
         with:
           artifact: server
           target: runtime
           attempt: "1"
+      - name: Retain first Server build original plain progress
+        continue-on-error: true
+        if: ${{ always() && steps.first_server_build.outcome != 'skipped' }}
+        timeout-minutes: 5
+        env:
+          PROGRESS_BUILDER: ${{ steps.candidate-builder.outputs.name }}
+          BUILD_OUTCOME: ${{ steps.first_server_build.outcome }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, subprocess
+          from pathlib import Path
+          output = Path("artifacts/first-server-build-progress")
+          output.mkdir(parents=True, exist_ok=True)
+          builder = os.environ["PROGRESS_BUILDER"]
+          receipt = {"build_step_outcome": os.environ["BUILD_OUTCOME"],
+                     "origin": "original BuildKit history plain progress", "complete": False}
+          try:
+              with (output / "history-after.json").open("wb") as log:
+                  subprocess.run(["docker", "buildx", "--builder", builder, "history", "ls",
+                                  "--format", "json"], stdout=log, check=True, timeout=30)
+              def refs(path):
+                  remaining = path.read_text().strip()
+                  rows = []
+                  while remaining:
+                      value, consumed = json.JSONDecoder().raw_decode(remaining)
+                      rows.extend(value if isinstance(value, list) else [value])
+                      remaining = remaining[consumed:].lstrip()
+                  assert all(isinstance(row, dict) for row in rows), "Invalid history row"
+                  result = {row.get("ref") or row.get("ID") or row.get("Ref") for row in rows}
+                  assert all(isinstance(ref, str) and ref.strip() == ref and ref for ref in result), "Invalid build ref"
+                  return result
+              created = refs(output / "history-after.json") - refs(output / "history-before.json")
+              assert len(created) == 1 and None not in created, "Ambiguous build record"
+              ref = created.pop()
+              receipt["build_ref"] = ref
+              parts = ref.split("/")
+              assert len(parts) == 3 and parts[0] == builder and all(parts), "Unexpected builder/node/ref"
+              record_ref = parts[-1]
+              receipt["native_record_ref"] = record_ref
+              with (output / "server-1.progress.original.log").open("wb") as log:
+                  subprocess.run(["docker", "buildx", "--builder", builder, "history", "logs",
+                                  "--progress", "plain", record_ref], stdout=log,
+                                 stderr=subprocess.STDOUT, check=True, timeout=120)
+              receipt["complete"] = True
+          except BaseException as error:
+              receipt["capture_error_type"] = type(error).__name__
+              raise
+          finally:
+              (output / "capture.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PYCODE
+      - name: Upload first Server build original progress
+        continue-on-error: true
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-first-build-progress-${{ env.CANDIDATE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/first-server-build-progress/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Verify executable Server candidate SDK on both architectures
+        id: first_server_sdk
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, secrets, subprocess, tarfile
+          from pathlib import Path
+          from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+          archive = Path(os.environ["RUNNER_TEMP"]) / "server-1.tar"
+          revision = os.environ["CANDIDATE_REVISION"]
+          facts = inspect_oci_archive(archive, label_profile="executable")
+          with tarfile.open(archive) as stream:
+              descriptors = json.load(stream.extractfile("index.json"))["manifests"]
+          assert len(descriptors) == 1
+          root = descriptors[0]["digest"]
+          subprocess.run(["docker", "load", "-i", str(archive)], check=True)
+          verified = []
+          owner = secrets.token_hex(16)
+          probe_names = []
+          errors = []
+          try:
+              actual = json.loads(subprocess.check_output([
+                  "docker", "image", "inspect", root,
+              ]))[0]
+              assert actual["Descriptor"]["digest"] == root and actual["Id"] == root
+              for arch in ("amd64", "arm64"):
+                  platform = f"linux/{arch}"
+                  actual = json.loads(subprocess.check_output([
+                      "docker", "image", "inspect", "--platform", platform, root,
+                  ]))[0]
+                  expected = facts["platforms"][platform]
+                  assert actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]
+                  assert actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]
+                  name = f"omnigent-sdk-{owner}-{arch}"
+                  probe_names.append(name)
+                  subprocess.run([
+                      "docker", "run", "--pull", "never", "--platform", platform,
+                      "--name", name, "--label", f"io.omnigent.sdk-probe={owner}",
+                      "--no-healthcheck",
+                      "--network", "none", "--user", "1000:1000", "--cap-drop", "ALL",
+                      "--security-opt", "no-new-privileges:true", "--read-only",
+                      "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
+                      "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
+                      "--entrypoint", "/opt/venv/bin/python", root, "-B", "-I", "-c",
+                      'import os,sys,kubernetes;from pathlib import Path;from importlib.metadata import version;from omnigent import _build_info;import saas.production.aliyun_server_profile as profile;import saas.production.aliyun_model_ingress;assert version("e2b")=="2.31.0";assert version("alibabacloud-sandbox20260820")=="1.2.0";assert version("alibabacloud-sts20150401")=="1.2.0";assert version("alibabacloud-oss-v2")=="1.4.0";assert version("defusedxml")=="0.7.1";import saas.production.aliyun_artifacts;import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert Path(profile.__file__).resolve().is_relative_to(Path("/opt/venv"))',
+                      revision,
+                  ], check=True, timeout=180)
+                  verified.append({"platform": platform, "config_digest": expected["config_digest"], "manifest_digest": expected["manifest_digest"]})
+          except BaseException as error:
+              errors.append(error)
+          finally:
+              for name in probe_names:
+                  try:
+                      identifiers = subprocess.check_output([
+                          "docker", "container", "ls", "--all", "--no-trunc",
+                          "--filter", f"name=^/{name}$",
+                          "--filter", f"label=io.omnigent.sdk-probe={owner}",
+                          "--format", "{{.ID}}",
+                      ], text=True, timeout=30).splitlines()
+                      for identifier in identifiers:
+                          assert re.fullmatch(r"[0-9a-f]{64}", identifier)
+                          subprocess.run(["docker", "container", "rm", "--force", identifier], check=True, timeout=30)
+                  except BaseException as error:
+                      errors.append(error)
+              try:
+                  subprocess.run(["docker", "image", "rm", root], check=True, timeout=30)
+              except BaseException as error:
+                  errors.append(error)
+              if len(errors) == 1:
+                  raise errors[0]
+              if errors:
+                  raise BaseExceptionGroup("SDK verification and cleanup failed", errors)
+          with archive.open("rb") as stream:
+              archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          Path("artifacts/server-candidate-runtime.json").write_text(json.dumps({
+              "schema_version": 1, "source_revision": revision,
+              "archive_sha256": archive_sha256, "root_digest": root,
+              "e2b_version": "2.31.0", "platforms": verified, "passed": True,
+          }, sort_keys=True, indent=2) + "\n")
+          PY
       - name: Preflight scan exact server candidate on both architectures
         id: server_preflight
         run: >-
@@ -335,6 +512,7 @@ jobs:
       - name: Retain failed Server preflight OCI for diagnosis
         if: >-
           ${{ failure() && !cancelled() && steps.first_server_build.outcome == 'success' &&
+              steps.first_server_sdk.outcome == 'success' &&
               steps.server_preflight.outcome == 'failure' &&
               ((github.event_name == 'pull_request' &&
                 github.event.pull_request.head.repo.full_name == github.repository) ||
@@ -346,6 +524,7 @@ jobs:
           name: failed-server-preflight-oci-${{ env.CANDIDATE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/server-1.tar
+            artifacts/server-candidate-runtime.json
             artifacts/grype-preflight/*.json
           compression-level: 0
           if-no-files-found: error
@@ -441,7 +620,9 @@ jobs:
         with:
           name: saas-image-candidate-${{ env.CANDIDATE_REVISION }}
           path: |
+            artifacts/server-regressions.junit.xml
             artifacts/saas-image-candidate.json
+            artifacts/server-candidate-runtime.json
             artifacts/oci-promotion-manifest.json
             artifacts/oci-layer-drift.json
             artifacts/candidate-storage-reclamation.json
@@ -642,7 +823,7 @@ jobs:
           done
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$SERVER_IMAGE" -B -I -c \
-            'import kubernetes; import saas.production.platform_model_sandbox_host'
+            'import kubernetes; from importlib.metadata import version; assert version("e2b") == "2.31.0"; assert version("alibabacloud-sandbox20260820") == "1.2.0"; assert version("alibabacloud-sts20150401") == "1.2.0"; assert version("alibabacloud-oss-v2") == "1.4.0"; assert version("defusedxml") == "0.7.1"; import saas.production.aliyun_artifacts; import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer; import saas.production.aliyun_server_profile; import saas.production.platform_model_sandbox_host'
           docker run --rm --pull always --platform linux/amd64 --network none \
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'import saas.production.platform_model_sandbox_host'

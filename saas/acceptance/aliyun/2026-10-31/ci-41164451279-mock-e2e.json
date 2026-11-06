@@ -1,0 +1,53 @@
+{
+  "expected_failures": [
+    "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_host_offline_user_acts[claude-stop-20s] - R4: Stop with the host unreachable reports success and shows idle, but the turn keeps running on the host and finishes once it returns (claude can also lose the next message in the busy TUI)",
+    "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_host_offline_user_acts[codex-send-20s] - R3: a message sent while the host is unreachable is accepted (202), then the relaunch fails with runner_failed_to_start; the message is never delivered and the failure stays after the host returns",
+    "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_host_offline_user_acts[claude-send-20s] - R3: a message sent while the host is unreachable is accepted (202), then the relaunch fails with runner_failed_to_start; the message is never delivered and the failure stays after the host returns",
+    "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_host_offline_user_acts[codex-stop-20s] - R4: Stop with the host unreachable reports success and shows idle, but the turn keeps running on the host and finishes once it returns (claude can also lose the next message in the busy TUI)"
+  ],
+  "observed_at": "2026-10-31T03:58:11.460527+00:00",
+  "p5_accepted": false,
+  "production_acceptance": false,
+  "raw_log_sha256": "2b730b1a147b92c967b28dc0287c78a07cacca4e47dd320930ddbfc1159de788",
+  "run_id": 41164451279,
+  "scope": "Four upstream mock E2E shards; no live Aliyun Host, storage or model acceptance",
+  "shards": [
+    {
+      "passed": 207,
+      "shard": 0,
+      "skipped": 44,
+      "summary": "========== 207 passed, 44 skipped, 23 warnings in 1121.76s (0:18:41) ===========",
+      "xfailed": 0
+    },
+    {
+      "passed": 207,
+      "shard": 1,
+      "skipped": 38,
+      "summary": "===== 207 passed, 38 skipped, 2 xfailed, 20 warnings in 1527.72s (0:25:27) =====",
+      "xfailed": 2
+    },
+    {
+      "passed": 191,
+      "shard": 2,
+      "skipped": 46,
+      "summary": "===== 191 passed, 46 skipped, 2 xfailed, 26 warnings in 1142.02s (0:19:02) =====",
+      "xfailed": 2
+    },
+    {
+      "passed": 201,
+      "shard": 3,
+      "skipped": 40,
+      "summary": "=========== 201 passed, 40 skipped, 19 warnings in 955.08s (0:15:55) ===========",
+      "xfailed": 0
+    }
+  ],
+  "skip_summary_count": 151,
+  "source": "GitHub Actions completed job logs; token artifacts contain usage rather than JUnit results",
+  "source_revision": "85f102b507bacab1f2e1101ab310a454bcdc7aa4",
+  "totals": {
+    "passed": 806,
+    "skipped": 168,
+    "xfailed": 4
+  },
+  "workflow_conclusion": "success"
+}

@@ -337,6 +337,33 @@ def _validate_disposition_receipt(
     inventory, platform = proof.get("inventory"), proof.get("platform")
     if not isinstance(inventory, list) or not isinstance(platform, str):
         raise ValueError("finite component disposition inventory or platform is missing")
+    if proof.get("classification") == "mitigated_by_verified_runtime_conditions":
+        scanner_exit = proof.get("scanner_exit")
+        if type(scanner_exit) is not int or scanner_exit != 2:
+            raise ValueError("finite combination requires original integer scanner exit 2")
+        from saas.scripts.combined_runtime_disposition import (
+            disposition_receipt as combined_receipt,
+        )
+        from saas.scripts.runtime_evidence_intake import verifier_from_registered_inputs
+
+        raw = report_path if isinstance(report_path, bytes) else report_path.read_bytes()
+        expected = combined_receipt(
+            raw,
+            inventory,
+            platform=platform,
+            now=now,
+            scanner_exit=scanner_exit,
+            verify_runtime=verifier_from_registered_inputs(
+                Path(__file__).resolve().parents[2], inventory
+            ),
+        )
+        if json.dumps(proof, sort_keys=True, allow_nan=False) != json.dumps(
+            expected, sort_keys=True, allow_nan=False
+        ):
+            raise ValueError(
+                "finite combination differs from unchanged raw and registered native proof"
+            )
+        return expected
     expected = disposition_receipt(report_path, inventory, platform=platform, now=now)
     if proof != expected:
         raise ValueError("finite component disposition differs from original raw report or rule")
@@ -349,13 +376,18 @@ def validate_disposition(
     receipt = _validate_disposition_receipt(report_path, proof, now=now)
     if image is None:
         raise ValueError("finite component disposition requires actual verified OCI input")
-    actual = inspect_disposition(image, report_path, platform=receipt["platform"], now=now)
+    from saas.scripts.approved_disposition import inspect_approved_disposition
+
+    actual = inspect_approved_disposition(
+        image, report_path, platform=receipt["platform"], now=now
+    )
     if receipt != actual:
         raise ValueError("finite component inventory differs from actual OCI contents")
     return actual
 
 
 def main() -> None:
+    from saas.scripts.approved_disposition import inspect_approved_disposition
     from saas.scripts.scan_oci_candidates import scan_report
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -372,7 +404,9 @@ def main() -> None:
     ):
         raise ValueError("unexpected actual scanner exit")
     proof = (
-        inspect_disposition(args.image, args.report, platform=args.platform, now=datetime.now(UTC))
+        inspect_approved_disposition(
+            args.image, args.report, platform=args.platform, now=datetime.now(UTC)
+        )
         if any(parsed["counts"].values())
         else None
     )
@@ -410,7 +444,7 @@ def validate_release_dispositions(
         or type(scan.get("critical")) is not int
         or scan["critical"] != 0
         or type(scan.get("high")) is not int
-        or scan["high"] != len(bundle)
+        or scan["high"] != sum(item.get("proof", {}).get("raw_high", 0) for item in bundle)
     ):
         raise ValueError("release raw counts do not bind finite component dispositions")
     if hashlib.sha256(json.dumps(bundle, sort_keys=True).encode()).hexdigest() != scan.get(

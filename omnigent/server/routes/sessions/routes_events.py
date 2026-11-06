@@ -2897,6 +2897,7 @@ def register_events_routes(
                 _runner_needs_session_init = True
         # Track the host's launch verdict for the unavailable response below.
         relaunched_runner_id: str | None = None
+        relaunch_connect_timeout_s = _HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S
         relaunched_launch_acknowledged = False
         relaunched_launch_refused = False
         # The host's launch-refusal reason and whether THIS requester may
@@ -2932,6 +2933,7 @@ def register_events_routes(
             # explicit pending sign-in retains this runner and the input.
             from omnigent.server.routes import sessions as _sf
 
+            reconnect_started = time.monotonic()
             if conv.runner_id is not None and _sf._HOST_BOUND_RUNNER_CONNECT_GRACE_S > 0:
                 _logger.info(
                     "Waiting up to %.1fs for host-bound runner %s to register "
@@ -2952,6 +2954,7 @@ def register_events_routes(
                         host_conn=_grace_host_conn,
                         host_registry=_grace_host_reg,
                         conversation_store=conversation_store,
+                        preserve_live_runner_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
                     )
                 else:
                     # Host tunnel absent: no one to query, so this is the
@@ -2968,6 +2971,7 @@ def register_events_routes(
             # An absent host needs its own grace before it can spawn a runner.
             _host_reg = getattr(request.app.state, "host_registry", None)
             if runner_client is None and _host_reg is not None:
+                binding_changed_during_host_grace = False
                 _host_conn = _host_reg.get(conv.host_id)
                 if _host_conn is None:
                     if await _maybe_relaunch_managed_sandbox(
@@ -2984,9 +2988,13 @@ def register_events_routes(
                         conv = conv_after_relaunch
                         runner_client = await _get_runner_client(session_id, runner_router)
                     else:
+                        host_grace_remaining = max(
+                            0.0,
+                            _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started),
+                        )
                         _logger.info(
                             "Waiting up to %.0fs for host %s to reconnect for session %s",
-                            _sf._HOST_RECONNECT_GRACE_S,
+                            host_grace_remaining,
                             conv.host_id,
                             session_id,
                         )
@@ -2995,7 +3003,7 @@ def register_events_routes(
                             _host_reg,
                             _tunnel_registry,
                             runner_id=conv.runner_id,
-                            timeout_s=_sf._HOST_RECONNECT_GRACE_S,
+                            timeout_s=host_grace_remaining,
                         )
                         # A surviving or concurrently replaced runner may have
                         # connected during the host grace; reuse it if available.
@@ -3004,6 +3012,7 @@ def register_events_routes(
                         )
                         if fresh_conv is None:
                             raise _session_not_found()
+                        binding_changed_during_host_grace = fresh_conv.runner_id != conv.runner_id
                         runner_client = await _get_runner_client(
                             session_id, runner_router, conversation=fresh_conv
                         )
@@ -3011,6 +3020,34 @@ def register_events_routes(
                         # to recognize and join a concurrent replacement launch.
                         if runner_client is not None:
                             conv = fresh_conv
+                if (
+                    runner_client is None
+                    and _host_conn is not None
+                    and _grace_host_conn is None
+                    and not binding_changed_during_host_grace
+                    and conv.runner_id is not None
+                ):
+                    remaining = max(
+                        0.0, _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started)
+                    )
+                    if remaining <= 0:
+                        raise OmnigentError(
+                            "The host has only just reconnected. Your message was not accepted; "
+                            "retry when the runner reconnects.",
+                            code=ErrorCode.RUNNER_UNAVAILABLE,
+                        )
+                    runner_client = await _wait_for_host_bound_runner_client(
+                        session_id,
+                        runner_router,
+                        _tunnel_registry,
+                        runner_id=conv.runner_id,
+                        timeout_s=remaining,
+                        runner_exit_reports=runner_exit_reports,
+                        host_conn=_host_conn,
+                        host_registry=_host_reg,
+                        conversation_store=conversation_store,
+                        preserve_live_runner_s=0.0,
+                    )
                 if runner_client is None and _host_conn is not None:
                     launch_attempt = await _launch_runner_on_host(
                         conv,
@@ -3081,6 +3118,14 @@ def register_events_routes(
                 relaunch_connect_timeout_s = _relaunch_connect_timeout_s(
                     acknowledged=relaunched_launch_acknowledged
                 )
+                if _grace_host_conn is None:
+                    relaunch_connect_timeout_s = min(
+                        relaunch_connect_timeout_s,
+                        max(
+                            0.0,
+                            _sf._HOST_RECONNECT_GRACE_S - (time.monotonic() - reconnect_started),
+                        ),
+                    )
                 _logger.info(
                     "Waiting up to %.0fs for host %s to spawn a runner for session %s",
                     relaunch_connect_timeout_s,
@@ -3219,6 +3264,16 @@ def register_events_routes(
                         ),
                     )
                     raise OmnigentError(_host_offline_hold_message(), code=ErrorCode.HOST_OFFLINE)
+                if (
+                    not exit_cause
+                    and not relaunched_launch_refused
+                    and _client_holds_host_offline_sends(request.headers)
+                ):
+                    raise OmnigentError(
+                        "The runner has not connected. Your message was not accepted; "
+                        "retry when it connects.",
+                        code=ErrorCode.RUNNER_UNAVAILABLE,
+                    )
                 if exit_cause:
                     failure_message = exit_cause
                 elif host_offline:
@@ -3316,7 +3371,7 @@ def register_events_routes(
                     event_name = "runner_never_connected"
                     launch_detail = (
                         "it never connected to the server within "
-                        f"{_relaunch_connect_timeout_s(acknowledged=True):.0f}s — the "
+                        f"{relaunch_connect_timeout_s:.0f}s — the "
                         "runner process may be hung or unable to reach the "
                         "server. Check the runner log on the host."
                     )
@@ -3331,7 +3386,7 @@ def register_events_routes(
                     launch_detail = (
                         "the host never confirmed the launch and no runner "
                         "connected to the server within "
-                        f"{_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S:.0f}s. "
+                        f"{relaunch_connect_timeout_s:.0f}s. "
                         "Check the daemon and runner logs on the host."
                     )
                     log_detail = launch_detail

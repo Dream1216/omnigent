@@ -8,7 +8,7 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (199 files, 4,576 net lines, nine patches, .85).
+`saas/upstream-baseline.json` (210 files, 5,602 net lines, nine patches, .85).
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
@@ -384,3 +384,31 @@ and Runner Session protocol `2` must still pass the integration matrix.
 | `0008-kimi-platform-provider.patch` | SaaS Platform | `omnigent/harnesses/kimi_native/credentials.py`; `omnigent/inner/kimi_executor.py`; `omnigent/inner/kimi_harness.py`; `omnigent/harnesses/kimi_native/forwarder.py` | headless/native temporary Provider routing and vendor-login fallback | Kimi temporary-provider proposal pending | first `09152b0a`; last `ee728a02004749e7f6971beee6c66d990bfbd216` | Remove when upstream supports the same credential-free platform routing |
 | `0009-managed-kubernetes-runtime-providers.patch` | SaaS Runtime | `omnigent/onboarding/sandboxes/kubernetes.py`; `omnigent/onboarding/sandboxes/agent_sandbox.py` | Agent Sandbox and Kubernetes Job provider parsing | Multi-provider proposal pending | first `09152b0a`; last `ee728a02004749e7f6971beee6c66d990bfbd216` | Remove when upstream exposes the equivalent dual managed runtime provider |
 | `0010-next-agent-session-reliability.patch` | SaaS Runtime | `omnigent/onboarding/harness_readiness.py`; `omnigent/runtime/pending_inputs.py`; `omnigent/server/API.md`; `omnigent/server/app.py`; `omnigent/server/managed_hosts.py`; `omnigent/server/routes/_sessions/orchestration.py`; `omnigent/server/routes/sessions/routes_core.py`; `omnigent/server/routes/sessions/routes_events.py`; `omnigent/server/startup_inputs.py` | Managed Host launch, reported harness readiness, exact-retry idempotency, and configured initial SPA title | Managed Host, Agent readiness, and branding proposals pending | first `09152b0a`; last `ee728a02004749e7f6971beee6c66d990bfbd216` | Remove when upstream exposes equivalent managed Host launch, Agent readiness, replay, and initial-title semantics |
+
+
+The proposed P5 Host-offline control extension stays in
+`0010-next-agent-session-reliability.patch`; the active patch count remains nine.
+The measured0.21 combination uses196 files /5349 net lines. The current ceiling is196 files /5353 net lines under the recorded later project-wide execution authorization; the new combination still requires its own full qualification. Owner: Omnigent Aliyun
+integration. Affected official paths are
+`omnigent/server/routes/_sessions/orchestration.py` and
+`omnigent/server/routes/sessions/routes_events.py`. It bounds reconnect waits,
+refuses unacknowledged message/stop requests, preserves a Host-confirmed live
+Runner and joins a concurrent replacement instead of starting another.
+Tests are `tests/server/integration/test_session_host_launch.py`,
+`tests/server/routes/test_orphaned_running_session_reconcile.py`,
+`tests/server/routes/test_intentional_runner_stop.py` and the send/stop subset
+of `tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py`.
+The first and latest replay target is pinned upstream
+`ee728a02004749e7f6971beee6c66d990bfbd216`; replay must reproduce every
+modified official-source byte. Proposed downstream review:
+https://github.com/Dream1216/omnigent/pull/200; no separate upstream fix is
+claimed. Remove this extension once the pinned upstream implements these
+reconnect and acknowledgement contracts and the strict 20/150-second native
+matrix passes without the extension. Local mock-model fault coverage does not
+qualify an Aliyun Host deployment or waive release gates.
+
+The Aliyun Host recovery followup distinguishes a process starting or reconnecting
+after its Host tunnel from a previously connected Runner that has become
+unresponsive. The latter remains eligible for replacement and superseded-process
+reaping after the ordinary connect grace; live startup and Host reconnect cases
+retain their bounded preservation behavior. Patch 0010 carries this distinction.

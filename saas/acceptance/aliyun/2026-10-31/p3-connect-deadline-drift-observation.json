@@ -1,0 +1,26 @@
+{
+  "after_reconnect_end_at": "2026-10-30T23:06:46+00:00",
+  "checks": {
+    "admitted_lifetime_persisted": true,
+    "cleanup_absence_confirmed": true,
+    "cross_tenant_cleanup_rejected": true,
+    "nonroot_command": true
+  },
+  "cloud_deadline_precision_tolerance_seconds": 1,
+  "cloud_started_at": "2026-10-30T23:05:44.993047+00:00",
+  "failure": "",
+  "failure_type": "AssertionError",
+  "finished_at": "2026-10-30T23:05:47.143782+00:00",
+  "original_end_at": "2026-10-30T23:06:44.993003+00:00",
+  "production_acceptance": false,
+  "reconnect_deadline_drifts_seconds": [
+    1.006997
+  ],
+  "sandbox_id": "sbx-8d9e332f-bbcf-4ac9-80a2-ec68612af813",
+  "schema_version": 1,
+  "scope": "real SDK transport using Base template and synthetic tenant; no Host or production admission",
+  "started_at": "2026-10-30T23:05:44.370810+00:00",
+  "template": "0mipsyhtqfvkegns0jbw",
+  "transport_module_sha256": "afdf271dd188a035614827e257cf2fed2498aede1aeb8cf3b7b690ba588a854a",
+  "transport_passed": false
+}

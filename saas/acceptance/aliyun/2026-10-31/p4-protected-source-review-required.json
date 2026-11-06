@@ -1,0 +1,60 @@
+{
+  "administrator_merge_performed": false,
+  "allowlist_modified": false,
+  "legacy_source_closure_drift": [
+    {
+      "expected_protected_sha256": "ded133dddef0e5185a396a936b83e66eecd3cd2532abb24c258f21f5e1dd95ca",
+      "observed_sha256": "8e1188acbd12f4a8abf529d98d7b10df14626365ebcca6ad14e2513fea2ab239",
+      "path": "saas/scripts/check_image_supply_chain.py"
+    },
+    {
+      "expected_protected_sha256": "ac394e8dcfb07e666dd4044571a0a993942eef29a9ca9aa933f4dc31b5962fa9",
+      "observed_sha256": "e980769bb53a8da04b7707adc83db1950e495b09b0e406b293f8428fd6950507",
+      "path": "saas/scripts/scan_oci_candidates.py"
+    },
+    {
+      "expected_protected_sha256": "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
+      "observed_sha256": "fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732",
+      "path": "saas/scripts/compare_oci_rebuilds.py"
+    }
+  ],
+  "note": "These are review inputs, not approval. Preserve immutable legacy qualification, source trust and raw vulnerability thresholds.",
+  "observed_at": "2026-10-31T02:18:56.800488+00:00",
+  "protected_checks_skipped_or_waived": false,
+  "protected_guard_files_modified": false,
+  "status": "not-admitted",
+  "trusted_input_drift": [
+    {
+      "observed_sha256": "52acea0dded4c8cdb1f5c89da18c49ad3c04b6072d6847ef11e3dd104c6dd64f",
+      "path": "pyproject.toml",
+      "trusted_sha256": [
+        "2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9",
+        "5b29e6b67c416f8b9c3b1b6b6c4e6dffec9fb11b309e16a188bd8f905713ca3b"
+      ]
+    },
+    {
+      "observed_sha256": "06f5eeed075bc43c7a1780818c2511645ad4799880ae7fbfba6d3fe01ac7a691",
+      "path": "uv.lock",
+      "trusted_sha256": [
+        "1d44c055d8f64ffababa0675aa6de21a640362e904c56a179e453d3f46eaf739",
+        "fe267e096b19ec19e20a33234a1548bf7d1894778b42ac81256fa8be2d2cf585"
+      ]
+    },
+    {
+      "observed_sha256": "28567239641a6f07a96cc62f530126c54acf293986b55fafd0acfaa3d9dd0289",
+      "path": "tests/saas/test_image_supply_chain.py",
+      "trusted_sha256": [
+        "0b554b2e7bbfc71789bb6278765e469976bdcf2014ec09f4c8ff8f8da50d0392",
+        "d65bf49883d9773ce3954c7c2086a248fc03b3accd3bd9e3733e224bbe4ef433"
+      ]
+    },
+    {
+      "observed_sha256": "fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732",
+      "path": "saas/scripts/compare_oci_rebuilds.py",
+      "trusted_sha256": [
+        "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
+        "49e6f76608c90dc191d8776a74e23956260f037a83f14cb98aca651d77aac557"
+      ]
+    }
+  ]
+}

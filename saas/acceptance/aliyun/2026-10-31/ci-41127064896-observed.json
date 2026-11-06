@@ -1,0 +1,22 @@
+{
+  "observed_at": "2026-10-30 20:58:26 UTC",
+  "run_id": 41127064896,
+  "url": "https://github.com/Dream1216/omnigent/actions/runs/41127064896",
+  "source_revision": "5c39063c99731bba3eb5f523c1b3697ead1a7a61",
+  "status": "in_progress",
+  "verify": "success",
+  "build_jobs": [
+    {
+      "id": 124308748544,
+      "name": "build (1)",
+      "status": "in_progress"
+    },
+    {
+      "id": 124308748503,
+      "name": "build (2)",
+      "status": "in_progress"
+    }
+  ],
+  "local_builder": "omnigent-aliyun-01a18d5f stopped, cache retained",
+  "production_acceptance": false
+}

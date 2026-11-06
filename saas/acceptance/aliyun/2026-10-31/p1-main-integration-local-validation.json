@@ -1,0 +1,87 @@
+{
+  "candidate_control_plane_schema_revision": "lm2t00000001",
+  "candidate_parent": "8775e943955a795569559c667e01f75aa2a147ac",
+  "checks": [
+    {
+      "errors": 0,
+      "evidence": "main-integration-scoped-regression.junit.xml",
+      "failures": 0,
+      "tests": 803
+    },
+    {
+      "errors": 0,
+      "evidence": "main-integration-contract-regression.junit.xml",
+      "failures": 0,
+      "tests": 258
+    }
+  ],
+  "current_trusted_input_drift": [
+    {
+      "observed_sha256": "52acea0dded4c8cdb1f5c89da18c49ad3c04b6072d6847ef11e3dd104c6dd64f",
+      "path": "pyproject.toml",
+      "trusted_sha256": [
+        "2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9",
+        "5b29e6b67c416f8b9c3b1b6b6c4e6dffec9fb11b309e16a188bd8f905713ca3b"
+      ]
+    },
+    {
+      "observed_sha256": "06f5eeed075bc43c7a1780818c2511645ad4799880ae7fbfba6d3fe01ac7a691",
+      "path": "uv.lock",
+      "trusted_sha256": [
+        "1d44c055d8f64ffababa0675aa6de21a640362e904c56a179e453d3f46eaf739",
+        "fe267e096b19ec19e20a33234a1548bf7d1894778b42ac81256fa8be2d2cf585"
+      ]
+    },
+    {
+      "observed_sha256": "302544b5d5ed4f670696702f8bbf591946a79c4f4a2881a7dd7e24acca1efd23",
+      "path": "tests/saas/test_image_supply_chain.py",
+      "trusted_sha256": [
+        "0b554b2e7bbfc71789bb6278765e469976bdcf2014ec09f4c8ff8f8da50d0392",
+        "d65bf49883d9773ce3954c7c2086a248fc03b3accd3bd9e3733e224bbe4ef433"
+      ]
+    },
+    {
+      "observed_sha256": "fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732",
+      "path": "saas/scripts/compare_oci_rebuilds.py",
+      "trusted_sha256": [
+        "74b7f38a031bc64e0490dc31c19a746487182dc1a2e62cadc6a60ab6fd8b159b",
+        "49e6f76608c90dc191d8776a74e23956260f037a83f14cb98aca651d77aac557"
+      ]
+    }
+  ],
+  "dependency_resolution": "Frozen Python and pnpm checks passed; both ecosystems retain cooldown policy. Main security versions retained, including its filelock 4.2.1 and scoped cutoff. Aliyun SDK pins retained.",
+  "filelock_review": "Official upstream 4.2.1...4.2.4 comparison checked; changes are lock-state/lazy-import/NetBSD fixes and release tooling. Retaining the existing main cutoff is not a vulnerability waiver.",
+  "filelock_review_source": "https://github.com/tox-dev/filelock/compare/4.2.1...4.2.4",
+  "integrated_main": "038812da9e93199620aaed5314604eb53749ac63",
+  "merge_conflicts_resolved": [
+    "pnpm-workspace.yaml",
+    "pnpm-lock.yaml",
+    "uv.lock",
+    "saas/scripts/check_image_supply_chain.py"
+  ],
+  "observed_at": "2026-10-31T01:35:57.047116+00:00",
+  "pending": [
+    "Fresh-source CI and exact OCI runtime/scans",
+    "PostgreSQL 16/18 migration replay for integrated source",
+    "Separately reviewed trusted-main policy and Actions changes",
+    "Host template, actual Host/model task and storage qualification",
+    "Registry choice and credentials",
+    "Concurrency, recovery, canary and rollback acceptance"
+  ],
+  "production_deployed": false,
+  "production_migrated": false,
+  "production_observed": {
+    "control_plane_schema_revision": "p0s000000015",
+    "product_revision": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
+    "url": "https://next.jxhh.com/saas/version"
+  },
+  "production_ready": false,
+  "saas_type_errors": 0,
+  "static_guards": {
+    "image_supply_chain": "pass",
+    "patch_queue": "pass",
+    "production_baseline": "pass",
+    "upstream_delta": "pass"
+  },
+  "status": "local-main-integration-validation-only"
+}

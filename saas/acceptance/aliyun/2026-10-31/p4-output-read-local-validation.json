@@ -1,0 +1,30 @@
+{
+  "base_revision": "85f102b507bacab1f2e1101ab310a454bcdc7aa4",
+  "candidate_identity": "Working-tree source/test SHA-256 values recorded below; commit assigned after validation",
+  "existing_execution_action": "run.create",
+  "http_download_route_implemented": false,
+  "native_session_owner_required": true,
+  "observed_at": "2026-10-31T04:01:38.842165+00:00",
+  "oss_reader_implemented": false,
+  "output_read_action": "run.read_content",
+  "p4_accepted": false,
+  "production_activated": false,
+  "read_admission_implemented": true,
+  "scope": "Local admission checks backed by actual SQLite conversation, permission and control-plane stores; no cloud operations",
+  "scoped_regression": {
+    "errors": 0,
+    "failures": 0,
+    "junit_sha256": "7eccee975ddddbdd671d63b2fffe70f7bea5679e083f9bd9eebe927d2646aca4",
+    "passed": 928,
+    "skipped": 0,
+    "tests": 928
+  },
+  "source_sha256": {
+    "saas/control_plane/resolver.py": "bff39f6ce1308bb0bb22d5f9cb5b022fb6bd8dcb080e5bc3fd12817e2c950073",
+    "saas/production/aliyun_storage_admission.py": "7d2047ba8e9588084c348d2302c3c15ab3b129be6ff22acababd6843214c4191",
+    "tests/saas/test_aliyun_storage_admission.py": "9b562aa57c3cf8960d5d16bfe07df905c2229ad5a45bd8f3e1f03604823a3592",
+    "tests/saas/test_control_plane_resolver.py": "d62f7dadc0b22c038596517ecc09cb34e5edd37681b0cd448bf7973b13029033"
+  },
+  "space_only_project_scope": "derived from consistent active Session/native Project bindings; request context unchanged",
+  "ui_download_integration_implemented": false
+}
