@@ -28,7 +28,7 @@ ENTRIES = {
     "runner_control": "RunnerControlError",
     "runner_agent": "RunnerControlError",
     "preview_edge": "ProductionPreviewEdgeError",
-    "preview_owner": "ProductionPreviewOwnerError",
+    "preview_owner": "ProductionPreviewRelayError",
 }
 
 
@@ -90,7 +90,12 @@ def observe_startup(bindings: dict) -> dict:
     entries = []
     for role, error_name in ENTRIES.items():
         module = importlib.import_module(f"saas.production.{role}")
-        expected_error = getattr(module, error_name)
+        errors = (
+            importlib.import_module("saas.production.server_config")
+            if role == "server"
+            else module
+        )
+        expected_error = getattr(errors, error_name)
         locale.setlocale(locale.LC_ALL, "C")
         os.environ.update(POISON)
         try:

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib
 import json
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +31,21 @@ def test_fixed_installed_bindings_match_product_source():
     for installed, expected in BINDINGS["installed_files"].items():
         relative = installed.split("/site-packages/", 1)[1]
         assert hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == expected
+
+
+@pytest.mark.parametrize(
+    "role", ["server", "worker", "runner_control", "runner_agent", "preview_edge", "preview_owner"]
+)
+def test_expected_errors_match_actual_empty_configuration_rejection(role):
+    definitions = runpy.run_path(str(SUPPORT / "probe.py"), run_name="probe_definitions")
+    module = importlib.import_module(f"saas.production.{role}")
+    errors = (
+        importlib.import_module("saas.production.server_config") if role == "server" else module
+    )
+    expected_error = getattr(errors, definitions["ENTRIES"][role])
+    assert issubclass(expected_error, Exception)
+    with pytest.raises(expected_error):
+        getattr(module, f"load_production_{role}_config")({})
 
 
 @pytest.mark.parametrize(
