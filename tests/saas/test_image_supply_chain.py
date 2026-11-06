@@ -1781,6 +1781,7 @@ def _write_oci(
     corrupt_layer: bool = False,
     rootfs_type: str = "layers",
     include_diff_id: bool = True,
+    config_os: str | None = None,
     header_only_attestation: bool = False,
     buildkit_image_attestation_config: bool = False,
     statement_type: str = "https://in-toto.io/Statement/v0.1",
@@ -1819,6 +1820,7 @@ def _write_oci(
         config = json.dumps(
             {
                 "architecture": architecture,
+                **({"os": config_os} if config_os is not None else {}),
                 "created": "2026-08-31T10:52:21Z",
                 "config": {"Labels": labels},
                 "history": [

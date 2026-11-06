@@ -144,7 +144,12 @@ def image_blobs(source: Path) -> Iterator[ImageBlobs]:
         yield ImageBlobs(source, archive)
 
 
-def component_inventory(blobs: ImageBlobs, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+def component_inventory(
+    blobs: ImageBlobs,
+    manifest: dict[str, Any],
+    *,
+    additional_paths: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
     for descriptor in manifest["layers"]:
         additions, overwritten, whiteouts = {}, set(), []
@@ -165,7 +170,11 @@ def component_inventory(blobs: ImageBlobs, manifest: dict[str, Any]) -> list[dic
                     continue
                 if not member.isdir():
                     overwritten.add(name)
-                selected = "sqlite" in name.lower() or "recover" in path.name.lower()
+                selected = (
+                    "sqlite" in name.lower()
+                    or "recover" in path.name.lower()
+                    or name in additional_paths
+                )
                 facts: dict[str, Any] = {
                     "path": name,
                     "type": member.type.decode(),
@@ -256,8 +265,30 @@ def disposition_receipt(
     revision = target.get("labels", {}).get("org.opencontainers.image.revision")
     if re.fullmatch(r"[0-9a-f]{40}", str(revision)) is None:
         raise ValueError("component disposition requires exact source revision")
+    component = sqlite_component_facts(inventory, platform=platform)
+    return {
+        "rule_sha256": RULE_SHA256,
+        "id": RULE["id"],
+        "justification": RULE["justification"],
+        "owner": RULE["owner"],
+        "expires_at": RULE["expires_at"],
+        "platform": platform,
+        "manifest_digest": target["manifestDigest"],
+        "config_digest": target["imageID"],
+        "source_revision": revision,
+        "report_sha256": hashlib.sha256(raw).hexdigest(),
+        **component,
+        "inventory": inventory,
+        "raw_critical": 0,
+        "raw_high": 1,
+    }
+
+
+def sqlite_component_facts(inventory: list[dict[str, Any]], *, platform: str) -> dict[str, str]:
+    """Validate component bytes/absence only; this does not classify a finding."""
     if (
-        not isinstance(inventory, list)
+        platform not in RULE["library_sha256"]
+        or not isinstance(inventory, list)
         or not inventory
         or len({item["path"] for item in inventory}) != len(inventory)
     ):
@@ -285,23 +316,10 @@ def disposition_receipt(
         ):
             raise ValueError("additional unapproved SQLite library is present")
     return {
-        "rule_sha256": RULE_SHA256,
-        "id": RULE["id"],
-        "justification": RULE["justification"],
-        "owner": RULE["owner"],
-        "expires_at": RULE["expires_at"],
-        "platform": platform,
-        "manifest_digest": target["manifestDigest"],
-        "config_digest": target["imageID"],
-        "source_revision": revision,
-        "report_sha256": hashlib.sha256(raw).hexdigest(),
         "library_sha256": libraries[0]["sha256"],
         "inventory_sha256": hashlib.sha256(
             json.dumps(inventory, sort_keys=True).encode()
         ).hexdigest(),
-        "inventory": inventory,
-        "raw_critical": 0,
-        "raw_high": 1,
     }
 
 

@@ -24,6 +24,7 @@ def candidate(
     *,
     extra: dict[str, bytes] | None = None,
     database_time: datetime = NOW,
+    config_os: str | None = None,
 ):
     monkeypatch.setattr(component, "rule_enabled", lambda: True)
     library_hash = hashlib.sha256(LIBRARY).hexdigest()
@@ -47,6 +48,7 @@ def candidate(
         label_profile="executable",
         nested=True,
         layer_payload=layer.getvalue(),
+        config_os=config_os,
     )
     layout = tmp_path / "candidate-layout"
     with tarfile.open(image, "w") as archive:
