@@ -67,11 +67,14 @@ def _xattr(operation: str, path: int | Path, name: str = "", value: bytes = b"")
         arguments.append(ctypes.c_char_p(os.fsencode(name)))
     suffix: list[ctypes.c_int | ctypes.c_uint32] = []
     if sys.platform == "darwin":
-        if operation != "list":
+        if operation not in {"list", "remove"}:
             suffix.append(ctypes.c_uint32(0))
         suffix.append(ctypes.c_int(0 if descriptor else 1))
     elif operation == "set":
         suffix.append(ctypes.c_int(0))
+    if operation == "remove":
+        _require(function(*arguments, *suffix) == 0)
+        return b""
     if operation == "set":
         _require(
             function(*arguments, ctypes.c_char_p(value), ctypes.c_size_t(len(value)), *suffix) == 0
@@ -94,7 +97,13 @@ def _open_directory(path: Path | str, *, parent: int | None = None) -> int:
     return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
 
 
-def _tree_digest(root: Path, *, check_active: Callable[[], None], maximum_bytes: int) -> str:
+def _tree_digest(
+    root: Path,
+    *,
+    check_active: Callable[[], None],
+    maximum_bytes: int,
+    excluded_root_names: frozenset[str] = frozenset(),
+) -> str:
     """Compare every entry, including ignored files, private Git and hardlinks."""
     rows: list[dict[str, object]] = []
     links: dict[tuple[int, int], str] = {}
@@ -107,6 +116,8 @@ def _tree_digest(root: Path, *, check_active: Callable[[], None], maximum_bytes:
         _require(before.st_dev == device)
         names = sorted(os.listdir(directory), key=os.fsencode)
         for name in names:
+            if not relative and name in excluded_root_names:
+                continue
             check_active()
             info = os.stat(name, dir_fd=directory, follow_symlinks=False)
             _require(info.st_dev == device)

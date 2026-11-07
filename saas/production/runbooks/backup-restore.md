@@ -69,6 +69,71 @@ temporary copies never authorize removal of the original user data.
 
 ## Drill evidence
 
+### Original Sessions on the Aliyun provider
+
+The browser/ordinary CLI Session is the original Conversation, not a native
+ExecutionSession/Run. Keep its actual Project binding, owner, Host and workspace.
+The existing Aliyun Session/storage authorizer revalidates those original
+permissions; recovery adds no public selectors, database schema or signing service.
+
+For a selected original Session, quiesce its writer before capture. Record the
+actual tenant/space/Project, physical workspace, Conversation and Host IDs,
+source Sandbox, actual cwd and both admitted OSS volume identities. Capture the
+whole `/home/user/workspace`, including `.git`, ignored/untracked files, private
+branches, hardlinks, modes, timestamps and extended attributes. Exclude only
+`workspace/inputs` and `workspace/artifacts`: these are separate existing OSS
+mounts and require their own complete versioned backup/restore evidence.
+Preserve the existing encrypted, independent backup and verify the source tree
+again after capture. A Git clone or attachment replay is not this backup.
+
+Use the existing PAX capture/decryption transport. The archive must contain one
+explicit `workspace` directory and its complete local descendants. Stage the
+independently verified plaintext PAX under a selected existing Session mount;
+`inputs` is read-only inside the VM, while `artifacts` permits the existing
+authorized writer/capture operation. Neither needs a new volume or IAM scope.
+Both sources are pinned by complete archive SHA before and after extraction;
+the restored tree is independently checked against the original complete tree
+digest. Keep traffic/writers fenced during capture and restore.
+
+An owner-only descriptor contains `schema_version:1`, the actual `tenant_id`,
+`space_id`, `project_id`, `workspace_id`, `session_id`, `host_id`,
+`source_sandbox_id`, `archive_relative_path`, `archive_sha256`, `tree_sha256`,
+and optionally `archive_mount` (`inputs` by default, or `artifacts`). UUIDs are
+validated/normalized from the actual stored identities. The tree digest is
+the existing complete metadata/private-Git digest with only those two mount
+roots excluded; it is not a HEAD hash. The approved backup owner may obtain it
+using `saas.production.aliyun_workspace_recovery._digest` on the quiesced original
+root. Never derive it from the new clone, a model response or test data.
+
+Pin that descriptor in the existing canonical/hash-pinned v3 Aliyun profile:
+
+```json
+"storage": {
+  "workspace_recovery": {
+    "descriptor_file": "/absolute/owner-only/original-session-recovery.json",
+    "descriptor_sha256": "actual-complete-descriptor-sha256"
+  }
+}
+```
+
+This fragment supplements the existing storage credentials/tenant configuration.
+The normal Session retry or `omnigent resume` entry still performs its original
+authorization. `provision` reuses the admitted Session OSS mounts; `start_host`
+then imports before clone, Host credentials or Host execution. The packaged
+consumer validates PAX paths/types/links/quota, extracts to a fresh same-filesystem
+quarantine, compares the complete tree and private repository directories, and
+promotes it before Runner initialization/any Agent read. Successful import skips
+clone entirely; an incomplete/mismatched source stops bootstrap without a
+Git-only fallback. A receipt bound to the actual target VM prevents later user
+edits from being rolled back when the same restored VM reconnects. An unrelated
+existing VM cannot be overwritten by a fresh-import request.
+
+The source archive/delivery is retained. This is a bounded operator restore of
+the selected original Session, not an automatic backup service for all Sessions.
+Actual source/target volumes, OSS versions, identity revalidation, complete-file
+comparison before first read, real reply and measured RPO/RTO remain mandatory
+drill evidence. Local/parser tests do not establish that production recovery.
+
 Run at least one randomly selected Tenant restore and one regional or cluster
 restore every 90 days. Record requested and achieved recovery points, actual
 RPO/RTO, lost or corrected facts, manual steps, revision tuple, hash report,
