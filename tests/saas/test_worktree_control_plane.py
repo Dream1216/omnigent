@@ -63,6 +63,11 @@ from saas.runner_adapter import (
     StaticRepositoryMirrorResolver,
 )
 from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore
+from tests.saas.test_production_repository_mirror import (
+    LocalRepositoryFetcher,
+    _fixture_spec,
+    _verify_receipt,
+)
 
 
 class _FakeArtifactStore:
@@ -1854,14 +1859,57 @@ def test_dirty_expiry_without_recovery_material_is_quarantined(
         assert quota is not None and quota.active_instances == 0
 
 
+@pytest.fixture
+def _private_git_umask() -> Iterator[None]:
+    """Use the same owner-only Git metadata mode as the managed Runner."""
+    previous = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
+@pytest.mark.parametrize("sealed_mirror", [False, True])
 def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     worktree_fixture: WorktreeFixture,
     tmp_path: Path,
+    _private_git_umask: None,
+    sealed_mirror: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from saas.production.repository_mirror import provision_repository_mirrors
+
     fixture = worktree_fixture
     now = datetime.now(UTC).replace(microsecond=0)
     source, base_revision = _create_git_fixture(tmp_path)
-    binding = f"repo_physical_{uuid4().hex}"
+    binding = "repository-primary"
+    verify_mirrors = []
+
+    def provision_mirror(root: Path, stem: str, run: LeasedRun) -> Path:
+        if not sealed_mirror:
+            return _create_bare_mirror(source, root, "repository.git")
+        provision_root = tmp_path / stem
+        provision_root.mkdir(mode=0o700)
+        spec_path, spec, secret = _fixture_spec(
+            provision_root,
+            revision=base_revision,
+            mirror_root=root,
+            stem=stem,
+            runner_id=run.runner_id,
+            runner_generation=run.runner_generation,
+        )
+        fetcher = LocalRepositoryFetcher(source, secret=secret)
+        receipt = provision_repository_mirrors(spec_path, fetcher=fetcher)
+
+        def reverify() -> None:
+            assert _verify_receipt(receipt, spec).bindings == receipt.bindings
+            assert provision_repository_mirrors(spec_path, fetcher=fetcher) == receipt
+            assert len(fetcher.calls) == 1
+
+        verify_mirrors.append(reverify)
+        reverify()
+        return receipt.bindings[binding]
+
     repository_id = fixture.worktrees.register_repository(
         fixture.request,
         project_id=fixture.project_id,
@@ -1905,7 +1953,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     artifact_store = FilesystemRecoveryArtifactStore(tmp_path / "recovery-artifacts")
     first_mirror_root = tmp_path / "runner-one-mirrors"
     first_mirror_root.mkdir(mode=0o700)
-    first_mirror = _create_bare_mirror(source, first_mirror_root, "repository.git")
+    first_mirror = provision_mirror(first_mirror_root, "first-provision", first)
     first_adapter = RunnerWorktreeAdapter(
         managed_root=tmp_path / "runner-one-worktrees",
         mirror_root=first_mirror_root,
@@ -1929,17 +1977,40 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     with pytest.raises(RunnerWorktreeAdapterError) as embedded_credential:
         first_adapter.materialize(first_lease, trace_id="runner:unsafe-credential")
     assert embedded_credential.value.code == "repository_mirror_credentials_exposed"
-    _git_fixture(first_mirror, "config", "remote.origin.url", str(source))
+    if sealed_mirror:
+        _git_fixture(first_mirror, "config", "--remove-section", "remote.origin")
+    else:
+        _git_fixture(first_mirror, "config", "remote.origin.url", str(source))
+    original_git = first_adapter._git
+
+    def interrupted_checkout(args: list[str], **kwargs):
+        if args[0] == "checkout":
+            raise RunnerWorktreeAdapterError("interrupted_checkout", "Interrupted before checkout")
+        return original_git(args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(first_adapter, "_git", interrupted_checkout)
+        with pytest.raises(RunnerWorktreeAdapterError, match="Interrupted before checkout"):
+            first_adapter.materialize(first_lease, trace_id="runner:interrupted-checkout")
+    assert not first_adapter._target_path(first_lease.opaque_runtime_key).exists()
+    assert not list((tmp_path / "runner-one-worktrees").rglob(".checkout-*"))
     first_physical = first_adapter.materialize(first_lease, trace_id="runner:physical-one")
     assert first_physical.head_revision == base_revision
     assert _git_fixture(first_physical.worktree_path, "rev-parse", "HEAD") == base_revision
     assert first_lease.opaque_runtime_key not in str(first_physical.worktree_path)
     assert binding not in str(first_physical.worktree_path)
+    assert (first_physical.worktree_path / ".git").is_dir()
+    assert _git_fixture(
+        first_physical.worktree_path, "rev-parse", "--path-format=absolute", "--git-common-dir"
+    ) == str(first_physical.worktree_path / ".git")
+    assert not (first_physical.worktree_path / ".git/objects/info/alternates").exists()
     retried_physical = first_adapter.materialize(
         first_lease,
         trace_id="runner:physical-one-retry",
     )
     assert retried_physical == first_physical
+    for verify in verify_mirrors:
+        verify()
 
     outside = tmp_path / "outside.txt"
     outside.write_text("outside\n", encoding="utf-8")
@@ -1976,6 +2047,51 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         trace_id="runner:checkpoint-one-retry",
     )
     assert checkpoint_retry.recovery_artifact_ref == checkpoint.recovery_artifact_ref
+    for verify in verify_mirrors:
+        verify()
+    _git_fixture(first_physical.worktree_path, "branch", "user-history", checkpoint.head_revision)
+    _git_fixture(first_physical.worktree_path, "tag", "user-base", base_revision)
+    user_refs = _git_fixture(first_physical.worktree_path, "show-ref")
+    user_objects = _git_fixture(
+        first_physical.worktree_path,
+        "cat-file",
+        "--batch-all-objects",
+        "--batch-check=%(objectname)",
+    )
+    restarted_adapter = RunnerWorktreeAdapter(
+        managed_root=tmp_path / "runner-one-worktrees",
+        mirror_root=first_mirror_root,
+        state_root=tmp_path / "runner-one-state",
+        authority=fixture.worktrees,
+        mirrors=StaticRepositoryMirrorResolver({binding: first_mirror}),
+        recovery_artifacts=artifact_store,
+        runner_id=first_lease.runner_id,
+    )
+    resumed = restarted_adapter.materialize(first_lease, trace_id="runner:same-volume-restart")
+    assert resumed.head_revision == checkpoint.head_revision
+    assert _git_fixture(resumed.worktree_path, "show-ref") == user_refs
+    assert (
+        _git_fixture(
+            resumed.worktree_path, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"
+        )
+        == user_objects
+    )
+    git_directory = first_physical.worktree_path / ".git"
+    preserved_git = tmp_path / "preserved-user-git"
+    git_directory.rename(preserved_git)
+    git_directory.write_text(f"gitdir: {preserved_git}\n", encoding="utf-8")
+    try:
+        with pytest.raises(RunnerWorktreeAdapterError) as nonprivate:
+            first_adapter.checkpoint(
+                first_lease,
+                environment_snapshot_ref="environment:physical-one",
+                trace_id="runner:nonprivate-git",
+            )
+        assert nonprivate.value.code == "worktree_repository_not_private"
+        assert _git_fixture(first_physical.worktree_path, "show-ref") == user_refs
+    finally:
+        git_directory.unlink()
+        preserved_git.rename(git_directory)
     first_events = fixture.worktrees.replay_events(
         fixture.request,
         project_id=fixture.project_id,
@@ -2023,7 +2139,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     )
     second_mirror_root = tmp_path / "runner-two-mirrors"
     second_mirror_root.mkdir(mode=0o700)
-    second_mirror = _create_bare_mirror(source, second_mirror_root, "repository.git")
+    second_mirror = provision_mirror(second_mirror_root, "second-provision", second)
     assert _git_fixture(second_mirror, "cat-file", "-t", base_revision) == "commit"
     missing_head = subprocess.run(
         ["git", "cat-file", "-e", f"{checkpoint.head_revision}^{{commit}}"],
@@ -2043,6 +2159,8 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         runner_id=second_lease.runner_id,
     )
     second_physical = second_adapter.materialize(second_lease, trace_id="runner:physical-two")
+    for verify in verify_mirrors:
+        verify()
     assert second_physical.head_revision == checkpoint.head_revision
     assert (second_physical.worktree_path / "README.md").read_text(
         encoding="utf-8"
@@ -2098,6 +2216,14 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         trace_id="runner:delete-one-retry",
     )
     assert first_delete_retry.event_sequence == first_deleted.event_sequence
+    for verify in verify_mirrors:
+        verify()
+    if sealed_mirror:
+        from saas.production.repository_mirror import RepositoryMirrorError
+
+        _git_fixture(first_mirror, "hash-object", "-w", str(outside))
+        with pytest.raises(RepositoryMirrorError, match="unreviewed objects"):
+            verify_mirrors[0]()
 
 
 def test_filesystem_recovery_artifact_store_rejects_tampering(tmp_path: Path) -> None:
@@ -2178,7 +2304,7 @@ def test_failed_materialization_is_recoverable_after_partial_state_loss(
         adapter.materialize(lease, trace_id="runner:unsafe-tree")
     assert unsafe_tree.value.code == "worktree_symlink_escape"
     physical_paths = [
-        path for path in managed_root.glob("*/*") if path.is_dir() and (path / ".git").is_file()
+        path for path in managed_root.glob("*/*") if path.is_dir() and (path / ".git").is_dir()
     ]
     assert len(physical_paths) == 1
 

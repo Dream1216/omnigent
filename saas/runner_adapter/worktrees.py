@@ -16,8 +16,10 @@ import json
 import os
 import re
 import secrets
+import shutil
 import stat
 import subprocess
+import tempfile
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
@@ -859,6 +861,7 @@ class RunnerWorktreeAdapter:
                     "worktree_state_invalid", "Runner Worktree state is invalid"
                 )
             self._verify_target_identity(target, metadata)
+            self._require_private_repository(target)
             actual_bytes = self._inspect_tree(
                 target, maximum_bytes=int(identity["reserved_bytes"])
             )
@@ -1018,10 +1021,14 @@ class RunnerWorktreeAdapter:
                     allow_external_symlinks=True,
                 )
                 self._make_writable(target)
-                self._git(
-                    ["worktree", "remove", "--force", str(target)],
-                    git_dir=mirror,
-                )
+                if (target / ".git").is_dir() and not (target / ".git").is_symlink():
+                    self._require_private_repository(target)
+                    shutil.rmtree(target)
+                else:
+                    self._git(
+                        ["worktree", "remove", "--force", str(target)],
+                        git_dir=mirror,
+                    )
                 if target.exists() or target.is_symlink():
                     raise RunnerWorktreeAdapterError(
                         "worktree_physical_delete_failed",
@@ -1297,14 +1304,28 @@ class RunnerWorktreeAdapter:
             git_dir=mirror,
         )
         if not target.exists():
-            self._git(
-                ["worktree", "add", "--detach", str(target), base_revision],
-                git_dir=mirror,
-            )
+            with tempfile.TemporaryDirectory(prefix=".checkout-", dir=target.parent) as staging:
+                checkout = Path(staging) / "checkout"
+                self._git(
+                    [
+                        "clone",
+                        "--no-hardlinks",
+                        "--no-checkout",
+                        "--template=",
+                        "--",
+                        str(mirror),
+                        str(checkout),
+                    ]
+                )
+                self._git(["checkout", "--detach", base_revision], cwd=checkout)
+                self._require_private_repository(checkout)
+                checkout.chmod(0o700)
+                os.replace(checkout, target)
         if not target.is_dir() or target.is_symlink():
             raise RunnerWorktreeAdapterError(
                 "worktree_path_unsafe", "Physical Worktree is not a regular directory"
             )
+        self._require_private_repository(target)
         current = self._head_revision(target)
         if grant.recovery_artifact_ref is None:
             if current != base_revision:
@@ -1348,6 +1369,22 @@ class RunnerWorktreeAdapter:
             self._git(["reset", "--hard", expected_head], cwd=target)
         finally:
             bundle_path.unlink(missing_ok=True)
+
+    def _require_private_repository(self, target: Path) -> None:
+        """Never write checkpoint or recovery objects into the sealed source mirror."""
+        git_directory = target / ".git"
+        if git_directory.is_symlink() or not git_directory.is_dir():
+            raise RunnerWorktreeAdapterError(
+                "worktree_repository_not_private",
+                "Worktree requires its own Git directory; existing history was preserved",
+            )
+        common = self._git(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=target
+        ).stdout.strip()
+        if Path(common) != git_directory:
+            raise RunnerWorktreeAdapterError(
+                "worktree_repository_not_private", "Worktree Git objects must stay in its checkout"
+            )
 
     def _temporary_bundle(self, opaque_runtime_key: str, payload: bytes) -> Path:
         digest = _digest_text(opaque_runtime_key)
