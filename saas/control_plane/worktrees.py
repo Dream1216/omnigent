@@ -112,6 +112,7 @@ class ChangeSetSpec:
     repository_id: UUID
     base_revision: str
     branch_ref: str
+    checkpoint_source_worktree_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +164,7 @@ class WorktreeMaterializationGrant:
     branch_ref: str
     recovery_artifact_ref: str | None
     environment_snapshot_ref: str | None
+    restore_change_set_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +242,8 @@ class WorktreeControlPlane:
         """Atomically create one ChangeSet per Repository for multi-repo work."""
 
         self._authorizer.require(request, action="project.content.edit", project_id=project_id)
+        if any(spec.checkpoint_source_worktree_id is not None for spec in specs):
+            self._authorizer.require(request, action="run.read_content", project_id=project_id)
         if not specs or len({spec.repository_id for spec in specs}) != len(specs):
             raise WorktreeControlPlaneError(
                 "changeset_group_invalid",
@@ -247,6 +251,7 @@ class WorktreeControlPlane:
             )
         group_id = uuid4()
         change_set_ids: list[UUID] = []
+        checkpoint_restores: dict[str, str] = {}
         with self._session_factory.begin() as db:
             self._apply_request_context(db, request)
             repositories = tuple(
@@ -280,6 +285,26 @@ class WorktreeControlPlane:
             for spec in specs:
                 change_set_id = uuid4()
                 change_set_ids.append(change_set_id)
+                source = None
+                source_change_set = None
+                if spec.checkpoint_source_worktree_id is not None:
+                    source, source_change_set = self._completed_checkpoint_source(
+                        db,
+                        source_id=spec.checkpoint_source_worktree_id,
+                        tenant_id=request.tenant_id,
+                        space_id=request.space_id,
+                        project_id=project_id,
+                        repository_id=spec.repository_id,
+                    )
+                    if (
+                        spec.base_revision != source_change_set.base_revision
+                        or spec.branch_ref != source_change_set.branch_ref
+                    ):
+                        raise WorktreeControlPlaneError(
+                            "worktree_restore_scope_invalid",
+                            "Restore must retain the checkpoint Repository scope",
+                        )
+                    checkpoint_restores[str(change_set_id)] = str(source.id)
                 db.add(
                     ChangeSetRecord(
                         id=change_set_id,
@@ -293,7 +318,11 @@ class WorktreeControlPlane:
                             spec.base_revision, field="base_revision", maximum=128
                         ),
                         branch_ref=_text(spec.branch_ref, field="branch_ref", maximum=256),
-                        status="open",
+                        head_revision=(
+                            source_change_set.head_revision if source_change_set else None
+                        ),
+                        recovery_artifact_ref=(source.recovery_artifact_ref if source else None),
+                        status="checkpointed" if source else "open",
                         version=1,
                     )
                 )
@@ -308,10 +337,164 @@ class WorktreeControlPlane:
                     "project_id": str(project_id),
                     "change_set_ids": [str(value) for value in change_set_ids],
                     "repository_count": len(change_set_ids),
+                    **(
+                        {"checkpoint_restores": checkpoint_restores} if checkpoint_restores else {}
+                    ),
                 },
                 idempotency_key=f"changeset-group:{group_id}:created",
             )
         return CreatedChangeSetGroup(group_id, tuple(change_set_ids))
+
+    @staticmethod
+    def _completed_checkpoint_source(
+        db: Session,
+        *,
+        source_id: UUID,
+        tenant_id: UUID,
+        space_id: UUID,
+        project_id: UUID,
+        repository_id: UUID,
+    ) -> tuple[WorktreeInstanceRecord, ChangeSetRecord]:
+        row = db.execute(
+            sa.select(WorktreeInstanceRecord, ChangeSetRecord, RunRecord)
+            .join(ChangeSetRecord, ChangeSetRecord.id == WorktreeInstanceRecord.change_set_id)
+            .join(RunRecord, RunRecord.id == WorktreeInstanceRecord.run_id)
+            .where(
+                WorktreeInstanceRecord.id == source_id,
+                WorktreeInstanceRecord.tenant_id == tenant_id,
+                WorktreeInstanceRecord.space_id == space_id,
+                WorktreeInstanceRecord.project_id == project_id,
+                ChangeSetRecord.repository_id == repository_id,
+            )
+        ).one_or_none()
+        if row is not None:
+            source, change_set, run = row
+            events = tuple(
+                db.scalars(
+                    sa.select(WorktreeEventRecord.payload).where(
+                        WorktreeEventRecord.worktree_id == source.id,
+                        WorktreeEventRecord.event_type == "worktree.checkpointed",
+                    )
+                )
+            )
+            if (
+                source.access_mode == "writer"
+                and source.status in {"released", "gc_eligible", "deleted"}
+                and not source.dirty
+                and source.lease_token_hash is None
+                and source.lease_expires_at is None
+                and source.recovery_artifact_ref is not None
+                and source.environment_snapshot_ref is not None
+                and change_set.status == "committed"
+                and run.status == "succeeded"
+                and change_set.head_revision is not None
+                and change_set.recovery_artifact_ref == source.recovery_artifact_ref
+                and events
+                == (
+                    {
+                        "head_revision": change_set.head_revision,
+                        "recovery_artifact_ref": source.recovery_artifact_ref,
+                        "environment_snapshot_ref": source.environment_snapshot_ref,
+                        "dirty_after": False,
+                    },
+                )
+            ):
+                return source, change_set
+        raise WorktreeControlPlaneError(
+            "worktree_restore_source_invalid", "Completed checkpoint is unavailable"
+        )
+
+    @classmethod
+    def _initial_checkpoint_restore_source(
+        cls, db: Session, change_set: ChangeSetRecord
+    ) -> tuple[WorktreeInstanceRecord, ChangeSetRecord] | None:
+        if change_set.status != "checkpointed":
+            return None
+        own_checkpoint = db.scalar(
+            sa.select(WorktreeEventRecord.id)
+            .join(
+                WorktreeInstanceRecord,
+                WorktreeInstanceRecord.id == WorktreeEventRecord.worktree_id,
+            )
+            .where(
+                WorktreeInstanceRecord.change_set_id == change_set.id,
+                WorktreeInstanceRecord.tenant_id == change_set.tenant_id,
+                WorktreeInstanceRecord.space_id == change_set.space_id,
+                WorktreeInstanceRecord.project_id == change_set.project_id,
+                WorktreeEventRecord.event_type == "worktree.checkpointed",
+            )
+            .limit(1)
+        )
+        if own_checkpoint is not None:
+            return None
+        intents = tuple(
+            db.scalars(
+                sa.select(ControlPlaneOutboxEvent.payload).where(
+                    ControlPlaneOutboxEvent.tenant_id == change_set.tenant_id,
+                    ControlPlaneOutboxEvent.aggregate_type == "ChangeSetGroup",
+                    ControlPlaneOutboxEvent.aggregate_key == str(change_set.group_id),
+                    ControlPlaneOutboxEvent.event_type == "changeset.group.created",
+                    ControlPlaneOutboxEvent.idempotency_key
+                    == f"changeset-group:{change_set.group_id}:created",
+                )
+            )
+        )
+        try:
+            if len(intents) != 1:
+                raise ValueError
+            restores = intents[0]["checkpoint_restores"]
+            if not isinstance(restores, dict):
+                raise ValueError
+            source_value = restores[str(change_set.id)]
+            if not isinstance(source_value, str):
+                raise ValueError
+            source_id = UUID(source_value)
+        except (KeyError, TypeError, ValueError) as error:
+            raise WorktreeControlPlaneError(
+                "worktree_restore_source_invalid", "Checkpoint restore intent is unavailable"
+            ) from error
+        source, original = cls._completed_checkpoint_source(
+            db,
+            source_id=source_id,
+            tenant_id=change_set.tenant_id,
+            space_id=change_set.space_id,
+            project_id=change_set.project_id,
+            repository_id=change_set.repository_id,
+        )
+        if (
+            change_set.base_revision != original.base_revision
+            or change_set.branch_ref != original.branch_ref
+            or change_set.head_revision != original.head_revision
+            or change_set.recovery_artifact_ref != source.recovery_artifact_ref
+        ):
+            raise WorktreeControlPlaneError(
+                "worktree_restore_scope_invalid", "Checkpoint restore scope changed"
+            )
+        return source, original
+
+    @staticmethod
+    def _restore_change_set_id(
+        db: Session, worktree_id: UUID, environment_snapshot_ref: str | None
+    ) -> UUID | None:
+        payload = db.scalar(
+            sa.select(WorktreeEventRecord.payload).where(
+                WorktreeEventRecord.worktree_id == worktree_id,
+                WorktreeEventRecord.sequence == 1,
+            )
+        )
+        if not isinstance(payload, dict) or "restore_change_set_id" not in payload:
+            return None
+        if payload.get("restore_environment_snapshot_ref") != environment_snapshot_ref:
+            return None
+        try:
+            source_value = payload["restore_change_set_id"]
+            if not isinstance(source_value, str):
+                raise ValueError
+            return UUID(source_value)
+        except (TypeError, ValueError, AttributeError) as error:
+            raise WorktreeControlPlaneError(
+                "worktree_restore_source_invalid", "Checkpoint restore scope is invalid"
+            ) from error
 
     def configure_quota(
         self,
@@ -699,10 +882,14 @@ class WorktreeControlPlane:
                     else None
                 )
                 environment_ref: str | None = None
+                restore_change_set_id: UUID | None = None
                 event_type = "worktree.created"
                 if source is not None:
                     recovery_ref = source.recovery_artifact_ref
                     environment_ref = source.environment_snapshot_ref
+                    restore_change_set_id = self._restore_change_set_id(
+                        db, source.id, environment_ref
+                    )
                     source.status = "released"
                     source.released_at = allocated_at
                     self._append_worktree_event(
@@ -713,6 +900,18 @@ class WorktreeControlPlane:
                         trace_id=trace,
                     )
                     event_type = "worktree.rebuilt"
+                else:
+                    completed = self._initial_checkpoint_restore_source(db, change_set)
+                    if completed is not None:
+                        if access_mode != "writer":
+                            raise WorktreeControlPlaneError(
+                                "worktree_restore_requires_writer",
+                                "Checkpoint continuation requires a new writer",
+                            )
+                        checkpoint_source, original_change_set = completed
+                        recovery_ref = checkpoint_source.recovery_artifact_ref
+                        environment_ref = checkpoint_source.environment_snapshot_ref
+                        restore_change_set_id = original_change_set.id
                 quota.active_instances += 1
                 quota.active_writers += int(access_mode == "writer")
                 quota.reserved_bytes += reserved_bytes
@@ -759,6 +958,14 @@ class WorktreeControlPlane:
                         "lease_generation": 1,
                         "run_fence_token": run.fence_token,
                         "rebuild_from_id": str(rebuild_from_id) if rebuild_from_id else None,
+                        **(
+                            {
+                                "restore_change_set_id": str(restore_change_set_id),
+                                "restore_environment_snapshot_ref": environment_ref,
+                            }
+                            if restore_change_set_id is not None
+                            else {}
+                        ),
                     },
                     trace_id=trace,
                 )
@@ -976,6 +1183,9 @@ class WorktreeControlPlane:
                 branch_ref=change_set.branch_ref,
                 recovery_artifact_ref=record.recovery_artifact_ref,
                 environment_snapshot_ref=record.environment_snapshot_ref,
+                restore_change_set_id=self._restore_change_set_id(
+                    db, record.id, record.environment_snapshot_ref
+                ),
             )
 
     def heartbeat(
@@ -2156,6 +2366,9 @@ class WorktreeControlPlane:
                     .mappings()
                     .one()
                 )
+                restore_change_set_id = self._restore_change_set_id(
+                    db, worktree_id, row["environment_snapshot_ref"]
+                )
         except sa.exc.DBAPIError as exc:
             self._raise_runner_rpc_error(exc)
         return WorktreeMaterializationGrant(
@@ -2181,6 +2394,7 @@ class WorktreeControlPlane:
                 if row["environment_snapshot_ref"] is None
                 else str(row["environment_snapshot_ref"])
             ),
+            restore_change_set_id=restore_change_set_id,
         )
 
     @staticmethod

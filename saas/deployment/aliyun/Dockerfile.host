@@ -181,4 +181,12 @@ RUN printf '%s\n' 'export PATH="/opt/venv/bin:/opt/omnigent-host-cli/.github/ci-
 
 USER user
 WORKDIR /home/user
+RUN tar --version \
+ && mkdir -m 700 /tmp/omnigent-pax-tool-check \
+ && /opt/venv/bin/python -B -I -c 'import tarfile; tarfile.open("/tmp/omnigent-pax-tool-check/empty.pax", "w", format=tarfile.PAX_FORMAT).close()' \
+ && tar --extract --file /tmp/omnigent-pax-tool-check/empty.pax \
+      --directory /tmp/omnigent-pax-tool-check \
+      --xattrs --acls --numeric-owner --same-permissions \
+ && rm -- /tmp/omnigent-pax-tool-check/empty.pax \
+ && rmdir /tmp/omnigent-pax-tool-check
 CMD ["sleep", "infinity"]

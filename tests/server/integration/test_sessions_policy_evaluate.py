@@ -47,6 +47,102 @@ from tests.server.helpers import policy_tool_call_request as _tool_call_request
 pytestmark = pytest.mark.asyncio
 
 
+async def test_admin_start_transform_uses_only_trusted_caps(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The startup branch excludes generic approvals and ignores client grants."""
+    from omnigent.runner.policy import AGENT_START_TOOL, START_SANDBOX_HANDLER
+
+    caps = RuntimeCaps(
+        default_policies=[
+            FunctionPolicySpec(
+                name="generic_approval",
+                on=None,
+                function=FunctionRef(path="unresolvable.generic.approval"),
+            ),
+            FunctionPolicySpec(
+                name="admin_sandbox",
+                on=None,
+                function=FunctionRef(
+                    path=START_SANDBOX_HANDLER,
+                    arguments={
+                        "allow_network": False,
+                        "read_paths": [str(tmp_path)],
+                        "write_paths": [str(tmp_path)],
+                        "env_passthrough": [],
+                    },
+                ),
+            ),
+        ]
+    )
+    agent = await create_test_agent(client)
+    session_id = await _create_session(client, agent["id"])
+    monkeypatch.setattr("omnigent.server.routes.sessions.get_caps", lambda: caps)
+    response = await client.post(
+        f"/v1/sessions/{session_id}/policies/evaluate",
+        json={
+            "agent_start": True,
+            "event": {
+                "type": "PHASE_TOOL_CALL",
+                "data": {
+                    "name": AGENT_START_TOOL,
+                    "arguments": {
+                        "agent_name": "tenant",
+                        "harness": "pi",
+                        "sandbox": {"type": "none", "read_paths": ["/"], "allow_network": True},
+                    },
+                },
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    forced = response.json()["data"]["arguments"]["sandbox"]
+    assert forced["type"] == "linux_bwrap" and forced["allow_network"] is False
+    assert forced["read_paths"] == [str(tmp_path)]
+    assert forced["write_paths"] == [str(tmp_path)]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"allow_network": True},
+        {"unknown_factory_argument": True},
+        {"allow_network": False, "read_paths": ["."], "write_paths": ["."], "env_passthrough": []},
+    ],
+)
+async def test_admin_start_cannot_drop_unsafe_or_unevaluable_policy(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, arguments: dict[str, object]
+) -> None:
+    from omnigent.runner.policy import AGENT_START_TOOL, START_SANDBOX_HANDLER
+
+    agent = await create_test_agent(client)
+    session_id = await _create_session(client, agent["id"])
+    caps = RuntimeCaps(
+        default_policies=[
+            FunctionPolicySpec(
+                name="required",
+                on=None,
+                function=FunctionRef(path=START_SANDBOX_HANDLER, arguments=arguments),
+            )
+        ]
+    )
+    monkeypatch.setattr("omnigent.server.routes.sessions.get_caps", lambda: caps)
+    response = await client.post(
+        f"/v1/sessions/{session_id}/policies/evaluate",
+        json={
+            "agent_start": True,
+            "event": {
+                "type": "PHASE_TOOL_CALL",
+                "data": {
+                    "name": AGENT_START_TOOL,
+                    "arguments": {"agent_name": "tenant", "harness": "pi"},
+                },
+            },
+        },
+    )
+    assert response.status_code == 403
+
+
 # ── Policy callables ────────────────────────────────────────
 
 

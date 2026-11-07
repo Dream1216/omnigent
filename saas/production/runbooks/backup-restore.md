@@ -32,7 +32,118 @@ and Runner pool until validation is complete.
 7. Promote a canary scope only after authorization, logout, deletion,
    revocation, Run replay, audit, and billing probes pass. Expand gradually.
 
+## Full user checkout before Runner launch
+
+Retain the original native checkpoint state in the existing encrypted backup.
+Its existing `environment_snapshot_ref` identifies the full user tree; the Git
+`recovery_artifact_ref` alone contains only HEAD relative to Base Revision.
+An ordinary allocation without an Environment Snapshot does not prove full
+user-file recovery.
+
+The backup owner decrypts the existing independent backup into quarantine,
+verifies the complete original file/private-Git manifest, and delivers only the
+quiesced user checkout to the new owned work volume. Use the product's
+`PreparedWorktreeRestores(work_root / "restore-snapshots")` and
+`prepare_checkpoint(original_quarantine_native_state, verified_quarantine_checkout)`.
+This reads the Source-written checkpoint binding without requiring a released
+lease or copying old state into the active Runner. If the actual original grant
+was retained before release, `prepare(actual_checkpoint_grant, verified_quarantine_checkout)`
+is also supported, or deliver to
+`delivery_path(actual_checkpoint_grant.environment_snapshot_ref)` with metadata
+preserved and call `seal(actual_checkpoint_grant)`. Retain the original native
+checkpoint state or sealed delivery receipt with the encrypted backup; do not reconstruct
+grant fields from a model reply or restore old Runner state, locks or leases.
+These local owner operations create no execution grant or independent backup.
+
+The production factory connects this consumer to the existing materializer.
+After the new fenced allocation and private Git checkout, it validates the
+original ChangeSet/repository/base/head/artifact binding and copies every entry,
+including ignored files and the entire private `.git`, preserving hardlinks,
+ownership, modes, timestamps and extended attributes. It compares the complete
+source and restored tree, validates containment/quota/private Git, and checks
+the current native grant before acknowledging ready. Only then can the original
+isolation grant and fixed Agent/Preview launch proceed. Missing/changed delivery,
+lost authority or cancellation prevents readiness and launch. Keep the verified
+delivery until the existing backup-retention policy permits removal; failed
+temporary copies never authorize removal of the original user data.
+
 ## Drill evidence
+
+### Original Sessions on the Aliyun provider
+
+The browser/ordinary CLI Session is the original Conversation, not a native
+ExecutionSession/Run. Keep its actual Project binding, owner, Host and workspace.
+The existing Aliyun Session/storage authorizer revalidates those original
+permissions; recovery adds no public selectors, database schema or signing service.
+
+For a selected original Session, quiesce its writer before capture. Record the
+actual tenant/space/Project, physical workspace, Conversation and Host IDs,
+source Sandbox, actual cwd and both admitted OSS volume identities. Capture the
+whole `/home/user/workspace`, including `.git`, ignored/untracked files, private
+branches, hardlinks, modes, timestamps and extended attributes. Exclude only
+`workspace/inputs` and `workspace/artifacts`: these are separate existing OSS
+mounts and require their own complete versioned backup/restore evidence.
+Preserve the existing encrypted, independent backup and verify the source tree
+again after capture. A Git clone or attachment replay is not this backup.
+
+Use the existing PAX capture/decryption transport. The archive must contain one
+explicit `workspace` directory and its complete local descendants. Stage the
+independently verified plaintext PAX under a selected existing Session mount;
+`inputs` is read-only inside the VM, while `artifacts` permits the existing
+authorized writer/capture operation. Neither needs a new volume or IAM scope.
+Both sources are pinned by complete archive SHA before and after extraction;
+the restored tree is independently checked against the original complete tree
+digest. Keep traffic/writers fenced during capture and restore.
+
+The importer copies the selected archive to an unlinked owner-private local
+file before parsing; validation and extraction consume that same private copy.
+Capture uncompressed PAX: compressed inputs are refused. Limits are 9 GiB of
+archive bytes, 8 GiB of logical file data, 1 MiB per metadata read and 64 MiB of
+cumulative header/metadata reads. Reserve space for the private archive plus the
+restored tree and fresh baseline; a failed import blocks Host startup and retains
+the original backup and existing mounts.
+The existing final Host image build also records its real `tar --version` and
+executes those extraction options as `user`; component proofs do not substitute
+for this final-image tool check or real Session recovery.
+
+An owner-only descriptor contains `schema_version:1`, the actual `tenant_id`,
+`space_id`, `project_id`, `workspace_id`, `session_id`, `host_id`,
+`source_sandbox_id`, `archive_relative_path`, `archive_sha256`, `tree_sha256`,
+and optionally `archive_mount` (`inputs` by default, or `artifacts`). UUIDs are
+validated/normalized from the actual stored identities. The tree digest is
+the existing complete metadata/private-Git digest with only those two mount
+roots excluded; it is not a HEAD hash. The approved backup owner may obtain it
+using `saas.production.aliyun_workspace_recovery._digest` on the quiesced original
+root. Never derive it from the new clone, a model response or test data.
+
+Pin that descriptor in the existing canonical/hash-pinned v3 Aliyun profile:
+
+```json
+"storage": {
+  "workspace_recovery": {
+    "descriptor_file": "/absolute/owner-only/original-session-recovery.json",
+    "descriptor_sha256": "actual-complete-descriptor-sha256"
+  }
+}
+```
+
+This fragment supplements the existing storage credentials/tenant configuration.
+The normal Session retry or `omnigent resume` entry still performs its original
+authorization. `provision` reuses the admitted Session OSS mounts; `start_host`
+then imports before clone, Host credentials or Host execution. The packaged
+consumer validates PAX paths/types/links/quota, extracts to a fresh same-filesystem
+quarantine, compares the complete tree and private repository directories, and
+promotes it before Runner initialization/any Agent read. Successful import skips
+clone entirely; an incomplete/mismatched source stops bootstrap without a
+Git-only fallback. A receipt bound to the actual target VM prevents later user
+edits from being rolled back when the same restored VM reconnects. An unrelated
+existing VM cannot be overwritten by a fresh-import request.
+
+The source archive/delivery is retained. This is a bounded operator restore of
+the selected original Session, not an automatic backup service for all Sessions.
+Actual source/target volumes, OSS versions, identity revalidation, complete-file
+comparison before first read, real reply and measured RPO/RTO remain mandatory
+drill evidence. Local/parser tests do not establish that production recovery.
 
 Run at least one randomly selected Tenant restore and one regional or cluster
 restore every 90 days. Record requested and achieved recovery points, actual
