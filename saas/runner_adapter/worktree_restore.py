@@ -288,7 +288,7 @@ class PreparedWorktreeRestores:
             grant.environment_snapshot_ref is not None and grant.recovery_artifact_ref is not None
         )
         return {
-            "change_set_id": str(grant.change_set_id),
+            "change_set_id": str(grant.restore_change_set_id or grant.change_set_id),
             "snapshot_ref": grant.environment_snapshot_ref,
             "recovery_artifact_ref": grant.recovery_artifact_ref,
             "repository_binding_digest": _digest_text(grant.repository_source_binding_key),

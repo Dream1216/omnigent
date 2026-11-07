@@ -1872,12 +1872,182 @@ def _private_git_umask() -> Iterator[None]:
         os.umask(previous)
 
 
-@pytest.mark.parametrize("sealed_mirror", [False, True])
+def test_completed_checkpoint_continuation_revalidates_source_scope_and_permissions(
+    worktree_fixture: WorktreeFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = worktree_fixture
+    now = datetime.now(UTC).replace(microsecond=0)
+    repository_id, change_set_id = _repository_and_change_set(fixture, suffix="completed")
+    other_repository, _ = _repository_and_change_set(fixture, suffix="other-completed")
+    _configure_worktree_quota(fixture)
+    first = _lease_run(fixture, change_set_id=change_set_id, key="completed", now=now)
+    lease = _allocate(fixture, first, change_set_id, now=now + timedelta(seconds=2))
+    _ready(fixture, lease, now=now + timedelta(seconds=3))
+    fixture.worktrees.checkpoint(
+        worktree_id=lease.worktree_id,
+        runner_id=lease.runner_id,
+        lease_generation=lease.lease_generation,
+        run_fence_token=lease.run_fence_token,
+        lease_token=lease.lease_token,
+        head_revision="e" * 40,
+        recovery_artifact_ref="wta_sha256_" + "b" * 64,
+        environment_snapshot_ref="run:completed:final",
+        dirty_after=False,
+        trace_id="completed:checkpoint",
+        now=now + timedelta(seconds=5),
+    )
+    spec = ChangeSetSpec(
+        repository_id=repository_id,
+        base_revision="a" * 40,
+        branch_ref="refs/heads/codex/completed",
+        checkpoint_source_worktree_id=lease.worktree_id,
+    )
+
+    def continue_checkpoint(candidate=spec, request=fixture.request):
+        return fixture.worktrees.create_change_set_group(
+            request,
+            project_id=fixture.project_id,
+            title="Continue checkpoint",
+            specs=(candidate,),
+        )
+
+    with pytest.raises(WorktreeControlPlaneError) as still_active:
+        continue_checkpoint()
+    assert still_active.value.code == "worktree_restore_source_invalid"
+    _finish_run(fixture, first, now=now + timedelta(seconds=6))
+    fixture.worktrees.release(
+        worktree_id=lease.worktree_id,
+        runner_id=lease.runner_id,
+        lease_generation=lease.lease_generation,
+        run_fence_token=lease.run_fence_token,
+        lease_token=lease.lease_token,
+        final_change_set_status="committed",
+        trace_id="completed:release",
+        now=now + timedelta(seconds=7),
+    )
+    with fixture.factory() as db:
+        groups_before = db.scalar(sa.select(sa.func.count()).select_from(ChangeSetGroupRecord))
+        source_before = db.get(WorktreeInstanceRecord, lease.worktree_id)
+        assert source_before is not None
+        assert not source_before.dirty and source_before.status == "released"
+    for candidate, expected in (
+        (replace(spec, checkpoint_source_worktree_id=uuid4()), "worktree_restore_source_invalid"),
+        (replace(spec, repository_id=other_repository), "worktree_restore_source_invalid"),
+        (replace(spec, base_revision="f" * 40), "worktree_restore_scope_invalid"),
+        (replace(spec, branch_ref="refs/heads/unrelated"), "worktree_restore_scope_invalid"),
+    ):
+        with pytest.raises(WorktreeControlPlaneError) as rejected:
+            continue_checkpoint(candidate)
+        assert rejected.value.code == expected
+    with pytest.raises(PermissionError):
+        continue_checkpoint(request=replace(fixture.request, actor_id=uuid4()))
+
+    require = fixture.worktrees._authorizer.require
+
+    def deny_content(request, *, action, **kwargs):
+        if action == "run.read_content":
+            raise PermissionError("source content is unavailable")
+        return require(request, action=action, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fixture.worktrees._authorizer, "require", deny_content)
+        with pytest.raises(PermissionError, match="source content"):
+            continue_checkpoint()
+    with fixture.factory() as db:
+        assert (
+            db.scalar(sa.select(sa.func.count()).select_from(ChangeSetGroupRecord))
+            == groups_before
+        )
+    continued = continue_checkpoint()
+    new_change_set_id = continued.change_set_ids[0]
+    second = _lease_run(
+        fixture,
+        change_set_id=new_change_set_id,
+        key="continued",
+        now=now + timedelta(seconds=8),
+    )
+    new_lease = _allocate(fixture, second, new_change_set_id, now=now + timedelta(seconds=10))
+    fixture.worktrees.begin_materialization(
+        worktree_id=new_lease.worktree_id,
+        runner_id=new_lease.runner_id,
+        lease_generation=new_lease.lease_generation,
+        run_fence_token=new_lease.run_fence_token,
+        lease_token=new_lease.lease_token,
+        trace_id="continued:materialize",
+        now=now + timedelta(seconds=11),
+    )
+    grant = fixture.worktrees.materialization_grant(
+        worktree_id=new_lease.worktree_id,
+        runner_id=new_lease.runner_id,
+        lease_generation=new_lease.lease_generation,
+        run_fence_token=new_lease.run_fence_token,
+        lease_token=new_lease.lease_token,
+        now=now + timedelta(seconds=12),
+    )
+    assert grant.change_set_id == new_change_set_id != change_set_id
+    assert grant.restore_change_set_id == change_set_id
+    assert grant.environment_snapshot_ref == "run:completed:final"
+    for status in ("starting", "failed"):
+        fixture.execution.transition_run(
+            run_id=second.run_id,
+            lease_token=second.run_lease_token,
+            fence_token=second.run_fence_token,
+            target_status=status,
+            trace_id="continued:preparation-failed",
+            now=now + timedelta(seconds=13),
+        )
+    fixture.worktrees.release(
+        worktree_id=new_lease.worktree_id,
+        runner_id=new_lease.runner_id,
+        lease_generation=new_lease.lease_generation,
+        run_fence_token=new_lease.run_fence_token,
+        lease_token=new_lease.lease_token,
+        final_change_set_status="checkpointed",
+        trace_id="continued:preparation-release",
+        now=now + timedelta(seconds=14),
+    )
+    third = _lease_run(
+        fixture,
+        change_set_id=new_change_set_id,
+        key="continued-retry",
+        now=now + timedelta(seconds=15),
+    )
+    retry = _allocate(fixture, third, new_change_set_id, now=now + timedelta(seconds=17))
+    _ready(fixture, retry, now=now + timedelta(seconds=18))
+    retry_grant = fixture.worktrees.materialization_grant(
+        worktree_id=retry.worktree_id,
+        runner_id=retry.runner_id,
+        lease_generation=retry.lease_generation,
+        run_fence_token=retry.run_fence_token,
+        lease_token=retry.lease_token,
+        now=now + timedelta(seconds=20),
+    )
+    assert retry_grant.environment_snapshot_ref == grant.environment_snapshot_ref
+    assert retry_grant.restore_change_set_id == change_set_id
+    with fixture.factory() as db:
+        original = db.get(ChangeSetRecord, change_set_id)
+        source_after = db.get(WorktreeInstanceRecord, lease.worktree_id)
+        assert original is not None and original.status == "committed"
+        assert source_after is not None and source_after.status == source_before.status
+        assert source_after.lease_generation == source_before.lease_generation
+        assert source_after.event_sequence == source_before.event_sequence
+        assert not source_after.dirty and source_after.lease_token_hash is None
+
+
+@pytest.mark.parametrize(
+    ("sealed_mirror", "completed_checkpoint"),
+    [
+        pytest.param(False, False, id="False"),
+        pytest.param(True, False, id="True"),
+        pytest.param(True, True, id="completed-checkpoint"),
+    ],
+)
 def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     worktree_fixture: WorktreeFixture,
     tmp_path: Path,
     _private_git_umask: None,
     sealed_mirror: bool,
+    completed_checkpoint: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from saas.production.repository_mirror import provision_repository_mirrors
@@ -2198,6 +2368,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         assert missing_snapshot_ref.value.code == "worktree_full_restore_invalid"
         digest = full_restores.prepare_checkpoint(original_state, first_physical.worktree_path)
         assert full_restores.seal(native_checkpoint_grant) == digest
+    if full_restores is not None and not completed_checkpoint:
         fixture.worktrees.heartbeat(
             worktree_id=first_lease.worktree_id,
             runner_id=first_lease.runner_id,
@@ -2209,8 +2380,8 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
             now=now + timedelta(seconds=6),
         )
     _finish_run(fixture, first, now=now + timedelta(seconds=7))
-    offset = 200 if full_restores is not None else 0
-    if full_restores is not None:
+    offset = 200 if full_restores is not None and not completed_checkpoint else 0
+    if full_restores is not None and not completed_checkpoint:
         (first_release,) = fixture.worktrees.expire_stale_leases(
             now=now + timedelta(seconds=offset)
         )
@@ -2222,11 +2393,36 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
             lease_generation=first_lease.lease_generation,
             run_fence_token=first_lease.run_fence_token,
             lease_token=first_lease.lease_token,
-            final_change_set_status="checkpointed",
+            final_change_set_status="committed" if completed_checkpoint else "checkpointed",
             trace_id="runner:release-one",
             now=now + timedelta(seconds=7),
         )
     assert first_release.lease_generation == first_lease.lease_generation + 1
+
+    if completed_checkpoint:
+        original_change_set_id = change_set_id
+        assert fixture.worktrees.expire_stale_leases(now=now + timedelta(seconds=200)) == ()
+        continued = fixture.worktrees.create_change_set_group(
+            fixture.request,
+            project_id=fixture.project_id,
+            title="Continue completed full checkpoint",
+            specs=(
+                ChangeSetSpec(
+                    repository_id=repository_id,
+                    base_revision=base_revision,
+                    branch_ref="refs/heads/codex/physical",
+                    checkpoint_source_worktree_id=first_lease.worktree_id,
+                ),
+            ),
+        )
+        change_set_id = continued.change_set_ids[0]
+        assert change_set_id != original_change_set_id
+        with fixture.factory() as db:
+            original = db.get(ChangeSetRecord, original_change_set_id)
+            source_record = db.get(WorktreeInstanceRecord, first_lease.worktree_id)
+            assert original is not None and original.status == "committed"
+            assert source_record is not None and source_record.status == "released"
+            assert not source_record.dirty and source_record.lease_token_hash is None
 
     second = _lease_run(
         fixture,
@@ -2239,7 +2435,11 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         second,
         change_set_id,
         now=now + timedelta(seconds=offset + 10),
-        rebuild_from_id=first_lease.worktree_id if full_restores is not None else None,
+        rebuild_from_id=(
+            first_lease.worktree_id
+            if full_restores is not None and not completed_checkpoint
+            else None
+        ),
     )
     second_mirror_root = tmp_path / "runner-two-mirrors"
     second_mirror_root.mkdir(mode=0o700)
