@@ -130,7 +130,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 5602
+    assert budget["max_upstream_net_added_loc"] == 5604
     assert budget["max_direct_upstream_files"] == 210
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
@@ -148,7 +148,10 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     current = revision["final_Main579_common_locale_cloud_composition_20261106"]
     assert current["max_upstream_net_added_loc"] == 5593
     vendor = revision["fixed_host_diagnostic_vendor_security_20261106"]
-    assert vendor["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert vendor["max_upstream_net_added_loc"] == 5602
+    host_progress = revision["main_c6_host_progress_existing_budget_20261107"]
+    assert host_progress["previous_max_upstream_net_added_loc"] == 5602
+    assert host_progress["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
     assert current["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
     assert locale_boundary["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]

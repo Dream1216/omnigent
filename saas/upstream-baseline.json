@@ -115,7 +115,7 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 210,
-    "max_upstream_net_added_loc": 5602,
+    "max_upstream_net_added_loc": 5604,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1162,6 +1162,18 @@
       ],
       "changes": "Six exact Go compress source-build/compiled-module checks and three package-only OAuthLib cooldown lines; frozen transitive lock only. No extra findings accepted or release/data gate waived.",
       "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source"
+    },
+    "main_c6_host_progress_existing_budget_20261107": {
+      "base": "c6e8826b59e520118711ea8ed710492aa9afd8e5",
+      "previous_max_upstream_net_added_loc": 5602,
+      "max_upstream_net_added_loc": 5604,
+      "max_direct_upstream_files": 210,
+      "measured_upstream_net_added_loc": 5604,
+      "scoped_upstream_paths": [
+        "tests/server/integration/test_host_session_binding.py"
+      ],
+      "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
+      "reason": "Reuse the existing CI timeout scale for incidental Host-progress waits and bound the fake handshake by one existing Deadline. Two net test lines only; all original stage/order/snapshot assertions, production timeouts, global CI limit, nine patches, .85 isolation and release/security requirements remain. Preserve the previous5602 authorization history."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
