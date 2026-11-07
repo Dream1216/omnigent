@@ -38,7 +38,10 @@ def select_candidate_artifacts(
         and run.get("head_sha") == revision
         and run.get("repository", {}).get("full_name") == repository
         and run.get("head_repository", {}).get("full_name") == repository
-        and run.get("head_branch") == "codex/aliyun-sandbox-p1-p5-20261031"
+        and (
+            run.get("head_branch") == "codex/aliyun-sandbox-p1-p5-20261031"
+            or (run.get("head_branch") == "main" and run.get("event") == "workflow_dispatch")
+        )
         and run.get("path") == ".github/workflows/saas-aliyun-host-candidate.yml"
         and run.get("event") in {"push", "workflow_dispatch"}
         and run.get("status") == "completed"

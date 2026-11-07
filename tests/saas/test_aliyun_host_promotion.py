@@ -22,12 +22,21 @@ REVISION = "a" * 40
 
 
 @pytest.mark.parametrize(
+    ("branch", "event"),
+    [
+        ("codex/aliyun-sandbox-p1-p5-20261031", "push"),
+        ("codex/aliyun-sandbox-p1-p5-20261031", "workflow_dispatch"),
+        ("main", "workflow_dispatch"),
+    ],
+)
+@pytest.mark.parametrize(
     "failure",
     [
         None,
         "source",
         "repository",
         "branch",
+        "event",
         "workflow",
         "run",
         "job",
@@ -39,15 +48,15 @@ REVISION = "a" * 40
         "truncated",
     ],
 )
-def test_promotion_only_selects_both_archives_from_a_successful_native_run(failure):
+def test_promotion_only_selects_both_archives_from_a_successful_native_run(branch, event, failure):
     run = {
         "id": 123,
         "head_sha": REVISION,
         "repository": {"full_name": "Dream1216/omnigent"},
         "head_repository": {"full_name": "Dream1216/omnigent"},
-        "head_branch": "codex/aliyun-sandbox-p1-p5-20261031",
+        "head_branch": branch,
         "path": ".github/workflows/saas-aliyun-host-candidate.yml",
-        "event": "push",
+        "event": event,
         "status": "completed",
         "conclusion": "success",
         "run_attempt": 2,
@@ -79,6 +88,8 @@ def test_promotion_only_selects_both_archives_from_a_successful_native_run(failu
         run["head_repository"] = {"full_name": "untrusted/omnigent"}
     elif failure == "branch":
         run["head_branch"] = "other-branch"
+    elif failure == "event":
+        run["event"] = "push" if branch == "main" else "pull_request"
     elif failure == "workflow":
         run["path"] = ".github/workflows/other.yml"
     elif failure == "run":
