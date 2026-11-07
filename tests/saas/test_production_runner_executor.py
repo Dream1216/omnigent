@@ -1055,6 +1055,51 @@ async def test_cancel_during_helper_start_closes_the_late_environment(
 
 
 @pytest.mark.asyncio
+async def test_cancel_during_materialization_prevents_isolation_preparation(
+    worktree_fixture: WorktreeFixture,  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _build_prepared_executor(worktree_fixture, tmp_path, suffix="cancel-restore")
+    started = threading.Event()
+    proceed = threading.Event()
+    original_materialize = context.executor._worktree_adapter.materialize
+
+    def held_materialize(*args, **kwargs):
+        started.set()
+        assert proceed.wait(timeout=10)
+        return original_materialize(*args, **kwargs)
+
+    def forbidden_isolation(*args, **kwargs):
+        pytest.fail("Cancelled materialization must not issue an isolation launch grant")
+
+    monkeypatch.setattr(context.executor._worktree_adapter, "materialize", held_materialize)
+    monkeypatch.setattr(context.executor._isolation, "issue_launch_grant", forbidden_isolation)
+    cancellation = asyncio.Event()
+    execution = asyncio.create_task(
+        context.executor.execute(context.lease, cancellation=cancellation)
+    )
+    assert await asyncio.to_thread(started.wait, 10)
+    active = context.executor._active[context.lease.run_id]
+    cancellation.set()
+    await context.executor.cancel(context.lease)
+    proceed.set()
+    assert await execution == "cancelled"
+    assert active.prepared is None and active.physical_worktree is None
+    assert active.worktree_lease.run_id == context.lease.run_id
+    await context.executor.prepare_finalization(context.lease, result="cancelled")
+    context.fixture.execution.transition_run(
+        run_id=context.lease.run_id,
+        lease_token=context.lease.lease_token,
+        fence_token=context.lease.fence_token,
+        target_status="cancelling",
+        trace_id="runner:cancel-materialization",
+    )
+    _terminalize(context, "cancelled")
+    await context.executor.finalize(context.lease, result="cancelled")
+
+
+@pytest.mark.asyncio
 async def test_worktree_heartbeat_covers_materialization_before_shell(
     worktree_fixture: WorktreeFixture,  # noqa: F811
     tmp_path: Path,

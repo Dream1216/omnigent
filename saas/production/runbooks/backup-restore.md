@@ -32,6 +32,38 @@ and Runner pool until validation is complete.
 7. Promote a canary scope only after authorization, logout, deletion,
    revocation, Run replay, audit, and billing probes pass. Expand gradually.
 
+## Full user checkout before Runner launch
+
+Before the source lease is released or faulted, retain its actual native
+`WorktreeMaterializationGrant` after checkpoint. The existing
+`environment_snapshot_ref` identifies the full user tree; the Git
+`recovery_artifact_ref` alone contains only HEAD relative to Base Revision.
+An ordinary allocation without an Environment Snapshot does not prove full
+user-file recovery.
+
+The backup owner decrypts the existing independent backup into quarantine,
+verifies the complete original file/private-Git manifest, and delivers only the
+quiesced user checkout to the new owned work volume. Use the product's
+`PreparedWorktreeRestores(work_root / "restore-snapshots")` and
+`prepare(actual_checkpoint_grant, verified_quarantine_checkout)`, or deliver to
+`delivery_path(actual_checkpoint_grant.environment_snapshot_ref)` with metadata
+preserved and call `seal(actual_checkpoint_grant)`. Retain the original native
+grant or sealed delivery receipt with the encrypted backup; do not reconstruct
+grant fields from a model reply or restore old Runner state, locks or leases.
+These local owner operations create no execution grant or independent backup.
+
+The production factory connects this consumer to the existing materializer.
+After the new fenced allocation and private Git checkout, it validates the
+original ChangeSet/repository/base/head/artifact binding and copies every entry,
+including ignored files and the entire private `.git`, preserving hardlinks,
+ownership, modes, timestamps and extended attributes. It compares the complete
+source and restored tree, validates containment/quota/private Git, and checks
+the current native grant before acknowledging ready. Only then can the original
+isolation grant and fixed Agent/Preview launch proceed. Missing/changed delivery,
+lost authority or cancellation prevents readiness and launch. Keep the verified
+delivery until the existing backup-retention policy permits removal; failed
+temporary copies never authorize removal of the original user data.
+
 ## Drill evidence
 
 Run at least one randomly selected Tenant restore and one regional or cluster

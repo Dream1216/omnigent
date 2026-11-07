@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
@@ -17,6 +18,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+import saas.runner_adapter.worktree_restore as restore_module
 from saas.compatibility import RequestContext
 from saas.control_plane import (
     ChangeSetGroupRecord,
@@ -62,6 +64,7 @@ from saas.runner_adapter import (
     RunnerWorktreeAdapterError,
     StaticRepositoryMirrorResolver,
 )
+from saas.runner_adapter.worktree_restore import PreparedWorktreeRestores
 from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore
 from tests.saas.test_production_repository_mirror import (
     LocalRepositoryFetcher,
@@ -1951,6 +1954,9 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     assert unfenced_grant.value.code == "worktree_materialization_not_started"
 
     artifact_store = FilesystemRecoveryArtifactStore(tmp_path / "recovery-artifacts")
+    full_restores = (
+        PreparedWorktreeRestores(tmp_path / "full-checkpoints") if sealed_mirror else None
+    )
     first_mirror_root = tmp_path / "runner-one-mirrors"
     first_mirror_root.mkdir(mode=0o700)
     first_mirror = provision_mirror(first_mirror_root, "first-provision", first)
@@ -1962,6 +1968,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         mirrors=StaticRepositoryMirrorResolver({binding: first_mirror}),
         recovery_artifacts=artifact_store,
         runner_id=first_lease.runner_id,
+        full_restores=full_restores,
     )
     _git_fixture(first_mirror, "config", "core.sshCommand", "/bin/false")
     with pytest.raises(RunnerWorktreeAdapterError) as executable_config:
@@ -2030,6 +2037,20 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         changed_content,
         encoding="utf-8",
     )
+    _git_fixture(first_physical.worktree_path, "branch", "user-history", base_revision)
+    _git_fixture(first_physical.worktree_path, "tag", "user-base", base_revision)
+    ignored = first_physical.worktree_path / "private.bin"
+    (first_physical.worktree_path / ".gitignore").write_text("private*\n", encoding="utf-8")
+    ignored.write_bytes(b"ignored user artifact\x00\xff")
+    os.link(ignored, first_physical.worktree_path / "private-hardlink.bin")
+    (first_physical.worktree_path / "private-link").symlink_to("private.bin")
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["/usr/bin/xattr", "-w", "user.omnigent-test", "metadata", str(ignored)], check=True
+        )
+    else:
+        os.setxattr(ignored, "user.omnigent-test", b"metadata")
+    unreachable = _git_fixture(first_physical.worktree_path, "hash-object", "-w", str(ignored))
     checkpoint = first_adapter.checkpoint(
         first_lease,
         environment_snapshot_ref="environment:physical-one",
@@ -2049,8 +2070,6 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     assert checkpoint_retry.recovery_artifact_ref == checkpoint.recovery_artifact_ref
     for verify in verify_mirrors:
         verify()
-    _git_fixture(first_physical.worktree_path, "branch", "user-history", checkpoint.head_revision)
-    _git_fixture(first_physical.worktree_path, "tag", "user-base", base_revision)
     user_refs = _git_fixture(first_physical.worktree_path, "show-ref")
     user_objects = _git_fixture(
         first_physical.worktree_path,
@@ -2058,6 +2077,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         "--batch-all-objects",
         "--batch-check=%(objectname)",
     )
+    assert unreachable in user_objects.splitlines()
     restarted_adapter = RunnerWorktreeAdapter(
         managed_root=tmp_path / "runner-one-worktrees",
         mirror_root=first_mirror_root,
@@ -2092,6 +2112,18 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     finally:
         git_directory.unlink()
         preserved_git.rename(git_directory)
+    alternates = git_directory / "objects/info/alternates"
+    alternates.write_text(str(first_mirror / "objects") + "\n", encoding="utf-8")
+    try:
+        with pytest.raises(RunnerWorktreeAdapterError) as alternate_objects:
+            first_adapter.checkpoint(
+                first_lease,
+                environment_snapshot_ref="environment:physical-one",
+                trace_id="runner:external-git-objects",
+            )
+        assert alternate_objects.value.code == "worktree_repository_not_private"
+    finally:
+        alternates.unlink()
     first_events = fixture.worktrees.replay_events(
         fixture.request,
         project_id=fixture.project_id,
@@ -2112,30 +2144,57 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         assert str(first_physical.worktree_path) not in str(stored.__dict__)
         assert first_lease.lease_token not in str(stored.__dict__)
 
-    _finish_run(fixture, first, now=now + timedelta(seconds=3))
-    first_release = fixture.worktrees.release(
-        worktree_id=first_lease.worktree_id,
-        runner_id=first_lease.runner_id,
-        lease_generation=first_lease.lease_generation,
-        run_fence_token=first_lease.run_fence_token,
-        lease_token=first_lease.lease_token,
-        final_change_set_status="checkpointed",
-        trace_id="runner:release-one",
-        now=now + timedelta(seconds=7),
-    )
+    if full_restores is not None:
+        native_checkpoint_grant = fixture.worktrees.materialization_grant(
+            worktree_id=first_lease.worktree_id,
+            runner_id=first_lease.runner_id,
+            lease_generation=first_lease.lease_generation,
+            run_fence_token=first_lease.run_fence_token,
+            lease_token=first_lease.lease_token,
+        )
+        full_restores.prepare(native_checkpoint_grant, first_physical.worktree_path)
+        fixture.worktrees.heartbeat(
+            worktree_id=first_lease.worktree_id,
+            runner_id=first_lease.runner_id,
+            lease_generation=first_lease.lease_generation,
+            run_fence_token=first_lease.run_fence_token,
+            lease_token=first_lease.lease_token,
+            actual_bytes=first_physical.actual_bytes,
+            dirty=True,
+            now=now + timedelta(seconds=6),
+        )
+    _finish_run(fixture, first, now=now + timedelta(seconds=7))
+    offset = 200 if full_restores is not None else 0
+    if full_restores is not None:
+        (first_release,) = fixture.worktrees.expire_stale_leases(
+            now=now + timedelta(seconds=offset)
+        )
+        assert first_release.status == "rebuild_pending"
+    else:
+        first_release = fixture.worktrees.release(
+            worktree_id=first_lease.worktree_id,
+            runner_id=first_lease.runner_id,
+            lease_generation=first_lease.lease_generation,
+            run_fence_token=first_lease.run_fence_token,
+            lease_token=first_lease.lease_token,
+            final_change_set_status="checkpointed",
+            trace_id="runner:release-one",
+            now=now + timedelta(seconds=7),
+        )
     assert first_release.lease_generation == first_lease.lease_generation + 1
 
     second = _lease_run(
         fixture,
         change_set_id=change_set_id,
         key="physical-two",
-        now=now + timedelta(seconds=8),
+        now=now + timedelta(seconds=offset + 8),
     )
     second_lease = _allocate(
         fixture,
         second,
         change_set_id,
-        now=now + timedelta(seconds=10),
+        now=now + timedelta(seconds=offset + 10),
+        rebuild_from_id=first_lease.worktree_id if full_restores is not None else None,
     )
     second_mirror_root = tmp_path / "runner-two-mirrors"
     second_mirror_root.mkdir(mode=0o700)
@@ -2157,7 +2216,78 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         mirrors=StaticRepositoryMirrorResolver({binding: second_mirror}),
         recovery_artifacts=artifact_store,
         runner_id=second_lease.runner_id,
+        full_restores=full_restores,
     )
+    if full_restores is not None:
+        # A full delivery is mandatory for this native checkpoint. Incomplete,
+        # cancelled or changed-authority attempts must never acknowledge ready.
+        with fixture.factory() as db:
+            first_record = db.get(WorktreeInstanceRecord, first_lease.worktree_id)
+            assert first_record is not None and first_record.environment_snapshot_ref is not None
+            snapshot_ref = first_record.environment_snapshot_ref
+        receipt = full_restores.delivery_path(snapshot_ref).parent / "receipt.json"
+        retained = receipt.read_bytes()
+        receipt.unlink()
+        with pytest.raises(RunnerWorktreeAdapterError) as missing_restore:
+            second_adapter.materialize(second_lease, trace_id="runner:missing-full-delivery")
+        assert missing_restore.value.code == "worktree_full_restore_invalid"
+        receipt.write_bytes(retained)
+        receipt.chmod(0o600)
+        checks = 0
+        copy_started = False
+        original_copy = restore_module._copy_tree
+
+        def copying(*args, **kwargs):
+            nonlocal copy_started
+            copy_started = True
+            return original_copy(*args, **kwargs)
+
+        def cancel_restore() -> None:
+            nonlocal checks
+            checks += int(copy_started)
+            if checks == 8:
+                raise RunnerWorktreeAdapterError("worktree_materialization_cancelled", "cancelled")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(restore_module, "_copy_tree", copying)
+            with pytest.raises(RunnerWorktreeAdapterError) as cancelled_restore:
+                second_adapter.materialize(
+                    second_lease,
+                    trace_id="runner:cancel-full-delivery",
+                    check_active=cancel_restore,
+                )
+        assert cancelled_restore.value.code == "worktree_materialization_cancelled"
+        assert not list((tmp_path / "runner-two-worktrees").rglob(".restore-*"))
+        snapshot_file = full_restores.delivery_path(snapshot_ref) / "private.bin"
+        snapshot_info = snapshot_file.stat()
+        snapshot_file.write_bytes(b"changed ignored file")
+        with pytest.raises(RunnerWorktreeAdapterError) as altered_delivery:
+            second_adapter.materialize(second_lease, trace_id="runner:changed-full-delivery")
+        assert altered_delivery.value.code == "worktree_full_restore_invalid"
+        snapshot_file.write_bytes(ignored.read_bytes())
+        os.utime(snapshot_file, ns=(snapshot_info.st_atime_ns, snapshot_info.st_mtime_ns))
+        original_grant = fixture.worktrees.materialization_grant
+        grant_reads = 0
+
+        def changed_grant(**kwargs):
+            nonlocal grant_reads
+            grant_reads += 1
+            grant = original_grant(**kwargs)
+            return (
+                replace(grant, reserved_bytes=grant.reserved_bytes - 1)
+                if grant_reads == 2
+                else grant
+            )
+
+        with monkeypatch.context() as patch:
+            patch.setattr(fixture.worktrees, "materialization_grant", changed_grant)
+            with pytest.raises(RunnerWorktreeAdapterError) as stale_restore:
+                second_adapter.materialize(second_lease, trace_id="runner:changed-native-grant")
+        assert stale_restore.value.code == "worktree_grant_mismatch"
+        with fixture.factory() as db:
+            record = db.get(WorktreeInstanceRecord, second_lease.worktree_id)
+            assert record is not None and record.status == "materializing"
+        assert ignored.read_bytes() == b"ignored user artifact\x00\xff"
     second_physical = second_adapter.materialize(second_lease, trace_id="runner:physical-two")
     for verify in verify_mirrors:
         verify()
@@ -2165,8 +2295,47 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     assert (second_physical.worktree_path / "README.md").read_text(
         encoding="utf-8"
     ) == changed_content
+    if full_restores is not None:
+        restored = second_physical.worktree_path
+        assert (restored / "private.bin").read_bytes() == ignored.read_bytes()
+        assert (restored / "private.bin").stat().st_ino == (
+            restored / "private-hardlink.bin"
+        ).stat().st_ino
+        assert (restored / "private-link").readlink() == Path("private.bin")
+        if sys.platform == "darwin":
+            attribute = bytes.fromhex(
+                subprocess.run(
+                    ["/usr/bin/xattr", "-px", "user.omnigent-test", str(restored / "private.bin")],
+                    check=True,
+                    capture_output=True,
+                ).stdout.decode()
+            )
+        else:
+            attribute = os.getxattr(restored / "private.bin", "user.omnigent-test")
+        assert attribute == b"metadata"
+        assert _git_fixture(restored, "show-ref") == user_refs
+        assert (
+            _git_fixture(
+                restored, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"
+            )
+            == user_objects
+        )
+        assert second_physical.worktree_id == second_lease.worktree_id != first_lease.worktree_id
+        state = second_adapter._load_state(
+            second_adapter._state_path(second_lease.opaque_runtime_key)
+        )
+        assert state["identity"] == second_adapter._identity(
+            fixture.worktrees.materialization_grant(
+                worktree_id=second_lease.worktree_id,
+                runner_id=second_lease.runner_id,
+                lease_generation=second_lease.lease_generation,
+                run_fence_token=second_lease.run_fence_token,
+                lease_token=second_lease.lease_token,
+            )
+        )
+        assert state["restore_tree_sha256"] is not None
 
-    _finish_run(fixture, second, now=now + timedelta(seconds=11))
+    _finish_run(fixture, second, now=now + timedelta(seconds=offset + 11))
     second_release = fixture.worktrees.release(
         worktree_id=second_lease.worktree_id,
         runner_id=second_lease.runner_id,
@@ -2175,11 +2344,11 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         lease_token=second_lease.lease_token,
         final_change_set_status="committed",
         trace_id="runner:release-two",
-        now=now + timedelta(seconds=15),
+        now=now + timedelta(seconds=offset + 15),
     )
     deletion_escape = second_physical.worktree_path / "delete-escape"
     deletion_escape.symlink_to(outside)
-    eligible = fixture.worktrees.mark_gc_eligible(now=now + timedelta(seconds=26))
+    eligible = fixture.worktrees.mark_gc_eligible(now=now + timedelta(seconds=offset + 26))
     assert {item.worktree_id for item in eligible} == {
         first_lease.worktree_id,
         second_lease.worktree_id,

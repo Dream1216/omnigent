@@ -20,11 +20,11 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -34,6 +34,9 @@ from saas.control_plane import (
     WorktreeMaterializationGrant,
     WorktreeMutation,
 )
+
+if TYPE_CHECKING:
+    from saas.runner_adapter.worktree_restore import PreparedWorktreeRestores
 
 _OPAQUE_KEY = re.compile(r"^wti_[0-9a-f]{48}$")
 _OPAQUE_BINDING = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
@@ -583,6 +586,7 @@ class RunnerWorktreeAdapter:
         recovery_artifacts: RecoveryArtifactStore,
         runner_id: UUID | None = None,
         git_timeout_seconds: int = _GIT_TIMEOUT_SECONDS,
+        full_restores: PreparedWorktreeRestores | None = None,
     ) -> None:
         if git_timeout_seconds <= 0 or git_timeout_seconds > 900:
             raise RunnerWorktreeAdapterError(
@@ -608,8 +612,24 @@ class RunnerWorktreeAdapter:
         self._recovery_artifacts = recovery_artifacts
         self._git_timeout_seconds = git_timeout_seconds
         self._managed_device = self._managed_root.stat().st_dev
+        self._full_restores = full_restores
+        if full_restores is not None:
+            _ensure_distinct_roots(
+                {
+                    "managed": self._managed_root,
+                    "mirrors": self._mirror_root,
+                    "state": self._state_root,
+                    "restores": full_restores.root,
+                }
+            )
 
-    def materialize(self, lease: WorktreeLease, *, trace_id: str) -> PhysicalWorktree:
+    def materialize(
+        self,
+        lease: WorktreeLease,
+        *,
+        trace_id: str,
+        check_active: Callable[[], None] = lambda: None,
+    ) -> PhysicalWorktree:
         """Fence the lease, resolve trusted inputs, and create a detached checkout."""
 
         if self._runner_id is not None and lease.runner_id != self._runner_id:
@@ -617,6 +637,7 @@ class RunnerWorktreeAdapter:
                 "worktree_runner_mismatch", "Worktree lease belongs to another Runner"
             )
 
+        check_active()
         self._authority.begin_materialization(
             worktree_id=lease.worktree_id,
             runner_id=lease.runner_id,
@@ -663,9 +684,37 @@ class RunnerWorktreeAdapter:
                     "inode": None,
                     "actual_bytes": 0,
                     "physical_deleted": False,
+                    "restore_snapshot_ref": grant.environment_snapshot_ref
+                    if grant.recovery_artifact_ref
+                    else None,
+                    "restore_required": grant.recovery_artifact_ref is not None
+                    and grant.environment_snapshot_ref is not None,
+                    "restore_tree_sha256": None,
                 }
                 self._store_state(state_path, metadata)
             self._ensure_checkout(mirror=mirror, target=target, grant=grant)
+            if metadata.get("restore_required") and metadata.get("restore_tree_sha256") is None:
+                if metadata.get("restore_snapshot_ref") != grant.environment_snapshot_ref:
+                    raise RunnerWorktreeAdapterError(
+                        "worktree_grant_mismatch", "Pending restore reference changed"
+                    )
+                if self._full_restores is not None:
+
+                    def validate_restored(restored: Path) -> None:
+                        self._require_private_repository(restored)
+                        if self._head_revision(restored) != expected_head:
+                            raise RunnerWorktreeAdapterError(
+                                "worktree_head_mismatch",
+                                "Restored HEAD differs from the active grant",
+                            )
+                        self._inspect_tree(restored, maximum_bytes=grant.reserved_bytes)
+
+                    metadata["restore_tree_sha256"] = self._full_restores.restore(
+                        grant,
+                        target,
+                        check_active=check_active,
+                        validate=validate_restored,
+                    )
             target_info = target.lstat()
             metadata.update(
                 {
@@ -682,6 +731,18 @@ class RunnerWorktreeAdapter:
                     "Physical Worktree HEAD does not match the trusted recovery grant",
                 )
             actual_bytes = self._inspect_tree(target, maximum_bytes=grant.reserved_bytes)
+            check_active()
+            current_grant = self._authority.materialization_grant(
+                worktree_id=lease.worktree_id,
+                runner_id=lease.runner_id,
+                lease_generation=lease.lease_generation,
+                run_fence_token=lease.run_fence_token,
+                lease_token=lease.lease_token,
+            )
+            if current_grant != grant:
+                raise RunnerWorktreeAdapterError(
+                    "worktree_grant_mismatch", "Materialization grant changed during restoration"
+                )
             if grant.access_mode == "readonly":
                 self._make_readonly(target)
             else:
@@ -697,6 +758,7 @@ class RunnerWorktreeAdapter:
                 }
             )
             self._store_state(state_path, metadata)
+            check_active()
             self._authority.acknowledge_ready(
                 worktree_id=lease.worktree_id,
                 runner_id=lease.runner_id,
@@ -923,6 +985,7 @@ class RunnerWorktreeAdapter:
             )
             metadata["head_revision"] = head_revision
             metadata["recovery_artifact_ref"] = artifact_ref
+            metadata["environment_snapshot_ref"] = environment_snapshot_ref
             metadata["actual_bytes"] = actual_bytes
             self._store_state(state_path, metadata)
             return PhysicalCheckpoint(
@@ -1377,6 +1440,14 @@ class RunnerWorktreeAdapter:
             raise RunnerWorktreeAdapterError(
                 "worktree_repository_not_private",
                 "Worktree requires its own Git directory; existing history was preserved",
+            )
+        if any(
+            (git_directory / "objects/info" / name).exists()
+            for name in ("alternates", "http-alternates")
+        ):
+            raise RunnerWorktreeAdapterError(
+                "worktree_repository_not_private",
+                "Worktree must not depend on external Git objects",
             )
         common = self._git(
             ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=target
