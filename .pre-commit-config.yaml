@@ -220,9 +220,9 @@ repos:
         files: ^pnpm-lock\.yaml$
       - id: check-merge-conflict
         name: check for merge conflicts
-      - id: check-added-large-files
-        name: prevent large files
-        args: ['--maxkb=1000']
+      - {id: check-added-large-files, name: prevent large files, args: ['--maxkb=1000'], exclude: '^saas/(acceptance/p0-production-image-evidence\.json|supply_chain/runtime-conditions/(amd64|arm64)-full-role-contract\.json)$'}
+      - {id: check-added-large-files, name: bound generated image runtime evidence, args: ['--maxkb=5120', --enforce-all], files: '^saas/acceptance/p0-production-image-evidence\.json$'}
+      - {id: check-added-large-files, name: bound generated full role contracts, args: ['--maxkb=2048', --enforce-all], files: '^saas/supply_chain/runtime-conditions/(amd64|arm64)-full-role-contract\.json$'}
       - id: check-case-conflict
         name: check for case conflicts
       - id: mixed-line-ending
