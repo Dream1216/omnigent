@@ -1027,7 +1027,7 @@ def test_official_config_is_nonsecret_integrity_protected_and_never_expands_env(
     assert leaked not in repr(captured.value)
 
 
-def _reviewed_production_sandbox_config() -> dict[str, object]:
+def _reviewed_production_sandbox_config(*, aliyun_only: bool = False) -> dict[str, object]:
     host_config = json.loads(
         render_platform_model_gateway_config(
             allowed_models=("deepseek-v4-pro",),
@@ -1039,7 +1039,7 @@ def _reviewed_production_sandbox_config() -> dict[str, object]:
     openai = cast(dict[str, object], provider["openai"])
     openai.pop("api_key")
     openai["api_key_ref"] = "env:OMNIGENT_PLATFORM_DEEPSEEK_KEY"
-    return {
+    sandbox: dict[str, object] = {
         "server_url": "http://omnigent-saas-server.omnigent-next-beta.svc.cluster.local",
         "providers": [{"provider": "agent_sandbox"}, {"provider": "kubernetes"}],
         "reaper": {
@@ -1096,20 +1096,34 @@ def _reviewed_production_sandbox_config() -> dict[str, object]:
             ],
         },
     }
+    if aliyun_only:
+        sandbox.pop("kubernetes")
+        sandbox["providers"] = [{"provider": "e2b"}]
+        sandbox["server_url"] = "https://next.example.test"
+    return sandbox
 
 
-def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: Path) -> None:
+@pytest.mark.parametrize("aliyun_only", [False, True])
+def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(
+    tmp_path: Path, aliyun_only: bool
+) -> None:
     path = tmp_path / "official.yaml"
-    document = {"execution_timeout": 7200, "sandbox": _reviewed_production_sandbox_config()}
+    document = {
+        "execution_timeout": 7200,
+        "sandbox": _reviewed_production_sandbox_config(aliyun_only=aliyun_only),
+    }
     path.write_text(yaml.safe_dump(document, sort_keys=True), encoding="utf-8")
     path.chmod(0o644)
 
     loaded = server_module._load_official_config(path)
 
-    assert [entry["provider"] for entry in loaded["sandbox"]["providers"]] == [
-        "agent_sandbox",
-        "kubernetes",
-    ]
+    assert [entry["provider"] for entry in loaded["sandbox"]["providers"]] == (
+        ["e2b"] if aliyun_only else ["agent_sandbox", "kubernetes"]
+    )
+    if aliyun_only:
+        with pytest.raises(ValueError, match="admitted profile"):
+            server_module.parse_tenant_sandbox_config(loaded["sandbox"])
+        return
     parsed = server_module.parse_tenant_sandbox_config(loaded["sandbox"])
     assert parsed is not None
     assert parsed.launchable_providers() == ("agent_sandbox", "kubernetes")
@@ -1117,6 +1131,49 @@ def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(tmp_path: 
     launcher = parsed.default.launcher_factory()
     with pytest.raises(RuntimeError, match="runtime context is not bound"):
         launcher._resolve_sandbox_env()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "kubernetes",
+        "missing_host",
+        "empty_host",
+        "http",
+        "credentials",
+        "path",
+        "reaper",
+        "model_mismatch",
+        "inline_key",
+    ],
+)
+def test_official_config_rejects_aliyun_only_authority_expansion(tmp_path, mutation):
+    sandbox = _reviewed_production_sandbox_config(aliyun_only=True)
+    if mutation == "kubernetes":
+        sandbox["kubernetes"] = {"namespace": "foreign"}
+    elif mutation == "missing_host":
+        sandbox.pop("host_config")
+    elif mutation == "empty_host":
+        sandbox["host_config"] = {}
+    elif mutation == "http":
+        sandbox["server_url"] = "http://next.example.test"
+    elif mutation == "credentials":
+        sandbox["server_url"] = "https://secret@next.example.test"
+    elif mutation == "path":
+        sandbox["server_url"] = "https://next.example.test/other"
+    elif mutation in {"model_mismatch", "inline_key"}:
+        host = cast(dict[str, Any], sandbox["host_config"])
+        openai = host["providers"]["platform-deepseek"]["openai"]
+        if mutation == "model_mismatch":
+            openai["models"]["allowed-1"] = "foreign-model"
+        else:
+            openai["api_key"] = "synthetic-not-a-credential"
+    else:
+        sandbox["reaper"] = {"enabled": False}
+    path = tmp_path / "official.yaml"
+    path.write_text(yaml.safe_dump({"sandbox": sandbox}), encoding="utf-8")
+    with pytest.raises(ProductionServerCompositionError, match="sandbox"):
+        server_module._load_official_config(path)
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,17 @@ The SaaS Server accepts an explicit Aliyun profile through
 Host model broker remain disabled. Partial configuration, unknown activation
 variables, digest mismatch and unqualified fields stop startup.
 
+To offer only Aliyun, set the official Server config's `sandbox.providers` to
+`[{provider: e2b}]`, omit `sandbox.kubernetes`, and supply `server_url`,
+`host_config` and `reaper`. The callback must equal the admitted Aliyun profile's
+HTTPS Server origin. Host config must use the same reviewed `platform-deepseek`
+gateway, synthetic credential reference and single approved model as the
+Kubernetes profile; it cannot be empty or contain real provider keys. Reaper
+settings remain `enabled: true`, `sweep_interval_s: 3600` and
+`terminate_after_offline_days: 7`. This mode offers no Kubernetes or agent-sandbox
+provider and requires the complete Aliyun profile. Omitting `sandbox` does not
+implicitly enable it. The original dual Kubernetes profile remains supported.
+
 This configuration connects the candidate implementation. It does not replace
 image qualification, actual generation-2 template verification, cloud network
 checks or production release approval. No production profile has been activated.
