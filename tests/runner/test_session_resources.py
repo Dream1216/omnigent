@@ -123,6 +123,11 @@ def _seed_registry(
 class _CapturingResourceRegistry:
     """Resource registry stub that records terminal launch specs."""
 
+    def required_os_env(self, session_id: str) -> OSEnvSpec | None:
+        """This unmanaged fixture has no server-owned startup restriction."""
+        del session_id
+        return None
+
     def __init__(self, tmp_path: Path, *, runner_workspace: Path | None = None) -> None:
         """
         Initialize the stub.

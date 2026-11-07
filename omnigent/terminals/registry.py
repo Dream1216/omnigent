@@ -40,7 +40,8 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from urllib.parse import quote
@@ -230,6 +231,21 @@ class TerminalRegistry:
         # Protects both ``_by_conversation`` and ``_instance_locks``.
         self._lock = threading.Lock()
         self.environment_resolver: Callable[[str, OSEnvSpec], OSEnvironment] | None = None
+        self._required_environments: dict[str, OSEnvSpec] = {}
+        self._pending_launches: dict[str, int] = {}
+        self.require_environment_binding = False
+
+    def bind_required_environment(self, conversation_id: str, spec: OSEnvSpec) -> None:
+        """Install a session restriction before any terminal can start."""
+        with self._lock:
+            if self._required_environments.get(conversation_id) == spec:
+                return
+            if self._pending_launches.get(conversation_id) or any(
+                terminal.running
+                for terminal in self._by_conversation.get(conversation_id, {}).values()
+            ):
+                raise ValueError("Cannot replace a pending or live terminal sandbox")
+            self._required_environments[conversation_id] = deepcopy(spec)
 
     def conversation_link_for_id(self, conversation_id: str) -> str:
         """
@@ -246,6 +262,42 @@ class TerminalRegistry:
         )
 
     async def launch(
+        self,
+        conversation_id: str,
+        terminal_name: str,
+        session_key: str,
+        spec: TerminalEnvSpec,
+        *,
+        parent_os_env: OSEnvSpec | None = None,
+        cwd_override: str | None = None,
+        sandbox_override: str | None = None,
+        program_status_app: str | None = None,
+    ) -> TerminalInstance:
+        """Track a launch until registration so policy binding cannot race it."""
+        with self._lock:
+            self._pending_launches[conversation_id] = (
+                self._pending_launches.get(conversation_id, 0) + 1
+            )
+        try:
+            return await self._launch(
+                conversation_id,
+                terminal_name,
+                session_key,
+                spec,
+                parent_os_env=parent_os_env,
+                cwd_override=cwd_override,
+                sandbox_override=sandbox_override,
+                program_status_app=program_status_app,
+            )
+        finally:
+            with self._lock:
+                remaining = self._pending_launches[conversation_id] - 1
+                if remaining:
+                    self._pending_launches[conversation_id] = remaining
+                else:
+                    self._pending_launches.pop(conversation_id)
+
+    async def _launch(
         self,
         conversation_id: str,
         terminal_name: str,
@@ -293,6 +345,18 @@ class TerminalRegistry:
             fails. Inner code surfaces a clear error; the caller
             tool wraps in a JSON error envelope.
         """
+        with self._lock:
+            required = deepcopy(self._required_environments.get(conversation_id))
+            if self.require_environment_binding and required is None:
+                raise RuntimeError("Required server sandbox has not been bound")
+        if required is not None:
+            spec = replace(
+                spec,
+                os_env=required,
+                allow_cwd_override=False,
+                allow_sandbox_override=False,
+            )
+            parent_os_env = required
         key = (terminal_name, session_key)
         with self._lock:
             existing = self._by_conversation.get(conversation_id, {}).get(key)
@@ -512,6 +576,8 @@ class TerminalRegistry:
         target_conversation_id: str,
         terminal_name: str,
         session_key: str,
+        *,
+        expected_environment: OSEnvSpec | None = None,
     ) -> bool:
         """Move one terminal registry entry without closing tmux.
 
@@ -540,6 +606,26 @@ class TerminalRegistry:
             instance = source_slot.get(key)
             if instance is None:
                 return False
+            source_policy = self._required_environments.get(source_conversation_id)
+            target_policy = self._required_environments.get(target_conversation_id)
+            if (
+                self.require_environment_binding
+                or source_policy is not None
+                or target_policy is not None
+                or expected_environment is not None
+            ):
+                if (
+                    source_policy is None
+                    or source_policy != target_policy
+                    or (expected_environment is not None and source_policy != expected_environment)
+                ):
+                    raise RuntimeError(
+                        "Terminal transfer requires the same approved target sandbox"
+                    )
+                if self._pending_launches.get(
+                    source_conversation_id
+                ) or self._pending_launches.get(target_conversation_id):
+                    raise RuntimeError("Cannot transfer a terminal while a launch is pending")
             target_slot = self._by_conversation.setdefault(target_conversation_id, {})
             if key in target_slot:
                 raise RuntimeError(

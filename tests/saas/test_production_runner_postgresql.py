@@ -19,6 +19,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.orm import Session, sessionmaker
 
+from saas.compatibility import RequestContext
+from saas.control_plane import ChangeSetSpec, ExecutionControlPlane, SaasBase
 from saas.control_plane.dispatch_binding import dispatch_requirements_hash
 from saas.control_plane.isolation import IsolationControlPlane, IsolationControlPlaneError
 from saas.control_plane.preview_execution import (
@@ -55,6 +57,290 @@ _ADAPTER_CONTRACT = "0.2.0"
 
 def _digest(value: str) -> str:
     return sha256(value.encode()).hexdigest()
+
+
+def _exercise_completed_checkpoint_continuation(
+    owner_engine: sa.Engine,
+    login_engine: sa.Engine,
+    *,
+    template_run_id: UUID,
+    template_change_set_id: UUID,
+    template_capability_id: UUID,
+    runner_id: UUID,
+) -> None:
+    """Reuse this isolated fixture's scope; all checkpoint/release writes use the RPC."""
+    tables = SaasBase.metadata.tables
+    now = datetime.now(UTC)
+    with owner_engine.begin() as db:
+
+        def row(table, key, value):
+            relation = tables[table]
+            return dict(
+                db.execute(sa.select(relation).where(relation.c[key] == value)).mappings().one()
+            )
+
+        run_template = row("saas_runs", "id", template_run_id)
+        change_template = row("saas_changesets", "id", template_change_set_id)
+        group_template = row("saas_changeset_groups", "id", change_template["group_id"])
+        dispatch_template = row("saas_run_dispatches", "run_id", template_run_id)
+        capability_template = row("saas_capability_tokens", "id", template_capability_id)
+        actor = run_template["created_by"]
+        tenant, space, project = (run_template[k] for k in ("tenant_id", "space_id", "project_id"))
+        for name, key, values in (
+            ("saas_tenant_memberships", "user_id", {"tenant_id": tenant, "user_id": actor}),
+            (
+                "saas_space_memberships",
+                "user_id",
+                {"tenant_id": tenant, "space_id": space, "user_id": actor},
+            ),
+            (
+                "saas_project_memberships",
+                "subject_id",
+                {
+                    "tenant_id": tenant,
+                    "space_id": space,
+                    "project_id": project,
+                    "subject_type": "user",
+                    "subject_id": actor,
+                    "created_by": actor,
+                },
+            ),
+        ):
+            table = tables[name]
+            if db.scalar(sa.select(table.c[key]).where(table.c[key] == actor)) is None:
+                db.execute(
+                    table.insert().values(**values, role="owner", status="active", version=1)
+                )
+        source_group, source_change_set = uuid4(), uuid4()
+        db.execute(
+            tables["saas_changeset_groups"]
+            .insert()
+            .values(**{**group_template, "id": source_group, "status": "open", "version": 1})
+        )
+        db.execute(
+            tables["saas_changesets"]
+            .insert()
+            .values(
+                **{
+                    **change_template,
+                    "id": source_change_set,
+                    "group_id": source_group,
+                    "status": "open",
+                    "version": 1,
+                    "head_revision": None,
+                    "recovery_artifact_ref": None,
+                }
+            )
+        )
+
+    def seed_run(change_set_id):
+        run_id, run_token, capability_id = uuid4(), uuid4(), uuid4()
+        capability = "completed_" + uuid4().hex
+        with owner_engine.begin() as db:
+            db.execute(
+                tables["saas_runs"]
+                .insert()
+                .values(
+                    **{
+                        **run_template,
+                        "id": run_id,
+                        "status": "running",
+                        "version": 1,
+                        "event_sequence": 0,
+                        "fence_token": 7,
+                        "lease_owner": str(runner_id),
+                        "lease_token": run_token,
+                        "lease_expires_at": now + timedelta(minutes=5),
+                        "heartbeat_at": now,
+                        "terminal_at": None,
+                        "idempotency_key": "completed:" + run_id.hex,
+                        "input": {**run_template["input"], "change_set_id": str(change_set_id)},
+                    }
+                )
+            )
+            db.execute(
+                tables["saas_run_dispatches"]
+                .insert()
+                .values(
+                    **{
+                        **dispatch_template,
+                        "run_id": run_id,
+                        "status": "leased",
+                        "dispatch_generation": 1,
+                        "selected_runner_id": runner_id,
+                        "released_at": None,
+                        "recovery_quarantined_at": None,
+                    }
+                )
+            )
+            db.execute(
+                tables["saas_capability_tokens"]
+                .insert()
+                .values(
+                    **{
+                        **capability_template,
+                        "id": capability_id,
+                        "token_hash": _digest(capability),
+                        "run_id": run_id,
+                        "runner_id": runner_id,
+                        "runner_connection_generation": 3,
+                        "dispatch_generation": 1,
+                        "fence_token": 7,
+                        "revoked_at": None,
+                        "resource_scope": {"change_set_id": str(change_set_id)},
+                        "issued_at": now,
+                        "expires_at": now + timedelta(minutes=5),
+                    }
+                )
+            )
+        return run_id, run_token, capability
+
+    sessions = sessionmaker(owner_engine, expire_on_commit=False)
+    owner = WorktreeControlPlane(sessions)
+    execution = ExecutionControlPlane(sessions)
+    runner = WorktreeControlPlane(sessionmaker(login_engine, expire_on_commit=False))
+    source_run, run_token, capability = seed_run(source_change_set)
+
+    def allocate(run_id, token, change_set, **extra):
+        return runner.allocate_worktree(
+            capability_token=token,
+            runner_id=runner_id,
+            run_id=run_id,
+            change_set_id=change_set,
+            access_mode=extra.pop("access_mode", "writer"),
+            reserved_bytes=1024,
+            lease_duration=timedelta(seconds=60),
+            trace_id="completed:postgresql",
+            **extra,
+        )
+
+    source = allocate(source_run, capability, source_change_set)
+
+    def scope(lease):
+        return {
+            "worktree_id": lease.worktree_id,
+            "runner_id": lease.runner_id,
+            "lease_generation": lease.lease_generation,
+            "run_fence_token": lease.run_fence_token,
+            "lease_token": lease.lease_token,
+        }
+
+    runner.begin_materialization(**scope(source), trace_id="completed:mount")
+    runner.acknowledge_ready(**scope(source), actual_bytes=512, trace_id="completed:ready")
+    snapshot = f"run:{source_run}:fence:7:final"
+    runner.checkpoint(
+        **scope(source),
+        head_revision="e" * 40,
+        recovery_artifact_ref="wta_sha256_" + "b" * 64,
+        environment_snapshot_ref=snapshot,
+        dirty_after=False,
+        trace_id="completed:checkpoint",
+    )
+    execution.transition_run(
+        run_id=source_run,
+        lease_token=run_token,
+        fence_token=7,
+        target_status="succeeded",
+        trace_id="completed:succeeded",
+    )
+    runner.release(
+        **scope(source), final_change_set_status="committed", trace_id="completed:release"
+    )
+    with owner_engine.connect() as db:
+        original = dict(
+            db.execute(
+                sa.select(tables["saas_worktree_instances"]).where(
+                    tables["saas_worktree_instances"].c.id == source.worktree_id
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert original["status"] == "released" and original["dirty"] is False
+        assert (
+            db.scalar(
+                sa.select(tables["saas_changesets"].c.status).where(
+                    tables["saas_changesets"].c.id == source_change_set
+                )
+            )
+            == "committed"
+        )
+    request = RequestContext(
+        actor_id=actor,
+        tenant_id=tenant,
+        space_id=space,
+        project_id=project,
+        user_security_version=1,
+        tenant_membership_version=1,
+        space_membership_version=1,
+        trace_id="completed:continuation",
+    )
+    target = owner.create_change_set_group(
+        request,
+        project_id=project,
+        title="Continue completed checkpoint",
+        specs=(
+            ChangeSetSpec(
+                repository_id=change_template["repository_id"],
+                base_revision=change_template["base_revision"],
+                branch_ref=change_template["branch_ref"],
+                checkpoint_source_worktree_id=source.worktree_id,
+            ),
+        ),
+    ).change_set_ids[0]
+    target_run, target_token, target_capability = seed_run(target)
+    for extra, code in (
+        ({"rebuild_from_id": source.worktree_id}, "runner_worktree_rebuild_source_invalid"),
+        ({"access_mode": "readonly"}, "runner_worktree_restore_requires_writer"),
+    ):
+        with pytest.raises(WorktreeControlPlaneError) as denied:
+            allocate(target_run, target_capability, target, **extra)
+        assert denied.value.code == code
+    restored = allocate(target_run, target_capability, target)
+    assert allocate(target_run, target_capability, target) == restored
+    runner.begin_materialization(**scope(restored), trace_id="completed:restore-mount")
+    grant = runner.materialization_grant(**scope(restored))
+    assert grant.change_set_id == target != source_change_set
+    assert grant.restore_change_set_id == source_change_set
+    assert grant.environment_snapshot_ref == snapshot
+    assert grant.recovery_artifact_ref == original["recovery_artifact_ref"]
+    execution.transition_run(
+        run_id=target_run,
+        lease_token=target_token,
+        fence_token=7,
+        target_status="failed",
+        trace_id="completed:test-cleanup",
+    )
+    runner.release(
+        **scope(restored), final_change_set_status="checkpointed", trace_id="completed:cleanup"
+    )
+    retry_run, retry_token, retry_capability = seed_run(target)
+    retry = allocate(retry_run, retry_capability, target)
+    runner.begin_materialization(**scope(retry), trace_id="completed:retry-mount")
+    retry_grant = runner.materialization_grant(**scope(retry))
+    assert retry_grant.environment_snapshot_ref == snapshot
+    assert retry_grant.restore_change_set_id == source_change_set
+    execution.transition_run(
+        run_id=retry_run,
+        lease_token=retry_token,
+        fence_token=7,
+        target_status="failed",
+        trace_id="completed:retry-cleanup",
+    )
+    runner.release(
+        **scope(retry), final_change_set_status="checkpointed", trace_id="completed:retry-release"
+    )
+    with owner_engine.connect() as db:
+        after = dict(
+            db.execute(
+                sa.select(tables["saas_worktree_instances"]).where(
+                    tables["saas_worktree_instances"].c.id == source.worktree_id
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert after == original
 
 
 def _saas_migration_config(connection: sa.Connection) -> Config:
@@ -505,8 +791,65 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
             connection.exec_driver_sql("CREATE EXTENSION pg_trgm WITH SCHEMA public")
             connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
             _migrate(connection, root)
-            connection.exec_driver_sql(
-                (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+            allocator_signature = (
+                "public.saas_runner_allocate_worktree_v1("
+                "text,uuid,uuid,uuid,uuid,text,bigint,integer,text,text,uuid)"
+            )
+            allocator_body_hash = sa.text(
+                "SELECT encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') "
+                "FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"
+            )
+            old_allocator_hash = "89b309018cafbd0ee0dad70d1ee4848c147157d9ed2737aae857cf3a843ac4af"
+            new_allocator_hash = "dbc6b6832b48c3299742a49bd4259165fd1932bbbb7e02504e10943b63f35b9f"
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == old_allocator_hash
+            )
+            # An already-migrated P18 database must receive the forward install
+            # through the normal owner projection, without replaying old migrations.
+            _migrate(connection, root)
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == old_allocator_hash
+            )
+            roles_sql = (root / "saas/control_plane/postgresql_roles.sql").read_text(
+                encoding="utf-8"
+            )
+            connection.exec_driver_sql(roles_sql)
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == new_allocator_hash
+            )
+            allocator_contract = sa.text(
+                "SELECT oid, proowner, proacl::text, prosecdef, proleakproof, "
+                "provolatile, proparallel, proconfig, pg_get_function_result(oid) "
+                "FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"
+            )
+            installed_contract = connection.execute(
+                allocator_contract, {"signature": allocator_signature}
+            ).one()
+            connection.exec_driver_sql(roles_sql)
+            assert (
+                connection.execute(allocator_contract, {"signature": allocator_signature}).one()
+                == installed_contract
+            )
+            definition = connection.scalar(
+                sa.text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),
+                {"signature": allocator_signature},
+            )
+            changed_definition = definition.replace(
+                "restore_intent_count integer;", "restore_intent_count integer; -- unexpected body"
+            )
+            assert changed_definition != definition
+            with pytest.raises(
+                sa.exc.DBAPIError, match="allocator forward installation source rejected"
+            ):
+                with connection.begin_nested():
+                    connection.exec_driver_sql(changed_definition)
+                    connection.exec_driver_sql(roles_sql)
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == new_allocator_hash
             )
             connection.exec_driver_sql("RESET ROLE")
 
@@ -2933,6 +3276,15 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
             name="max_prepared_transactions",
             rejected_value=1,
             restored_value=0,
+        )
+
+        _exercise_completed_checkpoint_continuation(
+            owner_engine,
+            login_engine,
+            template_run_id=run_id,
+            template_change_set_id=change_set_id,
+            template_capability_id=capability_id,
+            runner_id=runner_id,
         )
 
         # Every claim boundary revalidates the live role graph.  Once drift is

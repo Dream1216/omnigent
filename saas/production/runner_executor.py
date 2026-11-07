@@ -74,7 +74,8 @@ from saas.runner_adapter.platform_models import (
     load_platform_managed_model_projection,
 )
 from saas.runner_adapter.preview_supervisor import RunnerPreviewProcessSupervisor
-from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore
+from saas.runner_adapter.worktree_restore import PreparedWorktreeRestores
+from saas.runner_adapter.worktrees import ObjectRecoveryArtifactStore, RunnerWorktreeAdapterError
 
 _PREVIEW_EXECUTION_KIND = "omnigent.preview.v1"
 _RUNNER_AGENT_DATABASE_ROLE = "saas_runner_agent"
@@ -374,16 +375,18 @@ def _runner_agent_schema_contract(
         "p0s000000017",
         "p0s000000018",
     }:
+        function_hash = (
+            "50fcfa4dd43a39e05af19467869ca569bd61402d984741e4310a20c1d79998f0"
+            if selected == "p0s000000018"
+            else "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67"
+        )
         return (
             selected,
             (
                 *_RUNNER_AGENT_API_FUNCTION_SIGNATURES,
                 ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb"),
             ),
-            {
-                16: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
-                18: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
-            },
+            dict.fromkeys((16, 18), function_hash),
         )
     return selected, _RUNNER_AGENT_API_FUNCTION_SIGNATURES, _RUNNER_AGENT_FUNCTION_SHA256_BY_MAJOR
 
@@ -419,6 +422,7 @@ class _ActiveExecution:
     heartbeat_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     heartbeat_stop: asyncio.Event | None = field(default=None, repr=False)
     heartbeat_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    preparation_cancellation: asyncio.Event | None = field(default=None, repr=False)
 
 
 class _HeartbeatCallWorker:
@@ -2309,6 +2313,18 @@ class ProductionHostIsolationExecutor:
             self._active[lease.run_id] = active
         return active, execution_spec.launch_argv
 
+    def _require_preparation_active(self, active: _ActiveExecution) -> None:
+        with self._lock:
+            cancelled = active.preparation_cancellation
+            if (
+                active.environment_closed
+                or active.lease_lost
+                or (cancelled is not None and cancelled.is_set())
+            ):
+                raise RunnerWorktreeAdapterError(
+                    "worktree_materialization_cancelled", "Worktree preparation was stopped"
+                )
+
     def _finish_preparation(
         self, active: _ActiveExecution, lease: RunnerControlClientLease
     ) -> None:
@@ -2317,7 +2333,9 @@ class ProductionHostIsolationExecutor:
         physical_worktree = self._worktree_adapter.materialize(
             active.worktree_lease,
             trace_id=f"runner:{envelope.runner_id}:materialize",
+            check_active=lambda: self._require_preparation_active(active),
         )
+        self._require_preparation_active(active)
         with self._lock:
             active.physical_worktree = physical_worktree
         if active.execution_kind == _PREVIEW_EXECUTION_KIND:
@@ -2754,10 +2772,16 @@ class ProductionHostIsolationExecutor:
         with self._lock:
             active.heartbeat_stop = heartbeat_stop
             active.heartbeat_task = heartbeat
+            active.preparation_cancellation = cancellation
         try:
             # The durable lease is already heartbeating while Git and sandbox
             # preparation run; materialization never owns liveness implicitly.
-            await asyncio.to_thread(self._finish_preparation, active, lease)
+            try:
+                await asyncio.to_thread(self._finish_preparation, active, lease)
+            except RunnerWorktreeAdapterError as exc:
+                if exc.code != "worktree_materialization_cancelled":
+                    raise
+                return "orphaned" if active.lease_lost else "cancelled"
             if heartbeat.done():
                 try:
                     await heartbeat
@@ -3157,6 +3181,7 @@ def build_production_host_isolation_executor(
                 connection_generation=config.connection_generation,
             ),
             runner_id=config.runner_id,
+            full_restores=PreparedWorktreeRestores(work_root / "restore-snapshots"),
         )
         platform_model_runtime = _optional_platform_model_projection(source)
         isolation_adapter = RunnerIsolationAdapter(

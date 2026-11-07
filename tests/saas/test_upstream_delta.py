@@ -130,8 +130,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 5604
-    assert budget["max_direct_upstream_files"] == 210
+    assert budget["max_upstream_net_added_loc"] == 6532
+    assert budget["max_direct_upstream_files"] == 221
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -149,11 +149,36 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert current["max_upstream_net_added_loc"] == 5593
     vendor = revision["fixed_host_diagnostic_vendor_security_20261106"]
     assert vendor["max_upstream_net_added_loc"] == 5602
+    assert current["max_direct_upstream_files"] == 210
+    assert locale_boundary["max_direct_upstream_files"] == 210
+    managed_start = revision["managed_normal_start_sandbox_binding_20261107"]
+    assert managed_start["previous_max_upstream_net_added_loc"] == 5602
+    assert managed_start["previous_max_direct_upstream_files"] == 210
+    assert managed_start["max_upstream_net_added_loc"] == 6244
+    assert managed_start["max_direct_upstream_files"] == 218
+    transfer = revision["managed_clear_target_binding_20261107"]
+    assert transfer["previous_max_upstream_net_added_loc"] == 6244
+    assert transfer["previous_max_direct_upstream_files"] == 218
+    assert transfer["max_upstream_net_added_loc"] == 6528
+    assert transfer["max_direct_upstream_files"] == 220
+    query_scope = revision["managed_binding_query_execution_scope_20261107"]
+    assert query_scope["previous_max_upstream_net_added_loc"] == 6528
+    assert query_scope["previous_max_direct_upstream_files"] == 220
+    assert query_scope["max_upstream_net_added_loc"] == 6529
+    assert query_scope["max_direct_upstream_files"] == 220
+    fixture_followup = revision["native_COW_optional_binding_fixture_20261107"]
+    assert fixture_followup["previous_budget"]["max_direct_upstream_files"] == 220
+    assert fixture_followup["previous_budget"]["max_upstream_net_added_loc"] == 6529
+    assert fixture_followup["net_added_lines"] == 1
+    assert fixture_followup["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert fixture_followup["max_upstream_net_added_loc"] == 6530
     host_progress = revision["main_c6_host_progress_existing_budget_20261107"]
     assert host_progress["previous_max_upstream_net_added_loc"] == 5602
-    assert host_progress["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
-    assert current["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
-    assert locale_boundary["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert host_progress["max_upstream_net_added_loc"] == 5604
+    consolidation = revision["main30a_source2cc_consolidation_20261107"]
+    assert consolidation["previous_Source_max_upstream_net_added_loc"] == 6530
+    assert consolidation["previous_Main_max_upstream_net_added_loc"] == 5604
+    assert consolidation["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153

@@ -1037,6 +1037,7 @@ def test_managed_host_injects_runner_only_session_channel(
     ):
         captured["token"] = environment[PLATFORM_MODEL_CREDENTIAL_ENV]
         captured["transport"] = environment[PLATFORM_MODEL_RELAY_BASE_URL_ENV]
+        captured["required_start_sandbox"] = environment["OMNIGENT_RUNNER_REQUIRE_START_SANDBOX"]
         if failure == "spawn":
             raise OSError("spawn failed")
         return cast(object, object()), tmp_path / "runner.log"
@@ -1053,7 +1054,10 @@ def test_managed_host_injects_runner_only_session_channel(
         token_authority=authority,
         token_ttl_seconds=3600,
     )
-    environment = {PRIMARY_SESSION_ID_ENV_VAR: str(SESSION_ID)}
+    environment = {
+        PRIMARY_SESSION_ID_ENV_VAR: str(SESSION_ID),
+        "OMNIGENT_RUNNER_REQUIRE_START_SANDBOX": "0",
+    }
 
     if failure is None:
         host._spawn_runner_proc(environment, "session-", tmp_path)
@@ -1064,6 +1068,7 @@ def test_managed_host_injects_runner_only_session_channel(
     assert PLATFORM_MODEL_CREDENTIAL_ENV not in environment
     assert PLATFORM_MODEL_RELAY_BASE_URL_ENV not in environment
     assert captured["token"] == Relay.capability
+    assert captured["required_start_sandbox"] == "1"
     assert json.loads(captured["transport"]) == {
         "platform-deepseek": {"openai": "http://127.0.0.1:12345/v1"}
     }

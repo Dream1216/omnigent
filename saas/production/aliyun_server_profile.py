@@ -18,6 +18,7 @@ from saas.production.aliyun_model_lease import HostModelLeaseAuthority
 from saas.production.aliyun_sandbox import AliyunSandboxLauncher, AliyunSandboxScope
 from saas.production.aliyun_storage import AliyunOssStorageConfig
 from saas.production.aliyun_tenant_sandbox import AliyunManagedSandbox
+from saas.production.aliyun_workspace_recovery import AliyunWorkspaceRecovery
 from saas.production.platform_model_relay import validated_model_gateway_url
 from saas.production.tenant_model_keys import _read_file
 from saas.runner_adapter.platform_model_gateway import PlatformModelGatewayTokenAuthority
@@ -83,6 +84,9 @@ class AliyunServerProfile:
 
     def assert_ready(self) -> None:
         """Check installed SDK and local credentials without making a cloud API call."""
+
+        if self.managed.workspace_recovery is not None:
+            self.managed.workspace_recovery.load()
 
         AliyunSandboxLauncher(
             template=self.managed.template,
@@ -231,6 +235,7 @@ def load_aliyun_server_profile(
         storage_configs = []
         storage_credential_file = None
         artifact_credential_file = None
+        workspace_recovery = None
         if document["schema_version"] in (2, 3):
             storage = document["storage"]
             if (
@@ -238,11 +243,24 @@ def load_aliyun_server_profile(
                 or set(storage)
                 != {"credential_file", "tenants"}
                 | ({"artifact_credential_file"} if document["schema_version"] == 3 else set())
+                | ({"workspace_recovery"} if "workspace_recovery" in storage else set())
                 or not isinstance(storage["tenants"], list)
                 or len(storage["tenants"]) != len(scopes)
             ):
                 raise ValueError
             storage_credential_file = _path(storage["credential_file"])
+            if "workspace_recovery" in storage:
+                recovery = storage["workspace_recovery"]
+                if (
+                    document["schema_version"] != 3
+                    or not isinstance(recovery, dict)
+                    or set(recovery) != {"descriptor_file", "descriptor_sha256"}
+                ):
+                    raise ValueError
+                workspace_recovery = AliyunWorkspaceRecovery(
+                    _path(recovery["descriptor_file"]), recovery["descriptor_sha256"]
+                )
+                workspace_recovery.load()
             if storage_credential_file in paths:
                 raise ValueError
             paths.add(storage_credential_file)
@@ -283,6 +301,7 @@ def load_aliyun_server_profile(
             scopes=tuple(scopes),
             model_leases=HostModelLeaseAuthority(lease_key),
             lifetime_s=document["lifetime_seconds"],
+            workspace_recovery=workspace_recovery,
         )
         profile = AliyunServerProfile(
             expected,

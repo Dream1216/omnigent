@@ -919,6 +919,42 @@ def register_hooks_routes(
 
         _caps = _sf.get_caps()
 
+        if payload.get("agent_start") is True:
+            from omnigent.runner.policy import (
+                AGENT_START_TOOL,
+                AgentStartPolicyError,
+                admin_start_os_env,
+                evaluate_admin_start_sandbox,
+            )
+
+            arguments = data.get("arguments") if isinstance(data, dict) else None
+            if (
+                phase != Phase.TOOL_CALL
+                or not isinstance(data, dict)
+                or data.get("name") != AGENT_START_TOOL
+                or not isinstance(arguments, dict)
+                or not isinstance(arguments.get("agent_name"), str)
+                or not isinstance(arguments.get("harness"), str)
+            ):
+                raise OmnigentError("Invalid agent-start probe", code=ErrorCode.INVALID_INPUT)
+            try:
+                transformed = await evaluate_admin_start_sandbox(
+                    _caps.default_policies,
+                    agent_name=arguments["agent_name"],
+                    harness=arguments["harness"],
+                )
+                admin_start_os_env(transformed)
+            except AgentStartPolicyError:
+                raise OmnigentError(
+                    "Required server startup sandbox is unavailable", code=ErrorCode.FORBIDDEN
+                ) from None
+            return Response(
+                content=json.dumps(
+                    {"result": "POLICY_ACTION_ALLOW", "agent_start": True, "data": transformed}
+                ),
+                media_type="application/json",
+            )
+
         # Fast path: if no policies would fire (no agent guardrails, no
         # session policies, no server-wide defaults), skip the engine build
         # entirely. This avoids conversation-store reads for labels/state/usage

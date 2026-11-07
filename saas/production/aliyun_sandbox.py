@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import secrets
@@ -46,6 +47,7 @@ from saas.production.aliyun_sdk import (
     require_qualified_sdk,
 )
 from saas.production.aliyun_storage import AliyunOssSession, AliyunStorageMounts
+from saas.production.aliyun_workspace_recovery import AliyunWorkspaceRecovery
 from saas.production.platform_model_relay import validated_model_gateway_url
 from saas.production.tenant_model_keys import _read_file
 
@@ -122,6 +124,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         model_gateway_url: str | None = None,
         storage: AliyunStorageMounts | None = None,
         authorize_execution: Callable[[], RuntimeContext] | None = None,
+        workspace_recovery: AliyunWorkspaceRecovery | None = None,
     ) -> None:
         if (
             not isinstance(template, str)
@@ -152,6 +155,8 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         self._model_gateway_url = model_gateway_url
         self._storage = storage
         self._authorize_execution = authorize_execution
+        self._workspace_recovery = workspace_recovery
+        self._fresh_sandboxes: set[str] = set()
 
     def _execution_runtime(self) -> RuntimeContext:
         requested = current_runtime_context()
@@ -223,19 +228,29 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
         self._remaining_lifetime(info)
         storage = self._admit_storage(info)
         admitted_lifetime = self._admitted_lifetime_s(info)
-        lease = self._model_leases.issue(
-            host_id=host_id,
-            launch_token=token,
-            runtime=runtime,
-            ttl_seconds=admitted_lifetime,
-            now=int(info.started_at.timestamp()),
-        )
         home = self.run(sandbox_id, 'printf %s "$HOME"').stdout.strip()
         if home != "/home/user":
             raise ValueError("Aliyun Host image HOME is not the qualified path")
         workspace = f"{home}/workspace"
         self.run(sandbox_id, f"mkdir -p -- {shlex.quote(workspace)}")
-        if repos:
+        recovered = False
+        if self._workspace_recovery is not None:
+            if storage is None:
+                raise ValueError("Workspace recovery requires admitted Session storage")
+            plan = self._workspace_recovery.for_session(
+                runtime,
+                storage,
+                host_id=host_id,
+                sandbox_id=sandbox_id,
+                fresh=sandbox_id in self._fresh_sandboxes,
+                repositories=[f"repos/{name}" for name in clone_dir_names(repos)],
+            )
+            if plan is not None:
+                if on_stage is not None:
+                    on_stage("cloning")
+                self._restore_workspace(sandbox_id, home=home, plan=plan)
+                recovered = True
+        if repos and not recovered:
             repository_root = f"{workspace}/repos" if storage is not None else workspace
             if storage is not None:
                 self.run(sandbox_id, f"mkdir -p -- {shlex.quote(repository_root)}")
@@ -254,6 +269,17 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             ]
             if storage is None and len(checkouts) == 1:
                 workspace = checkouts[0]
+        # Import and complete-tree verification precede credentials, Host, Runner
+        # initialization, and every Agent read. Never clone over a restored tree.
+        if recovered and self._execution_runtime() != runtime:
+            raise ValueError("Aliyun recovery execution scope changed")
+        lease = self._model_leases.issue(
+            host_id=host_id,
+            launch_token=token,
+            runtime=runtime,
+            ttl_seconds=admitted_lifetime,
+            now=int(info.started_at.timestamp()),
+        )
         if host_config is not None:
             self.run(sandbox_id, render_host_config_write_command(host_config))
         private = f"{home}/.omnigent/runtime/aliyun-host-{host_id}-{secrets.token_hex(12)}"
@@ -294,7 +320,38 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             with suppress(Exception):
                 self.run(sandbox_id, shlex.join(["rm", "-rf", "--", private]), check=False)
             raise
+        self._fresh_sandboxes.discard(sandbox_id)
         return workspace
+
+    def _restore_workspace(self, sandbox_id: str, *, home: str, plan: dict[str, object]) -> None:
+        private = f"{home}/.omnigent/runtime/aliyun-host-{plan['host_id']}-{secrets.token_hex(12)}"
+        prepare = (
+            "import sys; from pathlib import Path; "
+            "from saas.production.aliyun_host import prepare_aliyun_host_directory; "
+            "prepare_aliyun_host_directory(Path(sys.argv[1]))"
+        )
+        self.run(sandbox_id, shlex.join(["/opt/venv/bin/python", "-I", "-c", prepare, private]))
+        filename = f"{private}/workspace-recovery.json"
+        try:
+            self._resolve(sandbox_id).files.write(
+                filename, json.dumps(plan, sort_keys=True), user="user", request_timeout=45
+            )
+            self.run(sandbox_id, shlex.join(["chmod", "0400", "--", filename]))
+            self.run(
+                sandbox_id,
+                shlex.join(
+                    [
+                        "/opt/venv/bin/python",
+                        "-I",
+                        "-m",
+                        "saas.production.aliyun_workspace_recovery",
+                        filename,
+                    ]
+                ),
+            )
+        finally:
+            with suppress(Exception):
+                self.run(sandbox_id, shlex.join(["rm", "-rf", "--", private]), check=False)
 
     def _sdk_options(self) -> dict[str, Any]:
         raw = _read_file(self._credential_file, private=True, maximum=512)
@@ -352,6 +409,7 @@ class AliyunSandboxLauncher(E2BSandboxLauncher):
             raise click.ClickException("Aliyun sandbox creation failed") from None
         sandbox_id = str(handle.sandbox_id)
         self._sandboxes[sandbox_id] = handle
+        self._fresh_sandboxes.add(sandbox_id)
         return sandbox_id
 
     def _check_storage_scope(self, session: AliyunOssSession) -> None:
