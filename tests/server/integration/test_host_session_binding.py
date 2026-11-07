@@ -52,7 +52,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
 from tests._helpers.polling import poll_until_async
-from tests.budgets import Deadline
+from tests.budgets import Deadline, budget
 from tests.server.helpers import (
     FakeSandboxLauncher,
     HostStartInvocation,
@@ -370,18 +370,20 @@ async def _fake_sandbox_host(
     """
     from omnigent.runner.identity import token_bound_runner_id
 
+    handshake_deadline = Deadline(15.0)
+
     scope = _websocket_scope(f"/v1/hosts/{host_id}/tunnel")
     scope["headers"] = [(b"x-omnigent-host-token", token.encode("ascii"))]
     comm = ApplicationCommunicator(app, scope)
     await comm.send_input({"type": "websocket.connect"})
-    accepted = await comm.receive_output(timeout=5.0)
+    accepted = await comm.receive_output(timeout=handshake_deadline.next_wait(5.0))
     assert accepted["type"] == "websocket.accept", f"tunnel refused: {accepted!r}"
     await comm.send_input(
         {"type": "websocket.receive", "text": _make_hello(name=host_name)},
     )
     # Serve frames until the launch request arrives, then confirm it.
     for _ in range(50):
-        output = await comm.receive_output(timeout=10.0)
+        output = await comm.receive_output(timeout=handshake_deadline.next_wait(10.0))
         if output["type"] != "websocket.send":
             continue
         try:
@@ -990,7 +992,7 @@ async def test_managed_launch_progress_surfaces_on_snapshot_and_stream(
     from omnigent.runtime import session_stream
 
     env = managed_session_env
-    monkeypatch.setattr("omnigent.server.managed_hosts.MANAGED_HOST_ONLINE_TIMEOUT_S", 10)
+    monkeypatch.setattr("omnigent.server.managed_hosts.MANAGED_HOST_ONLINE_TIMEOUT_S", budget(10))
     # This test asserts the happy-path "ready" progress edge; fake the
     # runner tunnel connect so settlement is driven by progress ordering,
     # not by the runner WebSocket harness.
@@ -1069,9 +1071,9 @@ async def test_managed_launch_progress_surfaces_on_snapshot_and_stream(
     try:
         # The subscriber slot must be live before the gate releases,
         # or early stages could be lost (live-tail only, no replay).
-        await asyncio.wait_for(subscribed.wait(), timeout=5.0)
+        await asyncio.wait_for(subscribed.wait(), timeout=budget(5.0))
         gate.set()
-        await asyncio.wait_for(settled.wait(), timeout=15.0)
+        await asyncio.wait_for(settled.wait(), timeout=budget(15.0))
     finally:
         tail_task.cancel()
     tunnels = [await future for future in host_futures]
