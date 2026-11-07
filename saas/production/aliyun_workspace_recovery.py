@@ -16,9 +16,11 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
+from typing import BinaryIO, cast
 from uuid import UUID
 
 from saas.compatibility.runtime_partition import RuntimeContext
@@ -29,6 +31,9 @@ from saas.runner_adapter.worktree_restore import _attributes, _tree_digest, _xat
 WORKSPACE = Path("/home/user/workspace")
 _MOUNTS = frozenset({"inputs", "artifacts"})
 _MAX_BYTES = 8 * 1024**3
+_MAX_ARCHIVE_BYTES = 9 * 1024**3
+_MAX_PAX_HEADER_BYTES = 1024**2
+_MAX_PAX_METADATA_BYTES = 64 * 1024**2
 _SHA = re.compile(r"[0-9a-f]{64}")
 _FIELDS = {
     "schema_version",
@@ -118,6 +123,29 @@ class AliyunWorkspaceRecovery:
         }
 
 
+class _PaxMetadataReader:
+    """Bound reads before tarfile allocates extended-header/metadata buffers."""
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self.stream = stream
+        self.read_bytes = 0
+
+    def read(self, size: int = -1) -> bytes:
+        _require(0 <= size <= min(_MAX_BYTES, _MAX_PAX_HEADER_BYTES))
+        _require(self.read_bytes + size <= min(_MAX_BYTES, _MAX_PAX_METADATA_BYTES))
+        data = self.stream.read(size)
+        self.read_bytes += len(data)
+        return data
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        position = self.stream.seek(offset, whence)
+        _require(0 <= position <= _MAX_ARCHIVE_BYTES)
+        return position
+
+    def tell(self) -> int:
+        return self.stream.tell()
+
+
 def validate_workspace_pax(stream: BinaryIO) -> None:
     """Reuse the original full-user PAX path/link rules before any extraction."""
     kinds: dict[str, str] = {}
@@ -132,7 +160,10 @@ def validate_workspace_pax(stream: BinaryIO) -> None:
         _require(len(path.parts) < 2 or path.parts[1] not in _MOUNTS)
         return str(path)
 
-    with tarfile.open(fileobj=stream, mode="r|*") as archive:
+    # Native capture is uncompressed PAX. Refuse compression before expansion;
+    # each header read and the cumulative metadata budget are checked first.
+    bounded = cast(BinaryIO, _PaxMetadataReader(stream))
+    with tarfile.open(fileobj=bounded, mode="r:") as archive:
         for item in archive:
             name = member_path(item.name)
             _require(name not in kinds and len(kinds) < 200000)
@@ -145,6 +176,8 @@ def validate_workspace_pax(stream: BinaryIO) -> None:
                 links[name] = member_path(item.linkname)
             if item.issym():
                 _require("\x00" not in item.linkname)
+            members: list[tarfile.TarInfo] = vars(archive)["members"]
+            members.clear()
     _require(kinds.get("workspace") == "directory")
     for name in kinds:
         for parent in PurePosixPath(name).parents:
@@ -157,6 +190,26 @@ def validate_workspace_pax(stream: BinaryIO) -> None:
             seen.add(target)
             target = links[target]
         _require(kinds.get(target) == "file")
+
+
+@contextmanager
+def _private_archive(descriptor: int, *, directory: Path, expected: object) -> Iterator[int]:
+    """Snapshot shared storage before validating or executing its archive bytes."""
+    with tempfile.TemporaryFile(dir=directory) as snapshot:
+        total = 0
+        digest = hashlib.sha256()
+        with os.fdopen(os.dup(descriptor), "rb") as source:
+            while chunk := source.read(1024**2):
+                total += len(chunk)
+                _require(total <= _MAX_ARCHIVE_BYTES)
+                digest.update(chunk)
+                snapshot.write(chunk)
+        _require(total > 0 and digest.hexdigest() == expected)
+        snapshot.flush()
+        snapshot.seek(0)
+        validate_workspace_pax(snapshot)
+        snapshot.seek(0)
+        yield snapshot.fileno()
 
 
 def _digest(root: Path) -> str:
@@ -239,22 +292,20 @@ def restore_workspace(
             current = child
         descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=current)
         info = os.fstat(descriptor)
-        _require(stat.S_ISREG(info.st_mode) and 0 < info.st_size <= 9 * 1024**3)
-        with os.fdopen(os.dup(descriptor), "rb") as stream:
-            _require(hashlib.file_digest(stream, "sha256").hexdigest() == plan["archive_sha256"])
-            stream.seek(0)
-            validate_workspace_pax(stream)
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        with tempfile.TemporaryDirectory(
-            prefix=".workspace-import-", dir=workspace.parent
-        ) as temp:
+        _require(stat.S_ISREG(info.st_mode) and 0 < info.st_size <= _MAX_ARCHIVE_BYTES)
+        with (
+            _private_archive(
+                descriptor, directory=private, expected=plan["archive_sha256"]
+            ) as archive_descriptor,
+            tempfile.TemporaryDirectory(prefix=".workspace-import-", dir=workspace.parent) as temp,
+        ):
             stage = Path(temp)
             subprocess.run(
                 [
                     tar,
                     "--extract",
                     "--file",
-                    f"/dev/fd/{descriptor}",
+                    f"/dev/fd/{archive_descriptor}",
                     "--directory",
                     str(stage),
                     "--xattrs",
@@ -262,7 +313,7 @@ def restore_workspace(
                     "--numeric-owner",
                     "--same-permissions",
                 ],
-                pass_fds=(descriptor,),
+                pass_fds=(archive_descriptor,),
                 check=True,
                 capture_output=True,
             )
@@ -271,8 +322,8 @@ def restore_workspace(
             _repositories(restored, repositories)
             metadata = restored.stat()
             attributes = _attributes(restored)
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            with os.fdopen(os.dup(descriptor), "rb") as stream:
+            os.lseek(archive_descriptor, 0, os.SEEK_SET)
+            with os.fdopen(os.dup(archive_descriptor), "rb") as stream:
                 _require(
                     hashlib.file_digest(stream, "sha256").hexdigest() == plan["archive_sha256"]
                 )

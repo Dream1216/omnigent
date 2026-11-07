@@ -95,6 +95,17 @@ Both sources are pinned by complete archive SHA before and after extraction;
 the restored tree is independently checked against the original complete tree
 digest. Keep traffic/writers fenced during capture and restore.
 
+The importer copies the selected archive to an unlinked owner-private local
+file before parsing; validation and extraction consume that same private copy.
+Capture uncompressed PAX: compressed inputs are refused. Limits are 9 GiB of
+archive bytes, 8 GiB of logical file data, 1 MiB per metadata read and 64 MiB of
+cumulative header/metadata reads. Reserve space for the private archive plus the
+restored tree and fresh baseline; a failed import blocks Host startup and retains
+the original backup and existing mounts.
+The existing final Host image build also records its real `tar --version` and
+executes those extraction options as `user`; component proofs do not substitute
+for this final-image tool check or real Session recovery.
+
 An owner-only descriptor contains `schema_version:1`, the actual `tenant_id`,
 `space_id`, `project_id`, `workspace_id`, `session_id`, `host_id`,
 `source_sandbox_id`, `archive_relative_path`, `archive_sha256`, `tree_sha256`,
