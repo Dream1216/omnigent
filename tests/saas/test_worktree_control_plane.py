@@ -2039,11 +2039,26 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     )
     _git_fixture(first_physical.worktree_path, "branch", "user-history", base_revision)
     _git_fixture(first_physical.worktree_path, "tag", "user-base", base_revision)
-    ignored = first_physical.worktree_path / "private.bin"
-    (first_physical.worktree_path / ".gitignore").write_text("private*\n", encoding="utf-8")
-    ignored.write_bytes(b"ignored user artifact\x00\xff")
-    os.link(ignored, first_physical.worktree_path / "private-hardlink.bin")
-    (first_physical.worktree_path / "private-link").symlink_to("private.bin")
+    dataset_relative = Path("p5-acceptance/p5-before-b-20261107")
+    dataset = first_physical.worktree_path / dataset_relative
+    dataset.mkdir(parents=True)
+    (dataset / ".gitignore").write_text("ignored*.bin\n", encoding="utf-8")
+    chinese_content = "OmniAgent P5 完整文件恢复\n任务标识：p5-before-b-20261107\n"
+    hidden_content = "hidden user data: p5-before-b-20261107\n"
+    (dataset / "中文 结果.txt").write_text(chinese_content, encoding="utf-8")
+    (dataset / ".hidden-note").write_text(hidden_content, encoding="utf-8")
+    ignored_relative = dataset_relative / "ignored.bin"
+    ignored = first_physical.worktree_path / ignored_relative
+    ignored_content = bytes(range(256)) * 256
+    ignored.write_bytes(ignored_content)
+    os.link(ignored, dataset / "ignored-hardlink.bin")
+    (dataset / "relative-link").symlink_to("ignored.bin")
+    if full_restores is None:
+        # Keep the legacy Git-only lane's original untracked-link fixture. The
+        # full-snapshot lane uses Cloud's tracked dangling-link dependency.
+        excludes = first_physical.worktree_path / ".git/info/exclude"
+        excludes.parent.mkdir(mode=0o700, exist_ok=True)
+        excludes.write_text(f"/{dataset_relative}/relative-link\n", encoding="utf-8")
     if sys.platform == "darwin":
         subprocess.run(
             ["/usr/bin/xattr", "-w", "user.omnigent-test", "metadata", str(ignored)], check=True
@@ -2068,6 +2083,26 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         trace_id="runner:checkpoint-one-retry",
     )
     assert checkpoint_retry.recovery_artifact_ref == checkpoint.recovery_artifact_ref
+    private_branch = "p5-private-p5-before-b-20261107"
+    branch_path = dataset_relative / "branch-only.txt"
+    branch_content = "private branch only: p5-before-b-20261107\n"
+    _git_fixture(first_physical.worktree_path, "switch", "-c", private_branch)
+    (first_physical.worktree_path / branch_path).write_text(branch_content, encoding="utf-8")
+    _git_fixture(first_physical.worktree_path, "add", "--", str(branch_path))
+    _git_fixture(
+        first_physical.worktree_path,
+        "-c",
+        "user.name=Runner test",
+        "-c",
+        "user.email=runner-test@invalid",
+        "commit",
+        "-m",
+        "private branch only fixture",
+    )
+    private_commit = _git_fixture(first_physical.worktree_path, "rev-parse", "HEAD")
+    _git_fixture(first_physical.worktree_path, "checkout", "--detach", checkpoint.head_revision)
+    assert private_commit != checkpoint.head_revision
+    assert not (first_physical.worktree_path / branch_path).exists()
     for verify in verify_mirrors:
         verify()
     user_refs = _git_fixture(first_physical.worktree_path, "show-ref")
@@ -2228,6 +2263,21 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         runner_id=second_lease.runner_id,
         full_restores=full_restores,
     )
+    original_checkout = second_adapter._ensure_checkout
+    head_only_observed = False
+
+    def observe_head_only_checkout(**kwargs):
+        nonlocal head_only_observed
+        original_checkout(**kwargs)
+        if not head_only_observed:
+            target = kwargs["target"]
+            if full_restores is not None:
+                assert (target / dataset_relative / "relative-link").is_symlink()
+            with pytest.raises(FileNotFoundError):
+                (target / dataset_relative / "relative-link").read_bytes()
+            head_only_observed = True
+
+    monkeypatch.setattr(second_adapter, "_ensure_checkout", observe_head_only_checkout)
     if full_restores is not None:
         # A full delivery is mandatory for this native checkpoint. Incomplete,
         # cancelled or changed-authority attempts must never acknowledge ready.
@@ -2273,7 +2323,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
                 )
         assert cancelled_restore.value.code == "worktree_materialization_cancelled"
         assert not list((tmp_path / "runner-two-worktrees").rglob(".restore-*"))
-        snapshot_file = full_restores.delivery_path(snapshot_ref) / "private.bin"
+        snapshot_file = full_restores.delivery_path(snapshot_ref) / ignored_relative
         snapshot_info = snapshot_file.stat()
         snapshot_file.write_bytes(b"changed ignored file")
         with pytest.raises(RunnerWorktreeAdapterError) as altered_delivery:
@@ -2300,14 +2350,14 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
                 second_adapter.materialize(second_lease, trace_id="runner:changed-native-grant")
         assert stale_restore.value.code == "worktree_grant_mismatch"
         pending_target = second_adapter._target_path(second_lease.opaque_runtime_key)
-        (pending_target / "private.bin").write_bytes(b"corrupt after persisted restore marker")
+        (pending_target / ignored_relative).write_bytes(b"corrupt after persisted restore marker")
         grant_reads = 0
         with monkeypatch.context() as patch:
             patch.setattr(fixture.worktrees, "materialization_grant", changed_grant)
             with pytest.raises(RunnerWorktreeAdapterError) as replayed_restore:
                 second_adapter.materialize(second_lease, trace_id="runner:interrupted-full-retry")
         assert replayed_restore.value.code == "worktree_grant_mismatch"
-        assert (pending_target / "private.bin").read_bytes() == ignored.read_bytes()
+        assert (pending_target / ignored_relative).read_bytes() == ignored_content
         # Legacy partial state lacks restore markers. A false local ready flag
         # cannot substitute for the actual native authority's readiness either.
         pending_state = second_adapter._state_path(second_lease.opaque_runtime_key)
@@ -2316,12 +2366,56 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
             partial.pop(field)
         partial["phase"] = "ready"
         second_adapter._store_state(pending_state, partial)
-        (pending_target / "private.bin").write_bytes(b"legacy partial target is still incomplete")
+        (pending_target / ignored_relative).write_bytes(
+            b"legacy partial target is still incomplete"
+        )
         with fixture.factory() as db:
             record = db.get(WorktreeInstanceRecord, second_lease.worktree_id)
             assert record is not None and record.status == "materializing"
-        assert ignored.read_bytes() == b"ignored user artifact\x00\xff"
-    second_physical = second_adapter.materialize(second_lease, trace_id="runner:physical-two")
+        assert ignored.read_bytes() == ignored_content
+    original_ready = fixture.worktrees.acknowledge_ready
+    first_dependent_check_before_ready = False
+
+    def acknowledge_after_full_data_read(**kwargs):
+        nonlocal first_dependent_check_before_ready
+        if full_restores is not None and kwargs["worktree_id"] == second_lease.worktree_id:
+            target = second_adapter._target_path(second_lease.opaque_runtime_key)
+            restored_data = target / dataset_relative
+            assert (restored_data / "relative-link").read_bytes() == ignored_content
+            assert len((restored_data / "ignored.bin").read_bytes()) == 65536
+            assert (restored_data / "ignored.bin").stat().st_ino == (
+                restored_data / "ignored-hardlink.bin"
+            ).stat().st_ino
+            assert (restored_data / "relative-link").readlink() == Path("ignored.bin")
+            assert (restored_data / "中文 结果.txt").read_text(encoding="utf-8") == chinese_content
+            assert (restored_data / ".hidden-note").read_text(encoding="utf-8") == hidden_content
+            assert _git_fixture(
+                target,
+                "check-ignore",
+                str(ignored_relative),
+                str(dataset_relative / "ignored-hardlink.bin"),
+            ).splitlines() == [
+                str(ignored_relative),
+                str(dataset_relative / "ignored-hardlink.bin"),
+            ]
+            assert (
+                _git_fixture(target, "rev-parse", f"refs/heads/{private_branch}") == private_commit
+            )
+            assert _git_fixture(
+                target, "show", f"{private_branch}:{branch_path}"
+            ) == branch_content.rstrip("\n")
+            assert not (target / branch_path).exists()
+            assert (
+                _git_fixture(target, "merge-base", private_commit, "HEAD")
+                == checkpoint.head_revision
+            )
+            first_dependent_check_before_ready = True
+        return original_ready(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fixture.worktrees, "acknowledge_ready", acknowledge_after_full_data_read)
+        second_physical = second_adapter.materialize(second_lease, trace_id="runner:physical-two")
+    assert head_only_observed
     for verify in verify_mirrors:
         verify()
     assert second_physical.head_revision == checkpoint.head_revision
@@ -2329,22 +2423,28 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         encoding="utf-8"
     ) == changed_content
     if full_restores is not None:
+        assert first_dependent_check_before_ready
         restored = second_physical.worktree_path
-        assert (restored / "private.bin").read_bytes() == ignored.read_bytes()
-        assert (restored / "private.bin").stat().st_ino == (
-            restored / "private-hardlink.bin"
+        assert (restored / ignored_relative).read_bytes() == ignored.read_bytes()
+        assert (restored / ignored_relative).stat().st_ino == (
+            restored / dataset_relative / "ignored-hardlink.bin"
         ).stat().st_ino
-        assert (restored / "private-link").readlink() == Path("private.bin")
+        assert (restored / dataset_relative / "relative-link").readlink() == Path("ignored.bin")
         if sys.platform == "darwin":
             attribute = bytes.fromhex(
                 subprocess.run(
-                    ["/usr/bin/xattr", "-px", "user.omnigent-test", str(restored / "private.bin")],
+                    [
+                        "/usr/bin/xattr",
+                        "-px",
+                        "user.omnigent-test",
+                        str(restored / ignored_relative),
+                    ],
                     check=True,
                     capture_output=True,
                 ).stdout.decode()
             )
         else:
-            attribute = os.getxattr(restored / "private.bin", "user.omnigent-test")
+            attribute = os.getxattr(restored / ignored_relative, "user.omnigent-test")
         assert attribute == b"metadata"
         assert _git_fixture(restored, "show-ref") == user_refs
         assert (
