@@ -1026,6 +1026,110 @@ _BOOTSTRAP_SCHEMAS = {
 }
 
 
+# Exact observed setup/checkout command shapes; native-bound metadata is normalized.
+_FIXED_RUNNER_BOOTSTRAP_SCHEMAS = {
+    "fixed-setup-f14d61977388": {
+        "shape": "setup",
+        "operation_annotation_line": 34,
+        "operation_message": "A task was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "d18ccc77e8f0ac5be30663cd32f97633e7d1c44204d0cd8e788739a05b710b95",
+            "evaluate/system.txt": (
+                "2db13fec0f5d82e770f2b85e51f882717012d248bdb6478902486051bc5a2c4b"
+            ),
+        },
+    },
+    "fixed-checkout-0e021c94a3e9": {
+        "shape": "checkout",
+        "operation_annotation_line": 83,
+        "operation_message": "The operation was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "0c01adfe01c4d9084e804727e7326c4a3f1b05f7d4c94609758125b6263a69f4",
+            "evaluate/system.txt": (
+                "693c3d71e4b1a0be5986af6949e8e80fada9a703f9133393e26b16f72fb00c6c"
+            ),
+        },
+    },
+    "fixed-setup-ab21f2ec31dc": {
+        "shape": "setup",
+        "operation_annotation_line": 34,
+        "operation_message": "A task was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "d18ccc77e8f0ac5be30663cd32f97633e7d1c44204d0cd8e788739a05b710b95",
+            "evaluate/system.txt": (
+                "47a716b55ff7590c61aae1673e232b128d12480a879df5cde71dfb8c90681338"
+            ),
+        },
+    },
+    "fixed-checkout-9c1699bfff4b": {
+        "shape": "checkout",
+        "operation_annotation_line": 20,
+        "operation_message": "The operation was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "a231dca1094f09eca3d64fecb975cc2e0480e823b16e0e0b2d1c30dc6a05824e",
+            "evaluate/system.txt": (
+                "d0e08cada542b70ed219938d79dd6d1f6443163bb3d761872430141307ff3112"
+            ),
+        },
+    },
+    "fixed-setup-c156566c2a08": {
+        "shape": "setup",
+        "operation_annotation_line": 35,
+        "operation_message": "The operation was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "aeb45701790395468377ae76b21ac9cb9395ae1d3563a8b5ca64795825f124ce",
+            "evaluate/system.txt": (
+                "730e76a4d79af9bcc0be282dca10a96c9abfa678b40681c84aa8593d99f7e179"
+            ),
+        },
+    },
+    "fixed-checkout-88f16404cf2b": {
+        "shape": "checkout",
+        "operation_annotation_line": 31,
+        "operation_message": "The operation was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "14448bde45427efc2c1cef751ca59ffc446f6d00194fa543c2c86fb96cfee959",
+            "evaluate/system.txt": (
+                "56c58a7c2a0949ea788b46f5faaa606541243f1bcadee6503dba2c69d9a4c6e9"
+            ),
+        },
+    },
+    "fixed-setup-7ed4ce3148c3": {
+        "shape": "setup",
+        "operation_annotation_line": 34,
+        "operation_message": "The operation was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "4b8fd2ef46aabf8eb4ceaa43bb484284a978a1d0d4f661f6fb63b69245a91512",
+            "evaluate/system.txt": (
+                "a64670133783a2dd53ab5cf6a2b44946dfdb8961716ff071139e87b1106ff819"
+            ),
+        },
+    },
+    "fixed-checkout-92f8968c0f2d": {
+        "shape": "checkout",
+        "operation_annotation_line": 83,
+        "operation_message": "The operation was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "0c01adfe01c4d9084e804727e7326c4a3f1b05f7d4c94609758125b6263a69f4",
+            "evaluate/system.txt": (
+                "a5f759d397e1b33a875530514e406cc913a6e62015d3378459e67113fe35bec5"
+            ),
+        },
+    },
+    "fixed-checkout-fe0d3bd356bd": {
+        "shape": "checkout",
+        "operation_annotation_line": 20,
+        "operation_message": "The operation was canceled.",
+        "member_sha256": {
+            "0_evaluate.txt": "a231dca1094f09eca3d64fecb975cc2e0480e823b16e0e0b2d1c30dc6a05824e",
+            "evaluate/system.txt": (
+                "b1d4fd91653874b7f5af1839fc6ad4c2b613482f708b20e7a85bc6916aa51e11"
+            ),
+        },
+    },
+}
+
+
 @dataclass(frozen=True)
 class UnattributedNoJobExecutionObservation:
     """Native complete empty job/check sets; never a positive-job audit."""
@@ -1183,13 +1287,14 @@ def verify_no_job_execution(profile, identity, policy, run, jobs, suite, checks,
     )
 
 
-def _bootstrap_log_schema(run, job, logs, shape):
+def _bootstrap_log_schema(run, job, logs, shape, *, fixed_runner=False):
     require(0 < len(logs) <= 65536, "bootstrap archive exceeds its bounded schema")
     require(
         logs.startswith(b"PK\x03\x04") and logs[-22:-18] == b"PK\x05\x06",
         "bootstrap archive has a prefix, trailer or non-native ZIP layout",
     )
     digests = {}
+    credential_uuid = None
     with zipfile.ZipFile(io.BytesIO(logs)) as archive:
         entries = archive.infolist()
         require(
@@ -1263,13 +1368,43 @@ def _bootstrap_log_schema(run, job, logs, shape):
                         "bootstrap system log names another runner",
                     )
                     body = prefix + "RUNNER_NAME"
+                if fixed_runner:
+                    body = body.replace(run["head_sha"], "{ATTACHMENT_SHA}")
+                    body = body.replace(job["runner_name"], "{NATIVE_RUNNER_NAME}")
+                    if body.startswith("Region: "):
+                        require(
+                            body.removeprefix("Region: ")
+                            in {
+                                "eastus2",
+                                "westus3",
+                                "southcentralus",
+                                "westus",
+                                "eastus",
+                                "westcentralus",
+                            },
+                            "fixed-runner bootstrap region has an unknown shape",
+                        )
+                        body = "Region: {OBSERVED_AZURE_REGION}"
+                    credentials = re.findall(r"git-credentials-(" + uuid + r")\.config", body)
+                    if credentials:
+                        require(
+                            len(set(credentials)) == 1
+                            and credential_uuid in {None, credentials[0]},
+                            "bootstrap credential-file identity changed within the original log",
+                        )
+                        credential_uuid = credentials[0]
+                        body = body.replace(
+                            "git-credentials-" + credential_uuid + ".config",
+                            "git-credentials-{CREDENTIAL_UUID}.config",
+                        )
                 normalized.append(body)
             digests[entry.filename] = hashlib.sha256(
                 ("\n".join(normalized) + "\n").encode()
             ).hexdigest()
+    schemas = _FIXED_RUNNER_BOOTSTRAP_SCHEMAS if fixed_runner else _BOOTSTRAP_SCHEMAS
     matches = [
         name
-        for name, schema in _BOOTSTRAP_SCHEMAS.items()
+        for name, schema in schemas.items()
         if schema["shape"] == shape and schema["member_sha256"] == digests
     ]
     require(
@@ -1278,9 +1413,33 @@ def _bootstrap_log_schema(run, job, logs, shape):
     return matches[0]
 
 
-def verify_bootstrap_cancellation(profile, identity, policy, run, job, check, annotations, logs):
+def verify_bootstrap_cancellation(
+    profile,
+    identity,
+    policy,
+    run,
+    job,
+    check,
+    annotations,
+    logs,
+    *,
+    attachment_workflow_sha256=native.MAIN_WORKFLOW_SHA256,
+):
     validate_bootstrap_policy(policy, profile, identity)
-    coordinates = cancelled_job_coordinates(run, job, check)
+    require(
+        attachment_workflow_sha256
+        in {native.MAIN_WORKFLOW_SHA256, native.FIXED_RUNNER_WORKFLOW_SHA256},
+        "bootstrap attachment workflow differs",
+    )
+    fixed_runner = attachment_workflow_sha256 == native.FIXED_RUNNER_WORKFLOW_SHA256
+    if fixed_runner:
+        validate_profile(profile, COMPATIBILITY_COMPONENT)
+    coordinates = cancelled_job_coordinates(
+        run,
+        job,
+        check,
+        expected_runner_label="ubuntu-24.04" if fixed_runner else "ubuntu-latest",
+    )
     require(
         isinstance(job.get("steps"), list)
         and all(s.get("status") == "completed" for s in job["steps"]),
@@ -1292,9 +1451,12 @@ def verify_bootstrap_cancellation(profile, identity, policy, run, job, check, an
         "bootstrap cancellation executed an unreviewed governance or business step",
     )
     shape = "setup" if len(steps) == 1 else "checkout"
-    schema_name = _bootstrap_log_schema(run, job, logs, shape)
+    schema_name = _bootstrap_log_schema(run, job, logs, shape, fixed_runner=fixed_runner)
+    schemas = _FIXED_RUNNER_BOOTSTRAP_SCHEMAS if fixed_runner else _BOOTSTRAP_SCHEMAS
+    schema = schemas[schema_name]
+    annotation_count = 2 if fixed_runner else 3
     require(
-        isinstance(annotations, list) and len(annotations) == 3,
+        isinstance(annotations, list) and len(annotations) == annotation_count,
         "bootstrap cancellation complete annotation set differs",
     )
     message = annotations[0].get("message", "")
@@ -1312,15 +1474,16 @@ def verify_bootstrap_cancellation(profile, identity, policy, run, job, check, an
         _annotation(
             run,
             "failure",
-            "The operation was canceled.",
-            _BOOTSTRAP_SCHEMAS[schema_name]["operation_annotation_line"],
+            schema.get("operation_message", "The operation was canceled."),
+            schema["operation_annotation_line"],
         ),
-        _annotation(run, "notice", _UBUNTU26_NOTICE),
     ]
+    if not fixed_runner:
+        expected.append(_annotation(run, "notice", _UBUNTU26_NOTICE))
     output = check.get("output", {})
     require(
         annotations == expected
-        and output.get("annotations_count") == 3
+        and output.get("annotations_count") == annotation_count
         and output.get("annotations_url")
         == f"{native._REPO_URL}/check-runs/{check['id']}/annotations"
         and all(output.get(key) is None for key in ("title", "summary", "text")),
@@ -1329,6 +1492,7 @@ def verify_bootstrap_cancellation(profile, identity, policy, run, job, check, an
     return UnattributedBootstrapCancellationObservation(
         {
             **_audit_receipt(BOOTSTRAP_KIND, policy, run),
+            **({"attachment_workflow_sha256": attachment_workflow_sha256} if fixed_runner else {}),
             **coordinates,
             "execution": "native-bootstrap-only-cancelled",
             "bootstrap_schema": schema_name,
@@ -1509,9 +1673,16 @@ def collect_unattributed_audit(
             path.read_bytes(),
             attachment_workflow_sha256=attachment_workflow_sha256,
         )
-    require(not fixed_runner_absence, "fixed-runner bootstrap execution is not reviewed")
     return verify_bootstrap_cancellation(
-        profile, identity, bootstrap_policy, run, job, check, annotations, path.read_bytes()
+        profile,
+        identity,
+        bootstrap_policy,
+        run,
+        job,
+        check,
+        annotations,
+        path.read_bytes(),
+        attachment_workflow_sha256=attachment_workflow_sha256,
     )
 
 
