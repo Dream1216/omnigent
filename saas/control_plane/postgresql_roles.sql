@@ -5063,11 +5063,11 @@ BEGIN
           'saas_runner_claim_preview_stop_v1',
           'saas_runner_transition_preview_v1'
       );
-    IF function_contract_hash IS DISTINCT FROM CASE
+    IF function_contract_hash IS DISTINCT FROM (CASE
        WHEN schema_revision = 'p0s000000018' THEN
            '5ce99c34b8bb96019bd1d6498a65ce91e2d1a9aedd2dcb84701e195b07d0c749'
        ELSE '43423586ac39ca5a08a415b36f37e93d7409deb5f03050238b0b876c4d33ca02'
-       END
+       END)
     THEN
         RAISE EXCEPTION 'P0S10 Runner function contract rejected';
     END IF;
