@@ -82,7 +82,7 @@ on:
         type: boolean
         default: false
       diagnostic_arm64_startup:
-        description: One native ARM installed-entry observation of retained 8d Server; no build or release
+        description: One native ARM installed-entry observation of retained 2cc Server; no build or release
         required: false
         type: boolean
         default: false
@@ -252,7 +252,9 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked test dependencies
-        run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
+        run: |
+          uv sync --frozen --extra all --group dev --extra saas --extra e2b
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Prepare immutable runtime evidence data for candidate
         if: inputs.runtime_evidence_revision != ''
         uses: ./saas/actions/runtime-evidence-context
@@ -1182,8 +1184,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python -m saas.scripts.observe_arm64_startup \
-            --source-revision 8d864bff145fe81e1f1fd6eb6e45e1761c2dbac9 \
-            --source-run 42216529292 --artifact-id 13505357010 \
+            --source-revision 2cc37b3f37fe144baeb694b4c4796d2f5acbd7a5 \
+            --source-run 42368658111 --artifact-id 13574217452 \
             --output artifacts/arm-startup-native
       - name: Retain original component observations and raw scan
         if: always()

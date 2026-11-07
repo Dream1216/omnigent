@@ -1,0 +1,183 @@
+{
+  "DB_credentials_shared_PVC_external_network": false,
+  "High_disposition": false,
+  "QEMU_used": false,
+  "actual_container_id": "a00e60f1e5e75841bd1cf239c56fa289246e2af36530d85fae47fd83c240c0cc",
+  "actual_runtime_contract": {
+    "CapAdd": null,
+    "CapDrop": [
+      "ALL"
+    ],
+    "Memory": 536870912,
+    "NanoCpus": 1000000000,
+    "NetworkMode": "none",
+    "PidMode": "",
+    "PidsLimit": 128,
+    "Privileged": false,
+    "ReadonlyRootfs": true,
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Tmpfs": {
+      "/tmp": "rw,nosuid,nodev,size=64m,mode=1777"
+    }
+  },
+  "artifact_id": 13505357010,
+  "control_attempt": "1",
+  "control_revision": "810a06ccad97abaa85ec8e9967ae63692709c922",
+  "control_run": "42233784827",
+  "full_image_or_lifecycle_qualified": false,
+  "host_architecture": "aarch64",
+  "host_platform": "Linux-7.0.0-1017-azure-aarch64-with-glibc2.39",
+  "native_facts": {
+    "High_disposition": false,
+    "actual_controls": {
+      "all_capabilities_empty": true,
+      "interfaces": [
+        "lo"
+      ],
+      "no_new_privileges": true,
+      "non_loopback_routes": 0,
+      "rootfs_readonly": true
+    },
+    "actual_loaded_libc": {
+      "sha256": "98c931a2f98dfceb54e1bf580e7e552f3a33fdc2ee50df4e81051532082dc90f",
+      "target": "/usr/lib/libc.so.6"
+    },
+    "entries": [
+      {
+        "effective_LC_MESSAGES": "C.UTF-8",
+        "effective_encoding": "UTF-8",
+        "expected_config_rejection": "ProductionServerConfigError",
+        "five_locale_inputs": {
+          "LANG": "C.UTF-8",
+          "LANGUAGE": null,
+          "LC_ALL": "C.UTF-8",
+          "LC_MESSAGES": "C.UTF-8",
+          "LOCPATH": null
+        },
+        "role": "server"
+      },
+      {
+        "effective_LC_MESSAGES": "C.UTF-8",
+        "effective_encoding": "UTF-8",
+        "expected_config_rejection": "ProductionWorkerConfigError",
+        "five_locale_inputs": {
+          "LANG": "C.UTF-8",
+          "LANGUAGE": null,
+          "LC_ALL": "C.UTF-8",
+          "LC_MESSAGES": "C.UTF-8",
+          "LOCPATH": null
+        },
+        "role": "worker"
+      },
+      {
+        "effective_LC_MESSAGES": "C.UTF-8",
+        "effective_encoding": "UTF-8",
+        "expected_config_rejection": "RunnerControlError",
+        "five_locale_inputs": {
+          "LANG": "C.UTF-8",
+          "LANGUAGE": null,
+          "LC_ALL": "C.UTF-8",
+          "LC_MESSAGES": "C.UTF-8",
+          "LOCPATH": null
+        },
+        "role": "runner_control"
+      },
+      {
+        "effective_LC_MESSAGES": "C.UTF-8",
+        "effective_encoding": "UTF-8",
+        "expected_config_rejection": "RunnerControlError",
+        "five_locale_inputs": {
+          "LANG": "C.UTF-8",
+          "LANGUAGE": null,
+          "LC_ALL": "C.UTF-8",
+          "LC_MESSAGES": "C.UTF-8",
+          "LOCPATH": null
+        },
+        "role": "runner_agent"
+      },
+      {
+        "effective_LC_MESSAGES": "C.UTF-8",
+        "effective_encoding": "UTF-8",
+        "expected_config_rejection": "ProductionPreviewEdgeError",
+        "five_locale_inputs": {
+          "LANG": "C.UTF-8",
+          "LANGUAGE": null,
+          "LC_ALL": "C.UTF-8",
+          "LC_MESSAGES": "C.UTF-8",
+          "LOCPATH": null
+        },
+        "role": "preview_edge"
+      },
+      {
+        "effective_LC_MESSAGES": "C.UTF-8",
+        "effective_encoding": "UTF-8",
+        "expected_config_rejection": "ProductionPreviewRelayError",
+        "five_locale_inputs": {
+          "LANG": "C.UTF-8",
+          "LANGUAGE": null,
+          "LC_ALL": "C.UTF-8",
+          "LC_MESSAGES": "C.UTF-8",
+          "LOCPATH": null
+        },
+        "role": "preview_owner"
+      }
+    ],
+    "expires_at": "2026-11-11T10:40:00Z",
+    "gid": 1000,
+    "installed_files": {
+      "opt/venv/lib/python3.12/site-packages/omnigent/inner/bwrap_sandbox.py": "7d60e0110298b8be6e1ad5d284321f52f7ca9628426881a75000876a4056fd2b",
+      "opt/venv/lib/python3.12/site-packages/omnigent/inner/os_env.py": "e113566d883d43c060908b9b0a93b2defd168ebb0499e017c3cf336a2c443c43",
+      "opt/venv/lib/python3.12/site-packages/omnigent/inner/sandbox.py": "2c7faf6d85b6a02dcdffabddf1a5171e1b9bf1295fbf570c491778e2e303e8e8",
+      "opt/venv/lib/python3.12/site-packages/omnigent/inner/terminal.py": "86e529e7e20f9ed5d8795b9909b43a799031b67c8e385598dbfa7169d39b4985",
+      "opt/venv/lib/python3.12/site-packages/saas/production/preview_edge.py": "349bbceebd2a00ce23291345fde24f282296fad6af5fa1dfcdb9dc3871263ee2",
+      "opt/venv/lib/python3.12/site-packages/saas/production/preview_owner.py": "40399d6e2d2836a19884569f3eea35c9dff69d8cab3311f63f73ece185f2ead0",
+      "opt/venv/lib/python3.12/site-packages/saas/production/preview_readiness.py": "4691592d1717a02ea6e98cbea3c71e3bc92e0a322d6ccbc3afb578905e357068",
+      "opt/venv/lib/python3.12/site-packages/saas/production/preview_relay.py": "cf51d1f217bc93c1f8025537311ee6168a362bdf21168d4fa0ac77aa9db6d66e",
+      "opt/venv/lib/python3.12/site-packages/saas/production/runner_agent.py": "ec2a1e3b8a4dc6527d584595ba8d40db1d272f0e6ae24174e718bde5bc4713c9",
+      "opt/venv/lib/python3.12/site-packages/saas/production/runner_control.py": "ace8b7227ee12efd5e3d01e19f64608954802a1086bc1068270d35d78669fbe0",
+      "opt/venv/lib/python3.12/site-packages/saas/production/runner_executor.py": "75281dd71d71a12c24e8e6a4f58b349b427eaed86014749f2de202581931a596",
+      "opt/venv/lib/python3.12/site-packages/saas/production/runner_readiness.py": "bd3d174f440b85906d4b700564edf7589cf1631c702068ece70126d7f2838d40",
+      "opt/venv/lib/python3.12/site-packages/saas/production/runtime_locale.py": "89e54a498a2e2d11fe0b8ef64308ef144bc262b0754ff47fe0488faea80d60ec",
+      "opt/venv/lib/python3.12/site-packages/saas/production/server.py": "0fbce786db76e432cb9645cd30f28e8808b4706f1d8fbc440f5f37a0407254de",
+      "opt/venv/lib/python3.12/site-packages/saas/production/worker.py": "6b350f48c46cc25d3f10cd19816cca377a7d2b782755bdedb858bfbb332dae25"
+    },
+    "kind": "installed-production-startup-locale/v1",
+    "mocked_exec": false,
+    "pid": 1,
+    "pid_namespace": "pid:[4026532266]",
+    "platform": "linux/arm64",
+    "process_start_ticks": "12437",
+    "production_source_modified": false,
+    "simulated_inputs": {
+      "LANG": "fr_FR.UTF-8",
+      "LANGUAGE": "../../workspace/catalog:fr",
+      "LC_ALL": "fr_FR.UTF-8",
+      "LC_MESSAGES": "fr_FR.UTF-8",
+      "LOCPATH": "/workspace/locale"
+    },
+    "source_revision": "8d864bff145fe81e1f1fd6eb6e45e1761c2dbac9",
+    "uid": 1000,
+    "whole_service_lifecycle_qualified": false
+  },
+  "operation": "omnigent-arm-startup-7194b126dba5ac229b4a55cf",
+  "original_artifact_sha256": "207609111b9b3ea2dba97b5b3d7f9e6f6eafb399f7d61a3cf62dd5ba60c6e25d",
+  "original_report_sha256": "8d4f7bf65af4efe46020466cc1413f25f8162d495c990561812a1cd0d19613ea",
+  "owned_container_absent": true,
+  "qualification_exit": 0,
+  "schema_version": 1,
+  "source_revision": "8d864bff145fe81e1f1fd6eb6e45e1761c2dbac9",
+  "source_run": 42216529292,
+  "subject": {
+    "config_digest": "sha256:23864797ff4cdd3a1e3e19d47c9ff3d49416dc768693cf603fe0a429c0866c08",
+    "libc_sha256": "98c931a2f98dfceb54e1bf580e7e552f3a33fdc2ee50df4e81051532082dc90f",
+    "manifest_digest": "sha256:6547887e90bd62d56db6d3812162081b3707075c5bb43fa4865a7fe27fef9799",
+    "platform": "linux/arm64",
+    "source_revision": "8d864bff145fe81e1f1fd6eb6e45e1761c2dbac9"
+  },
+  "support_files": {
+    "bindings.json": "1a8e87e0c7cdb25b6702d0ce54859baa9dd30504231c5e8d648f6a69317035d0",
+    "probe.py": "26b946d4c38c84a440dd919d73d595f6825da9bc30b8a222e547d96999192304"
+  }
+}

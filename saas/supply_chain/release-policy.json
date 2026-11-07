@@ -124,6 +124,17 @@
         "linux/amd64": "7c8f466fe08716da0c3ce29ef451e8443313b296717fd8ef98b020030fb282f7",
         "linux/arm64": "8f68e1e2567a00b7a986468884f2b166a9feff1e3e77ece7b63358fe6d3cb373"
       }
+    },
+    "runtime_mitigation": {
+      "id": "CVE-2026-84243",
+      "package": "glibc-2.44",
+      "version": "2.44-r8",
+      "classification": "mitigated_by_verified_runtime_conditions",
+      "expires_at": "2026-11-11T10:40:00Z",
+      "libc_sha256": {
+        "linux/amd64": "ff446e3fa632b252be608349a210f1b4142f30e97d9735d2c3a95d35a9b37ea8",
+        "linux/arm64": "98c931a2f98dfceb54e1bf580e7e552f3a33fdc2ee50df4e81051532082dc90f"
+      }
     }
   },
   "license_policy": {

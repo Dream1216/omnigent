@@ -344,7 +344,8 @@ RUN printf '%s\n' "${SOURCE_DATE_EPOCH}" > /etc/omnigent-runtime-source-date-epo
 FROM scratch AS secured-python-runtime
 COPY --from=secured-python-runtime-rootfs / /
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin" \
-    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 LC_MESSAGES=C.UTF-8
 
 # ── Node alias stage ─────────────────────────────────────
 # Pure alias so the host stage can COPY node out of a version-pinned

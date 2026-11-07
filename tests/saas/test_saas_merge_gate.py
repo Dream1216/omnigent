@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -48,6 +52,56 @@ def test_saas_release_workflows_are_pr_eligible() -> None:
         assert "pull_request" in events
 
 
+def test_compatibility_shards_preserve_full_selection_and_isolated_services():
+    workflow = _workflow("saas-upstream-compat.yml")
+    job = workflow["jobs"]["compatibility-tests"]
+    assert job["strategy"] == {"fail-fast": "false", "matrix": {"shard": ["0", "1"]}}
+    assert job["timeout-minutes"] == "45"
+    assert job["services"]["postgres"]["ports"] == ["5432:5432"]
+    assert job["env"]["SHARD_ID"] == "${{ matrix.shard }}"
+    command = next(
+        s["run"] for s in job["steps"] if s.get("name") == "Run SaaS compatibility tests"
+    )
+    tokens = shlex.split(command)
+    assert tokens[:3] == ["uv", "run", "pytest"]
+    assert tokens[3:5] == ["--num-shards=2", "--shard-id=$SHARD_ID"]
+    assert tokens[5].startswith("--junitxml=artifacts/saas-compatibility-")
+    assert tokens[6:] == [
+        "tests/db/test_workspace_scope.py",
+        "tests/cli/test_cli.py",
+        "tests/runner/transports/ws_tunnel/test_serve.py",
+        "tests/server/test_managed_hosts.py",
+        "tests/server/integration/test_sessions_archive.py",
+        "tests/saas",
+    ]
+    single_steps = {
+        "Run isolated PostgreSQL logical restore contract",
+        "Run official zygote and query-context compatibility tests",
+        "Run official hard-sandbox and credential-proxy acceptance",
+        "Verify SaaS migration CLI",
+        "Verify SaaS wheel contents",
+        "Replay downstream patch queue",
+        "Validate P0-P6 acceptance ledger",
+        "Validate P0 production baselines",
+        "Enforce source-intrusion budget",
+    }
+    assert {s["name"] for s in job["steps"] if s.get("if") == "matrix.shard == 0"} == single_steps
+    assert not any(s.get("continue-on-error") == "true" for s in job["steps"])
+
+
+@pytest.mark.parametrize("result", ["success", "failure", "cancelled", "skipped", "", "unknown"])
+def test_required_compatibility_context_rejects_any_incomplete_shard(result):
+    gate = _workflow("saas-upstream-compat.yml")["jobs"]["compatibility-gate"]
+    assert gate["if"] == "always()" and gate["needs"] == "compatibility-tests"
+    assert gate["steps"][0]["env"] == {"TEST_RESULT": "${{ needs.compatibility-tests.result }}"}
+    process = subprocess.run(
+        ["bash", "-c", gate["steps"][0]["run"]],
+        env={**os.environ, "TEST_RESULT": result},
+        check=False,
+    )
+    assert (process.returncode == 0) == (result == "success")
+
+
 def test_postgresql_18_workflows_bind_the_exact_service_container() -> None:
     expected_script = "bash saas/scripts/configure_postgresql_18_test_service.sh"
     expected_image = (
@@ -55,7 +109,7 @@ def test_postgresql_18_workflows_bind_the_exact_service_container() -> None:
         "sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
     )
     for name, job_name in (
-        ("saas-upstream-compat.yml", "compatibility-gate"),
+        ("saas-upstream-compat.yml", "compatibility-tests"),
         ("saas-image-candidate.yml", "build-candidate"),
     ):
         workflow = _workflow(name)

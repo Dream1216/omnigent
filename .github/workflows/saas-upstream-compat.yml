@@ -17,11 +17,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  compatibility-gate:
+  compatibility-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     runs-on: ubuntu-24.04
-    # The official e179bc42 suite plus PG18 restore and hard-sandbox gates
-    # measured 19m55s before runner teardown. Keep deterministic headroom so a
-    # fully successful exact-SHA run is not reclassified as cancelled at 20m.
+    # Hash-partition the complete suite on independent PostgreSQL runners.
+    # Keep the original limit; serial execution exhausted it after 38m44s of tests.
     timeout-minutes: 45
     services:
       postgres:
@@ -36,6 +39,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      SHARD_ID: ${{ matrix.shard }}
       OMNIGENT_SKIP_WEB_UI: "true"
       # CI transport recovery; product locks, Ubuntu trust and tests stay fixed.
       OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
@@ -91,6 +95,8 @@ jobs:
       - name: Run SaaS compatibility tests
         run: >-
           uv run pytest
+          --num-shards=2 --shard-id="$SHARD_ID"
+          --junitxml="artifacts/saas-compatibility-$SHARD_ID.xml"
           tests/db/test_workspace_scope.py
           tests/cli/test_cli.py
           tests/runner/transports/ws_tunnel/test_serve.py
@@ -98,11 +104,13 @@ jobs:
           tests/server/integration/test_sessions_archive.py
           tests/saas
       - name: Run isolated PostgreSQL logical restore contract
+        if: matrix.shard == 0
         run: >-
           uv run python -m saas.scripts.run_postgresql_restore_contract
           --allow-disposable-databases
           --output artifacts/postgresql-restore-contract.json
       - name: Run official zygote and query-context compatibility tests
+        if: matrix.shard == 0
         run: >-
           uv run pytest
           tests/host/test_runner_zygote.py
@@ -132,6 +140,7 @@ jobs:
           tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_arena_max_zero_disables_cap
           tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_honors_overrides
       - name: Run official hard-sandbox and credential-proxy acceptance
+        if: matrix.shard == 0
         run: >-
           uv run pytest
           tests/inner/test_bwrap_symlink_mask_3265.py
@@ -149,21 +158,26 @@ jobs:
           tests/inner/egress/test_proxy.py::test_s5_connect_rejects_unsafe_host_before_dns
           tests/inner/egress/test_proxy.py::test_s5_http_rejects_unsafe_host_before_dns
       - name: Verify SaaS migration CLI
+        if: matrix.shard == 0
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-control-plane.db
         run: |
           uv run python -m saas.scripts.check_control_plane_migration_cli
       - name: Verify SaaS wheel contents
+        if: matrix.shard == 0
         run: |
           uv build --wheel --out-dir artifacts/saas-wheel
           uv run python -m saas.scripts.check_wheel_contents artifacts/saas-wheel
       - name: Replay downstream patch queue
+        if: matrix.shard == 0
         run: >-
           uv run python saas/scripts/check_patch_queue.py
           --output artifacts/patch-replay-report.json
       - name: Validate P0-P6 acceptance ledger
+        if: matrix.shard == 0
         run: uv run python -m saas.scripts.check_acceptance_manifest
       - name: Validate P0 production baselines
+        if: matrix.shard == 0
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -182,11 +196,12 @@ jobs:
           uv run python -m saas.scripts.check_production_readiness \
             --output artifacts/production-readiness-report.json
       - name: Enforce source-intrusion budget
+        if: matrix.shard == 0
         run: >-
           uv run python saas/scripts/check_upstream_delta.py
           --output artifacts/upstream-delta-report.json
       - name: Upload compatibility evidence
-        if: always()
+        if: always() && matrix.shard == 0
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: upstream-delta-report
@@ -201,3 +216,20 @@ jobs:
             artifacts/image-supply-chain-report.json
             artifacts/production-readiness-report.json
           if-no-files-found: error
+      - name: Retain exact compatibility shard results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-compatibility-${{ matrix.shard }}-${{ github.run_id }}
+          path: artifacts/saas-compatibility-${{ matrix.shard }}.xml
+          if-no-files-found: error
+
+  compatibility-gate:
+    if: always()
+    needs: compatibility-tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require both independent compatibility shards
+        env:
+          TEST_RESULT: ${{ needs.compatibility-tests.result }}
+        run: test "$TEST_RESULT" = success
