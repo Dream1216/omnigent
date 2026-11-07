@@ -34,9 +34,8 @@ and Runner pool until validation is complete.
 
 ## Full user checkout before Runner launch
 
-Before the source lease is released or faulted, retain its actual native
-`WorktreeMaterializationGrant` after checkpoint. The existing
-`environment_snapshot_ref` identifies the full user tree; the Git
+Retain the original native checkpoint state in the existing encrypted backup.
+Its existing `environment_snapshot_ref` identifies the full user tree; the Git
 `recovery_artifact_ref` alone contains only HEAD relative to Base Revision.
 An ordinary allocation without an Environment Snapshot does not prove full
 user-file recovery.
@@ -45,10 +44,14 @@ The backup owner decrypts the existing independent backup into quarantine,
 verifies the complete original file/private-Git manifest, and delivers only the
 quiesced user checkout to the new owned work volume. Use the product's
 `PreparedWorktreeRestores(work_root / "restore-snapshots")` and
-`prepare(actual_checkpoint_grant, verified_quarantine_checkout)`, or deliver to
+`prepare_checkpoint(original_quarantine_native_state, verified_quarantine_checkout)`.
+This reads the Source-written checkpoint binding without requiring a released
+lease or copying old state into the active Runner. If the actual original grant
+was retained before release, `prepare(actual_checkpoint_grant, verified_quarantine_checkout)`
+is also supported, or deliver to
 `delivery_path(actual_checkpoint_grant.environment_snapshot_ref)` with metadata
 preserved and call `seal(actual_checkpoint_grant)`. Retain the original native
-grant or sealed delivery receipt with the encrypted backup; do not reconstruct
+checkpoint state or sealed delivery receipt with the encrypted backup; do not reconstruct
 grant fields from a model reply or restore old Runner state, locks or leases.
 These local owner operations create no execution grant or independent backup.
 

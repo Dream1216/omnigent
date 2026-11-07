@@ -2086,6 +2086,7 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
         mirrors=StaticRepositoryMirrorResolver({binding: first_mirror}),
         recovery_artifacts=artifact_store,
         runner_id=first_lease.runner_id,
+        full_restores=full_restores,
     )
     resumed = restarted_adapter.materialize(first_lease, trace_id="runner:same-volume-restart")
     assert resumed.head_revision == checkpoint.head_revision
@@ -2152,7 +2153,16 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
             run_fence_token=first_lease.run_fence_token,
             lease_token=first_lease.lease_token,
         )
-        full_restores.prepare(native_checkpoint_grant, first_physical.worktree_path)
+        original_state = first_adapter._state_path(first_lease.opaque_runtime_key)
+        legacy = json.loads(original_state.read_bytes())
+        legacy.pop("environment_snapshot_ref")
+        legacy_state = tmp_path / "legacy-checkpoint-state.json"
+        legacy_state.write_text(json.dumps(legacy), encoding="utf-8")
+        with pytest.raises(RunnerWorktreeAdapterError) as missing_snapshot_ref:
+            full_restores.prepare_checkpoint(legacy_state, first_physical.worktree_path)
+        assert missing_snapshot_ref.value.code == "worktree_full_restore_invalid"
+        digest = full_restores.prepare_checkpoint(original_state, first_physical.worktree_path)
+        assert full_restores.seal(native_checkpoint_grant) == digest
         fixture.worktrees.heartbeat(
             worktree_id=first_lease.worktree_id,
             runner_id=first_lease.runner_id,
@@ -2221,6 +2231,11 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
     if full_restores is not None:
         # A full delivery is mandatory for this native checkpoint. Incomplete,
         # cancelled or changed-authority attempts must never acknowledge ready.
+        with monkeypatch.context() as patch:
+            patch.setattr(second_adapter, "_full_restores", None)
+            with pytest.raises(RunnerWorktreeAdapterError) as missing_consumer:
+                second_adapter.materialize(second_lease, trace_id="runner:missing-full-consumer")
+        assert missing_consumer.value.code == "worktree_full_restore_required"
         with fixture.factory() as db:
             first_record = db.get(WorktreeInstanceRecord, first_lease.worktree_id)
             assert first_record is not None and first_record.environment_snapshot_ref is not None
@@ -2284,6 +2299,24 @@ def test_physical_runner_materializes_checkpoints_recovers_and_fenced_deletes(
             with pytest.raises(RunnerWorktreeAdapterError) as stale_restore:
                 second_adapter.materialize(second_lease, trace_id="runner:changed-native-grant")
         assert stale_restore.value.code == "worktree_grant_mismatch"
+        pending_target = second_adapter._target_path(second_lease.opaque_runtime_key)
+        (pending_target / "private.bin").write_bytes(b"corrupt after persisted restore marker")
+        grant_reads = 0
+        with monkeypatch.context() as patch:
+            patch.setattr(fixture.worktrees, "materialization_grant", changed_grant)
+            with pytest.raises(RunnerWorktreeAdapterError) as replayed_restore:
+                second_adapter.materialize(second_lease, trace_id="runner:interrupted-full-retry")
+        assert replayed_restore.value.code == "worktree_grant_mismatch"
+        assert (pending_target / "private.bin").read_bytes() == ignored.read_bytes()
+        # Legacy partial state lacks restore markers. A false local ready flag
+        # cannot substitute for the actual native authority's readiness either.
+        pending_state = second_adapter._state_path(second_lease.opaque_runtime_key)
+        partial = second_adapter._load_state(pending_state)
+        for field in ("restore_required", "restore_snapshot_ref", "restore_tree_sha256"):
+            partial.pop(field)
+        partial["phase"] = "ready"
+        second_adapter._store_state(pending_state, partial)
+        (pending_target / "private.bin").write_bytes(b"legacy partial target is still incomplete")
         with fixture.factory() as db:
             record = db.get(WorktreeInstanceRecord, second_lease.worktree_id)
             assert record is not None and record.status == "materializing"

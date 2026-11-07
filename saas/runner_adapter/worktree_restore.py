@@ -13,11 +13,13 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from uuid import UUID
 
 from saas.control_plane import WorktreeMaterializationGrant
 from saas.runner_adapter.worktrees import (
@@ -300,14 +302,15 @@ class PreparedWorktreeRestores:
         Capture that grant through the original native authority after checkpoint
         and before releasing its lease. No old Runner identity is transplanted.
         """
-        binding = self._binding(checkpoint_grant)
-        assert checkpoint_grant.environment_snapshot_ref is not None
-        tree = self.delivery_path(checkpoint_grant.environment_snapshot_ref)
+        return self._seal(self._binding(checkpoint_grant), checkpoint_grant.reserved_bytes)
+
+    def _seal(self, binding: dict[str, object], maximum_bytes: int) -> str:
+        snapshot_ref = binding["snapshot_ref"]
+        assert isinstance(snapshot_ref, str)
+        tree = self.delivery_path(snapshot_ref)
         _require(tree.exists() and not tree.is_symlink())
         _private_root(tree, label="worktree_restore_checkout")
-        digest = _tree_digest(
-            tree, check_active=lambda: None, maximum_bytes=checkpoint_grant.reserved_bytes
-        )
+        digest = _tree_digest(tree, check_active=lambda: None, maximum_bytes=maximum_bytes)
         payload = _canonical_json({"binding": binding, "tree_sha256": digest})
         receipt = tree.parent / "receipt.json"
         if receipt.exists():
@@ -318,26 +321,74 @@ class PreparedWorktreeRestores:
 
     def prepare(self, checkpoint_grant: WorktreeMaterializationGrant, source: Path) -> str:
         """Stage the owner's verified, quiesced user tree; retain its native ref."""
-        self._binding(checkpoint_grant)
-        assert checkpoint_grant.environment_snapshot_ref is not None
-        target = self.delivery_path(checkpoint_grant.environment_snapshot_ref)
-        _require(not target.exists() and not target.is_symlink())
-        digest = _tree_digest(
-            source, check_active=lambda: None, maximum_bytes=checkpoint_grant.reserved_bytes
+        return self._prepare(
+            self._binding(checkpoint_grant), checkpoint_grant.reserved_bytes, source
         )
+
+    def prepare_checkpoint(self, original_state: Path, source: Path) -> str:
+        """Read the original product checkpoint from verified backup quarantine.
+
+        This reads scope only. It never restores old state into the new Runner,
+        accepts a fabricated lease, or requires an already released grant.
+        """
+        try:
+            state = json.loads(_read_regular_private_file(original_state))
+            _require(
+                isinstance(state, dict)
+                and state.get("format_version") == 1
+                and state.get("phase") == "ready"
+            )
+            identity = state["identity"]
+            _require(isinstance(identity, dict))
+            binding = {
+                "change_set_id": str(UUID(identity["change_set_id"])),
+                "snapshot_ref": state["environment_snapshot_ref"],
+                "recovery_artifact_ref": state["recovery_artifact_ref"],
+                "repository_binding_digest": identity["repository_binding_digest"],
+                "base_revision": identity["base_revision"],
+                "head_revision": state["head_revision"],
+            }
+            maximum_bytes = identity["reserved_bytes"]
+            _require(type(maximum_bytes) is int and maximum_bytes > 0)
+            _require(
+                isinstance(binding["snapshot_ref"], str)
+                and 0 < len(binding["snapshot_ref"]) <= 256
+            )
+            for key, pattern in (
+                ("recovery_artifact_ref", r"wta_sha256_[0-9a-f]{64}"),
+                ("repository_binding_digest", r"[0-9a-f]{64}"),
+                ("base_revision", r"(?:[0-9a-f]{40}|[0-9a-f]{64})"),
+                ("head_revision", r"(?:[0-9a-f]{40}|[0-9a-f]{64})"),
+            ):
+                _require(
+                    isinstance(binding[key], str)
+                    and re.fullmatch(pattern, binding[key]) is not None
+                )
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            raise RunnerWorktreeAdapterError(
+                "worktree_full_restore_invalid", "Original native checkpoint state is unavailable"
+            ) from None
+        return self._prepare(binding, maximum_bytes, source)
+
+    def _prepare(self, binding: dict[str, object], maximum_bytes: int, source: Path) -> str:
+        snapshot_ref = binding["snapshot_ref"]
+        assert isinstance(snapshot_ref, str)
+        target = self.delivery_path(snapshot_ref)
+        _require(not target.exists() and not target.is_symlink())
+        digest = _tree_digest(source, check_active=lambda: None, maximum_bytes=maximum_bytes)
         with tempfile.TemporaryDirectory(prefix=".delivery-", dir=target.parent) as temporary:
             staged = Path(temporary) / "checkout"
             _copy_tree(
                 source,
                 staged,
                 check_active=lambda: None,
-                maximum_bytes=checkpoint_grant.reserved_bytes,
+                maximum_bytes=maximum_bytes,
             )
             _require(
                 _tree_digest(
                     staged,
                     check_active=lambda: None,
-                    maximum_bytes=checkpoint_grant.reserved_bytes,
+                    maximum_bytes=maximum_bytes,
                 )
                 == digest
             )
@@ -345,12 +396,12 @@ class PreparedWorktreeRestores:
                 _tree_digest(
                     source,
                     check_active=lambda: None,
-                    maximum_bytes=checkpoint_grant.reserved_bytes,
+                    maximum_bytes=maximum_bytes,
                 )
                 == digest
             )
             os.replace(staged, target)
-        _require(self.seal(checkpoint_grant) == digest)
+        _require(self._seal(binding, maximum_bytes) == digest)
         return digest
 
     def restore(

@@ -693,12 +693,33 @@ class RunnerWorktreeAdapter:
                 }
                 self._store_state(state_path, metadata)
             self._ensure_checkout(mirror=mirror, target=target, grant=grant)
-            if metadata.get("restore_required") and metadata.get("restore_tree_sha256") is None:
-                if metadata.get("restore_snapshot_ref") != grant.environment_snapshot_ref:
-                    raise RunnerWorktreeAdapterError(
-                        "worktree_grant_mismatch", "Pending restore reference changed"
-                    )
-                if self._full_restores is not None:
+            if (
+                grant.recovery_artifact_ref is not None
+                and grant.environment_snapshot_ref is not None
+            ):
+                # Read native readiness under the physical-operation lock. A
+                # persisted marker alone cannot authorize skipping recovery.
+                materialization = self._authority.begin_materialization(
+                    worktree_id=lease.worktree_id,
+                    runner_id=lease.runner_id,
+                    lease_generation=lease.lease_generation,
+                    run_fence_token=lease.run_fence_token,
+                    lease_token=lease.lease_token,
+                    trace_id=trace_id,
+                )
+                if metadata.get("phase") != "ready" or materialization.status != "ready":
+                    if self._full_restores is None:
+                        raise RunnerWorktreeAdapterError(
+                            "worktree_full_restore_required",
+                            "Full checkpoint consumer is required",
+                        )
+                    if metadata.get("restore_snapshot_ref") not in (
+                        None,
+                        grant.environment_snapshot_ref,
+                    ):
+                        raise RunnerWorktreeAdapterError(
+                            "worktree_grant_mismatch", "Pending restore reference changed"
+                        )
 
                     def validate_restored(restored: Path) -> None:
                         self._require_private_repository(restored)
@@ -715,6 +736,8 @@ class RunnerWorktreeAdapter:
                         check_active=check_active,
                         validate=validate_restored,
                     )
+                    metadata["restore_snapshot_ref"] = grant.environment_snapshot_ref
+                    metadata["restore_required"] = True
             target_info = target.lstat()
             metadata.update(
                 {
