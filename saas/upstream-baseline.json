@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 220,
-    "max_upstream_net_added_loc": 6529,
+    "max_direct_upstream_files": 221,
+    "max_upstream_net_added_loc": 6530,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1241,6 +1241,20 @@
       ],
       "changes": "Six exact Go compress source-build/compiled-module checks and three package-only OAuthLib cooldown lines; frozen transitive lock only. No extra findings accepted or release/data gate waived.",
       "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source"
+    },
+    "native_COW_optional_binding_fixture_20261107": {
+      "previous_budget": {
+        "max_active_patches": 9,
+        "max_direct_upstream_files": 220,
+        "max_upstream_net_added_loc": 6529,
+        "min_isolated_custom_code_ratio": 0.85
+      },
+      "max_direct_upstream_files": 221,
+      "max_upstream_net_added_loc": 6530,
+      "changed_official_test": "tests/runner/test_copy_on_write.py",
+      "net_added_lines": 1,
+      "authorization_reference": "managed_binding_query_execution_scope_20261107.authorization_source",
+      "reason": "Reconcile the exact original runner-app CI failure: the existing unmanaged COW test double explicitly returns None for the optional required_os_env query. Preserve every namespace and preparation assertion, all historical budgets, nine patches, .85 isolation and all CI/security/signing/release gates. This numeric source record does not waive an installation, catalog or native-PG finding."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

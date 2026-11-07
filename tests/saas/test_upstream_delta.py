@@ -130,8 +130,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 6529
-    assert budget["max_direct_upstream_files"] == 220
+    assert budget["max_upstream_net_added_loc"] == 6530
+    assert budget["max_direct_upstream_files"] == 221
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -164,8 +164,14 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     query_scope = revision["managed_binding_query_execution_scope_20261107"]
     assert query_scope["previous_max_upstream_net_added_loc"] == 6528
     assert query_scope["previous_max_direct_upstream_files"] == 220
-    assert query_scope["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
-    assert query_scope["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert query_scope["max_upstream_net_added_loc"] == 6529
+    assert query_scope["max_direct_upstream_files"] == 220
+    fixture_followup = revision["native_COW_optional_binding_fixture_20261107"]
+    assert fixture_followup["previous_budget"]["max_direct_upstream_files"] == 220
+    assert fixture_followup["previous_budget"]["max_upstream_net_added_loc"] == 6529
+    assert fixture_followup["net_added_lines"] == 1
+    assert fixture_followup["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert fixture_followup["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153

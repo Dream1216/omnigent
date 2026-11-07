@@ -480,13 +480,6 @@ def _install_runner_worktree_api() -> None:
             generated_runtime_key text;
             allocation_request_hash text;
             existing_request_hash text;
-            restore_change_set_id uuid;
-            restore_intent jsonb;
-            restore_intent_count integer;
-            restore_source_text text;
-            restored_change_set public.saas_changesets%ROWTYPE;
-            restore_checkpoint jsonb;
-            restore_checkpoint_count integer;
         BEGIN
             IF expected_runner_id IS NULL
                OR expected_run_id IS NULL OR expected_change_set_id IS NULL
@@ -733,11 +726,6 @@ def _install_runner_worktree_api() -> None:
             IF requested_rebuild_from_id IS NOT NULL THEN
                 recovery_ref := selected_source.recovery_artifact_ref;
                 environment_ref := selected_source.environment_snapshot_ref;
-                SELECT (event.payload ->> 'restore_change_set_id')::uuid
-                INTO restore_change_set_id
-                FROM public.saas_worktree_events AS event
-                WHERE event.worktree_id = selected_source.id AND event.sequence = 1
-                  AND event.payload ->> 'restore_environment_snapshot_ref' = environment_ref;
                 UPDATE public.saas_worktree_instances AS source
                 SET status = 'released', released_at = database_now,
                     updated_at = database_now
@@ -749,99 +737,6 @@ def _install_runner_worktree_api() -> None:
                     ), requested_trace_id
                 );
                 initial_event := 'worktree.rebuilt';
-            ELSIF selected_change_set.status = 'checkpointed'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM public.saas_worktree_events AS checkpoint
-                      JOIN public.saas_worktree_instances AS instance
-                        ON instance.id = checkpoint.worktree_id
-                      WHERE instance.change_set_id = selected_change_set.id
-                        AND instance.tenant_id = selected_change_set.tenant_id
-                        AND instance.space_id = selected_change_set.space_id
-                        AND instance.project_id = selected_change_set.project_id
-                        AND checkpoint.event_type = 'worktree.checkpointed'
-                  ) THEN
-                IF requested_access_mode <> 'writer' THEN
-                    RAISE EXCEPTION 'runner_worktree_restore_requires_writer'
-                        USING ERRCODE = '42501';
-                END IF;
-                SELECT count(*), (array_agg(event.payload::jsonb))[1]
-                INTO restore_intent_count, restore_intent
-                FROM public.saas_control_plane_outbox AS event
-                WHERE event.tenant_id = selected_change_set.tenant_id
-                  AND event.aggregate_type = 'ChangeSetGroup'
-                  AND event.aggregate_key = selected_change_set.group_id::text
-                  AND event.event_type = 'changeset.group.created'
-                  AND event.idempotency_key = 'changeset-group:'
-                      || selected_change_set.group_id::text || ':created';
-                restore_source_text := restore_intent -> 'checkpoint_restores'
-                    ->> selected_change_set.id::text;
-                IF restore_intent_count <> 1 OR restore_source_text IS NULL
-                   OR restore_source_text !~
-                      '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-                    RAISE EXCEPTION 'runner_worktree_restore_source_invalid'
-                        USING ERRCODE = '42501';
-                END IF;
-                SELECT candidate.* INTO selected_source
-                FROM public.saas_worktree_instances AS candidate
-                WHERE candidate.id = restore_source_text::uuid;
-                IF NOT FOUND THEN
-                    RAISE EXCEPTION 'runner_worktree_restore_source_invalid'
-                        USING ERRCODE = '42501';
-                END IF;
-                SELECT candidate.* INTO restored_change_set
-                FROM public.saas_changesets AS candidate
-                WHERE candidate.id = selected_source.change_set_id;
-                SELECT count(*), (array_agg(event.payload::jsonb))[1]
-                INTO restore_checkpoint_count, restore_checkpoint
-                FROM public.saas_worktree_events AS event
-                WHERE event.worktree_id = selected_source.id
-                  AND event.event_type = 'worktree.checkpointed';
-                IF selected_source.tenant_id <> selected_change_set.tenant_id
-                   OR selected_source.space_id <> selected_change_set.space_id
-                   OR selected_source.project_id <> selected_change_set.project_id
-                   OR selected_source.access_mode <> 'writer'
-                   OR selected_source.status NOT IN ('released', 'gc_eligible', 'deleted')
-                   OR selected_source.dirty
-                   OR selected_source.lease_token_hash IS NOT NULL
-                   OR selected_source.lease_expires_at IS NOT NULL
-                   OR selected_source.recovery_artifact_ref IS NULL
-                   OR selected_source.environment_snapshot_ref IS NULL
-                   OR restored_change_set.id IS NULL
-                   OR restored_change_set.repository_id <> selected_change_set.repository_id
-                   OR restored_change_set.tenant_id <> selected_change_set.tenant_id
-                   OR restored_change_set.space_id <> selected_change_set.space_id
-                   OR restored_change_set.project_id <> selected_change_set.project_id
-                   OR restored_change_set.status <> 'committed'
-                   OR restored_change_set.head_revision IS NULL
-                   OR restored_change_set.base_revision <> selected_change_set.base_revision
-                   OR restored_change_set.branch_ref <> selected_change_set.branch_ref
-                   OR restored_change_set.head_revision IS DISTINCT FROM
-                      selected_change_set.head_revision
-                   OR restored_change_set.recovery_artifact_ref IS DISTINCT FROM
-                      selected_source.recovery_artifact_ref
-                   OR selected_change_set.recovery_artifact_ref IS DISTINCT FROM
-                      selected_source.recovery_artifact_ref
-                   OR NOT EXISTS (
-                       SELECT 1 FROM public.saas_runs AS original_run
-                       WHERE original_run.id = selected_source.run_id
-                         AND original_run.status = 'succeeded'
-                         AND original_run.tenant_id = selected_change_set.tenant_id
-                         AND original_run.space_id = selected_change_set.space_id
-                         AND original_run.project_id = selected_change_set.project_id
-                   )
-                   OR restore_checkpoint_count <> 1
-                   OR restore_checkpoint IS DISTINCT FROM jsonb_build_object(
-                       'head_revision', restored_change_set.head_revision,
-                       'recovery_artifact_ref', selected_source.recovery_artifact_ref,
-                       'environment_snapshot_ref', selected_source.environment_snapshot_ref,
-                       'dirty_after', false
-                   ) THEN
-                    RAISE EXCEPTION 'runner_worktree_restore_source_invalid'
-                        USING ERRCODE = '42501';
-                END IF;
-                recovery_ref := selected_source.recovery_artifact_ref;
-                environment_ref := selected_source.environment_snapshot_ref;
-                restore_change_set_id := restored_change_set.id;
             END IF;
 
             UPDATE public.saas_worktree_quotas AS quota
@@ -886,11 +781,7 @@ def _install_runner_worktree_api() -> None:
                     'capability_id', selected_capability.id::text,
                     'requested_lease_seconds', requested_lease_seconds,
                     'allocation_request_hash', allocation_request_hash
-                ) || CASE WHEN restore_change_set_id IS NULL THEN '{}'::jsonb
-                     ELSE jsonb_build_object(
-                         'restore_change_set_id', restore_change_set_id::text,
-                         'restore_environment_snapshot_ref', environment_ref
-                     ) END, requested_trace_id
+                ), requested_trace_id
             );
             RETURN QUERY SELECT created_worktree.id,
                 created_worktree.change_set_id, created_worktree.run_id,

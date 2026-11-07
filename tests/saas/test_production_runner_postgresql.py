@@ -791,8 +791,65 @@ def test_exact_runner_login_and_run_envelope_rls_binding(
             connection.exec_driver_sql("CREATE EXTENSION pg_trgm WITH SCHEMA public")
             connection.exec_driver_sql(f"SET LOCAL ROLE {quoted_owner}")
             _migrate(connection, root)
-            connection.exec_driver_sql(
-                (root / "saas/control_plane/postgresql_roles.sql").read_text(encoding="utf-8")
+            allocator_signature = (
+                "public.saas_runner_allocate_worktree_v1("
+                "text,uuid,uuid,uuid,uuid,text,bigint,integer,text,text,uuid)"
+            )
+            allocator_body_hash = sa.text(
+                "SELECT encode(sha256(convert_to(prosrc, 'UTF8')), 'hex') "
+                "FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"
+            )
+            old_allocator_hash = "89b309018cafbd0ee0dad70d1ee4848c147157d9ed2737aae857cf3a843ac4af"
+            new_allocator_hash = "dbc6b6832b48c3299742a49bd4259165fd1932bbbb7e02504e10943b63f35b9f"
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == old_allocator_hash
+            )
+            # An already-migrated P18 database must receive the forward install
+            # through the normal owner projection, without replaying old migrations.
+            _migrate(connection, root)
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == old_allocator_hash
+            )
+            roles_sql = (root / "saas/control_plane/postgresql_roles.sql").read_text(
+                encoding="utf-8"
+            )
+            connection.exec_driver_sql(roles_sql)
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == new_allocator_hash
+            )
+            allocator_contract = sa.text(
+                "SELECT oid, proowner, proacl::text, prosecdef, proleakproof, "
+                "provolatile, proparallel, proconfig, pg_get_function_result(oid) "
+                "FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"
+            )
+            installed_contract = connection.execute(
+                allocator_contract, {"signature": allocator_signature}
+            ).one()
+            connection.exec_driver_sql(roles_sql)
+            assert (
+                connection.execute(allocator_contract, {"signature": allocator_signature}).one()
+                == installed_contract
+            )
+            definition = connection.scalar(
+                sa.text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),
+                {"signature": allocator_signature},
+            )
+            changed_definition = definition.replace(
+                "restore_intent_count integer;", "restore_intent_count integer; -- unexpected body"
+            )
+            assert changed_definition != definition
+            with pytest.raises(
+                sa.exc.DBAPIError, match="allocator forward installation source rejected"
+            ):
+                with connection.begin_nested():
+                    connection.exec_driver_sql(changed_definition)
+                    connection.exec_driver_sql(roles_sql)
+            assert (
+                connection.scalar(allocator_body_hash, {"signature": allocator_signature})
+                == new_allocator_hash
             )
             connection.exec_driver_sql("RESET ROLE")
 

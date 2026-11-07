@@ -375,16 +375,18 @@ def _runner_agent_schema_contract(
         "p0s000000017",
         "p0s000000018",
     }:
+        function_hash = (
+            "50fcfa4dd43a39e05af19467869ca569bd61402d984741e4310a20c1d79998f0"
+            if selected == "p0s000000018"
+            else "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67"
+        )
         return (
             selected,
             (
                 *_RUNNER_AGENT_API_FUNCTION_SIGNATURES,
                 ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb"),
             ),
-            {
-                16: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
-                18: "7e5d534b22159804cc21f23893a2ba462a0af8674a3f535c58c83a3efd8cde67",
-            },
+            dict.fromkeys((16, 18), function_hash),
         )
     return selected, _RUNNER_AGENT_API_FUNCTION_SIGNATURES, _RUNNER_AGENT_FUNCTION_SHA256_BY_MAJOR
 

@@ -4251,6 +4251,514 @@ TO saas_platform;
 -- directly, but every row policy also authenticates the unforgeable
 -- session_user spelling runner_<uuidhex>_g<generation>.  No SET ROLE path can
 -- satisfy that predicate and this role never inherits saas_executor.
+-- The normal owner projection installs the reviewed P18 allocator update on
+-- already-migrated databases. Historical migrations remain immutable.
+DO $completed_checkpoint_allocator$
+DECLARE
+    schema_revision text;
+    allocator oid;
+    original_body_hash text;
+BEGIN
+    SELECT version_num INTO STRICT schema_revision FROM public.saas_alembic_version;
+    IF schema_revision <> 'p0s000000018' THEN
+        RETURN;
+    END IF;
+    allocator := to_regprocedure('public.saas_runner_allocate_worktree_v1(text,uuid,uuid,uuid,uuid,text,bigint,integer,text,text,uuid)');
+    SELECT encode(sha256(convert_to(procedure.prosrc, 'UTF8')), 'hex')
+    INTO original_body_hash
+    FROM pg_proc AS procedure
+    WHERE procedure.oid = allocator
+      AND procedure.proowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+      AND procedure.prosecdef AND NOT procedure.proleakproof
+      AND procedure.prokind = 'f' AND procedure.provolatile = 'v'
+      AND procedure.proparallel = 'u'
+      AND procedure.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[];
+    IF original_body_hash IS NULL OR original_body_hash NOT IN (
+        '89b309018cafbd0ee0dad70d1ee4848c147157d9ed2737aae857cf3a843ac4af',
+        'dbc6b6832b48c3299742a49bd4259165fd1932bbbb7e02504e10943b63f35b9f'
+    ) THEN
+        RAISE EXCEPTION 'P18 allocator forward installation source rejected';
+    END IF;
+    IF original_body_hash = '89b309018cafbd0ee0dad70d1ee4848c147157d9ed2737aae857cf3a843ac4af' THEN
+        EXECUTE $allocator_definition$
+
+        CREATE OR REPLACE FUNCTION public.saas_runner_allocate_worktree_v1(
+            expected_capability_hash text,
+            expected_runner_id uuid,
+            expected_run_id uuid,
+            expected_change_set_id uuid,
+            requested_worktree_id uuid,
+            requested_access_mode text,
+            requested_reserved_bytes bigint,
+            requested_lease_seconds integer,
+            requested_lease_hash text,
+            requested_trace_id text,
+            requested_rebuild_from_id uuid
+        ) RETURNS TABLE (
+            worktree_id uuid,
+            change_set_id uuid,
+            run_id uuid,
+            runner_id uuid,
+            opaque_runtime_key text,
+            access_mode text,
+            lease_generation bigint,
+            run_fence_token bigint,
+            runner_connection_generation bigint,
+            lease_expires_at timestamptz,
+            replayed boolean
+        )
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, pg_temp
+        AS $function$
+        DECLARE
+            selected_runner public.saas_runner_registrations;
+            selected_capability public.saas_capability_tokens;
+            selected_dispatch public.saas_run_dispatches;
+            selected_run public.saas_runs;
+            selected_change_set public.saas_changesets;
+            selected_source public.saas_worktree_instances;
+            existing_worktree public.saas_worktree_instances;
+            selected_quota public.saas_worktree_quotas;
+            created_worktree public.saas_worktree_instances;
+            required_action text;
+            computed_expiry timestamptz;
+            computed_maximum_lifetime timestamptz;
+            recovery_ref text;
+            environment_ref text;
+            initial_event text;
+            database_now timestamptz := clock_timestamp();
+            generated_runtime_key text;
+            allocation_request_hash text;
+            existing_request_hash text;
+            restore_change_set_id uuid;
+            restore_intent jsonb;
+            restore_intent_count integer;
+            restore_source_text text;
+            restored_change_set public.saas_changesets;
+            restore_checkpoint jsonb;
+            restore_checkpoint_count integer;
+        BEGIN
+            IF expected_runner_id IS NULL
+               OR expected_run_id IS NULL OR expected_change_set_id IS NULL
+               OR requested_worktree_id IS NULL
+               OR expected_capability_hash !~ '^[0-9a-f]{64}$'
+               OR requested_lease_hash !~ '^[0-9a-f]{64}$'
+               OR requested_access_mode NOT IN ('writer', 'readonly')
+               OR requested_reserved_bytes <= 0
+               OR requested_lease_seconds <= 0
+               OR length(requested_trace_id) NOT BETWEEN 1 AND 128 THEN
+                RAISE EXCEPTION 'runner_worktree_allocation_invalid'
+                    USING ERRCODE = '22023';
+            END IF;
+            required_action := CASE requested_access_mode
+                WHEN 'writer' THEN 'worktree.write' ELSE 'worktree.read' END;
+            SELECT candidate.* INTO selected_runner
+            FROM public.saas_runner_registrations AS candidate
+            WHERE candidate.id = expected_runner_id;
+            IF NOT FOUND
+               OR selected_runner.status NOT IN ('online', 'draining')
+               OR session_user::text <> 'runner_' ||
+                    replace(expected_runner_id::text, '-', '') || '_g' ||
+                    selected_runner.connection_generation::text THEN
+                RAISE EXCEPTION 'runner_worktree_runner_stale'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            SELECT candidate.* INTO selected_capability
+            FROM public.saas_capability_tokens AS candidate
+            WHERE candidate.token_hash = expected_capability_hash
+              AND candidate.run_id = expected_run_id
+              AND candidate.runner_id = expected_runner_id;
+            IF NOT FOUND
+               OR selected_capability.token_hash <> expected_capability_hash
+               OR selected_capability.revoked_at IS NOT NULL
+               OR selected_capability.expires_at <= database_now
+               OR selected_capability.run_id <> expected_run_id
+               OR selected_capability.runner_id <> expected_runner_id
+               OR selected_capability.runner_connection_generation <>
+                    selected_runner.connection_generation
+               OR NOT ((selected_capability.allowed_actions)::jsonb ? required_action)
+               OR selected_capability.resource_scope ->> 'change_set_id' <>
+                    expected_change_set_id::text THEN
+                RAISE EXCEPTION 'runner_worktree_capability_stale'
+                    USING ERRCODE = '42501';
+            END IF;
+            allocation_request_hash := encode(sha256(convert_to(concat_ws('|',
+                selected_capability.id::text, expected_runner_id::text,
+                expected_run_id::text, expected_change_set_id::text,
+                requested_worktree_id::text, requested_access_mode,
+                requested_reserved_bytes::text, requested_lease_seconds::text,
+                requested_lease_hash,
+                COALESCE(requested_rebuild_from_id::text, '')
+            ), 'UTF8')), 'hex');
+
+            SELECT candidate.* INTO selected_run
+            FROM public.saas_runs AS candidate
+            WHERE candidate.id = expected_run_id;
+            IF NOT FOUND
+               OR selected_run.tenant_id <> selected_capability.tenant_id
+               OR selected_run.space_id <> selected_capability.space_id
+               OR selected_run.project_id <> selected_capability.project_id
+               OR selected_run.status NOT IN (
+                    'leased', 'starting', 'running', 'waiting_input',
+                    'waiting_approval', 'cancelling'
+               )
+               OR selected_run.fence_token <> selected_capability.fence_token
+               OR selected_run.lease_owner <> expected_runner_id::text
+               OR selected_run.lease_token IS NULL
+               OR selected_run.lease_expires_at IS NULL
+               OR selected_run.lease_expires_at <= database_now THEN
+                RAISE EXCEPTION 'runner_worktree_run_stale'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            SELECT candidate.* INTO selected_dispatch
+            FROM public.saas_run_dispatches AS candidate
+            WHERE candidate.run_id = expected_run_id;
+            IF NOT FOUND OR selected_dispatch.status <> 'leased'
+               OR selected_dispatch.selected_runner_id <> expected_runner_id
+               OR selected_dispatch.dispatch_generation <>
+                    selected_capability.dispatch_generation THEN
+                RAISE EXCEPTION 'runner_worktree_dispatch_stale'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            SELECT candidate.* INTO selected_change_set
+            FROM public.saas_changesets AS candidate
+            WHERE candidate.id = expected_change_set_id;
+            IF NOT FOUND
+               OR selected_change_set.tenant_id <> selected_run.tenant_id
+               OR selected_change_set.space_id <> selected_run.space_id
+               OR selected_change_set.project_id <> selected_run.project_id
+               OR selected_change_set.status NOT IN ('open', 'checkpointed', 'committed')
+               OR (selected_change_set.status = 'committed'
+                   AND requested_access_mode <> 'readonly')
+               OR (selected_change_set.status = 'committed'
+                   AND (selected_change_set.head_revision IS NULL
+                        OR selected_change_set.recovery_artifact_ref IS NULL))
+               OR (requested_access_mode = 'readonly'
+                   AND (selected_capability.allowed_actions)::jsonb ? 'preview.serve'
+                   AND (selected_change_set.status <> 'committed'
+                        OR selected_change_set.head_revision IS NULL
+                        OR selected_change_set.recovery_artifact_ref IS NULL)) THEN
+                RAISE EXCEPTION 'runner_worktree_changeset_stale'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            SELECT candidate.* INTO existing_worktree
+            FROM public.saas_worktree_instances AS candidate
+            WHERE candidate.run_id = expected_run_id
+              AND candidate.run_fence_token = selected_run.fence_token
+            FOR UPDATE;
+            IF FOUND THEN
+                database_now := clock_timestamp();
+                IF NOT public.saas_runner_worktree_authority_live_v1(
+                    expected_capability_hash, expected_runner_id, expected_run_id,
+                    expected_change_set_id, requested_access_mode,
+                    selected_run.fence_token, false
+                ) THEN
+                    RAISE EXCEPTION 'runner_worktree_capability_stale'
+                        USING ERRCODE = '42501';
+                END IF;
+                SELECT event.payload ->> 'allocation_request_hash'
+                INTO existing_request_hash
+                FROM public.saas_worktree_events AS event
+                WHERE event.worktree_id = existing_worktree.id
+                  AND event.sequence = 1;
+                IF existing_worktree.id = requested_worktree_id
+                   AND existing_worktree.runner_id = expected_runner_id
+                   AND existing_worktree.runner_connection_generation =
+                        selected_runner.connection_generation
+                   AND existing_worktree.change_set_id = expected_change_set_id
+                   AND existing_worktree.access_mode = requested_access_mode
+                   AND existing_worktree.reserved_bytes = requested_reserved_bytes
+                   AND existing_worktree.lease_token_hash = requested_lease_hash
+                   AND existing_request_hash = allocation_request_hash
+                   AND existing_worktree.status IN (
+                       'reserved', 'materializing', 'ready', 'checkpointing'
+                   )
+                   AND existing_worktree.lease_expires_at > database_now
+                   AND existing_worktree.maximum_lifetime_at > database_now THEN
+                    RETURN QUERY SELECT existing_worktree.id,
+                        existing_worktree.change_set_id, existing_worktree.run_id,
+                        existing_worktree.runner_id,
+                        existing_worktree.opaque_runtime_key::text,
+                        existing_worktree.access_mode::text,
+                        existing_worktree.lease_generation,
+                        existing_worktree.run_fence_token,
+                        existing_worktree.runner_connection_generation,
+                        existing_worktree.lease_expires_at, true;
+                    RETURN;
+                END IF;
+                RAISE EXCEPTION 'runner_worktree_run_already_allocated'
+                    USING ERRCODE = '23505';
+            END IF;
+
+            IF requested_rebuild_from_id IS NOT NULL THEN
+                IF requested_access_mode <> 'writer' THEN
+                    RAISE EXCEPTION 'runner_worktree_rebuild_requires_writer'
+                        USING ERRCODE = '42501';
+                END IF;
+                SELECT candidate.* INTO selected_source
+                FROM public.saas_worktree_instances AS candidate
+                WHERE candidate.id = requested_rebuild_from_id
+                FOR UPDATE;
+                IF NOT FOUND
+                   OR selected_source.change_set_id <> expected_change_set_id
+                   OR selected_source.access_mode <> 'writer'
+                   OR NOT selected_source.dirty
+                   OR selected_source.status <> 'rebuild_pending'
+                   OR selected_source.recovery_artifact_ref IS NULL THEN
+                    RAISE EXCEPTION 'runner_worktree_rebuild_source_invalid'
+                        USING ERRCODE = '42501';
+                END IF;
+            END IF;
+
+            SELECT candidate.* INTO selected_quota
+            FROM public.saas_worktree_quotas AS candidate
+            WHERE candidate.tenant_id = selected_change_set.tenant_id
+              AND candidate.space_id = selected_change_set.space_id
+              AND candidate.project_id = selected_change_set.project_id
+            FOR UPDATE;
+            IF NOT FOUND OR requested_lease_seconds > selected_quota.max_lease_seconds
+               OR selected_quota.active_instances >= selected_quota.max_active_instances
+               OR (requested_access_mode = 'writer'
+                   AND selected_quota.active_writers >= selected_quota.max_active_writers)
+               OR selected_quota.reserved_bytes + requested_reserved_bytes >
+                    selected_quota.max_reserved_bytes THEN
+                RAISE EXCEPTION 'runner_worktree_quota_exceeded'
+                    USING ERRCODE = '54000';
+            END IF;
+            IF requested_access_mode = 'writer' AND EXISTS (
+                SELECT 1 FROM public.saas_worktree_instances AS candidate
+                WHERE candidate.change_set_id = expected_change_set_id
+                  AND candidate.access_mode = 'writer'
+                  AND candidate.status IN ('reserved', 'materializing', 'ready', 'checkpointing')
+            ) THEN
+                RAISE EXCEPTION 'runner_worktree_writer_conflict'
+                    USING ERRCODE = '23505';
+            END IF;
+            IF requested_access_mode = 'writer'
+               AND requested_rebuild_from_id IS NULL
+               AND EXISTS (
+                    SELECT 1 FROM public.saas_worktree_instances AS candidate
+                    WHERE candidate.change_set_id = expected_change_set_id
+                      AND candidate.access_mode = 'writer'
+                      AND candidate.status = 'rebuild_pending'
+               ) THEN
+                RAISE EXCEPTION 'runner_worktree_rebuild_source_required'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            database_now := clock_timestamp();
+            IF NOT public.saas_runner_worktree_authority_live_v1(
+                expected_capability_hash, expected_runner_id, expected_run_id,
+                expected_change_set_id, requested_access_mode,
+                selected_run.fence_token, false
+            ) THEN
+                RAISE EXCEPTION 'runner_worktree_capability_stale'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            computed_expiry := LEAST(
+                database_now + make_interval(secs => requested_lease_seconds),
+                selected_capability.expires_at,
+                selected_run.lease_expires_at
+            );
+            computed_maximum_lifetime := database_now +
+                make_interval(secs => selected_quota.max_lifetime_seconds);
+            IF computed_expiry <= database_now THEN
+                RAISE EXCEPTION 'runner_worktree_capability_expired'
+                    USING ERRCODE = '42501';
+            END IF;
+            recovery_ref := CASE
+                WHEN selected_change_set.status IN ('checkpointed', 'committed')
+                THEN selected_change_set.recovery_artifact_ref ELSE NULL END;
+            environment_ref := NULL;
+            initial_event := 'worktree.created';
+            generated_runtime_key := 'wti_' || substring(
+                replace(gen_random_uuid()::text, '-', '') ||
+                replace(gen_random_uuid()::text, '-', '') FROM 1 FOR 48
+            );
+            IF requested_rebuild_from_id IS NOT NULL THEN
+                recovery_ref := selected_source.recovery_artifact_ref;
+                environment_ref := selected_source.environment_snapshot_ref;
+                SELECT (event.payload ->> 'restore_change_set_id')::uuid
+                INTO restore_change_set_id
+                FROM public.saas_worktree_events AS event
+                WHERE event.worktree_id = selected_source.id AND event.sequence = 1
+                  AND event.payload ->> 'restore_environment_snapshot_ref' = environment_ref;
+                UPDATE public.saas_worktree_instances AS source
+                SET status = 'released', released_at = database_now,
+                    updated_at = database_now
+                WHERE source.id = selected_source.id;
+                PERFORM public.saas_runner_append_worktree_event_v1(
+                    selected_source.id, 'worktree.rebuild.source_consumed',
+                    jsonb_build_object(
+                        'replacement_worktree_id', requested_worktree_id::text
+                    ), requested_trace_id
+                );
+                initial_event := 'worktree.rebuilt';
+            ELSIF selected_change_set.status = 'checkpointed'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM public.saas_worktree_events AS checkpoint
+                      JOIN public.saas_worktree_instances AS instance
+                        ON instance.id = checkpoint.worktree_id
+                      WHERE instance.change_set_id = selected_change_set.id
+                        AND instance.tenant_id = selected_change_set.tenant_id
+                        AND instance.space_id = selected_change_set.space_id
+                        AND instance.project_id = selected_change_set.project_id
+                        AND checkpoint.event_type = 'worktree.checkpointed'
+                  ) THEN
+                IF requested_access_mode <> 'writer' THEN
+                    RAISE EXCEPTION 'runner_worktree_restore_requires_writer'
+                        USING ERRCODE = '42501';
+                END IF;
+                SELECT count(*), (array_agg(event.payload::jsonb))[1]
+                INTO restore_intent_count, restore_intent
+                FROM public.saas_control_plane_outbox AS event
+                WHERE event.tenant_id = selected_change_set.tenant_id
+                  AND event.aggregate_type = 'ChangeSetGroup'
+                  AND event.aggregate_key = selected_change_set.group_id::text
+                  AND event.event_type = 'changeset.group.created'
+                  AND event.idempotency_key = 'changeset-group:'
+                      || selected_change_set.group_id::text || ':' || 'created';
+                restore_source_text := restore_intent -> 'checkpoint_restores'
+                    ->> selected_change_set.id::text;
+                IF restore_intent_count <> 1 OR restore_source_text IS NULL
+                   OR restore_source_text !~
+                      '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+                    RAISE EXCEPTION 'runner_worktree_restore_source_invalid'
+                        USING ERRCODE = '42501';
+                END IF;
+                SELECT candidate.* INTO selected_source
+                FROM public.saas_worktree_instances AS candidate
+                WHERE candidate.id = restore_source_text::uuid;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'runner_worktree_restore_source_invalid'
+                        USING ERRCODE = '42501';
+                END IF;
+                SELECT candidate.* INTO restored_change_set
+                FROM public.saas_changesets AS candidate
+                WHERE candidate.id = selected_source.change_set_id;
+                SELECT count(*), (array_agg(event.payload::jsonb))[1]
+                INTO restore_checkpoint_count, restore_checkpoint
+                FROM public.saas_worktree_events AS event
+                WHERE event.worktree_id = selected_source.id
+                  AND event.event_type = 'worktree.checkpointed';
+                IF selected_source.tenant_id <> selected_change_set.tenant_id
+                   OR selected_source.space_id <> selected_change_set.space_id
+                   OR selected_source.project_id <> selected_change_set.project_id
+                   OR selected_source.access_mode <> 'writer'
+                   OR selected_source.status NOT IN ('released', 'gc_eligible', 'deleted')
+                   OR selected_source.dirty
+                   OR selected_source.lease_token_hash IS NOT NULL
+                   OR selected_source.lease_expires_at IS NOT NULL
+                   OR selected_source.recovery_artifact_ref IS NULL
+                   OR selected_source.environment_snapshot_ref IS NULL
+                   OR restored_change_set.id IS NULL
+                   OR restored_change_set.repository_id <> selected_change_set.repository_id
+                   OR restored_change_set.tenant_id <> selected_change_set.tenant_id
+                   OR restored_change_set.space_id <> selected_change_set.space_id
+                   OR restored_change_set.project_id <> selected_change_set.project_id
+                   OR restored_change_set.status <> 'committed'
+                   OR restored_change_set.head_revision IS NULL
+                   OR restored_change_set.base_revision <> selected_change_set.base_revision
+                   OR restored_change_set.branch_ref <> selected_change_set.branch_ref
+                   OR restored_change_set.head_revision IS DISTINCT FROM
+                      selected_change_set.head_revision
+                   OR restored_change_set.recovery_artifact_ref IS DISTINCT FROM
+                      selected_source.recovery_artifact_ref
+                   OR selected_change_set.recovery_artifact_ref IS DISTINCT FROM
+                      selected_source.recovery_artifact_ref
+                   OR NOT EXISTS (
+                       SELECT 1 FROM public.saas_runs AS original_run
+                       WHERE original_run.id = selected_source.run_id
+                         AND original_run.status = 'succeeded'
+                         AND original_run.tenant_id = selected_change_set.tenant_id
+                         AND original_run.space_id = selected_change_set.space_id
+                         AND original_run.project_id = selected_change_set.project_id
+                   )
+                   OR restore_checkpoint_count <> 1
+                   OR restore_checkpoint IS DISTINCT FROM jsonb_build_object(
+                       'head_revision', restored_change_set.head_revision,
+                       'recovery_artifact_ref', selected_source.recovery_artifact_ref,
+                       'environment_snapshot_ref', selected_source.environment_snapshot_ref,
+                       'dirty_after', false
+                   ) THEN
+                    RAISE EXCEPTION 'runner_worktree_restore_source_invalid'
+                        USING ERRCODE = '42501';
+                END IF;
+                recovery_ref := selected_source.recovery_artifact_ref;
+                environment_ref := selected_source.environment_snapshot_ref;
+                restore_change_set_id := restored_change_set.id;
+            END IF;
+
+            UPDATE public.saas_worktree_quotas AS quota
+            SET active_instances = quota.active_instances + 1,
+                active_writers = quota.active_writers +
+                    CASE WHEN requested_access_mode = 'writer' THEN 1 ELSE 0 END,
+                reserved_bytes = quota.reserved_bytes + requested_reserved_bytes,
+                version = quota.version + 1,
+                updated_at = database_now
+            WHERE quota.id = selected_quota.id;
+            INSERT INTO public.saas_worktree_instances (
+                id, tenant_id, space_id, project_id, change_set_id, run_id,
+                runner_id, created_by, created_by_service_account_id,
+                opaque_runtime_key, access_mode, status, lease_generation,
+                run_fence_token, runner_connection_generation, lease_token_hash,
+                lease_expires_at, heartbeat_at, maximum_lifetime_at,
+                reserved_bytes, actual_bytes, dirty, recovery_artifact_ref,
+                environment_snapshot_ref, event_sequence, released_at,
+                quarantine_reason, deleted_at, created_at, updated_at
+            ) VALUES (
+                requested_worktree_id, selected_change_set.tenant_id,
+                selected_change_set.space_id, selected_change_set.project_id,
+                selected_change_set.id, selected_run.id, selected_runner.id,
+                selected_run.created_by, selected_run.created_by_service_account_id,
+                generated_runtime_key, requested_access_mode, 'reserved', 1,
+                selected_run.fence_token, selected_runner.connection_generation,
+                requested_lease_hash, computed_expiry, database_now,
+                computed_maximum_lifetime, requested_reserved_bytes, 0, false,
+                recovery_ref, environment_ref, 0, NULL, NULL, NULL,
+                database_now, database_now
+            ) RETURNING * INTO created_worktree;
+            PERFORM public.saas_runner_append_worktree_event_v1(
+                created_worktree.id, initial_event,
+                jsonb_build_object(
+                    'change_set_id', selected_change_set.id::text,
+                    'run_id', selected_run.id::text,
+                    'runner_id', selected_runner.id::text,
+                    'access_mode', requested_access_mode,
+                    'lease_generation', 1,
+                    'run_fence_token', selected_run.fence_token,
+                    'rebuild_from_id', requested_rebuild_from_id::text,
+                    'capability_id', selected_capability.id::text,
+                    'requested_lease_seconds', requested_lease_seconds,
+                    'allocation_request_hash', allocation_request_hash
+                ) || CASE WHEN restore_change_set_id IS NULL THEN '{}'::jsonb
+                     ELSE jsonb_build_object(
+                         'restore_change_set_id', restore_change_set_id::text,
+                         'restore_environment_snapshot_ref', environment_ref
+                     ) END, requested_trace_id
+            );
+            RETURN QUERY SELECT created_worktree.id,
+                created_worktree.change_set_id, created_worktree.run_id,
+                created_worktree.runner_id, created_worktree.opaque_runtime_key::text,
+                created_worktree.access_mode::text,
+                created_worktree.lease_generation,
+                created_worktree.run_fence_token,
+                created_worktree.runner_connection_generation,
+                created_worktree.lease_expires_at, false;
+        END
+        $function$
+
+        $allocator_definition$;
+    END IF;
+END
+$completed_checkpoint_allocator$;
+
 DO $$
 DECLARE
     schema_revision text;
@@ -4555,8 +5063,11 @@ BEGIN
           'saas_runner_claim_preview_stop_v1',
           'saas_runner_transition_preview_v1'
       );
-    IF function_contract_hash IS DISTINCT FROM
-       '43423586ac39ca5a08a415b36f37e93d7409deb5f03050238b0b876c4d33ca02'
+    IF function_contract_hash IS DISTINCT FROM CASE
+       WHEN schema_revision = 'p0s000000018' THEN
+           '5ce99c34b8bb96019bd1d6498a65ce91e2d1a9aedd2dcb84701e195b07d0c749'
+       ELSE '43423586ac39ca5a08a415b36f37e93d7409deb5f03050238b0b876c4d33ca02'
+       END
     THEN
         RAISE EXCEPTION 'P0S10 Runner function contract rejected';
     END IF;

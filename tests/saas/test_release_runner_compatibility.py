@@ -68,7 +68,7 @@ def test_r_runner_contract_pins_the_complete_new_function_set_and_digest(head) -
     ) != runner_agent_database_authority_contract_sha256(control_plane_schema_revision=_P0)
 
 
-@pytest.mark.parametrize("installed", [_P16, _P17, _P18])
+@pytest.mark.parametrize("installed", [_P16, _P17])
 def test_unreleased_p16_p17_inherit_the_complete_t_runner_contract(monkeypatch, installed):
     _t, t_functions, t_hashes = _runner_agent_schema_contract(_T)
     _p0, p0_functions, _p0_hashes = _runner_agent_schema_contract(_P0)
@@ -81,6 +81,18 @@ def test_unreleased_p16_p17_inherit_the_complete_t_runner_contract(monkeypatch, 
     assert set(functions) - set(p0_functions) == {
         ("saas_interactive_recovery_owner_v1", "uuid, bigint, uuid, bigint, jsonb")
     }
+
+
+def test_p18_forward_allocator_has_its_own_exact_contract(monkeypatch) -> None:
+    _t, t_functions, t_hashes = _runner_agent_schema_contract(_T)
+    monkeypatch.setattr(migration, "_expected_head", lambda _kind: _P18)
+    selected, functions, hashes = _runner_agent_schema_contract(None)
+    assert selected == _P18
+    assert functions == t_functions
+    assert hashes == dict.fromkeys(
+        (16, 18), "50fcfa4dd43a39e05af19467869ca569bd61402d984741e4310a20c1d79998f0"
+    )
+    assert hashes != t_hashes
 
 
 @pytest.mark.parametrize("revision", ["lm2q00000001", "future", ""])
