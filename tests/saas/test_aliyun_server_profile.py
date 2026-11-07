@@ -154,6 +154,48 @@ def test_v3_explicitly_adds_independent_output_read_credentials(profile_case):
     profile.assert_ready()
 
 
+@pytest.mark.parametrize("change", ["valid", "digest", "mode", "v2"])
+def test_full_workspace_restore_is_an_explicit_hash_pinned_operator_input(profile_case, change):
+    c = profile_case
+    storage = _enable_artifacts(c)
+    raw = json.dumps(
+        {
+            "schema_version": 1,
+            "tenant_id": str(c.tenant),
+            "space_id": str(uuid4()),
+            "project_id": str(uuid4()),
+            "workspace_id": 91,
+            "session_id": str(uuid4()),
+            "host_id": uuid4().hex,
+            "source_sandbox_id": "sbx-original",
+            "archive_relative_path": "recovery/workspace.pax",
+            "archive_sha256": "a" * 64,
+            "tree_sha256": "b" * 64,
+        }
+    ).encode()
+    descriptor = c.secret("workspace-recovery.json", raw)
+    storage["workspace_recovery"] = {
+        "descriptor_file": descriptor,
+        "descriptor_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    if change == "digest":
+        storage["workspace_recovery"]["descriptor_sha256"] = "c" * 64
+    elif change == "mode":
+        Path(descriptor).chmod(0o644)
+    elif change == "v2":
+        c.document["schema_version"] = 2
+        del storage["artifact_credential_file"]
+    c.save()
+    if change == "valid":
+        profile = c.load()
+        assert profile.managed.workspace_recovery.descriptor_file == Path(descriptor)
+        assert profile.managed.workspace_recovery.load()["archive_sha256"] == "a" * 64
+        profile.assert_ready()
+    else:
+        with pytest.raises(ValueError, match="profile configuration"):
+            c.load()
+
+
 @pytest.mark.parametrize("change", ["v2", "missing", "alias", "same_identity", "unknown"])
 def test_output_read_authority_requires_explicit_v3_and_independent_sts(profile_case, change):
     c = profile_case

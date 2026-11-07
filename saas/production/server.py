@@ -54,6 +54,7 @@ from saas.control_plane.identity import IdentityManagementService, PasswordCrede
 from saas.control_plane.lifecycle import MembershipLifecycleService
 from saas.control_plane.public_api import PublicApiExecutionService
 from saas.control_plane.resolver import RuntimeCompatibilityPolicy, SqlAlchemyContextResolver
+from saas.production.aliyun_model_client import validated_server_origin
 from saas.production.onboarding import (
     ProductionOnboardingHttpServices,
     build_production_onboarding_http_services,
@@ -718,34 +719,52 @@ def _load_official_config(path: Path | None) -> dict[str, Any]:
 
 
 def _validate_production_sandbox_config(value: object) -> None:
-    """Admit only the reviewed dual Kubernetes runtime profile.
+    """Admit the reviewed Kubernetes or explicit Aliyun-only runtime profile.
 
     The OSS parser intentionally supports many providers and operator knobs.
-    The hosted production entrypoint is narrower: both supported runtimes share
-    one pinned Host image, one powerless runner ServiceAccount, one execution
-    namespace, and one file-mounted model signing authority.  A typo or an
-    attempted expansion therefore stops startup instead of silently widening
-    the deployment's authority.
+    The Kubernetes runtimes share one pinned Host image, runner ServiceAccount,
+    execution namespace and file-mounted model authority. Aliyun-only shares
+    their Host model policy; its admitted profile supplies the launcher and
+    callback. Unknown fields stop startup instead of widening authority.
     """
 
     if value is None:
         return
-    if not isinstance(value, dict) or set(value) != {
+    providers = value.get("providers") if isinstance(value, dict) else None
+    aliyun_only = providers == [{"provider": "e2b"}]
+    expected_keys = {
         "host_config",
-        "kubernetes",
         "providers",
         "reaper",
         "server_url",
-    }:
+    }
+    if not aliyun_only:
+        expected_keys.add("kubernetes")
+    if not isinstance(value, dict) or set(value) != expected_keys:
         raise ProductionServerCompositionError(
             "official server sandbox config is not the reviewed production profile"
         )
-    providers = value.get("providers")
-    if providers != [{"provider": "agent_sandbox"}, {"provider": "kubernetes"}]:
+    if not aliyun_only and providers != [
+        {"provider": "agent_sandbox"},
+        {"provider": "kubernetes"},
+    ]:
         raise ProductionServerCompositionError(
             "official server sandbox providers are not the reviewed production profile"
         )
-    if value.get("server_url") != _PRODUCTION_SANDBOX_SERVER_URL:
+    server_url = value.get("server_url")
+    if aliyun_only:
+        try:
+            if (
+                not isinstance(server_url, str)
+                or not server_url.startswith("https://")
+                or validated_server_origin(server_url) != server_url
+            ):
+                raise ValueError
+        except ValueError:
+            raise ProductionServerCompositionError(
+                "official Aliyun sandbox callback is invalid"
+            ) from None
+    elif server_url != _PRODUCTION_SANDBOX_SERVER_URL:
         raise ProductionServerCompositionError(
             "official server sandbox callback is not the reviewed production service"
         )
@@ -801,6 +820,9 @@ def _validate_production_sandbox_config(value: object) -> None:
         raise ProductionServerCompositionError(
             "official server sandbox Host config is not the reviewed production profile"
         )
+
+    if aliyun_only:
+        return  # The admitted Aliyun profile supplies the sole launcher and authority.
 
     kubernetes = value.get("kubernetes")
     if (

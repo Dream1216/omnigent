@@ -113,6 +113,7 @@ def _server_tracking_fields(body: Mapping[str, Any]) -> dict[str, Any]:
 def register_resource_routes(
     app: FastAPI,
     *,
+    _bind_server_start_sandbox: Callable[[str], Awaitable[None]],
     _antigravity_terminal_ensure_locks: dict[str, asyncio.Lock],
     _claude_terminal_ensure_locks: dict[str, asyncio.Lock],
     _codex_terminal_ensure_locks: dict[str, asyncio.Lock],
@@ -840,6 +841,7 @@ def register_resource_routes(
                 },
             )
         try:
+            await _bind_server_start_sandbox(target_session_id)
             resource = await resource_registry.transfer_terminal(
                 source_session_id=session_id,
                 target_session_id=target_session_id,

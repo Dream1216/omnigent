@@ -11,7 +11,11 @@ from uuid import UUID
 from omnigent.db.db_models import current_workspace_id
 from omnigent.onboarding.sandboxes.agent_sandbox_warm_pool import AgentSandboxWarmPoolLauncher
 from omnigent.onboarding.sandboxes.kubernetes import KubernetesSandboxLauncher
-from omnigent.server.managed_hosts import ManagedSandboxDeployment, parse_sandbox_config
+from omnigent.server.managed_hosts import (
+    ManagedSandboxDeployment,
+    ManagedSandboxReaperConfig,
+    parse_sandbox_config,
+)
 from saas.compatibility.runtime_partition import current_runtime_context
 from saas.production.aliyun_tenant_sandbox import (
     AliyunManagedSandbox,
@@ -97,6 +101,24 @@ def parse_tenant_sandbox_config(
     aliyun: AliyunManagedSandbox | None = None,
 ) -> ManagedSandboxDeployment | None:
     """Compose an already production-reviewed profile with scoped launchers."""
+
+    if isinstance(raw, dict) and raw.get("providers") == [{"provider": "e2b"}]:
+        if (
+            aliyun is None
+            or set(raw) != {"providers", "server_url", "host_config", "reaper"}
+            or raw["server_url"] != aliyun.server_url
+            or not isinstance(raw["host_config"], dict)
+            or not raw["host_config"]
+            or raw["reaper"]
+            != {"enabled": True, "sweep_interval_s": 3600, "terminate_after_offline_days": 7}
+        ):
+            raise ValueError("Aliyun-only Sandbox requires its admitted profile and Host config")
+        return ManagedSandboxDeployment.single(
+            build_aliyun_managed_config(aliyun, host_config=raw["host_config"]),
+            reaper=ManagedSandboxReaperConfig(
+                enabled=True, sweep_interval_s=3600, terminate_after_offline_days=7
+            ),
+        )
 
     parsed = parse_sandbox_config(raw)
     if parsed is None:

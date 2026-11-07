@@ -14,6 +14,7 @@ from saas.production.aliyun_model_client import validated_server_origin
 from saas.production.aliyun_model_lease import HostModelLeaseAuthority
 from saas.production.aliyun_sandbox import AliyunSandboxLauncher, AliyunSandboxScope
 from saas.production.aliyun_storage import AliyunStorageMounts
+from saas.production.aliyun_workspace_recovery import AliyunWorkspaceRecovery
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class AliyunManagedSandbox:
     scopes: tuple[AliyunSandboxScope, ...]
     model_leases: HostModelLeaseAuthority = field(repr=False)
     lifetime_s: int = 1800
+    workspace_recovery: AliyunWorkspaceRecovery | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -83,6 +85,7 @@ def build_aliyun_managed_config(
             model_gateway_url=settings.model_gateway_url,
             storage=storage,
             authorize_execution=authorize_execution,
+            workspace_recovery=settings.workspace_recovery,
         )
 
     def factory() -> AliyunSandboxLauncher:

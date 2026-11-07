@@ -114,11 +114,90 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 210,
-    "max_upstream_net_added_loc": 5602,
+    "max_direct_upstream_files": 221,
+    "max_upstream_net_added_loc": 6532,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "managed_binding_query_execution_scope_20261107": {
+      "accepted_main": "82019f14c6ec7c8c844dbe067767d46e82144db3",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "max_direct_upstream_files": 220,
+      "max_upstream_net_added_loc": 6529,
+      "measured_direct_upstream_files": 220,
+      "measured_upstream_net_added_loc": 6529,
+      "parent_source": "b423a5cdce15752f5b65cd7206be48b58736e811",
+      "previous_max_direct_upstream_files": 220,
+      "previous_max_upstream_net_added_loc": 6528,
+      "reason": "Two bounded execution-scope guards close reproduced unmanaged/native lightweight-registry compatibility regressions. Cold spec cache queries mandatory binding only when the original require_start_sandbox flag is enabled. SDK spawn-env composition queries the private snapshot only for non-native harnesses; native panes retain the same mandatory private TerminalRegistry restriction. Managed normal initialize, recovery, SDK private snapshot and target-transfer authorization remain strict and fail closed. Original adjacent failures retained; combined native/comment/Pi/workflow/startup/SDK dispatch regressions yield592P/1original skip/0F/E without retries. Standing direct human blanket authority covers this minimal correction; preserve every historical budget, nine patches, .85 isolation floor and all native CI/full E/raw High/signing/business/restore/canary/rollback gates.",
+      "recorded_at": "2026-11-07",
+      "scope_paths": [
+        "omnigent/runner/app.py"
+      ],
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216"
+    },
+    "managed_clear_target_binding_20261107": {
+      "accepted_main": "82019f14c6ec7c8c844dbe067767d46e82144db3",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "max_direct_upstream_files": 220,
+      "max_upstream_net_added_loc": 6528,
+      "measured_direct_upstream_files": 220,
+      "measured_upstream_net_added_loc": 6528,
+      "parent_source": "ffa049be3fb5271357b2dde2f25f78c63f7e6fb2",
+      "previous_max_direct_upstream_files": 218,
+      "previous_max_upstream_net_added_loc": 6244,
+      "reason": "Close Observer FFA-1 in the existing terminal transfer path: obtain independently authorized target startup policy before move; require equal effective source/target restrictions and cross-layer snapshot under original locks, reject pending launches and target execution-state overwrite; preserve the same live pane and primary environment for valid native /clear and subsequent idempotent initialize. Reuse unchanged fixed ffa review. Standing direct human blanket authority covers this bounded correction; preserve historical budgets, nine patches, .85 isolation floor and all original CI, full E, raw High, signing, business/data/restore/canary/rollback requirements.",
+      "recorded_at": "2026-11-07",
+      "scope_paths": [
+        "omnigent/runner/app.py",
+        "omnigent/runner/resource_routes.py",
+        "omnigent/runner/resource_registry.py",
+        "omnigent/terminals/registry.py",
+        "tests/runner/test_enforce_sandbox_gate.py",
+        "tests/runner/test_resource_registry.py",
+        "tests/runner/test_session_resources.py",
+        "tests/terminals/test_registry.py"
+      ],
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216"
+    },
+    "managed_normal_start_sandbox_binding_20261107": {
+      "accepted_main": "82019f14c6ec7c8c844dbe067767d46e82144db3",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "max_direct_upstream_files": 218,
+      "max_upstream_net_added_loc": 6244,
+      "measured_direct_upstream_files": 218,
+      "measured_upstream_net_added_loc": 6244,
+      "previous_max_direct_upstream_files": 210,
+      "previous_max_upstream_net_added_loc": 5602,
+      "reason": "Required production normal-session binding from existing server-owned RuntimeCaps enforce_sandbox to the original startup gate. Apply admin policy last; bind resource and terminal execution, reject explicit none/fork/late downgrade and stale or pending execution reuse, preserve unmanaged behavior and existing authorization/real-tool approval paths. Put three C.UTF-8 defaults before Python in the shared clean Linux runtime image. This execution-scope reconciliation is under standing direct human blanket authority; preserve all historical limits, nine patches, .85 isolation floor, forbidden native paths/reverse-dependency checks and every original CI, full-role E/raw vulnerability, signing, native business/data/restore/canary/rollback gate. No new per-patch exact hash human approval is asserted.",
+      "recorded_at": "2026-11-07",
+      "scope_paths": [
+        "deploy/docker/Dockerfile",
+        "omnigent/runner/_entry.py",
+        "omnigent/runner/app.py",
+        "omnigent/runner/policy.py",
+        "omnigent/runner/resource_registry.py",
+        "omnigent/server/routes/sessions/routes_hooks.py",
+        "omnigent/terminals/registry.py",
+        "tests/runner/test_enforce_sandbox_gate.py",
+        "tests/runner/test_resource_registry.py",
+        "tests/server/integration/test_sessions_policy_evaluate.py",
+        "tests/terminals/test_registry.py"
+      ],
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216"
+    },
     "aliyun_main25cd_integration_scope_followup": {
       "accepted_main": "25cd042f79fe8a5af4c8e3be2304538e4b831049",
       "authorization_source": {
@@ -1162,6 +1241,43 @@
       ],
       "changes": "Six exact Go compress source-build/compiled-module checks and three package-only OAuthLib cooldown lines; frozen transitive lock only. No extra findings accepted or release/data gate waived.",
       "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source"
+    },
+    "native_COW_optional_binding_fixture_20261107": {
+      "previous_budget": {
+        "max_active_patches": 9,
+        "max_direct_upstream_files": 220,
+        "max_upstream_net_added_loc": 6529,
+        "min_isolated_custom_code_ratio": 0.85
+      },
+      "max_direct_upstream_files": 221,
+      "max_upstream_net_added_loc": 6530,
+      "changed_official_test": "tests/runner/test_copy_on_write.py",
+      "net_added_lines": 1,
+      "authorization_reference": "managed_binding_query_execution_scope_20261107.authorization_source",
+      "reason": "Reconcile the exact original runner-app CI failure: the existing unmanaged COW test double explicitly returns None for the optional required_os_env query. Preserve every namespace and preparation assertion, all historical budgets, nine patches, .85 isolation and all CI/security/signing/release gates. This numeric source record does not waive an installation, catalog or native-PG finding."
+    },
+    "main_c6_host_progress_existing_budget_20261107": {
+      "base": "c6e8826b59e520118711ea8ed710492aa9afd8e5",
+      "previous_max_upstream_net_added_loc": 5602,
+      "max_upstream_net_added_loc": 5604,
+      "max_direct_upstream_files": 210,
+      "measured_upstream_net_added_loc": 5604,
+      "scoped_upstream_paths": [
+        "tests/server/integration/test_host_session_binding.py"
+      ],
+      "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
+      "reason": "Reuse the existing CI timeout scale for incidental Host-progress waits and bound the fake handshake by one existing Deadline. Two net test lines only; all original stage/order/snapshot assertions, production timeouts, global CI limit, nine patches, .85 isolation and release/security requirements remain. Preserve the previous5602 authorization history."
+    },
+    "main30a_source2cc_consolidation_20261107": {
+      "main_candidate": "30a37ee0118369b1763cb3b75b5d9c90dda4d865",
+      "source_candidate": "2cc37b3f37fe144baeb694b4c4796d2f5acbd7a5",
+      "previous_Source_max_upstream_net_added_loc": 6530,
+      "previous_Main_max_upstream_net_added_loc": 5604,
+      "max_upstream_net_added_loc": 6532,
+      "max_direct_upstream_files": 221,
+      "additional_official_test_net_LOC": 2,
+      "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
+      "reason": "Prepare normal consolidation of exact reviewed Source2cc runtime with the Main30a trusted pin and Host-progress test correction. Preserve both complete parent budget histories, all runtime2cc postimages and Main30a evaluator bytes. Only two additional official test lines; nine patches/.85 floor and every native, signing, data and release gate remain. This preparation is not an accepted Main or release claim."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",

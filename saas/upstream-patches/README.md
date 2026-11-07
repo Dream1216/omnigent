@@ -8,7 +8,7 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (210 files, 5,602 net lines, nine patches, .85).
+`saas/upstream-baseline.json` (220 files, 6,529 net lines, nine patches, .85).
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
@@ -18,6 +18,21 @@ sub-agent, session override and loader implementation. Page ACLs and Agent rows
 are still read on every request; failed/missing results are not cached. This
 does not cache authorization or bypass execution-time path validation. Existing
 workspace, revision, override, artifact-failure and revocation assertions remain.
+
+## Managed normal-session startup binding (2026-11-07)
+
+Source owns the existing `0010-next-agent-session-reliability.patch` extension.
+The existing authenticated policy endpoint evaluates only the configured built-in
+sandbox transform from trusted RuntimeCaps for startup. Managed normal Runner
+initialization applies it after tenant policies, including restored sessions.
+The resource and terminal registries retain that restriction across fresh spec
+loads, explicit terminal `none`/fork declarations and concurrent/cache reuse.
+Unmanaged execution and real-tool DENY/ASK paths retain their existing behavior.
+Tests extend the owning runner, resource, terminal and policy-route modules.
+First/last replay target is the exact upstream revision above; upstream PR: none.
+Remove this extension when upstream binds trusted startup restrictions at these
+same execution boundaries. This source replay and budget reconciliation grants
+no image, native-runtime, vulnerability or production-release qualification.
 
 ## Linux sandbox launcher locale (2026-11-06)
 
@@ -412,3 +427,16 @@ after its Host tunnel from a previously connected Runner that has become
 unresponsive. The latter remains eligible for replacement and superseded-process
 reaping after the ordinary connect grace; live startup and Host reconnect cases
 retain their bounded preservation behavior. Patch 0010 carries this distinction.
+
+The managed startup binding also covers native `/clear`: the existing transfer
+route obtains the target session policy before an atomic same-scope move.
+Pending launches, incompatible policies and target execution-state overwrite
+refuse without losing the source pane or workspace. Source owns this bounded
+patch until upstream provides equivalent mandatory startup and transfer binding;
+coverage remains in the existing Runner gate/resource and TerminalRegistry suites.
+
+Mandatory spec-cache lookup is scoped to the existing managed-start flag.
+SDK spawn composition reads the private binding for non-native harnesses;
+native panes enforce the same binding in TerminalRegistry. Unmanaged lightweight
+registry interfaces and the original native relay/agent-switch paths remain
+compatible. The owning Runner tests cover both guarded execution boundaries.
