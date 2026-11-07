@@ -82,7 +82,7 @@ on:
         type: boolean
         default: false
       diagnostic_arm64_startup:
-        description: One native ARM installed-entry observation of retained 2cc Server; no build or release
+        description: One native ARM installed-entry observation of retained d074 Server; no build or release
         required: false
         type: boolean
         default: false
@@ -1184,8 +1184,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python -m saas.scripts.observe_arm64_startup \
-            --source-revision 2cc37b3f37fe144baeb694b4c4796d2f5acbd7a5 \
-            --source-run 42368658111 --artifact-id 13574217452 \
+            --source-revision d074f5a75e917b1e204c63d5e7020bec9040052a \
+            --source-run 42399841399 --artifact-id 13586334848 \
             --output artifacts/arm-startup-native
       - name: Retain original component observations and raw scan
         if: always()

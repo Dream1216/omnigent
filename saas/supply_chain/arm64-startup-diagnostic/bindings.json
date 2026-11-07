@@ -1,5 +1,5 @@
 {
-  "artifact_id": 13574217452,
+  "artifact_id": 13586334848,
   "installed_files": {
     "opt/venv/lib/python3.12/site-packages/omnigent/inner/bwrap_sandbox.py": "7d60e0110298b8be6e1ad5d284321f52f7ca9628426881a75000876a4056fd2b",
     "opt/venv/lib/python3.12/site-packages/omnigent/inner/os_env.py": "e113566d883d43c060908b9b0a93b2defd168ebb0499e017c3cf336a2c443c43",
@@ -14,12 +14,13 @@
     "opt/venv/lib/python3.12/site-packages/saas/production/runner_executor.py": "e46fc5dbe89ab307bc6b5c00fa1dbc63e5068ef96670800a01751879924b5bfc",
     "opt/venv/lib/python3.12/site-packages/saas/production/runner_readiness.py": "bd3d174f440b85906d4b700564edf7589cf1631c702068ece70126d7f2838d40",
     "opt/venv/lib/python3.12/site-packages/saas/production/runtime_locale.py": "89e54a498a2e2d11fe0b8ef64308ef144bc262b0754ff47fe0488faea80d60ec",
-    "opt/venv/lib/python3.12/site-packages/saas/production/server.py": "0fbce786db76e432cb9645cd30f28e8808b4706f1d8fbc440f5f37a0407254de",
+    "opt/venv/lib/python3.12/site-packages/saas/production/server.py": "19d66cb6389b13c760db23556625f38f2238c299cbea62adfd8d97c0b37367f6",
+    "opt/venv/lib/python3.12/site-packages/saas/production/tenant_sandbox.py": "d9a663fed72739265d6d5fc6c12d1ddbeb4fffbb3a7193af2b2378540e74ca24",
     "opt/venv/lib/python3.12/site-packages/saas/production/worker.py": "6b350f48c46cc25d3f10cd19816cca377a7d2b782755bdedb858bfbb332dae25"
   },
   "libc_sha256": "98c931a2f98dfceb54e1bf580e7e552f3a33fdc2ee50df4e81051532082dc90f",
-  "original_artifact_sha256": "ae45d3b58fa0058fdb849d4a77df451fdbb57eb5e50afb1c16dca96fc2e9d2ee",
-  "original_report_sha256": "7eacab6fcefa85db46586324b33e062b0437ce88ecf0872a097932b929928aca",
-  "source_revision": "2cc37b3f37fe144baeb694b4c4796d2f5acbd7a5",
-  "source_run": 42368658111
+  "original_artifact_sha256": "2a2f2ef8bf3fe685b2987020ea254b1282c7a30c7f26dc4455f747152eb11ba5",
+  "original_report_sha256": "215372f3f6cd6fa7d8c60cefc96999c97c1074fc3bc63014f39abe0480d9ce24",
+  "source_revision": "d074f5a75e917b1e204c63d5e7020bec9040052a",
+  "source_run": 42399841399
 }
