@@ -39,7 +39,7 @@ index 44e3261..708d8f5 100644
 @@ -1661,0 +1663 @@ def create_app(
 +        require_start_sandbox=(os.environ.get(REQUIRED_START_SANDBOX_ENV) == "1"),
 diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
-index bb4f578..5449669 100644
+index bb4f578..205942c 100644
 --- a/omnigent/runner/app.py
 +++ b/omnigent/runner/app.py
 @@ -1201,0 +1202 @@ def create_runner_app(
@@ -79,16 +79,17 @@ index bb4f578..5449669 100644
 -            if _start_data is not None:
 -                _apply_sandbox_override_from_start_data(spec, _start_data)
 -
-@@ -7483,0 +7510,5 @@ def create_runner_app(
-+                enforced = resource_registry.required_os_env(session_id)
-+                if enforced is not None:
-+                    resolved_spec = _unwrap_spec_entry(spec_entry)
-+                    if resolved_spec is not None:
-+                        resolved_spec.os_env = enforced
-@@ -7540,0 +7572 @@ def create_runner_app(
+@@ -7483,0 +7510,6 @@ def create_runner_app(
++                if require_start_sandbox:
++                    enforced = resource_registry.required_os_env(session_id)
++                    if enforced is not None:
++                        resolved_spec = _unwrap_spec_entry(spec_entry)
++                        if resolved_spec is not None:
++                            resolved_spec.os_env = enforced
+@@ -7540,0 +7573 @@ def create_runner_app(
 +        _bind_server_start_sandbox=_bind_server_start_sandbox,
-@@ -8477,0 +8510,4 @@ def _build_spawn_env_from_spec(
-+    if resource_registry is not None and session_id is not None:
+@@ -8477,0 +8511,4 @@ def _build_spawn_env_from_spec(
++    if resource_registry is not None and session_id is not None and not is_native_harness(harness):
 +        enforced = resource_registry.required_os_env(session_id)
 +        if enforced is not None:
 +            spec = dataclasses.replace(spec, os_env=enforced)

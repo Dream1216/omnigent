@@ -7507,11 +7507,12 @@ def create_runner_app(
                         spec_entry = sub_entry
                         _session_sub_agent_resolved[session_id] = True
             if _session_cache_generation_is_current(session_id, generation):
-                enforced = resource_registry.required_os_env(session_id)
-                if enforced is not None:
-                    resolved_spec = _unwrap_spec_entry(spec_entry)
-                    if resolved_spec is not None:
-                        resolved_spec.os_env = enforced
+                if require_start_sandbox:
+                    enforced = resource_registry.required_os_env(session_id)
+                    if enforced is not None:
+                        resolved_spec = _unwrap_spec_entry(spec_entry)
+                        if resolved_spec is not None:
+                            resolved_spec.os_env = enforced
                 _session_spec_cache[session_id] = spec_entry
             return spec_entry
 
@@ -8507,7 +8508,7 @@ def _build_spawn_env_from_spec(
         )
     from omnigent.sandbox.copy_on_write import validate_copy_on_write_harness
 
-    if resource_registry is not None and session_id is not None:
+    if resource_registry is not None and session_id is not None and not is_native_harness(harness):
         enforced = resource_registry.required_os_env(session_id)
         if enforced is not None:
             spec = dataclasses.replace(spec, os_env=enforced)

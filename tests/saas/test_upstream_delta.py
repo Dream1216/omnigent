@@ -130,7 +130,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 6528
+    assert budget["max_upstream_net_added_loc"] == 6529
     assert budget["max_direct_upstream_files"] == 220
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
@@ -159,8 +159,13 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     transfer = revision["managed_clear_target_binding_20261107"]
     assert transfer["previous_max_upstream_net_added_loc"] == 6244
     assert transfer["previous_max_direct_upstream_files"] == 218
-    assert transfer["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
-    assert transfer["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert transfer["max_upstream_net_added_loc"] == 6528
+    assert transfer["max_direct_upstream_files"] == 220
+    query_scope = revision["managed_binding_query_execution_scope_20261107"]
+    assert query_scope["previous_max_upstream_net_added_loc"] == 6528
+    assert query_scope["previous_max_direct_upstream_files"] == 220
+    assert query_scope["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert query_scope["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
     composer_followup = revision["upstream_composer_recovery_budget_followup"]
     assert composer_followup["approved_at"] == "2026-10-24"
     assert composer_followup["previous_max_direct_upstream_files"] == 153

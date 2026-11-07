@@ -8,7 +8,7 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (220 files, 6,528 net lines, nine patches, .85).
+`saas/upstream-baseline.json` (220 files, 6,529 net lines, nine patches, .85).
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
@@ -434,3 +434,9 @@ Pending launches, incompatible policies and target execution-state overwrite
 refuse without losing the source pane or workspace. Source owns this bounded
 patch until upstream provides equivalent mandatory startup and transfer binding;
 coverage remains in the existing Runner gate/resource and TerminalRegistry suites.
+
+Mandatory spec-cache lookup is scoped to the existing managed-start flag.
+SDK spawn composition reads the private binding for non-native harnesses;
+native panes enforce the same binding in TerminalRegistry. Unmanaged lightweight
+registry interfaces and the original native relay/agent-switch paths remain
+compatible. The owning Runner tests cover both guarded execution boundaries.
