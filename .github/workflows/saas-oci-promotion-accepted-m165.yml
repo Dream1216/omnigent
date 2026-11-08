@@ -62,11 +62,34 @@ jobs:
       - run: uv sync --frozen --group dev --extra saas
       - uses: ./saas/actions/setup-pinned-crane
         timeout-minutes: 3
+      - name: Install locked scanner for native registry subject preflight
+        run: |
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+          from saas.scripts.scan_oci_candidates import install_grype
+
+          directory = Path(os.environ["RUNNER_TEMP"]) / "registry-subject-preflight"
+          directory.mkdir()
+          scanner = install_grype(directory)
+          with Path(os.environ["GITHUB_ENV"]).open("a") as environment:
+              environment.write(f"OCI_PROMOTION_TEST_GRYPE={scanner}\n")
+              reports = Path.cwd() / "artifacts" / "registry-subject-preflight"
+              environment.write(f"OCI_PROMOTION_TEST_REPORT_DIRECTORY={reports}\n")
+          PY
       - name: Exercise unchanged admission gates and real OCI round-trip
         run: |
           set -euo pipefail
           export OCI_PROMOTION_TEST_CRANE="$(command -v crane)"
           uv run pytest tests/saas/test_pinned_crane_action.py tests/saas/test_accepted_m165_promotion.py tests/saas/test_resume_oci_promotion.py tests/saas/test_oci_promotion.py tests/saas/test_image_supply_chain.py --reruns 0 -q
+      - name: Preserve original native registry subject preflight reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: registry-subject-preflight-${{ github.run_id }}
+          path: artifacts/registry-subject-preflight/
+          if-no-files-found: warn
+          retention-days: 90
 
   admit-original:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha
@@ -375,13 +398,13 @@ jobs:
               docker run --rm --pull always --platform "linux/${arch}" --network none \
                 --entrypoint /bin/sh "$image" -ec \
                 'test ! -e /usr/bin/perl && test ! -e /usr/local/bin/perl'
-              "${RUNNER_TEMP}/supply-chain-tools/syft" "$image" \
+              "${RUNNER_TEMP}/supply-chain-tools/syft" "registry:$image" \
                 --platform "linux/${arch}" \
                 -o "spdx-json=${prefix}.spdx.json" \
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
-              "${RUNNER_TEMP}/supply-chain-tools/grype" "$image" \
-                --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json"
-              grype_exit=$?
+              grype_exit=0
+              "${RUNNER_TEMP}/supply-chain-tools/grype" "registry:$image" \
+                --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json" || grype_exit=$?
               jq -e '
                 (.ignoredMatches // []) == []
               ' "${prefix}.raw.grype.json" >/dev/null
@@ -545,7 +568,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: signed-image-scans-${{ env.PRODUCT_REVISION }}
-          path: artifacts/signed-grype/*.json
+          path: |
+            artifacts/signed-grype/*.json
+            artifacts/supply-chain/*.json
           if-no-files-found: warn
           retention-days: 90
       - name: Record signed candidate facts

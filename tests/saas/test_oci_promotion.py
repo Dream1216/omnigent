@@ -45,14 +45,23 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def candidate(root: Path) -> tuple[dict[str, str], datetime]:
+def candidate(
+    root: Path, *, layer_payload: bytes = b"stable-layer", config_os: str | None = None
+) -> tuple[dict[str, str], datetime]:
     now = datetime.now(UTC)
     (root / "grype").mkdir(parents=True)
     comparisons, rows = {}, []
     labels: dict[str, str] = {}
     for name in ("server", "host"):
         archive = root / f"{name}-1.tar"
-        _write_oci(archive, revision=REVISION, label_profile="executable", nested=True)
+        _write_oci(
+            archive,
+            revision=REVISION,
+            label_profile="executable",
+            nested=True,
+            layer_payload=layer_payload,
+            config_os=config_os,
+        )
         layout = root / f"{name}-1-layout"
         index = json.loads((layout / "index.json").read_text())
         descriptor = index["manifests"][0]
@@ -75,6 +84,9 @@ def candidate(root: Path) -> tuple[dict[str, str], datetime]:
                     .st_size
                 )
                 config["mediaType"] = "application/vnd.oci.image.config.v1+json"
+                if config_os is not None:
+                    for layer in document["layers"]:
+                        layer["mediaType"] = "application/vnd.oci.image.layer.v1.tar"
                 document["mediaType"] = child["mediaType"]
                 body = json.dumps(document, sort_keys=True).encode()
                 digest = hashlib.sha256(body).hexdigest()
@@ -423,7 +435,17 @@ def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path) -> Non
     crane = os.environ.get("OCI_PROMOTION_TEST_CRANE")
     if not crane:
         pytest.skip("real crane round-trip is enabled in candidate preflight")
-    labels, now = candidate(tmp_path / "candidate")
+    grype = os.environ.get("OCI_PROMOTION_TEST_GRYPE")
+    options: dict[str, Any] = {}
+    if grype:
+        layer = io.BytesIO()
+        with tarfile.open(fileobj=layer, mode="w") as archive:
+            marker = b"registry subject contract\n"
+            member = tarfile.TarInfo("opt/registry-subject.txt")
+            member.size = len(marker)
+            archive.addfile(member, io.BytesIO(marker))
+        options = {"layer_payload": layer.getvalue(), "config_os": "linux"}
+    labels, now = candidate(tmp_path / "candidate", **options)
     manifest = seal(tmp_path / "candidate", labels, now)
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
@@ -450,6 +472,50 @@ def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path) -> Non
                 subprocess.run([crane, "push", str(layout), tag], check=True, capture_output=True)
                 digest = subprocess.check_output([crane, "digest", tag], text=True).strip()
                 assert digest == manifest["images"][name]["index_digest"]
+                if grype:
+                    facts = inspect_oci_archive(
+                        tmp_path / "candidate" / f"{name}-1.tar", label_profile="executable"
+                    )
+                    for platform, expected in facts["platforms"].items():
+                        subject = f"{address}/omnigent-saas-{name}@{expected['manifest_digest']}"
+                        reports = Path(
+                            os.environ.get(
+                                "OCI_PROMOTION_TEST_REPORT_DIRECTORY", tmp_path / "scanner-reports"
+                            )
+                        )
+                        reports.mkdir(parents=True, exist_ok=True)
+                        prefix = reports / f"{name}-{platform.split('/')[-1]}"
+                        raw = prefix.with_suffix(".raw.grype.json")
+                        with (
+                            raw.open("wb") as output,
+                            prefix.with_suffix(".stderr.txt").open("wb") as errors,
+                        ):
+                            subprocess.run(
+                                [
+                                    grype,
+                                    f"registry:{subject}",
+                                    "--platform",
+                                    platform,
+                                    "-o",
+                                    "json",
+                                ],
+                                env={
+                                    **os.environ,
+                                    "GRYPE_REGISTRY_INSECURE_USE_HTTP": "true",
+                                    "GRYPE_CHECK_FOR_APP_UPDATE": "false",
+                                },
+                                stdout=output,
+                                stderr=errors,
+                                timeout=180,
+                                check=True,
+                            )
+                        report = json.loads(raw.read_bytes())
+                        target = report["source"]["target"]
+                        assert target["manifestDigest"] == expected["manifest_digest"]
+                        assert target["imageID"] == expected["config_digest"]
+                        assert target["architecture"] == platform.split("/")[-1]
+                        assert target["os"] == "linux"
+                        assert target["labels"] == expected["labels"]
                 readback = tmp_path / f"{name}-readback.tar"
                 readback_layout = tmp_path / f"{name}-readback-layout"
                 subprocess.run(

@@ -602,6 +602,27 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
     }
     assert len(runtime_guards) == 2
     assert all(guard in text for guard in runtime_guards)
+    steps = publisher["steps"]
+    scan = next(
+        s
+        for s in steps
+        if s.get("name") == "Generate per-architecture SBOMs and check raw findings"
+    )
+    assert 'supply-chain-tools/syft" "registry:$image"' in scan["run"]
+    assert 'supply-chain-tools/grype" "registry:$image"' in scan["run"]
+    assert "|| grype_exit=$?" in scan["run"]
+    retention = next(s for s in steps if s.get("name") == "Upload exact signed-image scan reports")
+    assert retention["if"] == "always()"
+    assert "artifacts/supply-chain/*.json" in retention["with"]["path"].splitlines()
+    preflight = value["jobs"]["verify-resume-contract"]["steps"]
+    assert any("OCI_PROMOTION_TEST_GRYPE=" in s.get("run", "") for s in preflight)
+    reports = next(
+        s
+        for s in preflight
+        if s.get("name") == "Preserve original native registry subject preflight reports"
+    )
+    assert reports["if"] == "always()"
+    assert reports["with"]["path"] == "artifacts/registry-subject-preflight/"
 
 
 def test_signed_facts_shell_binds_actual_dynamic_producer_without_publishing(tmp_path):
