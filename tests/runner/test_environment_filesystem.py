@@ -1944,7 +1944,7 @@ async def test_content_search_limits_errors_and_hidden_files(
 
 @pytest.mark.parametrize("mode", ["missing", "timeout", "long-line"])
 def test_content_search_process_boundaries(tmp_path: Path, mode: str) -> None:
-    """Exercise the sandbox script with controlled executables and a short deadline."""
+    """Shorten the watchdog only for the scenario testing timeout cleanup."""
     from omnigent.runner.content_search import _SEARCH_SCRIPT
 
     if mode != "missing":
@@ -1954,17 +1954,27 @@ def test_content_search_process_boundaries(tmp_path: Path, mode: str) -> None:
             f"open({str(tmp_path / 'pid')!r}, 'w').write(str(os.getpid()))\n"
             "time.sleep(60)\n"
             if mode == "timeout"
-            else "print('x' * (2 * 1024 * 1024))\n"
+            else "import time\ntime.sleep(0.35)\nprint('x' * (2 * 1024 * 1024))\n"
         )
         executable.write_text(f"#!{sys.executable}\n{body}")
         executable.chmod(0o755)
     parameters = (
         "query = 'needle'\ncase_sensitive = False\nregex = False\nlimit = 2\nglob_args = []\n"
     )
-    timer = (
-        "import threading\noriginal_timer = threading.Timer\n"
-        "threading.Timer = lambda seconds, callback: original_timer(0.2, callback)\n"
-    )
+    timer = ""
+    if mode == "timeout":
+        timer = (
+            "import threading, time\nfrom pathlib import Path\n"
+            "original_timer = threading.Timer\n"
+            f"pid_path = Path({str(tmp_path / 'pid')!r})\n"
+            "def timer_after_child_ready(seconds, callback):\n"
+            "    deadline = time.monotonic() + 3\n"
+            "    while not pid_path.exists() and time.monotonic() < deadline:\n"
+            "        time.sleep(0.01)\n"
+            "    assert pid_path.exists(), 'controlled search child did not start'\n"
+            "    return original_timer(0.2, callback)\n"
+            "threading.Timer = timer_after_child_ready\n"
+        )
     completed = subprocess.run(
         [sys.executable, "-I", "-c", parameters + timer + _SEARCH_SCRIPT],
         env={**os.environ, "PATH": str(tmp_path)},

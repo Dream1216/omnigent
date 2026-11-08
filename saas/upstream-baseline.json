@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 221,
-    "max_upstream_net_added_loc": 6532,
+    "max_direct_upstream_files": 222,
+    "max_upstream_net_added_loc": 6542,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1278,6 +1278,26 @@
       "additional_official_test_net_LOC": 2,
       "authorization_reference": "aliyun_main25cd_integration_scope_followup.authorization_source",
       "reason": "Prepare normal consolidation of exact reviewed Source2cc runtime with the Main30a trusted pin and Host-progress test correction. Preserve both complete parent budget histories, all runtime2cc postimages and Main30a evaluator bytes. Only two additional official test lines; nine patches/.85 floor and every native, signing, data and release gate remain. This preparation is not an accepted Main or release claim."
+    },
+    "content_search_timeout_fixture_isolation_20261108": {
+      "accepted_main": "e86f4e92210468103e0b5c4e37406958498deebe",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "previous_max_direct_upstream_files": 221,
+      "previous_max_upstream_net_added_loc": 6532,
+      "max_direct_upstream_files": 222,
+      "max_upstream_net_added_loc": 6542,
+      "measured_direct_upstream_files": 222,
+      "measured_upstream_net_added_loc": 6542,
+      "scope_paths": [
+        "tests/runner/test_environment_filesystem.py"
+      ],
+      "reason": "Original Main runner-app sole failure reproduces when an artificial200ms watchdog intended for timeout also preempts the long-line scenario under load. Limit short-timer injection to timeout only start its200ms timer only after the controlled child writes its PID, and delay long-line fixture350ms so the original fault is deterministically covered. Production content-search script and all original result/cleanup assertions are unchanged; frozen product165,Root authority/DataD4 and release gates remain. Standing direct human budget authority covers one newly touched upstream test and net10LOC; preserve nine patches,.85 isolation floor and all historical budget entries.",
+      "recorded_at": "2026-11-08",
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216"
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
