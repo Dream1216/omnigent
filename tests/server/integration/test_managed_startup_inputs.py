@@ -1309,12 +1309,13 @@ async def test_external_native_cold_inputs_ack_before_shared_bootstrap(
         await runner.aclose()
 
 
-async def test_external_native_cold_inputs_are_durable_before_request_policy(
+async def test_external_native_slow_policy_saves_input_before_deferred_delivery(
     startup_env: _Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A cold policy lookup must not hold accepted input only in its HTTP caller."""
+    """An expired cold policy wait saves input without retaining its cancelled caller."""
     durable = asyncio.Event()
     enqueue = startup_env.app.state.startup_inputs.enqueue
+    active_policies = cancelled_policies = 0
 
     async def observe_saved(*args: Any, **kwargs: Any):
         saved = await enqueue(*args, **kwargs)
@@ -1322,7 +1323,15 @@ async def test_external_native_cold_inputs_are_durable_before_request_policy(
         return saved
 
     async def policy_after_save(*_: Any, **__: Any) -> None:
-        await durable.wait()
+        nonlocal active_policies, cancelled_policies
+        active_policies += 1
+        try:
+            await durable.wait()
+        except asyncio.CancelledError:
+            cancelled_policies += 1
+            raise
+        finally:
+            active_policies -= 1
 
     monkeypatch.setattr(startup_env.app.state.startup_inputs, "enqueue", observe_saved)
     monkeypatch.setattr(
@@ -1331,6 +1340,7 @@ async def test_external_native_cold_inputs_are_durable_before_request_policy(
     await test_external_native_cold_inputs_ack_before_shared_bootstrap(
         startup_env, monkeypatch, cancel_before_ack=True
     )
+    assert cancelled_policies >= 1 and active_policies == 0
 
 
 async def test_external_native_queue_and_workers_stay_workspace_scoped(

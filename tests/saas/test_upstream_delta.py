@@ -130,7 +130,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 6812
+    assert budget["max_upstream_net_added_loc"] == 6841
     assert budget["max_direct_upstream_files"] == 226
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
@@ -199,7 +199,10 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert timewait["max_upstream_net_added_loc"] == 6772
     cold_input = revision["cold_native_input_durable_before_policy_20261109"]
     assert cold_input["previous_max_upstream_net_added_loc"] == 6772
-    assert cold_input["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert cold_input["max_upstream_net_added_loc"] == 6812
+    caller_bound = revision["cold_policy_caller_bound_preserves_fast_handshake_20261109"]
+    assert caller_bound["previous_max_upstream_net_added_loc"] == 6812
+    assert caller_bound["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
     assert search_fixture["scope_paths"] == ["tests/runner/test_environment_filesystem.py"]
     assert search_fixture["accepted_main"] == "e86f4e92210468103e0b5c4e37406958498deebe"
     composer_followup = revision["upstream_composer_recovery_budget_followup"]

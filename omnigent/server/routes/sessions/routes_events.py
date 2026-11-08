@@ -1479,7 +1479,7 @@ def register_events_routes(
                 (body.type == "message" and body.data.get("role") == "user")
                 or (body.type == _SLASH_COMMAND_TYPE and body.data.get("kind") == "skill")
             )
-            and (cold_native_input or await startup.accepts(conv, request.app))
+            and await startup.accepts(conv, request.app)
         ):
             if peer_message:
                 await asyncio.to_thread(
@@ -1525,20 +1525,39 @@ def register_events_routes(
             and body.data.get("role") == "user"
             and conv.agent_id is not None
         ):
+            policy_wait = asyncio.timeout(
+                _NATIVE_BOOTSTRAP_CALLER_WAIT_S if cold_native_input else None
+            )
             try:
-                _input_verdict = await _evaluate_input_policy(
-                    cast("Request", request),
-                    session_id,
-                    conv,
-                    body,
-                    conversation_store,
-                    agent_store,
-                    runner_router,
-                    actor=_actor,
-                    file_store=file_store,
-                    artifact_store=artifact_store,
-                )
+                async with policy_wait:
+                    _input_verdict = await _evaluate_input_policy(
+                        cast("Request", request),
+                        session_id,
+                        conv,
+                        body,
+                        conversation_store,
+                        agent_store,
+                        runner_router,
+                        actor=_actor,
+                        file_store=file_store,
+                        artifact_store=artifact_store,
+                    )
             except Exception as _policy_exc:
+                if isinstance(_policy_exc, TimeoutError) and policy_wait.expired():
+                    assert startup is not None and conv.host_id is not None
+                    if startup.hosts.get(conv.host_id) is None:
+                        raise OmnigentError(
+                            "The host disconnected during startup",
+                            code=ErrorCode.RUNNER_UNAVAILABLE,
+                        ) from None
+                    saved = await startup.enqueue(
+                        session_id, body, user_id=user_id, headers=request.headers, first=False
+                    )
+                    startup.host_changed(request.app, conv.host_id)
+                    return {
+                        "queued": True,
+                        "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
+                    }
                 # Policy evaluation crashed (e.g. factory misconfigured).
                 # Log and treat as DENY so the session doesn't hang on
                 # "working" forever. The full cause is logged for admins;

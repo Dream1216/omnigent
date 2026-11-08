@@ -1490,3 +1490,56 @@ index ff3fd32791e..efaf6393eaf 100644
 @@ -1466 +1482 @@ def register_events_routes(
 -            and await startup.accepts(conv, request.app)
 +            and (cold_native_input or await startup.accepts(conv, request.app))
+diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
+index efaf6393eaf..07032fd69e1 100644
+--- a/omnigent/server/routes/sessions/routes_events.py
++++ b/omnigent/server/routes/sessions/routes_events.py
+@@ -1482 +1482 @@ def register_events_routes(
+-            and (cold_native_input or await startup.accepts(conv, request.app))
++            and await startup.accepts(conv, request.app)
+@@ -1527,0 +1528,3 @@ def register_events_routes(
++            policy_wait = asyncio.timeout(
++                _NATIVE_BOOTSTRAP_CALLER_WAIT_S if cold_native_input else None
++            )
+@@ -1529,12 +1532,13 @@ def register_events_routes(
+-                _input_verdict = await _evaluate_input_policy(
+-                    cast("Request", request),
+-                    session_id,
+-                    conv,
+-                    body,
+-                    conversation_store,
+-                    agent_store,
+-                    runner_router,
+-                    actor=_actor,
+-                    file_store=file_store,
+-                    artifact_store=artifact_store,
+-                )
++                async with policy_wait:
++                    _input_verdict = await _evaluate_input_policy(
++                        cast("Request", request),
++                        session_id,
++                        conv,
++                        body,
++                        conversation_store,
++                        agent_store,
++                        runner_router,
++                        actor=_actor,
++                        file_store=file_store,
++                        artifact_store=artifact_store,
++                    )
+@@ -1541,0 +1546,15 @@ def register_events_routes(
++                if isinstance(_policy_exc, TimeoutError) and policy_wait.expired():
++                    assert startup is not None and conv.host_id is not None
++                    if startup.hosts.get(conv.host_id) is None:
++                        raise OmnigentError(
++                            "The host disconnected during startup",
++                            code=ErrorCode.RUNNER_UNAVAILABLE,
++                        ) from None
++                    saved = await startup.enqueue(
++                        session_id, body, user_id=user_id, headers=request.headers, first=False
++                    )
++                    startup.host_changed(request.app, conv.host_id)
++                    return {
++                        "queued": True,
++                        "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
++                    }
