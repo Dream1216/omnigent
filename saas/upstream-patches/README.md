@@ -8,7 +8,7 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (226 files, 6,685 net lines, nine patches, .85).
+`saas/upstream-baseline.json` (226 files, 6,772 net lines, nine patches, .85).
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
@@ -22,10 +22,12 @@ workspace, revision, override, artifact-failure and revocation assertions remain
 ## Owned TCP transport listener (2026-11-09)
 
 Source / SaaS Runtime owns the bounded `0010-next-agent-session-reliability.patch`
-extension for `omnigent/runner/transports/tcp.py`. Transfer a bound, unlistened
-socket directly to the runner child, using an inherited descriptor on POSIX and
-an exclusive shared socket on Windows. Only the owning child starts listening;
-no released-port probe can make another service satisfy readiness. Loopback
+extension for `omnigent/runner/transports/tcp.py`. Transfer the held socket to
+the child using an inherited descriptor on POSIX and an exclusive shared socket
+on Windows. POSIX retains SO_REUSEADDR and reserves the listener before exec;
+a private pipe confirms the child has completed startup before readiness. Windows
+starts listening only in the child. No released-port probe can accept another
+service as ready, and server-active-close permits explicit-port restart. Loopback
 clients reuse the SDK's existing proxy-bypass predicate. Business routes, the
 original HTTP 501 contract, the 30-second startup bound and cleanup remain.
 

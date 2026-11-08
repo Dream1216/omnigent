@@ -7,6 +7,8 @@ change.
 
 from __future__ import annotations
 
+import socket
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -133,6 +135,27 @@ async def test_tcp_subprocess_does_not_use_another_listeners_response(monkeypatc
 
 
 # ── Failure modes ────────────────────────────────────────
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX TIME_WAIT reuse contract")
+def test_tcp_subprocess_restarts_after_server_active_close() -> None:
+    runner = RunnerTCPSubprocess(extra_env=_FAKE_SERVER_ENV)
+    with runner:
+        with socket.create_connection((runner.host, runner.port), timeout=5) as client:
+            client.sendall(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            response = b""
+            while chunk := client.recv(4096):
+                response += chunk
+            assert response.startswith(b"HTTP/1.1 200 ")
+    original_port = runner.port
+    with runner:
+        assert runner.port == original_port
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(
+                runner.base_url + "/v1/sessions/conv_test/events",
+                json={"type": "message", "role": "user", "content": []},
+            )
+            assert response.status_code == 501
 
 
 def test_tcp_subprocess_with_bad_app_factory_raises() -> None:

@@ -115,10 +115,35 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 226,
-    "max_upstream_net_added_loc": 6685,
+    "max_upstream_net_added_loc": 6772,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "tcp_explicit_port_timewait_compatibility_20261109": {
+      "accepted_main": "91c940487c7537bad4afddbb08256dea701b8cba",
+      "parent_source": "39bd45d9ca6a6b7e3f1bd6df3dc89e72c8ca6420",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "recorded_at": "2026-11-09",
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
+      "previous_max_direct_upstream_files": 226,
+      "previous_max_upstream_net_added_loc": 6685,
+      "max_direct_upstream_files": 226,
+      "max_upstream_net_added_loc": 6772,
+      "measured_direct_upstream_files": 226,
+      "measured_upstream_net_added_loc": 6772,
+      "reason": "Close sole independent review39bd P2: preserve the original POSIX SO_REUSEADDR/TIME_WAIT contract for explicit-port restart and reentering the same subprocess object after server-active-close. Hold/listen the bound POSIX socket before exec so a competing reuse-enabled listener cannot take it, and require a private child startup acknowledgement after original uvicorn startup before returning ready. Windows exclusive shared-socket behavior is unchanged. Original 30-second startup, poll interval, factory, HTTP501 and failure/cleanup assertions stay unchanged. Real same-instance/same-port active-close case fails before withEADDRINUSE and passes after; the unit negative requires TimeoutError when the parent listens but the child never acknowledges. Only the exact measured same-path LOC increment is added under standing direct human blanket budget authority; preserve old226/6685 and all historical budgets, ninepatches/.85 and every original CI, fullE2E, native evidence/signing, vulnerability, business/data/restore/gray/rollback gate. Root already directed necessary finalRC correction and no signing of unreviewed39bd.",
+      "scope_paths": [
+        "omnigent/runner/transports/tcp.py",
+        "tests/runner/transports/test_tcp_transport.py",
+        "tests/runner/transports/test_tcp_unit.py",
+        "saas/upstream-patches/0010-next-agent-session-reliability.patch",
+        "saas/upstream-patches/README.md"
+      ]
+    },
     "tcp_transport_owned_listener_20261109": {
       "accepted_main": "91c940487c7537bad4afddbb08256dea701b8cba",
       "parent_source": "7e783c58cad0556ad0fe73aa9c85d2eb4bc96795",

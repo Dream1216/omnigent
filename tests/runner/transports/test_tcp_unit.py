@@ -7,6 +7,7 @@ configuration — all without launching real uvicorn.
 
 from __future__ import annotations
 
+import os
 import socket
 from unittest.mock import MagicMock, patch
 
@@ -121,7 +122,7 @@ def test_runner_tcp_subprocess_defaults() -> None:
 
 
 @pytest.mark.parametrize("platform", ["linux", "win32"])
-def test_spawn_transfers_the_bound_socket_without_starting_a_parent_listener(platform) -> None:
+def test_spawn_transfers_the_owned_socket_and_waits_for_child_readiness(platform) -> None:
     listener = MagicMock()
     listener.__enter__.return_value = listener
     listener.getsockname.return_value = ("127.0.0.1", 43210)
@@ -133,7 +134,11 @@ def test_spawn_transfers_the_bound_socket_without_starting_a_parent_listener(pla
 
     def spawn(*args, **kwargs):
         listener.bind.assert_called_once()
-        listener.listen.assert_not_called()
+        if platform == "win32":
+            listener.listen.assert_not_called()
+        else:
+            listener.listen.assert_called_once()
+            os.write(kwargs["pass_fds"][1], b"1")
         return process
 
     with (
@@ -153,7 +158,8 @@ def test_spawn_transfers_the_bound_socket_without_starting_a_parent_listener(pla
         stdin.close.assert_called_once()
         assert process.stdin is None
     else:
-        assert popen.call_args.kwargs["pass_fds"] == (17,)
+        assert popen.call_args.kwargs["pass_fds"][0] == 17
+        assert len(popen.call_args.kwargs["pass_fds"]) == 2
         listener.share.assert_not_called()
 
 
@@ -161,6 +167,29 @@ def test_runner_tcp_subprocess_kill_noop_when_no_process() -> None:
     """_kill is safe to call before __enter__."""
     sub = RunnerTCPSubprocess()
     sub._kill()  # Should not raise.
+
+
+def test_parent_listener_cannot_replace_the_child_startup_signal() -> None:
+    listener = MagicMock()
+    listener.__enter__.return_value = listener
+    listener.getsockname.return_value = ("127.0.0.1", 43210)
+    listener.fileno.return_value = 17
+    process = MagicMock()
+    process.poll.return_value = None
+    runner = RunnerTCPSubprocess()
+    with (
+        patch.object(tcp.sys, "platform", "linux"),
+        patch.object(tcp.socket, "socket", return_value=listener),
+        patch.object(tcp.subprocess, "Popen", return_value=process),
+        patch.object(tcp, "_is_tcp_listening", return_value=True),
+        patch.object(tcp.time, "time", side_effect=[0, 1, 31]),
+        patch.object(tcp.time, "sleep"),
+        patch.object(runner, "_kill") as kill,
+    ):
+        with pytest.raises(TimeoutError, match=r"within 30\.0s"):
+            runner.__enter__()
+    listener.listen.assert_called_once()
+    kill.assert_called_once()
 
 
 def test_runner_tcp_subprocess_kill_noop_when_already_dead() -> None:

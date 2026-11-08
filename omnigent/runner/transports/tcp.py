@@ -90,10 +90,13 @@ class RunnerTCPSubprocess:
         family, kind, protocol, _, address = socket.getaddrinfo(
             self.host, self.port, type=socket.SOCK_STREAM
         )[0]
-        # Keep the bound socket through exec; only the child starts listening.
-        with socket.socket(family, kind, protocol) as listener:
+        # Keep the socket through exec and wait for the owning child's startup.
+        with contextlib.ExitStack() as stack:
+            listener = stack.enter_context(socket.socket(family, kind, protocol))
             if sys.platform == "win32":
                 listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(address)
             self.port = listener.getsockname()[1]
             cmd = [
@@ -104,6 +107,7 @@ class RunnerTCPSubprocess:
                 self.app_factory_path,
                 str(listener.fileno()),
             ]
+            ready = None
             if sys.platform == "win32":
                 self._process = subprocess.Popen(
                     cmd,
@@ -122,32 +126,46 @@ class RunnerTCPSubprocess:
                     self._kill()
                     raise
             else:
+                # Listen before another reuse-enabled socket can claim this port.
+                listener.listen()
+                read_fd, write_fd = os.pipe()
+                ready = stack.enter_context(os.fdopen(read_fd, "rb", buffering=0))
+                writer = stack.enter_context(os.fdopen(write_fd, "wb", buffering=0))
+                os.set_blocking(read_fd, False)
+                cmd.append(str(write_fd))
                 self._process = subprocess.Popen(
                     cmd,
-                    pass_fds=(listener.fileno(),),
+                    pass_fds=(listener.fileno(), write_fd),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=env,
                     **_proc.spawn_kwargs(),
                 )
-        deadline = time.time() + self.startup_timeout_s
-        while time.time() < deadline:
-            if self._process.poll() is not None:
-                _, stderr = self._process.communicate()
-                raise RuntimeError(
-                    f"runner TCP subprocess exited prematurely (rc="
-                    f"{self._process.returncode}); stderr: "
-                    f"{stderr.decode(errors='replace')[:500]}"
+                writer.close()
+            listener.close()
+            deadline = time.time() + self.startup_timeout_s
+            while time.time() < deadline:
+                if self._process.poll() is not None:
+                    _, stderr = self._process.communicate()
+                    raise RuntimeError(
+                        f"runner TCP subprocess exited prematurely (rc="
+                        f"{self._process.returncode}); stderr: "
+                        f"{stderr.decode(errors='replace')[:500]}"
+                    )
+                is_ready = (
+                    ready.read(1) == b"1"
+                    if ready is not None
+                    else _is_tcp_listening(self.host, self.port)
                 )
-            if _is_tcp_listening(self.host, self.port):
-                return self
-            time.sleep(0.05)
-        self._kill()
-        raise TimeoutError(
-            f"runner TCP subprocess didn't bind {self.host}:{self.port} "
-            f"within {self.startup_timeout_s}s"
-        )
+                if is_ready:
+                    return self
+                time.sleep(0.05)
+            self._kill()
+            raise TimeoutError(
+                f"runner TCP subprocess didn't bind {self.host}:{self.port} "
+                f"within {self.startup_timeout_s}s"
+            )
 
     def __exit__(self, *exc_info: object) -> None:
         self._kill()
@@ -192,18 +210,35 @@ def create_tcp_client(
     )
 
 
-def _serve_inherited_listener(factory: str, descriptor: int) -> None:
+def _serve_inherited_listener(
+    factory: str, descriptor: int, ready_descriptor: int | None = None
+) -> None:
     import uvicorn
 
     if sys.platform == "win32":
         listener = socket.fromshare(sys.stdin.buffer.read())
     else:
         listener = socket.socket(fileno=descriptor)
-    with listener:
-        uvicorn.Server(uvicorn.Config(factory, factory=True, log_level="warning")).run(
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(listener)
+        ready = (
+            stack.enter_context(os.fdopen(ready_descriptor, "wb", buffering=0))
+            if ready_descriptor is not None
+            else None
+        )
+
+        class ReadyServer(uvicorn.Server):
+            async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+                await super().startup(sockets=sockets)
+                if ready is not None and self.started:
+                    ready.write(b"1")
+
+        ReadyServer(uvicorn.Config(factory, factory=True, log_level="warning")).run(
             sockets=[listener]
         )
 
 
 if __name__ == "__main__":
-    _serve_inherited_listener(sys.argv[1], int(sys.argv[2]))
+    _serve_inherited_listener(
+        sys.argv[1], int(sys.argv[2]), int(sys.argv[3]) if len(sys.argv) > 3 else None
+    )
