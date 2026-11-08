@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
@@ -22,11 +21,175 @@ from saas.scripts.legacy_pytest_results import verify_job_artifact_identity
 COMPONENT = "Compatibility018"
 ORIGIN = "compat018_clean_recovered_oci/v1"
 VARIANT = "protected_legacy_initial_publication/compat018-recovered/v1"
+# Finite conservative import closure and the existing scan gate policies.
 SOURCES = (
-    recovery.WORKFLOW,
-    "saas/scripts/compat018_oci_recovery.py",
+    "saas/actions/runtime-evidence-context/action.yml",
+    ".github/workflows/saas-compat018-oci-recovery.yml",
+    "saas/__init__.py",
+    "saas/compatibility/__init__.py",
+    "saas/compatibility/runtime_partition.py",
+    "saas/compatibility/store_adapter.py",
+    "saas/control_plane/__init__.py",
+    "saas/control_plane/api_credential_models.py",
+    "saas/control_plane/api_credentials.py",
+    "saas/control_plane/api_http.py",
+    "saas/control_plane/approval_operations.py",
+    "saas/control_plane/approval_scheduler.py",
+    "saas/control_plane/approval_source_adapters.py",
+    "saas/control_plane/approval_source_projection.py",
+    "saas/control_plane/authorization.py",
+    "saas/control_plane/billing.py",
+    "saas/control_plane/billing_http.py",
+    "saas/control_plane/billing_metering.py",
+    "saas/control_plane/billing_models.py",
+    "saas/control_plane/binding_saga.py",
+    "saas/control_plane/bindings.py",
+    "saas/control_plane/certificate_models.py",
+    "saas/control_plane/certificates.py",
+    "saas/control_plane/client_network.py",
+    "saas/control_plane/context_snapshot.py",
+    "saas/control_plane/db_models.py",
+    "saas/control_plane/dispatch_binding.py",
+    "saas/control_plane/email_provider.py",
+    "saas/control_plane/enterprise_access.py",
+    "saas/control_plane/enterprise_http.py",
+    "saas/control_plane/enterprise_identity.py",
+    "saas/control_plane/enterprise_identity_models.py",
+    "saas/control_plane/enterprise_models.py",
+    "saas/control_plane/enterprise_scim_http.py",
+    "saas/control_plane/execution.py",
+    "saas/control_plane/execution_models.py",
+    "saas/control_plane/gateway_models.py",
+    "saas/control_plane/gateways.py",
+    "saas/control_plane/governance.py",
+    "saas/control_plane/http_auth.py",
+    "saas/control_plane/idempotency.py",
+    "saas/control_plane/identity.py",
+    "saas/control_plane/isolation.py",
+    "saas/control_plane/isolation_models.py",
+    "saas/control_plane/lifecycle.py",
+    "saas/control_plane/member_admin.py",
+    "saas/control_plane/member_http.py",
+    "saas/control_plane/model_budget.py",
+    "saas/control_plane/model_provider.py",
+    "saas/control_plane/notification_delivery.py",
+    "saas/control_plane/notification_events.py",
+    "saas/control_plane/notification_http.py",
+    "saas/control_plane/notification_models.py",
+    "saas/control_plane/oidc.py",
+    "saas/control_plane/onboarding.py",
+    "saas/control_plane/onboarding_http.py",
+    "saas/control_plane/onboarding_models.py",
+    "saas/control_plane/onboarding_status.py",
+    "saas/control_plane/onboarding_workflow.py",
+    "saas/control_plane/outbox.py",
+    "saas/control_plane/outbox_delivery.py",
+    "saas/control_plane/outbox_delivery_models.py",
+    "saas/control_plane/permissions.py",
+    "saas/control_plane/placement_models.py",
+    "saas/control_plane/placements.py",
+    "saas/control_plane/platform_governed_access.py",
+    "saas/control_plane/platform_governed_models.py",
+    "saas/control_plane/platform_http.py",
+    "saas/control_plane/platform_lifecycle.py",
+    "saas/control_plane/platform_models.py",
+    "saas/control_plane/platform_notification_http.py",
+    "saas/control_plane/platform_password_auth.py",
+    "saas/control_plane/platform_security.py",
+    "saas/control_plane/platform_support_http.py",
+    "saas/control_plane/postgresql_role_authority.py",
+    "saas/control_plane/preview_hosts.py",
+    "saas/control_plane/preview_sessions.py",
+    "saas/control_plane/privacy_attestation.py",
+    "saas/control_plane/privacy_execution.py",
+    "saas/control_plane/privacy_lifecycle.py",
+    "saas/control_plane/privacy_models.py",
+    "saas/control_plane/privacy_operations.py",
+    "saas/control_plane/project_http.py",
+    "saas/control_plane/projects.py",
+    "saas/control_plane/public_api.py",
+    "saas/control_plane/public_api_models.py",
+    "saas/control_plane/removal_impact.py",
+    "saas/control_plane/resolver.py",
+    "saas/control_plane/rls.py",
+    "saas/control_plane/rls_inventory.py",
+    "saas/control_plane/runner_execution_spec.py",
+    "saas/control_plane/runtime_provider.py",
+    "saas/control_plane/runtime_provider_journal.py",
+    "saas/control_plane/scheduling.py",
+    "saas/control_plane/scheduling_models.py",
+    "saas/control_plane/scim_syntax.py",
+    "saas/control_plane/webhook_models.py",
+    "saas/control_plane/webhooks.py",
+    "saas/control_plane/worktree_models.py",
+    "saas/control_plane/worktrees.py",
+    "saas/login_ui/__init__.py",
+    "saas/login_ui/http.py",
+    "saas/observability.py",
+    "saas/onboarding_composition.py",
+    "saas/onboarding_email.py",
+    "saas/preview_gateway.py",
+    "saas/preview_relay_transport.py",
+    "saas/preview_tunnel.py",
+    "saas/production/__init__.py",
+    "saas/production/admission.py",
+    "saas/production/business.py",
+    "saas/production/deletion.py",
+    "saas/production/deployment.py",
+    "saas/production/evidence-admission-policy.json",
+    "saas/production/legacy_publication.py",
+    "saas/production/legacy_stack.py",
+    "saas/production/observability.py",
+    "saas/production/readiness.py",
+    "saas/production/recovery.py",
+    "saas/production/review_exception.py",
+    "saas/production/slo_capacity.py",
+    "saas/production/slo_witness.py",
+    "saas/public_api_contract.py",
+    "saas/runtime_rls/__init__.py",
+    "saas/runtime_rls/installer.py",
+    "saas/scim_schema_catalog.py",
+    "saas/scripts/__init__.py",
+    "saas/scripts/approved_disposition.py",
+    "saas/scripts/check_acceptance_manifest.py",
+    "saas/scripts/check_adr_approvals.py",
+    "saas/scripts/check_image_supply_chain.py",
+    "saas/scripts/check_production_baseline.py",
+    "saas/scripts/combined_runtime_disposition.py",
+    "saas/scripts/compare_oci_rebuilds.py",
     "saas/scripts/compat018_clean_context.py",
+    "saas/scripts/compat018_oci_recovery.py",
+    "saas/scripts/compat018_recovered_input.py",
+    "saas/scripts/legacy_artifact_download.py",
+    "saas/scripts/legacy_build_controller.py",
+    "saas/scripts/legacy_check_history.py",
+    "saas/scripts/legacy_control_results.py",
+    "saas/scripts/legacy_domain_discovery.py",
+    "saas/scripts/legacy_domain_eligibility.py",
+    "saas/scripts/legacy_domain_native.py",
+    "saas/scripts/legacy_domain_non_execution.py",
+    "saas/scripts/legacy_initial_publisher.py",
+    "saas/scripts/legacy_job_log_archive.py",
+    "saas/scripts/legacy_native_evidence.py",
+    "saas/scripts/legacy_pg_contract.py",
+    "saas/scripts/legacy_pr_candidate.py",
+    "saas/scripts/legacy_publication_reader.py",
+    "saas/scripts/legacy_publication_renewal.py",
+    "saas/scripts/legacy_pytest_results.py",
+    "saas/scripts/legacy_security_policy.py",
+    "saas/scripts/legacy_source_ci.py",
+    "saas/scripts/legacy_source_qualification.py",
+    "saas/scripts/oci_promotion.py",
+    "saas/scripts/prepare_evidence_receipt.py",
+    "saas/scripts/protected_legacy_initial_build.py",
+    "saas/scripts/resume_oci_promotion.py",
+    "saas/scripts/runtime_evidence_intake.py",
+    "saas/scripts/scan_oci_candidates.py",
+    "saas/scripts/sqlite_component_disposition.py",
+    "saas/supply_chain/release-policy.json",
+    "saas/supply_chain/runtime-condition-inputs.json",
 )
+
 HISTORICAL = {
     "run_id": 41849013923,
     "attempt": 2,
@@ -193,17 +356,15 @@ def _derive_row(
     control: Path, run_id: int, *, sealed: bool
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
     run = api(f"repos/{recovery.REPOSITORY}/actions/runs/{run_id}")
-    row = {"run_id": run_id, "attempt": 1, "controller_revision": run.get("head_sha")}
-    require(
-        isinstance(row["controller_revision"], str)
-        and re.fullmatch(r"[0-9a-f]{40}", row["controller_revision"]) is not None,
-        "actual C2 native run has no full controller revision",
-    )
+    revision = run.get("head_sha")
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise ValueError("actual C2 native run has no full controller revision")
+    row = {"run_id": run_id, "attempt": 1, "controller_revision": revision}
     require(
         _run(row, sealed=sealed) == run,
         "C2 native run changed while deriving its identity",
     )
-    code = _code(control, row["controller_revision"])
+    code = _code(control, revision)
     key = "scan_job_id" if sealed else "builder_job_id"
     name = "scan-and-seal-same-oci" if sealed else "build-compat018-product"
     listed = _unique(
@@ -245,21 +406,43 @@ def _derive_row(
 
 
 def _code(control: Path, revision: str) -> dict[str, str]:
+    prefix = f"repos/{recovery.REPOSITORY}/git/"
+    commit = api(f"{prefix}commits/{revision}")
+    tree_sha = commit.get("tree", {}).get("sha")
+    require(
+        commit.get("sha") == revision
+        and isinstance(tree_sha, str)
+        and re.fullmatch(r"[0-9a-f]{40}", tree_sha) is not None,
+        "native C2 commit has no immutable source tree",
+    )
+    tree = api(f"{prefix}trees/{tree_sha}?recursive=1")
+    entries = tree.get("tree", [])
+    require(
+        tree.get("sha") == tree_sha
+        and tree.get("truncated") is False
+        and isinstance(entries, list)
+        and 0 < len(entries) <= 20000,
+        "native C2 execution tree metadata is incomplete",
+    )
     result = {}
-    prefix = f"repos/{recovery.REPOSITORY}/contents/"
     for name in SOURCES:
-        body = api(f"{prefix}{name}?ref={revision}")
+        matches = [entry for entry in entries if entry.get("path") == name]
+        require(len(matches) == 1, "native C2 execution source is missing or duplicated")
+        entry = matches[0]
+        path = control / name
         require(
-            body.get("path") == name
-            and body.get("encoding") == "base64"
-            and type(body.get("size")) is int
-            and 0 < body["size"] <= 262144,
-            "native C2 controller source metadata differs",
+            path.is_file() and not path.is_symlink(), "reviewed C2 execution source is missing"
         )
-        raw = base64.b64decode("".join(body["content"].split()), validate=True)
+        raw = path.read_bytes()
+        mode = "100755" if path.stat().st_mode & 0o111 else "100644"
+        blob_sha = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
         require(
-            len(raw) == body["size"] and raw == (control / name).read_bytes(),
-            "native C2 workflow/helper bytes differ from reviewed control",
+            len(raw) <= 262144
+            and entry.get("type") == "blob"
+            and entry.get("mode") == mode
+            and entry.get("size") == len(raw)
+            and entry.get("sha") == blob_sha,
+            f"native C2 execution source differs from reviewed control: {name}",
         )
         result[name] = hashlib.sha256(raw).hexdigest()
     return result

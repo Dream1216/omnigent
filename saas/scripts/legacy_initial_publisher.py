@@ -789,10 +789,8 @@ def unpack_original(
         "original OCI ZIP bytes differ",
     )
     if original.get("kind") == c2_recovered.ORIGIN:
-        require(
-            product is not None,
-            "recovered C2 payload requires the actual frozen Git product",
-        )
+        if product is None:
+            raise ValueError("recovered C2 payload requires the actual frozen Git product")
         c2_recovered.verify_sealed_zip(archive, original["zip_size"], crc=True)
         safe_extract(archive, destination, max_bytes=original["zip_size"])
         c2_recovered.verify_payload(destination, original, product)
@@ -1170,7 +1168,7 @@ def execute_runtime(
                 "import sys; from omnigent import _build_info; "
                 "assert _build_info.COMMIT_SHA == sys.argv[1]; "
                 "assert _build_info.BUILD_TIME_EPOCH == int(sys.argv[2]); "
-                "import pyexpat,zlib; assert pyexpat.EXPAT_VERSION == 'expat_2.9.0'; "
+                "import pyexpat,zlib; assert pyexpat.EXPAT_VERSION == 'expat_2.10.0'; "
                 "assert zlib.ZLIB_RUNTIME_VERSION == '1.3.2.1-motley'; "
                 "import saas.production.platform_model_sandbox_host"
             )

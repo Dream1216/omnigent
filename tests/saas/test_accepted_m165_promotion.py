@@ -1,5 +1,6 @@
 """Recovered product, real producer and signer identities remain independently bound."""
 
+import ast
 import copy
 import hashlib
 import json
@@ -590,6 +591,17 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
     assert not any("build-push-action" in step.get("uses", "") for step in publisher["steps"])
     assert "wheel-provenance.json" in text and "independent-wheel-signatures.json" in text
     assert "rebuilt: true, signing_rebuilt_oci: false" in text
+    # The signer must use the same strict component versions as product admission.
+    policy = ast.parse((root / "saas/scripts/check_image_supply_chain.py").read_text())
+    runtime_guards = {
+        node.value
+        for node in ast.walk(policy)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith(("pyexpat.EXPAT_VERSION == ", "zlib.ZLIB_RUNTIME_VERSION == "))
+    }
+    assert len(runtime_guards) == 2
+    assert all(guard in text for guard in runtime_guards)
 
 
 def test_signed_facts_shell_binds_actual_dynamic_producer_without_publishing(tmp_path):

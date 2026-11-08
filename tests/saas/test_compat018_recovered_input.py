@@ -7,11 +7,12 @@ No live API, dispatch, OCI build, credential, signing, or admission is performed
 
 from __future__ import annotations
 
-import base64
+import ast
 import copy
 import hashlib
 import importlib
 import importlib.util
+import inspect
 import json
 import shutil
 import sys
@@ -169,14 +170,29 @@ def native_origin(tmp_path, monkeypatch):
             "total_count": 1,
             "artifacts": [metadata],
         }
+        tree_sha = ("c" if run_id == 101 else "d") * 40
+        git_prefix = f"repos/{recovery.REPOSITORY}/git/"
+        native[f"{git_prefix}commits/{revision}"] = {"sha": revision, "tree": {"sha": tree_sha}}
+        entries = []
         for name in m.SOURCES:
-            body = (control / name).read_bytes()
-            native[f"repos/{recovery.REPOSITORY}/contents/{name}?ref={revision}"] = {
-                "path": name,
-                "encoding": "base64",
-                "size": len(body),
-                "content": base64.b64encode(body).decode(),
-            }
+            path = control / name
+            body = path.read_bytes()
+            entries.append(
+                {
+                    "path": name,
+                    "type": "blob",
+                    "mode": "100755" if path.stat().st_mode & 0o111 else "100644",
+                    "size": len(body),
+                    "sha": hashlib.sha1(
+                        b"blob " + str(len(body)).encode() + b"\0" + body
+                    ).hexdigest(),
+                }
+            )
+        native[f"{git_prefix}trees/{tree_sha}?recursive=1"] = {
+            "sha": tree_sha,
+            "truncated": False,
+            "tree": entries,
+        }
 
     def api(endpoint):
         endpoints.append(endpoint)
@@ -613,3 +629,161 @@ def test_sealed_run_defaults_to_actual_same_producer_without_conflating_artifact
         result["artifact_id"] == 502 and result["producer"]["raw_checkpoint"]["artifact_id"] == 501
     )
     assert downloaded == [502]
+
+
+@pytest.mark.parametrize("role", ["raw", "sealed"])
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "saas/scripts/compare_oci_rebuilds.py",
+        "saas/scripts/scan_oci_candidates.py",
+        "saas/scripts/oci_promotion.py",
+        "saas/scripts/legacy_artifact_download.py",
+        "saas/scripts/approved_disposition.py",
+        "saas/scripts/sqlite_component_disposition.py",
+        "saas/scripts/combined_runtime_disposition.py",
+        "saas/scripts/legacy_native_evidence.py",
+        "saas/actions/runtime-evidence-context/action.yml",
+        "saas/supply_chain/release-policy.json",
+    ],
+)
+def test_shared_execution_dependency_drift_rejected_with_identical_wrappers(
+    native_origin, tmp_path, role, dependency
+):
+    control, _, data, _, downloaded, _ = native_origin
+    wrappers = [
+        recovery.WORKFLOW,
+        "saas/scripts/compat018_oci_recovery.py",
+        "saas/scripts/compat018_clean_context.py",
+    ]
+    before = {name: (control / name).read_bytes() for name in wrappers}
+    tree_sha = ("c" if role == "raw" else "d") * 40
+    tree = data[f"repos/{recovery.REPOSITORY}/git/trees/{tree_sha}?recursive=1"]
+    next(row for row in tree["tree"] if row["path"] == dependency)["sha"] = "0" * 40
+    with pytest.raises(ValueError, match="execution source differs"):
+        m.collect(control, PROFILE, (101, 202), m.HISTORICAL, tmp_path / "refused")
+    assert before == {name: (control / name).read_bytes() for name in wrappers}
+    assert downloaded == []
+
+
+@pytest.mark.parametrize("fault", ["truncated", "missing", "duplicate", "mode", "size"])
+def test_incomplete_or_changed_git_execution_metadata_is_rejected(native_origin, fault):
+    control, _, data, _, _, _ = native_origin
+    tree = data[f"repos/{recovery.REPOSITORY}/git/trees/{'c' * 40}?recursive=1"]
+    if fault == "truncated":
+        tree["truncated"] = True
+    elif fault == "missing":
+        tree["tree"].pop()
+    elif fault == "duplicate":
+        tree["tree"].append(copy.deepcopy(tree["tree"][0]))
+    elif fault == "mode":
+        tree["tree"][0]["mode"] = "120000"
+    else:
+        tree["tree"][0]["size"] += 1
+    with pytest.raises(ValueError):
+        m._code(control, "a" * 40)
+
+
+def test_finite_identity_inventory_covers_existing_static_import_dependencies():
+    bound = set(m.SOURCES)
+    for name in m.SOURCES:
+        if not name.endswith(".py"):
+            continue
+        path = ROOT / name
+        module = name[:-3].replace("/", ".")
+        package = (
+            module.removesuffix(".__init__")
+            if path.name == "__init__.py"
+            else module.rpartition(".")[0]
+        )
+        for node in ast.walk(ast.parse(path.read_text())):
+            imports = []
+            if isinstance(node, ast.Import):
+                imports = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = (
+                    importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+                    if node.level
+                    else node.module
+                )
+                if base:
+                    imports = [base, *[base + "." + alias.name for alias in node.names]]
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "import_module"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                imports = [node.args[0].value]
+            for imported in imports:
+                if imported != "saas" and not imported.startswith("saas."):
+                    continue
+                parts = imported.split(".")
+                for count in range(1, len(parts) + 1):
+                    relative = "/".join(parts[:count])
+                    for candidate in (relative + ".py", relative + "/__init__.py"):
+                        if (ROOT / candidate).is_file():
+                            assert candidate in bound, (name, candidate)
+
+
+def test_publisher_component_equalities_match_the_canonical_security_contract():
+    canonical = ast.parse((ROOT / "saas/scripts/check_image_supply_chain.py").read_text())
+    fragments = [
+        node.value
+        for node in ast.walk(canonical)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith(("pyexpat.EXPAT_VERSION == ", "zlib.ZLIB_RUNTIME_VERSION == "))
+    ]
+    expected = {}
+    for fragment in fragments:
+        compare = ast.parse(fragment, mode="eval").body
+        assert isinstance(compare, ast.Compare)
+        expected[ast.unparse(compare.left)] = ast.literal_eval(compare.comparators[0])
+    assert len(expected) == 2
+    function = ast.parse(inspect.getsource(publisher.execute_runtime))
+    script = next(
+        node.value
+        for node in ast.walk(function)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("import sys; from omnigent import _build_info;")
+    )
+    actual = {
+        ast.unparse(node.left): ast.literal_eval(node.comparators[0])
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.Compare) and ast.unparse(node.left) in expected
+    }
+    assert actual == expected
+
+
+def test_finite_identity_inventory_covers_controller_owned_local_actions():
+    for name in m.SOURCES:
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        value = yaml.load((ROOT / name).read_text(), Loader=yaml.BaseLoader)
+        groups = list(value.get("jobs", {}).values())
+        if "runs" in value:
+            groups.append(value["runs"])
+        for group in groups:
+            fixed_product_checkout = False
+            for step in group.get("steps", []):
+                action = step.get("uses", "")
+                options = step.get("with", {})
+                if action.startswith("actions/checkout@") and not options.get("path"):
+                    ref = options.get("ref")
+                    fixed_product_checkout = not step.get("if") and (
+                        ref == recovery.PRODUCT
+                        or (
+                            ref == "${{ env.PRODUCT_REVISION }}"
+                            and value.get("env", {}).get("PRODUCT_REVISION") == recovery.PRODUCT
+                        )
+                    )
+                if action.startswith("./saas/"):
+                    if fixed_product_checkout:
+                        # This action is covered by the pinned product tree.
+                        assert action == "./saas/actions/build-oci-candidate"
+                    else:
+                        assert action[2:] + "/action.yml" in m.SOURCES, (name, action)
