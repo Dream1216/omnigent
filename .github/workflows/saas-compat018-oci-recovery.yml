@@ -1,0 +1,264 @@
+# DRAFT ONLY: not installed, dispatched, signed, or a qualified C2 handoff.
+# Source must integrate its own Source + PG16/18 jobs in the SAME final qualification run.
+name: Recover fixed compatibility018 4e OCI bytes (draft)
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/saas-compat018-oci-recovery.yml"
+      - "saas/scripts/compat018_oci_recovery.py"
+      - "saas/scripts/compat018_clean_context.py"
+      - "tests/saas/test_compat018_oci_recovery.py"
+      - "tests/saas/test_compat018_clean_context.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/saas-compat018-oci-recovery.yml"
+      - "saas/scripts/compat018_oci_recovery.py"
+      - "saas/scripts/compat018_clean_context.py"
+      - "tests/saas/test_compat018_oci_recovery.py"
+      - "tests/saas/test_compat018_clean_context.py"
+  workflow_dispatch:
+    inputs:
+      policy_revision:
+        description: Exact reviewed main controller SHA; fixed C2 product remains 4e
+        required: true
+        type: string
+      phase:
+        description: Recover cached bytes, or rescan the retained raw checkpoint
+        type: choice
+        options: [build, scan]
+        default: build
+      comparison_profile:
+        description: Fixed C2 comparison; clean Server uses a real independent no-cache second build
+        type: choice
+        options: [historical, clean-C2-server]
+        default: clean-C2-server
+      raw_run_id:
+        type: string
+      raw_artifact_id:
+        type: string
+      raw_artifact_sha256:
+        type: string
+      raw_controller_revision:
+        description: Actual reviewed controller SHA of the retained raw producer (required for scan)
+        type: string
+      c2_evidence_revision:
+        description: Optional admitted C2 runtime-only evidence for additional applicable findings; never M D4
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat018-4e-recovery
+  cancel-in-progress: false
+
+env:
+  PRODUCT_REVISION: 4e11681dd3809febeb42cb5d752d423b5f751f82
+  SOURCE_REVISION: 4e11681dd3809febeb42cb5d752d423b5f751f82
+  SOURCE_DATE_EPOCH: "1793801374"
+  UPSTREAM_REVISION: 825f8500d7cc8e997e5562fa55694cd146165f3c
+  ADAPTER_CONTRACT_VERSION: "0.2.0"
+  CONTROL_PLANE_SCHEMA_REVISION: p0s000000018
+  PYTHON_IMAGE: python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30
+  RUNTIME_IMAGE: cgr.dev/chainguard/wolfi-base@sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e
+  NODE_IMAGE: node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+  GO_IMAGE: golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d
+
+jobs:
+  verify-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --group dev --extra saas
+      - run: uv run pytest tests/saas/test_compat018_oci_recovery.py tests/saas/test_compat018_clean_context.py --reruns 0 -q
+
+  build-compat018-product:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'build'
+    needs: verify-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.raw.outputs.artifact-id }}
+      artifact-sha256: ${{ steps.raw.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --extra saas
+      - name: Authenticate original C2 PR producer and retained comparison evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run python -m saas.scripts.compat018_oci_recovery prepare --root "$RUNNER_TEMP/compat018-raw"
+          cp saas/scripts/compat018_oci_recovery.py "$RUNNER_TEMP/compat018_oci_recovery.py"
+          mkdir "$RUNNER_TEMP/compat018-control"
+          git archive "$GITHUB_SHA" saas | tar -x -C "$RUNNER_TEMP/compat018-control"
+      - name: Checkout unchanged fixed C2 business product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.PRODUCT_REVISION }}
+          persist-credentials: false
+      - name: Verify product checkout and install its existing locked helpers
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$PRODUCT_REVISION" ]]
+          [[ "$(git rev-parse HEAD^{tree})" == "cd9cbd2f918df17a44dc63423ac29a5ddd887820" ]]
+          [[ -z "$(git status --porcelain)" ]]
+          uv sync --frozen --extra saas
+      - name: Recreate the original fixed-product login export build context
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Build the original locked React18 login export before the original OCI action
+        working-directory: saas/login_web
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm ci --no-audit --no-fund && npm run build && npm run format:check
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        id: recovery-builder
+      - name: Recover Server using its existing first-attempt build cache
+        id: server
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "1"
+      - name: Recover Host using its existing first-attempt build cache
+        id: host
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: host
+          target: host
+          attempt: "1"
+      - name: Stage actual OCI before cleanup or inspection can fail
+        run: |
+          mv "$RUNNER_TEMP/server-1.tar" "$RUNNER_TEMP/compat018-raw/"
+          mv "$RUNNER_TEMP/host-1.tar" "$RUNNER_TEMP/compat018-raw/"
+      - name: Audit actual fixed C2 source, UI, and historical Host
+        env:
+          PYTHONPATH: ${{ runner.temp }}/compat018-control
+        run: uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_clean_context.py" audit --root "$RUNNER_TEMP/compat018-raw"
+      - name: Reclaim only this ephemeral builder cache before OCI inspection
+        env:
+          RECOVERY_BUILDER: ${{ steps.recovery-builder.outputs.name }}
+        run: |
+          [[ "$RECOVERY_BUILDER" =~ ^builder-[a-zA-Z0-9][a-zA-Z0-9_-]{1,90}$ ]]
+          docker buildx prune --builder "$RECOVERY_BUILDER" --all --force
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Independently build only C2 Server without cache
+        if: inputs.comparison_profile == 'clean-C2-server'
+        id: independent-server
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "2"
+      - name: Stage actual independent C2 Server
+        if: inputs.comparison_profile == 'clean-C2-server'
+        run: mv "$RUNNER_TEMP/server-2.tar" "$RUNNER_TEMP/compat018-raw/"
+      - name: Confirm exact C2 comparison profile
+        id: compare
+        env:
+          PYTHONPATH: ${{ runner.temp }}/compat018-control
+          COMPARISON_PROFILE: ${{ inputs.comparison_profile }}
+        run: |
+          uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_clean_context.py" confirm --root "$RUNNER_TEMP/compat018-raw" --comparison-profile "$COMPARISON_PROFILE"
+          uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_oci_recovery.py" verify --root "$RUNNER_TEMP/compat018-raw" --comparison-profile "$COMPARISON_PROFILE"
+      - name: Preserve actual OCI before any fresh vulnerability scan
+        id: raw
+        if: always() && steps.server.outcome == 'success' && steps.host.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compat018-raw-${{ env.PRODUCT_REVISION }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/compat018-raw/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+  scan-and-seal-same-oci:
+    if: always() && !cancelled() && needs.verify-contract.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && (needs.build-compat018-product.result == 'success' || inputs.phase == 'scan')
+    needs: [verify-contract, build-compat018-product]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: |
+          uv sync --frozen --extra saas --inexact
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Load C2 runtime evidence only when explicitly supplied
+        if: inputs.c2_evidence_revision != ''
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ env.PRODUCT_REVISION }}
+          evidence-revision: ${{ inputs.c2_evidence_revision }}
+      - name: Download and independently recheck the same real raw checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_RUN: ${{ inputs.raw_run_id || github.run_id }}
+          RAW_ID: ${{ inputs.raw_artifact_id || needs.build-compat018-product.outputs.artifact-id }}
+          RAW_SHA: ${{ inputs.raw_artifact_sha256 || needs.build-compat018-product.outputs.artifact-sha256 }}
+          RAW_CONTROLLER: ${{ inputs.raw_controller_revision || github.sha }}
+          COMPARISON_PROFILE: ${{ inputs.comparison_profile }}
+        run: |
+          python -m saas.scripts.compat018_oci_recovery download --root "$RUNNER_TEMP/same-oci" --run-id "$RAW_RUN" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA" --controller "$RAW_CONTROLLER" --comparison-profile "$COMPARISON_PROFILE"
+      - name: Fresh scan and seal without rebuilding or relaxing any gate
+        id: seal
+        run: |
+          python -m saas.scripts.scan_oci_candidates --image "server=$RUNNER_TEMP/same-oci/server-1.tar" --image "host=$RUNNER_TEMP/same-oci/host-1.tar" --output "$RUNNER_TEMP/same-oci/grype"
+          python -m saas.scripts.compat018_oci_recovery seal --root "$RUNNER_TEMP/same-oci" >> "$GITHUB_OUTPUT"
+      - name: Retain actually admitted immutable OCI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-oci-promotion-${{ env.PRODUCT_REVISION }}
+          path: |
+            ${{ runner.temp }}/same-oci/server-1.tar
+            ${{ runner.temp }}/same-oci/host-1.tar
+            ${{ runner.temp }}/same-oci/saas-image-candidate.json
+            ${{ runner.temp }}/same-oci/oci-promotion-manifest.json
+            ${{ runner.temp }}/same-oci/grype/
+            ${{ runner.temp }}/same-oci/clean-context-first.json
+            ${{ runner.temp }}/same-oci/original-report.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve raw rejection and original checkpoint on every outcome
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compat018-same-oci-scan-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/same-oci/grype/
+            ${{ runner.temp }}/same-oci/unadmitted-build.json
+            ${{ runner.temp }}/same-oci/saas-image-candidate.json
+            ${{ runner.temp }}/same-oci/oci-promotion-manifest.json
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 30

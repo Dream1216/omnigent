@@ -1,0 +1,418 @@
+"""Draft: recover only fixed C2 4e OCI; a raw checkpoint is never qualification."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+PRODUCT = "4e11681dd3809febeb42cb5d752d423b5f751f82"
+TREE = "cd9cbd2f918df17a44dc63423ac29a5ddd887820"
+UPSTREAM = "825f8500d7cc8e997e5562fa55694cd146165f3c"
+EPOCH = 1793801374
+REPOSITORY = "Dream1216/omnigent"
+WORKFLOW = ".github/workflows/saas-compat018-oci-recovery.yml"
+ORIGINAL_RUN = 41849013923
+ORIGINAL_JOB = 126696305642
+REPORT_ID = 13354100637
+REPORT_SIZE = 692811
+REPORT_SHA = "a8e83dac2d6947b404f2bc4259c0b23306d231d4f35dece8c4dd11f2a10cc272"
+OLD_SEAL_SHA = "fcb031afbb2cc0f9341bd27df19bbc500b04280630fe1e8442d2f39cda727406"
+LABELS = {
+    "org.opencontainers.image.revision": PRODUCT,
+    "ai.omnigent.upstream.revision": UPSTREAM,
+    "ai.omnigent.saas.schema-revision": "p0s000000018",
+    "ai.omnigent.saas.adapter-contract-version": "0.2.0",
+}
+
+
+def require(condition: Any, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+def sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def api(endpoint: str) -> dict[str, Any]:
+    return json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+
+
+def original_evidence(archive: Path) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    require(
+        archive.is_file()
+        and not archive.is_symlink()
+        and archive.stat().st_size == REPORT_SIZE
+        and sha256(archive) == REPORT_SHA,
+        "original small comparison artifact bytes differ",
+    )
+    with zipfile.ZipFile(archive) as bundle:
+        require(bundle.testzip() is None, "original comparison ZIP CRC failed")
+        comparison_bytes = bundle.read("saas-image-candidate.json")
+        comparison = json.loads(comparison_bytes)
+        seal_bytes = bundle.read("oci-promotion-manifest.json")
+        seal = json.loads(seal_bytes)
+        require(
+            hashlib.sha256(seal_bytes).hexdigest() == OLD_SEAL_SHA
+            and seal.get("product_revision") == PRODUCT
+            and seal.get("source_date_epoch") == EPOCH
+            and seal.get("labels") == LABELS
+            and seal.get("comparison_sha256") == hashlib.sha256(comparison_bytes).hexdigest(),
+            "original seal/comparison source binding differs",
+        )
+        require(
+            comparison.get("candidate_evidence_version") == 3
+            and comparison.get("status") == "pass"
+            and comparison.get("violations") == []
+            and comparison.get("product_revision") == PRODUCT
+            and comparison.get("upstream_revision") == UPSTREAM
+            and comparison.get("source_date_epoch") == EPOCH
+            and comparison.get("adapter_contract_version") == "0.2.0"
+            and comparison.get("label_profile") == "executable"
+            and set(comparison.get("images", {}))
+            == {"omnigent-saas-server", "omnigent-saas-host"},
+            "original comparison does not bind fixed C2 product",
+        )
+        scans = seal["scans"]
+        summary_bytes = bundle.read("grype/candidate-scan-summary.json")
+        require(
+            hashlib.sha256(summary_bytes).hexdigest() == scans["summary_sha256"],
+            "historical summary hash differs",
+        )
+        for role in ("server", "host"):
+            repeated = comparison["images"][f"omnigent-saas-{role}"]
+            facts = repeated["first"]
+            require(
+                repeated.get("matching_platform_manifest_and_config") is True
+                and repeated.get("history_created_by_equal") is True
+                and repeated.get("second", {}).get("platforms") == facts["platforms"]
+                and repeated.get("second", {}).get("attestations") == facts["attestations"]
+                and seal["images"][role]["facts"] == facts
+                and set(facts["platforms"]) == {"linux/amd64", "linux/arm64"},
+                "original repeated facts differ",
+            )
+            for platform, fact in facts["platforms"].items():
+                name = f"grype/{role}-{platform.split('/')[-1]}-grype.json"
+                body = bundle.read(name)
+                raw = json.loads(body)
+                high = [m for m in raw["matches"] if m["vulnerability"]["severity"] == "High"]
+                require(
+                    fact["labels"] == LABELS
+                    and hashlib.sha256(body).hexdigest() == scans["reports"][name]
+                    and raw["descriptor"]["name"] == "grype"
+                    and raw["descriptor"]["version"] == "0.120.1"
+                    and raw["source"]["target"]["manifestDigest"] == fact["manifest_digest"]
+                    and raw["source"]["target"]["imageID"] == fact["config_digest"]
+                    and not raw.get("ignoredMatches", [])
+                    and not any(
+                        m["vulnerability"]["severity"] == "Critical" for m in raw["matches"]
+                    )
+                    and len(high) == 1
+                    and high[0]["vulnerability"]["id"] == "CVE-2026-119586",
+                    "historical four-target raw facts differ; they are not fresh admission",
+                )
+    return comparison, seal, comparison_bytes
+
+
+def prepare(directory: Path) -> None:
+    from saas.scripts.legacy_artifact_download import download_artifact_bytes
+
+    prefix = f"repos/{REPOSITORY}"
+    run = api(f"{prefix}/actions/runs/{ORIGINAL_RUN}")
+    require(
+        run.get("id") == ORIGINAL_RUN
+        and run.get("head_sha") == PRODUCT
+        and run.get("event") == "pull_request"
+        and run.get("run_attempt") == 2
+        and run.get("path") == ".github/workflows/saas-image-candidate.yml"
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "success"
+        and run.get("repository", {}).get("full_name") == REPOSITORY,
+        "original native PR producer differs",
+    )
+    pr = api(f"{prefix}/pulls/223")
+    require(
+        pr.get("number") == 223
+        and pr.get("head", {}).get("sha") == PRODUCT
+        and pr.get("base", {}).get("repo", {}).get("full_name") == REPOSITORY,
+        "original PR product differs",
+    )
+    job = api(f"{prefix}/actions/jobs/{ORIGINAL_JOB}")
+    steps = {step["name"]: step for step in job.get("steps", [])}
+    require(
+        job.get("run_id") == ORIGINAL_RUN
+        and job.get("run_attempt") == 2
+        and job.get("name") == "build-candidate"
+        and job.get("status") == "completed"
+        and job.get("conclusion") == "success"
+        and all(
+            steps.get(name, {}).get("conclusion") == "success"
+            for name in (
+                "Build server candidate attempt 1",
+                "Build server candidate attempt 2",
+                "Build host candidate attempt 1",
+                "Build host candidate attempt 2",
+                "Compare repeated executable image facts",
+                "Scan exact OCI candidates on both architectures",
+                "Seal exact admitted OCI archives and raw scan evidence",
+            )
+        ),
+        "original build/comparison/seal steps are not successful",
+    )
+    metadata = api(f"{prefix}/actions/artifacts/{REPORT_ID}")
+    require(
+        metadata.get("id") == REPORT_ID
+        and metadata.get("name") == f"saas-image-candidate-{PRODUCT}"
+        and metadata.get("digest") == f"sha256:{REPORT_SHA}"
+        and metadata.get("size_in_bytes") == REPORT_SIZE
+        and metadata.get("expired") is False
+        and metadata.get("workflow_run", {}).get("id") == ORIGINAL_RUN
+        and metadata.get("workflow_run", {}).get("head_sha") == PRODUCT,
+        "original retained small evidence metadata differs",
+    )
+    directory.mkdir(parents=True, exist_ok=False)
+    archive = directory / "original-report.zip"
+    download_artifact_bytes(
+        REPORT_ID, archive, expected_size=REPORT_SIZE, expected_sha256=REPORT_SHA
+    )
+    original_evidence(archive)
+
+
+def verify_raw(directory: Path, *, comparison_profile: str = "historical") -> dict[str, Any]:
+    from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+
+    require(
+        comparison_profile in {"historical", "clean-C2-server"},
+        "unknown C2 comparison profile",
+    )
+    if (
+        comparison_profile == "clean-C2-server"
+        or (directory / "clean-context-first.json").exists()
+    ):
+        from saas.scripts import compat018_clean_context as clean
+
+        require(
+            not (directory / "grype").exists()
+            and not (directory / "oci-promotion-manifest.json").exists(),
+            "raw checkpoint must not carry admission reports",
+        )
+        clean.verify_complete(directory, Path.cwd(), comparison_profile)
+        report = json.loads((directory / "saas-image-candidate.json").read_text())
+        result = {
+            "schema_version": 2,
+            "product_revision": PRODUCT,
+            "product_tree": TREE,
+            "upstream_revision": UPSTREAM,
+            "source_date_epoch": EPOCH,
+            "rebuilt": True,
+            "comparison_profile": comparison_profile,
+            "original_comparison_artifact_id": REPORT_ID,
+            "original_comparison_artifact_sha256": REPORT_SHA,
+            "images": {
+                role: {
+                    "archive_sha256": sha256(directory / f"{role}-1.tar"),
+                    "facts": report["images"][f"omnigent-saas-{role}"]["first"],
+                }
+                for role in ("server", "host")
+            },
+            "raw_checkpoint_only": True,
+            "fresh_scans_passed": False,
+            "source_and_pg_same_final_run_qualified": False,
+            "signed_or_production_admitted": False,
+        }
+        (directory / "unadmitted-build.json").write_text(json.dumps(result, indent=2) + "\n")
+        return result
+
+    report, _, body = original_evidence(directory / "original-report.zip")
+    require(
+        not (directory / "grype").exists()
+        and not (directory / "oci-promotion-manifest.json").exists(),
+        "raw checkpoint must not carry historical or stale admission reports",
+    )
+    images = {}
+    for role in ("server", "host"):
+        archive = directory / f"{role}-1.tar"
+        require(
+            archive.is_file() and not archive.is_symlink(),
+            "missing regular recovered OCI",
+        )
+        facts = inspect_oci_archive(archive, label_profile="executable")
+        require(
+            facts == report["images"][f"omnigent-saas-{role}"]["first"],
+            "recovered OCI differs from exact original C2 independent comparison",
+        )
+        images[role] = {"archive_sha256": sha256(archive), "facts": facts}
+    # Preserve the comparison bytes named by the historical seal, including formatting.
+    (directory / "saas-image-candidate.json").write_bytes(body)
+    result = {
+        "schema_version": 1,
+        "product_revision": PRODUCT,
+        "product_tree": TREE,
+        "upstream_revision": UPSTREAM,
+        "source_date_epoch": EPOCH,
+        "rebuilt": True,
+        "original_comparison_artifact_id": REPORT_ID,
+        "original_comparison_artifact_sha256": REPORT_SHA,
+        "images": images,
+        "raw_checkpoint_only": True,
+        "fresh_scans_passed": False,
+        "source_and_pg_same_final_run_qualified": False,
+        "signed_or_production_admitted": False,
+    }
+    (directory / "unadmitted-build.json").write_text(json.dumps(result, indent=2) + "\n")
+    return result
+
+
+def verify_raw_producer(
+    run: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    run_id: int,
+    artifact_id: int,
+    sha: str,
+    controller: str,
+) -> None:
+    require(
+        re.fullmatch(r"[0-9a-f]{40}", controller) and re.fullmatch(r"[0-9a-f]{64}", sha),
+        "exact controller and archive SHA required",
+    )
+    require(
+        run.get("id") == run_id
+        and run.get("run_attempt") == 1
+        and run.get("head_sha") == controller
+        and run.get("head_branch") == "main"
+        and run.get("event") == "workflow_dispatch"
+        and run.get("path") == WORKFLOW
+        and run.get("repository", {}).get("full_name") == REPOSITORY,
+        "raw native producer differs; controller is not product",
+    )
+    builders = [j for j in jobs if j.get("name") == "build-compat018-product"]
+    require(
+        len(builders) == 1
+        and builders[0].get("run_id") == run_id
+        and builders[0].get("run_attempt") == 1
+        and builders[0].get("status") == "completed"
+        and builders[0].get("conclusion") == "success"
+        and builders[0].get("runner_group_name") == "GitHub Actions"
+        and "ubuntu-24.04" in builders[0].get("labels", []),
+        "raw checkpoint has no successful hosted builder",
+    )
+    require(
+        metadata.get("id") == artifact_id
+        and metadata.get("name") == f"compat018-raw-{PRODUCT}-{run_id}"
+        and metadata.get("digest") == f"sha256:{sha}"
+        and metadata.get("expired") is False
+        and metadata.get("workflow_run", {}).get("id") == run_id
+        and metadata.get("workflow_run", {}).get("head_sha") == controller
+        and type(metadata.get("size_in_bytes")) is int
+        and 0 < metadata["size_in_bytes"] <= 16 * 1024**3,
+        "actual rebuilt checkpoint artifact differs",
+    )
+
+
+def download_raw(
+    run_id: int,
+    artifact_id: int,
+    sha: str,
+    controller: str,
+    root: Path,
+    *,
+    comparison_profile: str = "historical",
+) -> None:
+    from saas.scripts.legacy_artifact_download import download_artifact_bytes
+    from saas.scripts.oci_promotion import extract_artifact
+
+    prefix = f"repos/{REPOSITORY}"
+    run = api(f"{prefix}/actions/runs/{run_id}")
+    jobs = api(f"{prefix}/actions/runs/{run_id}/attempts/1/jobs?per_page=100")["jobs"]
+    metadata = api(f"{prefix}/actions/artifacts/{artifact_id}")
+    verify_raw_producer(run, jobs, metadata, run_id, artifact_id, sha, controller)
+    archive = root.with_suffix(".zip")
+    download_artifact_bytes(
+        artifact_id,
+        archive,
+        expected_size=metadata["size_in_bytes"],
+        expected_sha256=sha,
+    )
+    extract_artifact(archive, root, zip_sha256=sha)
+    if comparison_profile == "historical" and not (root / "clean-context-first.json").exists():
+        verify_raw(root)
+    else:
+        verify_raw(root, comparison_profile=comparison_profile)
+
+
+def seal(root: Path) -> dict[str, Any]:
+    from saas.scripts.oci_promotion import seal_candidate
+
+    # C2 labels come from the exact original seal, never the current M controller checkout.
+    _, old_seal, _ = original_evidence(root / "original-report.zip")
+    result = seal_candidate(
+        root, labels=old_seal["labels"], source_date_epoch=EPOCH, now=datetime.now(UTC)
+    )
+    path = root / "oci-promotion-manifest.json"
+    path.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+    print(f"manifest-sha256={sha256(path)}")
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "command", choices=("inspect-original", "prepare", "verify", "download", "seal")
+    )
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--run-id", type=int)
+    parser.add_argument("--artifact-id", type=int)
+    parser.add_argument("--sha256")
+    parser.add_argument("--controller")
+    parser.add_argument(
+        "--comparison-profile",
+        choices=("historical", "clean-C2-server"),
+        default="historical",
+    )
+    args = parser.parse_args()
+    if args.command == "inspect-original":
+        original_evidence(args.root)
+        print(
+            json.dumps(
+                {
+                    "original_artifact_verified": True,
+                    "product_revision": PRODUCT,
+                    "historical_each_target_critical": 0,
+                    "historical_each_target_high": 1,
+                    "fresh_scans_passed": False,
+                    "signed_or_production_admitted": False,
+                }
+            )
+        )
+    elif args.command == "prepare":
+        prepare(args.root)
+    elif args.command == "verify":
+        verify_raw(args.root, comparison_profile=args.comparison_profile)
+    elif args.command == "seal":
+        seal(args.root)
+    else:
+        require(
+            bool(args.run_id and args.artifact_id and args.sha256 and args.controller),
+            "actual raw producer coordinates required",
+        )
+        download_raw(
+            args.run_id,
+            args.artifact_id,
+            args.sha256,
+            args.controller,
+            args.root,
+            comparison_profile=args.comparison_profile,
+        )
+
+
+if __name__ == "__main__":
+    main()
