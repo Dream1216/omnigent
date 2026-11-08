@@ -95,12 +95,19 @@ def test_workflow_keeps_fixed_product_and_preserves_before_scan():
     assert "packages" not in build["permissions"]
     steps = build["steps"]
     actual_builds = [
-        step for step in steps if step.get("uses") == "./saas/actions/build-oci-candidate"
+        step
+        for step in steps
+        if step.get("uses") == "./saas/actions/build-oci-candidate"
+        and step.get("if") == "inputs.phase == 'build'"
     ]
     assert {(step["with"]["artifact"], step["with"]["attempt"]) for step in actual_builds} == {
         ("server", "1"),
         ("host", "1"),
     }
+    independent = [step for step in steps if step.get("id") == "independent-server"]
+    assert len(independent) == 1
+    assert independent[0]["if"] == "inputs.phase == 'confirm-server'"
+    assert independent[0]["with"] == {"artifact": "server", "target": "runtime", "attempt": "2"}
     stage_index = next(
         index for index, step in enumerate(steps) if "Stage actual OCI" in step.get("name", "")
     )

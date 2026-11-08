@@ -6,12 +6,16 @@ on:
       - ".github/workflows/saas-accepted-oci-recovery.yml"
       - "saas/scripts/accepted_oci_recovery.py"
       - "tests/saas/test_accepted_oci_recovery.py"
+      - "saas/scripts/accepted_m165_clean_context.py"
+      - "tests/saas/test_accepted_m165_clean_context.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/saas-accepted-oci-recovery.yml"
       - "saas/scripts/accepted_oci_recovery.py"
       - "tests/saas/test_accepted_oci_recovery.py"
+      - "saas/scripts/accepted_m165_clean_context.py"
+      - "tests/saas/test_accepted_m165_clean_context.py"
   workflow_dispatch:
     inputs:
       policy_revision:
@@ -21,8 +25,13 @@ on:
       phase:
         description: Recover cached bytes, or rescan the retained raw checkpoint
         type: choice
-        options: [build, scan]
+        options: [build, confirm-server, scan]
         default: build
+      comparison_profile:
+        description: Historical exact pair, or the independently confirmed clean M165 Server pair
+        type: choice
+        options: [historical, clean-M165-server]
+        default: historical
       raw_run_id:
         type: string
       raw_artifact_id:
@@ -62,10 +71,10 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --group dev --extra saas
-      - run: uv run pytest tests/saas/test_accepted_oci_recovery.py --reruns 0 -q
+      - run: uv run pytest tests/saas/test_accepted_oci_recovery.py tests/saas/test_accepted_m165_clean_context.py --reruns 0 -q
 
   build-accepted-product:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'build'
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && (inputs.phase == 'build' || inputs.phase == 'confirm-server')
     needs: verify-contract
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -79,6 +88,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -86,11 +96,21 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --extra saas
       - name: Authenticate accepted CI and original successful comparison steps
+        if: inputs.phase == 'build'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           uv run python -m saas.scripts.accepted_oci_recovery prepare --root "$RUNNER_TEMP/accepted-raw"
           cp saas/scripts/accepted_oci_recovery.py "$RUNNER_TEMP/accepted_oci_recovery.py"
+      - name: Authenticate retained failed parent and prove current frozen source on both architectures
+        if: inputs.phase == 'confirm-server'
+        id: retained
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run python -m saas.scripts.accepted_m165_clean_context prepare --root "$RUNNER_TEMP/accepted-raw"
+          mkdir "$RUNNER_TEMP/accepted-control"
+          git archive "$GITHUB_SHA" saas | tar -x -C "$RUNNER_TEMP/accepted-control"
       - name: Checkout unchanged accepted business product
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -105,6 +125,7 @@ jobs:
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
         id: recovery-builder
       - name: Recover Server using its existing first-attempt build cache
+        if: inputs.phase == 'build'
         id: server
         uses: ./saas/actions/build-oci-candidate
         with:
@@ -112,16 +133,29 @@ jobs:
           target: runtime
           attempt: "1"
       - name: Recover Host using its existing first-attempt build cache
+        if: inputs.phase == 'build'
         id: host
         uses: ./saas/actions/build-oci-candidate
         with:
           artifact: host
           target: host
           attempt: "1"
+      - name: Independently build only Server without cache for the clean retained first
+        if: inputs.phase == 'confirm-server'
+        id: independent-server
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "2"
       - name: Stage actual OCI before any cleanup or inspection can fail
+        if: inputs.phase == 'build'
         run: |
           mv "$RUNNER_TEMP/server-1.tar" "$RUNNER_TEMP/accepted-raw/"
           mv "$RUNNER_TEMP/host-1.tar" "$RUNNER_TEMP/accepted-raw/"
+      - name: Preserve actual independent Server before any later inspection
+        if: inputs.phase == 'confirm-server'
+        run: mv "$RUNNER_TEMP/server-2.tar" "$RUNNER_TEMP/accepted-raw/"
       - name: Reclaim only this ephemeral builder cache before OCI inspection
         env:
           RECOVERY_BUILDER: ${{ steps.recovery-builder.outputs.name }}
@@ -130,14 +164,20 @@ jobs:
           docker buildx prune --builder "$RECOVERY_BUILDER" --all --force
           echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Match actual four-platform bytes to original independent comparisons
+        if: inputs.phase == 'build'
         id: compare
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           uv run python "$RUNNER_TEMP/accepted_oci_recovery.py" verify --root "$RUNNER_TEMP/accepted-raw"
+      - name: Confirm actual independent Server pair and unchanged historical Host pair
+        if: inputs.phase == 'confirm-server'
+        env:
+          PYTHONPATH: ${{ runner.temp }}/accepted-control
+        run: uv run python "$RUNNER_TEMP/accepted-control/saas/scripts/accepted_m165_clean_context.py" confirm --root "$RUNNER_TEMP/accepted-raw"
       - name: Preserve actual OCI before any fresh vulnerability scan
         id: raw
-        if: always() && steps.server.outcome == 'success' && steps.host.outcome == 'success'
+        if: always() && ((steps.server.outcome == 'success' && steps.host.outcome == 'success') || (inputs.phase == 'confirm-server' && steps.retained.outcome == 'success'))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: accepted-raw-${{ env.PRODUCT_REVISION }}-${{ github.run_id }}
@@ -173,8 +213,9 @@ jobs:
           RAW_RUN: ${{ inputs.raw_run_id || github.run_id }}
           RAW_ID: ${{ inputs.raw_artifact_id || needs.build-accepted-product.outputs.artifact-id }}
           RAW_SHA: ${{ inputs.raw_artifact_sha256 || needs.build-accepted-product.outputs.artifact-sha256 }}
+          COMPARISON_PROFILE: ${{ inputs.phase == 'confirm-server' && 'clean-M165-server' || inputs.comparison_profile }}
         run: |
-          python -m saas.scripts.accepted_oci_recovery download --root "$RUNNER_TEMP/same-oci" --run-id "$RAW_RUN" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA" --policy "$GITHUB_SHA"
+          python -m saas.scripts.accepted_oci_recovery download --root "$RUNNER_TEMP/same-oci" --run-id "$RAW_RUN" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA" --policy "$GITHUB_SHA" --comparison-profile "$COMPARISON_PROFILE"
       - name: Fresh scan and seal without rebuilding or relaxing any gate
         id: seal
         run: |
@@ -190,6 +231,8 @@ jobs:
             ${{ runner.temp }}/same-oci/saas-image-candidate.json
             ${{ runner.temp }}/same-oci/oci-promotion-manifest.json
             ${{ runner.temp }}/same-oci/grype/
+            ${{ runner.temp }}/same-oci/clean-context-first.json
+            ${{ runner.temp }}/same-oci/original-report.zip
           compression-level: 0
           if-no-files-found: error
           retention-days: 30
@@ -203,6 +246,8 @@ jobs:
             ${{ runner.temp }}/same-oci/unadmitted-build.json
             ${{ runner.temp }}/same-oci/saas-image-candidate.json
             ${{ runner.temp }}/same-oci/oci-promotion-manifest.json
+            ${{ runner.temp }}/same-oci/clean-context-first.json
+            ${{ runner.temp }}/same-oci/original-report.zip
           compression-level: 0
           if-no-files-found: warn
           retention-days: 30

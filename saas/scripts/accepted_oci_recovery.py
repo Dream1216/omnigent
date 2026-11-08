@@ -154,7 +154,18 @@ def verify_raw(directory: Path) -> dict[str, Any]:
     return result
 
 
-def download_raw(run_id: int, artifact_id: int, sha: str, policy: str, root: Path) -> None:
+def download_raw(
+    run_id: int,
+    artifact_id: int,
+    sha: str,
+    policy: str,
+    root: Path,
+    *,
+    comparison_profile: str = "historical",
+) -> None:
+    require(
+        comparison_profile in {"historical", "clean-M165-server"}, "unknown comparison profile"
+    )
     prefix = f"repos/{REPOSITORY}"
     run = api(f"{prefix}/actions/runs/{run_id}")
     require(
@@ -196,7 +207,13 @@ def download_raw(run_id: int, artifact_id: int, sha: str, policy: str, root: Pat
         artifact_id, archive, expected_size=metadata["size_in_bytes"], expected_sha256=sha
     )
     extract_artifact(archive, root, zip_sha256=sha)
-    verify_raw(root)
+    if comparison_profile == "historical":
+        verify_raw(root)
+    else:
+        from saas.scripts.accepted_m165_clean_context import verify_complete
+
+        archive.unlink()
+        verify_complete(root, Path.cwd())
 
 
 def main() -> None:
@@ -207,6 +224,9 @@ def main() -> None:
     parser.add_argument("--artifact-id", type=int)
     parser.add_argument("--sha256")
     parser.add_argument("--policy")
+    parser.add_argument(
+        "--comparison-profile", choices=("historical", "clean-M165-server"), default="historical"
+    )
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.root)
@@ -217,7 +237,14 @@ def main() -> None:
             bool(args.run_id and args.artifact_id and args.sha256 and args.policy),
             "exact raw checkpoint coordinates required",
         )
-        download_raw(args.run_id, args.artifact_id, args.sha256, args.policy, args.root)
+        download_raw(
+            args.run_id,
+            args.artifact_id,
+            args.sha256,
+            args.policy,
+            args.root,
+            comparison_profile=args.comparison_profile,
+        )
 
 
 if __name__ == "__main__":
