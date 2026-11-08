@@ -190,7 +190,13 @@ def child_reference(root: Path, role: str, architecture: str) -> str:
 
 
 def promotion_predicate(policy_revision: str, run_id: str, attempt: str) -> dict[str, Any]:
-    binding = lock()
+    return build_promotion_predicate(lock(), WORKFLOW, policy_revision, run_id, attempt)
+
+
+def build_promotion_predicate(
+    binding: dict[str, Any], workflow: str, policy_revision: str, run_id: str, attempt: str
+) -> dict[str, Any]:
+    """Construct the shared workflow predicate from an already verified binding."""
     require(re.fullmatch(r"[0-9a-f]{40}", policy_revision) is not None, "invalid policy SHA")
     require(policy_revision != binding["product_revision"], "signer policy must be explicit")
     require(re.fullmatch(r"[1-9][0-9]*", run_id) is not None, "invalid signing run")
@@ -201,7 +207,7 @@ def promotion_predicate(policy_revision: str, run_id: str, attempt: str) -> dict
             "buildType": BUILD_TYPE,
             "externalParameters": {
                 "workflow": {
-                    "path": WORKFLOW,
+                    "path": workflow,
                     "ref": "refs/heads/main",
                     "repository": repository,
                 },
@@ -234,15 +240,21 @@ def promotion_predicate(policy_revision: str, run_id: str, attempt: str) -> dict
             ],
         },
         "runDetails": {
-            "builder": {"id": f"{repository}/{WORKFLOW}@refs/heads/main"},
+            "builder": {"id": f"{repository}/{workflow}@refs/heads/main"},
             "metadata": {"invocationId": f"{repository}/actions/runs/{run_id}/attempts/{attempt}"},
         },
     }
 
 
 def certificate_claims(revision: str, workflow: str, run_id: str, attempt: str) -> dict[str, str]:
-    binding = lock()
-    repository = f"https://github.com/{binding['repository']}"
+    return build_certificate_claims(lock()["repository"], revision, workflow, run_id, attempt)
+
+
+def build_certificate_claims(
+    repository_name: str, revision: str, workflow: str, run_id: str, attempt: str
+) -> dict[str, str]:
+    """Construct expected native claims without selecting unrelated release material."""
+    repository = f"https://github.com/{repository_name}"
     return {
         "issuer": "https://token.actions.githubusercontent.com",
         "sourceRepositoryURI": repository,
