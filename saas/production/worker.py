@@ -1239,6 +1239,9 @@ def build_production_worker(
 def main() -> int:
     """Verify exact lineage, compose both authorities, and run until SIGTERM."""
 
+    from saas.production.runtime_locale import initialize_production_locale
+
+    initialize_production_locale()
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     config = load_production_worker_config()
     verify_installed_worker_lineage(config)

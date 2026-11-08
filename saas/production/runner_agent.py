@@ -814,6 +814,9 @@ async def _run(config: ProductionRunnerAgentConfig) -> ProductionRunnerAgentStat
 
 
 def main(_argv: Sequence[str] | None = None) -> int:
+    from saas.production.runtime_locale import initialize_production_locale
+
+    initialize_production_locale()
     config = load_production_runner_agent_config()
     verify_installed_runner_agent_lineage(config)
     asyncio.run(_run(config))

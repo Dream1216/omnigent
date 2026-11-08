@@ -1792,6 +1792,9 @@ async def _run(config: ProductionRunnerControlConfig) -> None:
 def main(_argv: Sequence[str] | None = None) -> int:
     """Fail closed before socket bind when release, PKI, or DB authority is absent."""
 
+    from saas.production.runtime_locale import initialize_production_locale
+
+    initialize_production_locale()
     config = load_production_runner_control_config()
     verify_installed_runner_control_lineage(config)
     asyncio.run(_run(config))

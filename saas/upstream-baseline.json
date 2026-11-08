@@ -114,11 +114,33 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 225,
-    "max_upstream_net_added_loc": 4927,
+    "max_direct_upstream_files": 229,
+    "max_upstream_net_added_loc": 5055,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "compat018_runtime_locale_guard_20261109": {
+      "parent_source": "ed81f2460102fab2ab6e9d0f60a091d07da026e4",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "recorded_at": "2026-11-09",
+      "previous_max_upstream_net_added_loc": 4927,
+      "max_upstream_net_added_loc": 5055,
+      "previous_max_direct_upstream_files": 225,
+      "max_direct_upstream_files": 229,
+      "measured_upstream_net_added_loc": 5055,
+      "measured_direct_upstream_files": 229,
+      "scope_paths": [
+        "omnigent/inner/os_env.py",
+        "omnigent/inner/terminal.py",
+        "tests/inner/test_os_env.py",
+        "tests/inner/test_terminal.py"
+      ],
+      "reason": "Backport only the reviewed Linux sandbox locale helper and its two final environment-merge call sites to the original C2 runtime, with owning spawn-boundary regressions. Add explicit production locale initialization before all six existing SaaS entry configurations and reuse its owning ordering/rejection tests. This changes the C2 runtime subject; neither M native facts nor old C2 source/image qualification is relabeled. Preserve C2 implementation outside these guards, all prior dependency and budget history, nine patches and the 0.85 isolation floor. The four additional upstream paths and 128 net lines are exactly measured under the existing direct human project-wide budget authority. All original source CI, independent image comparisons, fresh raw High blocking with only separately approved applicable C2 conditions, protected native evidence receipt, signatures and readback remain required."
+    },
     "compat018_dependency_security_rebuild_20261109": {
       "parent_source": "4e11681dd3809febeb42cb5d752d423b5f751f82",
       "authorization_source": {
