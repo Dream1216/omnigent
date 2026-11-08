@@ -45,7 +45,7 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
         "saas/scripts/compare_oci_rebuilds.py",
     }
     assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in aliyun_hashes.values())
-    assert len(trusted_inputs) == 22
+    assert len(trusted_inputs) == 21
     for trusted_input in trusted_inputs:
         path, expected_digests = trusted_input.split("|", 1)
         allowed_digests = expected_digests.split(",")

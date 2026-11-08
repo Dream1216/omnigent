@@ -16,7 +16,6 @@ POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 # Candidate inputs that can change pytest collection, dependency resolution,
 # fixtures, or the selected assertions are pinned by the trusted main policy.
 POSTGRESQL_N1_TRUSTED_INPUTS=(
-  "saas/actions/setup-pinned-crane/action.yml|383728141dbd88956fe9ddcb8fe29ec0e621ab5d2a51943b9e88d8f68d54bcfd"
   "pyproject.toml|2d50173296c09198dcafb573bdd0fc18abce0e1f6afbf702d077b54f3db770f9,3df60bf721d1df8558df6e569ff26a34d628c6590df7ac306a07f890cd9b1411"
   "uv.lock|8c4aef4e0da8a83415effabc4f9b4e946756145729a88ee43c466f994a35730f,a307dcaca4909b33b5fcce4846d03b2beebbda62a42d1c7148f708042bc70866"
   "tests/__init__.py|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -33,11 +32,16 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "saas/n1_compat/Dockerfile|df011b0e3c2a3f9ecf69b71307eeca282c2cf1377d26a20053df4d12a0d2aaed"
   "saas/n1_compat/Dockerfile.dockerignore|72aa85a2e1e88d468d3843d18199b1d0959a7ba4b3227c4354c722c4461f3275"
   "saas/n1_compat/build-requirements.txt|f258dfd1257091c9942501adc5106bee29806def12abd16d48feecabceb3ca29"
-  "tests/saas/test_n1_merge_gate_candidate.py|0a09d3731cce4d6611c85de07e76f7238295a5add9ecc82a2cf92e0bb524c7d4,c21cc93dffc061cd071c6dbd664a358b3a812d60296e6beccf0fdab7f73e5ac9"
+  "tests/saas/test_n1_merge_gate_candidate.py|ef2abbae9c50169ac76327227b76fd0fc89768e4bcf0fe7ee3562a92ed2b7365,0a09d3731cce4d6611c85de07e76f7238295a5add9ecc82a2cf92e0bb524c7d4"
   "tests/saas/test_n1_merge_gate.py|14ac6f69efaf5dcb165e082857bcbbe11764dab043a8cf1ff3b738d3c9b4d262,3b752c50ea3808e5172ecd6579237a8611f51ea3b5059a025a808ecb7dc47840"
   "tests/saas/test_n1_outbox_admission.py|d5db6f7cc3feb7a8a9de64da88bab036ba7b6e57be4043e36c29736d462811c1,2570537024bd3ba5d1501ad58d0e76d65a0b49c66ad471869f7c5cb757440b30"
   "tests/saas/test_control_plane_migration.py|deedcbfcf9cabb1ac4e71cfeb0f0803eb5b62a659bac00720ee99f9befd4d0ef,c533432965dcdc87fb9201459d96e44ce086ccb264007af7f2ba0330a31305eb"
   "tests/saas/test_production_runner_postgresql.py|0004ce57cb1ec4dafad3ea80729c8fedd95d0308098df8e073382e1cd66c0400,c62e642dabe8f0870a67583e6cb8fe64e58a558938678e30f716df51b88774e0"
+)
+
+# Controller tooling is separate from the frozen legacy product PG source inputs.
+POSTGRESQL_N1_ACTION_INPUTS=(
+  "saas/actions/setup-pinned-crane/action.yml|383728141dbd88956fe9ddcb8fe29ec0e621ab5d2a51943b9e88d8f68d54bcfd"
 )
 
 # Separately reviewed Aliyun input bytes; preserve generic and old018 hashes.
@@ -214,7 +218,7 @@ OBSERVED_WORKFLOW_SHA256=$(gh api \
 [[ "$OBSERVED_WORKFLOW_SHA256" == "$POSTGRESQL_N1_WORKFLOW_SHA256" ]] || \
   fail "PostgreSQL N-1 workflow bytes do not match trusted main policy"
 
-for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}"; do
+for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}" "${POSTGRESQL_N1_ACTION_INPUTS[@]}"; do
   trusted_path="${trusted_input%%|*}"
   trusted_sha256s="${trusted_input#*|}"
   [[ "$trusted_sha256s" =~ ^[0-9a-f]{64}(,[0-9a-f]{64})?$ ]] || \

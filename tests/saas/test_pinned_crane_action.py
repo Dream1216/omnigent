@@ -3,6 +3,7 @@
 import hashlib
 import io
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -87,6 +88,14 @@ def test_release_identity_is_fixed_and_only_required_workflows_use_the_shared_in
         == "7ebbdcd05b652345c1f5105f8475e518534b90d66f3bdb50017be63f426ea435"
     )
     assert "continue-on-error" not in step
+    policy = (ROOT / ".github/actions/compat-smoke-saas-n1-gate/evaluate.sh").read_text()
+    action_inputs = re.search(r"POSTGRESQL_N1_ACTION_INPUTS=\(\n(.*?)\n\)", policy, re.S)
+    assert action_inputs is not None
+    assert action_inputs.group(1).strip() == (
+        '"saas/actions/setup-pinned-crane/action.yml|'
+        + hashlib.sha256(ACTION.read_bytes()).hexdigest()
+        + '"'
+    )
     for workflow_path, expected_count in [
         (".github/workflows/saas-oci-promotion-accepted-m165.yml", 3),
         (".github/workflows/saas-n1-compat-image.yml", 2),
