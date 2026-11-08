@@ -130,8 +130,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 6542
-    assert budget["max_direct_upstream_files"] == 222
+    assert budget["max_upstream_net_added_loc"] == 6561
+    assert budget["max_direct_upstream_files"] == 223
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -182,8 +182,13 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     search_fixture = revision["content_search_timeout_fixture_isolation_20261108"]
     assert search_fixture["previous_max_direct_upstream_files"] == 221
     assert search_fixture["previous_max_upstream_net_added_loc"] == 6532
-    assert search_fixture["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
-    assert search_fixture["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert search_fixture["max_direct_upstream_files"] == 222
+    assert search_fixture["max_upstream_net_added_loc"] == 6542
+    ci_recovery = revision["ci_pinned_browser_indexes_and_finished_turn_20261109"]
+    assert ci_recovery["previous_max_direct_upstream_files"] == 222
+    assert ci_recovery["previous_max_upstream_net_added_loc"] == 6542
+    assert ci_recovery["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
+    assert ci_recovery["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
     assert search_fixture["scope_paths"] == ["tests/runner/test_environment_filesystem.py"]
     assert search_fixture["accepted_main"] == "e86f4e92210468103e0b5c4e37406958498deebe"
     composer_followup = revision["upstream_composer_recovery_budget_followup"]

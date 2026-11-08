@@ -9,12 +9,52 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "saas/scripts/ci_install_ubuntu_packages.sh"
 
 
+@pytest.mark.parametrize(
+    "command,accepted",
+    [
+        (
+            "apt-get update&& apt-get install -y --no-install-recommends "
+            "libasound2t64 fonts-liberation",
+            True,
+        ),
+        ("apt-get update && apt-get install -y --allow-unauthenticated tmux", False),
+        ("apt-get update && apt-get install -y --no-install-recommends", False),
+        ("apt-get update && apt-get install -y --no-install-recommends tmux; reboot", False),
+        ("apt-get update && apt-get install -y --no-install-recommends $(reboot)", False),
+        ("apt-get update || apt-get install -y --no-install-recommends tmux", False),
+    ],
+)
+def test_playwright_handoff_only_accepts_its_exact_package_command(command, accepted, monkeypatch):
+    source = SCRIPT.read_text().split("<<'PLAYWRIGHT'\n", 1)[1].split("\nPLAYWRIGHT", 1)[0]
+    monkeypatch.setattr(sys, "argv", ["sudo", "--", "sh", "-c", command])
+    monkeypatch.setenv("OMNIGENT_CI_UBUNTU_ORIGINAL_PATH", "/original/path")
+    monkeypatch.setenv("OMNIGENT_CI_UBUNTU_PACKAGE_SETUP", "/approved/installer.sh")
+    with patch("os.execvpe") as execute:
+        if not accepted:
+            with pytest.raises(SystemExit, match="Refusing unexpected"):
+                exec(compile(source, "playwright-sudo-handoff", "exec"), {})
+            execute.assert_not_called()
+        else:
+            exec(compile(source, "playwright-sudo-handoff", "exec"), {})
+            executable, arguments, environment = execute.call_args.args
+            assert executable == "bash"
+            assert arguments == [
+                "bash",
+                "/approved/installer.sh",
+                "libasound2t64",
+                "fonts-liberation",
+            ]
+            assert environment["PATH"] == "/original/path"
+
+
+@pytest.mark.parametrize("entry", ["packages", "playwright"])
 @pytest.mark.parametrize(
     "update_status,configure_only,reuse,update_errors,install_errors,updates,installs,status,archive_recovery,index_state",
     [
@@ -31,6 +71,20 @@ SCRIPT = Path(__file__).resolve().parents[2] / "saas/scripts/ci_install_ubuntu_p
         (0, False, False, ("404 Not Found",), (), 1, 0, 100, False, None),
         (0, False, False, (), ("502 Bad Gateway",), 1, 2, 0, False, None),
         (0, False, False, (), ("503 Service Unavailable",) * 3, 1, 3, 100, False, None),
+        (0, False, False, (), ("500 Internal Server Error",) * 3, 1, 3, 100, False, None),
+        (
+            0,
+            False,
+            False,
+            (),
+            ("503 Service Unavailable\nHash Sum mismatch",),
+            1,
+            1,
+            100,
+            False,
+            None,
+        ),
+        (0, False, False, (), ("503 Service Unavailable\nNO_PUBKEY",), 1, 1, 100, False, None),
         (
             0,
             False,
@@ -53,6 +107,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "saas/scripts/ci_install_ubuntu_p
 )
 def test_signed_package_setup_stops_on_failed_update(
     tmp_path,
+    entry,
     update_status,
     configure_only,
     reuse,
@@ -83,6 +138,7 @@ def test_signed_package_setup_stops_on_failed_update(
         )
     commands = tmp_path / "commands"
     commands.mkdir()
+    (commands / "python3").symlink_to(sys.executable)
     log = tmp_path / "commands.jsonl"
     environment = tmp_path / "environment.sh"
     environment.write_text(
@@ -90,8 +146,19 @@ def test_signed_package_setup_stops_on_failed_update(
     )
     timeout = commands / "timeout"
     timeout.write_text(
-        '#!/bin/bash\n[[ "$1 $2" == "--kill-after=10s 180s" ]] || exit 81\nshift 2\nexec "$@"\n'
+        "#!/bin/bash\n"
+        '[[ "$1" == --kill-after=10s && ( "$2" == 180s || "$2" == 360s ) ]] || exit 81\n'
+        'shift 2\nexec "$@"\n'
     )
+    uv = commands / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\nimport subprocess,sys\n"
+        "assert sys.argv[1:]==['run','--no-sync','playwright','install-deps','chromium']\n"
+        "result=subprocess.run(['sudo','--','sh','-c',"
+        "'apt-get update&& apt-get install -y --no-install-recommends ripgrep bubblewrap tmux'])\n"
+        "sys.exit(0 if result.returncode==0 else 1)\n"
+    )
+    uv.chmod(0o755)
     sudo = commands / "sudo"
     sudo.write_text(
         f"#!{sys.executable}\n"
@@ -148,7 +215,13 @@ def test_signed_package_setup_stops_on_failed_update(
         [
             "bash",
             str(SCRIPT),
-            *(["--configure-only"] if configure_only else ["ripgrep", "bubblewrap", "tmux"]),
+            *(
+                ["--configure-only"]
+                if configure_only
+                else ["--playwright-chromium"]
+                if entry == "playwright"
+                else ["ripgrep", "bubblewrap", "tmux"]
+            ),
         ],
         env={
             **os.environ,
@@ -170,7 +243,8 @@ def test_signed_package_setup_stops_on_failed_update(
         check=False,
     )
     selection_completed = datetime.now(UTC)
-    assert result.returncode == status, result.stdout + result.stderr
+    expected_status = int(status != 0) if entry == "playwright" and not configure_only else status
+    assert result.returncode == expected_status, result.stdout + result.stderr
     snapshot = snapshot_path.read_text()
     selected = datetime.strptime(snapshot, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     if reuse:
@@ -394,8 +468,8 @@ def test_all_release_ci_apt_and_browser_dependency_entries_use_bounded_setup():
 @pytest.mark.parametrize(
     "errors,apt_failure,calls,status",
     [
-        (["502 Bad Gateway"], True, 2, 0),
-        (["500 Internal Server Error"] * 3, True, 3, 1),
+        (["502 Bad Gateway"], True, 1, 1),
+        (["500 Internal Server Error"] * 3, True, 1, 1),
         (["503 Service Unavailable\nHash Sum mismatch"], True, 1, 1),
         (["503 Service Unavailable\nNO_PUBKEY"], True, 1, 1),
         (["502 Bad Gateway"], False, 1, 1),
@@ -448,6 +522,6 @@ def test_locked_playwright_dependency_transport_is_bounded(
     )
     assert result.returncode == status, result.stdout + result.stderr
     assert int((tmp_path / "calls").read_text()) == calls
-    logs = list(tmp_path.glob("omnigent-ubuntu-apt-attempt-*"))
+    logs = list(tmp_path.glob("omnigent-playwright-deps.*"))
     assert len(logs) == calls
     assert errors[0] in "\n".join(path.read_text() for path in logs)

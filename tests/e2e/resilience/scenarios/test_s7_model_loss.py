@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,14 +93,32 @@ def test_s7_model_loss(
     report.require()
 
 
+@pytest.mark.parametrize(
+    "status,replies,expected",
+    [("running", 1, None), ("idle", 1, "completed"), ("failed", 1, "failed"), ("idle", 0, None)],
+)
+def test_outcome_requires_a_finished_turn(monkeypatch, status, replies, expected):
+    lab = SimpleNamespace(snapshot=lambda session_id: {"status": status})
+    driver = SimpleNamespace(session_id="scenario", count_text=lambda text, role: replies)
+    turn = Turn("marker", "final reply")
+
+    def poll(predicate, *, timeout):
+        assert timeout == contract.RECOVERY_S
+        return predicate()
+
+    monkeypatch.setattr(contract, "eventually", poll)
+    assert _wait_outcome(lab, driver, turn) == expected
+
+
 def _wait_outcome(lab: Lab, driver: SessionDriver, turn: Turn) -> str | None:
     """``completed``, ``failed``, or ``None`` if the turn neither finished nor failed."""
 
     def _outcome() -> str | None:
-        if driver.count_text(turn.reply, role="assistant"):
-            return "completed"
-        if lab.snapshot(driver.session_id).get("status") == "failed":
+        status = lab.snapshot(driver.session_id).get("status")
+        if status == "failed":
             return "failed"
+        if status == "idle" and driver.count_text(turn.reply, role="assistant"):
+            return "completed"
         return None
 
     return contract.eventually(_outcome, timeout=contract.RECOVERY_S)  # type: ignore[return-value]

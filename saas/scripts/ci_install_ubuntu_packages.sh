@@ -180,8 +180,38 @@ install_ci_ubuntu_packages() {
 }
 export -f install_ci_ubuntu_packages
 if [[ "$1" == --playwright-chromium ]]; then
-  # The locked Playwright release owns its complete dependency list.
-  timeout --kill-after=10s 360s bash -c 'run_ci_ubuntu_apt "$@"' -- uv run --no-sync playwright install-deps chromium
+  # Playwright owns the package list; the existing installer owns its pinned indexes.
+  [[ "$(id -u)" != 0 ]]
+  playwright_commands=$(mktemp -d "${RUNNER_TEMP:?}/omnigent-playwright-commands.XXXXXX")
+  trap 'rm -f "$sources"; rm -rf -- "$playwright_commands"' EXIT
+  export OMNIGENT_CI_UBUNTU_ORIGINAL_PATH="$PATH"
+  export OMNIGENT_CI_UBUNTU_PACKAGE_SETUP
+  OMNIGENT_CI_UBUNTU_PACKAGE_SETUP="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
+  cat > "$playwright_commands/sudo" <<'PLAYWRIGHT'
+#!/usr/bin/env python3
+import os
+import re
+import shlex
+import sys
+
+if len(sys.argv) != 5 or sys.argv[1:4] != ["--", "sh", "-c"]:
+    raise SystemExit("Refusing unexpected Playwright privilege command")
+lexer = shlex.shlex(sys.argv[4], posix=True, punctuation_chars=";&|")
+lexer.whitespace_split = True
+arguments = list(lexer)
+prefix = ["apt-get", "update", "&&", "apt-get", "install", "-y", "--no-install-recommends"]
+packages = arguments[len(prefix):]
+if arguments[:len(prefix)] != prefix or not packages or any(
+    re.fullmatch(r"[a-z0-9][a-z0-9+.-]*", package) is None for package in packages
+):
+    raise SystemExit("Refusing unexpected Playwright dependency command")
+environment = dict(os.environ, PATH=os.environ["OMNIGENT_CI_UBUNTU_ORIGINAL_PATH"])
+os.execvpe("bash", ["bash", environment["OMNIGENT_CI_UBUNTU_PACKAGE_SETUP"], *packages], environment)
+PLAYWRIGHT
+  chmod 700 "$playwright_commands/sudo"
+  playwright_log=$(mktemp "${RUNNER_TEMP:?}/omnigent-playwright-deps.XXXXXX")
+  timeout --kill-after=10s 360s env PATH="$playwright_commands:$PATH" \
+    uv run --no-sync playwright install-deps chromium 2>&1 | tee "$playwright_log"
   verify_archive_index_state
   exit 0
 fi
