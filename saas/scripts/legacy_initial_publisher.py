@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, cast
 
+from saas.scripts import compat018_recovered_input as c2_recovered
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
 from saas.scripts.legacy_build_controller import (
     control_context,
@@ -35,7 +36,11 @@ from saas.scripts.legacy_build_controller import (
 )
 from saas.scripts.legacy_check_history import _pages
 from saas.scripts.legacy_control_results import collect_pg_receipts, verify_control_run
-from saas.scripts.legacy_native_evidence import _MAX_RESPONSES, api, preserve_native_evidence
+from saas.scripts.legacy_native_evidence import (
+    _MAX_RESPONSES,
+    api,
+    preserve_native_evidence,
+)
 from saas.scripts.legacy_pr_candidate import (
     UPLOAD_STEP as UPLOAD_STEP,
 )
@@ -43,6 +48,7 @@ from saas.scripts.legacy_pr_candidate import (
     load_transfer_profile,
     transfer_provenance,
     upload_step_name,
+    validate_transfer_profile,
 )
 from saas.scripts.legacy_pytest_results import verify_job_artifact_identity
 from saas.scripts.legacy_source_ci import (
@@ -360,7 +366,10 @@ def validate_export_inventory(root: Path, role: str) -> None:
     require(actual == inventories[role], "publication export has missing or extra payloads")
     for relative in actual:
         path = root / relative
-        require(path.stat().st_size <= 256 * 1024 * 1024, "publication JSON exceeds parser bound")
+        require(
+            path.stat().st_size <= 256 * 1024 * 1024,
+            "publication JSON exceeds parser bound",
+        )
         read_json(path)
 
 
@@ -380,7 +389,10 @@ def _checkout_logs(
         .partition(" ")[2]
         .startswith("##[group]Run actions/checkout@")
     ]
-    require(len(starts) == len(names), "native publication checkout header inventory differs")
+    require(
+        len(starts) == len(names),
+        "native publication checkout header inventory differs",
+    )
     return {
         name: checkout_step_log("".join(lines[start:]), steps[name], job_steps, workflow)
         for name, start in zip(names, starts, strict=True)
@@ -555,7 +567,11 @@ def collect_qualified_source(
     """Revalidate the exact same-attempt producer instead of repeating its work."""
     if profile["component"] != COMPATIBILITY_COMPONENT:
         result = qualify_source_ci(
-            control, product, profile["component"], context["control_revision"], destination
+            control,
+            product,
+            profile["component"],
+            context["control_revision"],
+            destination,
         )
         return result, {"mode": "original-full-source-qualification"}
     root, coordinate = collect_job_export(
@@ -640,13 +656,25 @@ def collect_qualified_source(
             destination / "changed-source-qualification",
         )
         strict_qualification(result, profile, context["control_revision"])
-    return result, {**coordinate, "current_inputs_required_full_requalification": changed}
+    return result, {
+        **coordinate,
+        "current_inputs_required_full_requalification": changed,
+    }
 
 
 def collect_original_input(
     control: Path, profile: dict[str, Any], destination: Path
 ) -> dict[str, Any]:
+    selection = c2_recovered.dispatch_selection(profile)
     with preserve_native_evidence(destination / "native-api", evidence_root=destination):
+        if selection is not None:
+            return c2_recovered.collect(
+                control,
+                profile,
+                selection,
+                load_original_inputs(control, profile),
+                destination / "download",
+            )
         result = download_original_oci(
             control,
             profile["component"],
@@ -682,7 +710,11 @@ def collect_original_input(
 
 
 def collect_inputs(
-    control: Path, product: Path, component: str, context: dict[str, Any], destination: Path
+    control: Path,
+    product: Path,
+    component: str,
+    context: dict[str, Any],
+    destination: Path,
 ) -> tuple[dict[str, Any], Path, Path]:
     destination.mkdir(parents=True, exist_ok=False)
     profile = load_profile(control, component)
@@ -729,6 +761,14 @@ def collect_inputs(
         "native_product_pg": {"sha256": digest(pg), "result": pg},
         "rebuild_in_publisher": False,
     }
+    if original.get("kind") == c2_recovered.ORIGIN:
+        result.update(
+            kind=c2_recovered.VARIANT,
+            recovered_compat018_oci=result.pop("original_pr_oci"),
+            historical_pr_transfer_profile=result.pop("transfer_profile"),
+            historical_pr_oci_registration=load_original_inputs(control, profile),
+        )
+        validate_input_identities(result)
     with preserve_native_evidence(destination / "final-native-api", evidence_root=destination):
         verify_native_control(control, context)
         verify_source_delta(product, profile)
@@ -736,12 +776,27 @@ def collect_inputs(
     return result, destination / "original/download/original-oci.zip", wheel
 
 
-def unpack_original(archive: Path, original: dict[str, Any], destination: Path) -> None:
+def unpack_original(
+    archive: Path,
+    original: dict[str, Any],
+    destination: Path,
+    *,
+    product: Path | None = None,
+) -> None:
     require(
         archive.stat().st_size == original["zip_size"]
         and file_sha256(archive) == original["zip_sha256"],
         "original OCI ZIP bytes differ",
     )
+    if original.get("kind") == c2_recovered.ORIGIN:
+        require(
+            product is not None,
+            "recovered C2 payload requires the actual frozen Git product",
+        )
+        c2_recovered.verify_sealed_zip(archive, original["zip_size"], crc=True)
+        safe_extract(archive, destination, max_bytes=original["zip_size"])
+        c2_recovered.verify_payload(destination, original, product)
+        return
     expected = {
         "server-1.tar",
         "host-1.tar",
@@ -780,7 +835,86 @@ def scan(control: Path, root: Path, destination: Path) -> None:
     )
 
 
+def oci_input(admission: dict[str, Any]) -> dict[str, Any]:
+    """The recovered producer and the historical PR are distinct source roles."""
+    if admission.get("kind") == c2_recovered.VARIANT:
+        require(
+            set(admission)
+            == {
+                "kind",
+                "control",
+                "profile",
+                "recovered_compat018_oci",
+                "historical_pr_transfer_profile",
+                "historical_pr_oci_registration",
+                "fresh_control_wheel",
+                "source_qualification",
+                "native_product_pg",
+                "rebuild_in_publisher",
+            }
+            and admission.get("rebuild_in_publisher") is False
+            and admission["historical_pr_oci_registration"] == c2_recovered.HISTORICAL,
+            "recovered C2 admission has an unknown field or changed historical registration",
+        )
+        value = admission["recovered_compat018_oci"]
+        c2_recovered.validate_descriptor(value, admission["profile"])
+        # A dispatch descriptor cannot silently replace the old PR transfer profile.
+        transfer = admission["historical_pr_transfer_profile"]
+        validate_transfer_profile(transfer, c2_recovered.COMPONENT)
+        return value
+    require(
+        admission.get("kind") == VARIANT
+        and not any(
+            key in admission
+            for key in (
+                "recovered_compat018_oci",
+                "historical_pr_transfer_profile",
+                "historical_pr_oci_registration",
+            )
+        ),
+        "unknown or conflated legacy OCI input variant",
+    )
+    return admission["original_pr_oci"]
+
+
+def validate_recovered_input_identities(admission: dict[str, Any]) -> None:
+    original = oci_input(admission)
+    profile, context, fresh = (
+        admission["profile"],
+        admission["control"],
+        admission["fresh_control_wheel"],
+    )
+    require(
+        all(
+            fresh.get(key) == context[key]
+            for key in ("control_revision", "run_id", "attempt", "actor")
+        )
+        and all(fresh.get(key) == profile[key] for key in ("product_revision", "product_tree"))
+        and type(fresh.get("job_id")) is int
+        and fresh["job_id"] > 0
+        and type(fresh.get("artifact_id")) is int
+        and fresh["artifact_id"] > 0
+        and type(fresh.get("zip_size")) is int
+        and fresh["zip_size"] > 0
+        and all(
+            isinstance(fresh.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", fresh[key])
+            for key in ("zip_sha256", "wheel_sha256", "source_facts_sha256")
+        )
+        and original["run_id"] != fresh["run_id"]
+        and original["artifact_id"] != fresh["artifact_id"]
+        and original["job_id"] != fresh["job_id"]
+        and fresh["run_id"] != original["producer"]["raw_checkpoint"]["run_id"]
+        and fresh["artifact_id"] != original["producer"]["raw_checkpoint"]["artifact_id"]
+        and fresh["job_id"] != original["producer"]["raw_checkpoint"]["builder_job_id"],
+        "recovered C2 and fresh final wheel native identities are incomplete or conflated",
+    )
+
+
 def validate_input_identities(admission: dict[str, Any]) -> None:
+    if admission.get("kind") == c2_recovered.VARIANT:
+        validate_recovered_input_identities(admission)
+        return
+    oci_input(admission)
     profile = admission["profile"]
     fresh = admission["fresh_control_wheel"]
     context = admission["control"]
@@ -818,7 +952,7 @@ def admitted_manifest(
     profile = admission["profile"]
     return verify_candidate(
         root,
-        manifest_sha256=admission["original_pr_oci"]["seal_sha256"],
+        manifest_sha256=oci_input(admission)["seal_sha256"],
         labels=expected_labels(product, profile["product_revision"]),
         source_date_epoch=profile["source_date_epoch"],
         current_scan_root=scans,
@@ -857,7 +991,14 @@ def read_registry(root: Path, manifest: dict[str, Any], images: dict[str, str]) 
     for role in IMAGES:
         layout = root / f"{role}-layout"
         subprocess.run(
-            ["crane", "pull", "--format=oci", "--platform=all", images[role], str(layout)],
+            [
+                "crane",
+                "pull",
+                "--format=oci",
+                "--platform=all",
+                images[role],
+                str(layout),
+            ],
             check=True,
         )
         archive = root / f"{role}-1.tar"
@@ -898,7 +1039,10 @@ def publish_exact(
             )
             subprocess.run(["crane", "push", str(layout), tag], check=True)
         actual = subprocess.check_output(["crane", "digest", tag], text=True).strip()
-        require(actual == manifest["images"][role]["index_digest"], "published OCI index changed")
+        require(
+            actual == manifest["images"][role]["index_digest"],
+            "published OCI index changed",
+        )
         shutil.rmtree(layout)
         (root / f"{role}-1.tar").unlink()
     read_registry(destination / "readback", manifest, images)
@@ -909,10 +1053,14 @@ def install_syft(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=False)
     archive = root / "syft.tar.gz"
     url = f"https://github.com/anchore/syft/releases/download/v{SYFT_VERSION}/syft_{SYFT_VERSION}_linux_amd64.tar.gz"
-    with urllib.request.urlopen(url, timeout=60) as response, archive.open("xb") as output:
+    with (
+        urllib.request.urlopen(url, timeout=60) as response,
+        archive.open("xb") as output,
+    ):
         shutil.copyfileobj(response, output, length=1024 * 1024)
     require(
-        file_sha256(archive) == SYFT_SHA256, "Syft archive differs from the hash-pinned release"
+        file_sha256(archive) == SYFT_SHA256,
+        "Syft archive differs from the hash-pinned release",
     )
     with tarfile.open(archive) as bundle:
         member = bundle.getmember("syft")
@@ -992,7 +1140,10 @@ def execute_runtime(
     # their original tar framing, which retains the original archive SHA.
     scan(control, oci_root, destination / "scans")
     scans = validate_scans(
-        destination / "scans", manifest["images"], now=datetime.now(UTC), archive_root=oci_root
+        destination / "scans",
+        manifest["images"],
+        now=datetime.now(UTC),
+        archive_root=oci_root,
     )
     syft = install_syft(work / "tools")
     sboms = destination / "sbom"
@@ -1091,7 +1242,8 @@ def typed_provenance(
 ) -> dict[str, Any]:
     """A separate variant; the original v1 statement and verifier stay exact."""
     require(
-        admission.get("kind") == VARIANT and admission.get("rebuild_in_publisher") is False,
+        admission.get("kind") in {VARIANT, c2_recovered.VARIANT}
+        and admission.get("rebuild_in_publisher") is False,
         "unknown initial publication variant",
     )
     validate_input_identities(admission)
@@ -1115,7 +1267,8 @@ def typed_provenance(
         "published/runtime source admission differs",
     )
     require(
-        runtime["publication_sha256"] == digest(publication), "runtime checked another publication"
+        runtime["publication_sha256"] == digest(publication),
+        "runtime checked another publication",
     )
     repository = "https://github.com/" + REPOSITORY
     context = admission["control"]
@@ -1138,8 +1291,10 @@ def typed_provenance(
         )
     artifact_ids = [
         coordinate["artifact_id"]
-        for coordinate in [admission["original_pr_oci"], fresh, *artifacts.values()]
+        for coordinate in [oci_input(admission), fresh, *artifacts.values()]
     ]
+    if admission["kind"] == c2_recovered.VARIANT:
+        artifact_ids.append(oci_input(admission)["producer"]["raw_checkpoint"]["artifact_id"])
     require(
         len(artifact_ids) == len(set(artifact_ids)),
         "typed publication artifact roles are conflated",
@@ -1158,7 +1313,7 @@ def typed_provenance(
         },
     ]
     for coordinate in [
-        admission["original_pr_oci"],
+        oci_input(admission),
         admission["fresh_control_wheel"],
         *artifacts.values(),
     ]:
@@ -1168,15 +1323,19 @@ def typed_provenance(
                 "digest": {"sha256": coordinate["zip_sha256"]},
             }
         )
-    return {
+    statement = {
         "buildDefinition": {
             "buildType": BUILD_TYPE,
             "externalParameters": {
-                "workflow": {"path": WORKFLOW, "ref": "refs/heads/main", "repository": repository},
+                "workflow": {
+                    "path": WORKFLOW,
+                    "ref": "refs/heads/main",
+                    "repository": repository,
+                },
                 "input_variant": VARIANT,
                 "legacy_security_profile": copy.deepcopy(profile),
                 "control_identity": copy.deepcopy(context),
-                "original_pr_oci": copy.deepcopy(admission["original_pr_oci"]),
+                "original_pr_oci": copy.deepcopy(oci_input(admission)),
                 "fresh_control_wheel": copy.deepcopy(admission["fresh_control_wheel"]),
                 "source_qualification": copy.deepcopy(admission["source_qualification"]),
                 "native_product_pg": copy.deepcopy(admission["native_product_pg"]),
@@ -1196,6 +1355,25 @@ def typed_provenance(
             },
         },
     }
+
+    if admission["kind"] == c2_recovered.VARIANT:
+        parameters = statement["buildDefinition"]["externalParameters"]
+        parameters["input_variant"] = c2_recovered.VARIANT
+        parameters["recovered_compat018_oci"] = parameters.pop("original_pr_oci")
+        parameters["historical_pr_oci_registration"] = copy.deepcopy(
+            admission["historical_pr_oci_registration"]
+        )
+        parameters["historical_pr_transfer_profile"] = copy.deepcopy(
+            admission["historical_pr_transfer_profile"]
+        )
+        raw = oci_input(admission)["producer"]["raw_checkpoint"]
+        statement["buildDefinition"]["resolvedDependencies"].append(
+            {
+                "uri": f"{repository}/actions/artifacts/{raw['artifact_id']}",
+                "digest": {"sha256": raw["zip_sha256"]},
+            }
+        )
+    return statement
 
 
 def verify_runtime_report(
@@ -1230,7 +1408,10 @@ def verify_runtime_report(
     require(
         runtime.get("scans")
         == validate_scans(
-            root / "scans", manifest["images"], now=datetime.now(UTC), archive_root=oci_root
+            root / "scans",
+            manifest["images"],
+            now=datetime.now(UTC),
+            archive_root=oci_root,
         ),
         "current raw runtime scans differ",
     )
@@ -1245,7 +1426,8 @@ def verify_runtime_report(
 def native_sbom_verify(subject: str, predicate: dict[str, Any], context: dict[str, Any]) -> None:
     require(
         re.fullmatch(
-            r"oci://ghcr.io/dream1216/omnigent-saas-(server|host)@sha256:[0-9a-f]{64}", subject
+            r"oci://ghcr.io/dream1216/omnigent-saas-(server|host)@sha256:[0-9a-f]{64}",
+            subject,
         )
         is not None,
         "invalid native SBOM subject",
@@ -1303,11 +1485,16 @@ def verify_signatures(root: Path, admission: dict[str, Any], wheel: Path) -> dic
     for role in IMAGES:
         image = publication["images"][role]
         verify_native_statement(
-            "oci://" + image, digest=image.split("@", 1)[1], predicate=predicate, **coordinates
+            "oci://" + image,
+            digest=image.split("@", 1)[1],
+            predicate=predicate,
+            **coordinates,
         )
     for name, facts in runtime["sboms"].items():
         native_sbom_verify(
-            "oci://" + facts["image"], read_json(root / "sbom" / f"{name}.spdx.json"), context
+            "oci://" + facts["image"],
+            read_json(root / "sbom" / f"{name}.spdx.json"),
+            context,
         )
     result = {
         "kind": "legacy_native_signature_readback/v2",
@@ -1335,7 +1522,11 @@ def stage(
         control, product, component, context, destination / "inputs"
     )
     root = destination / "oci"
-    unpack_original(archive, admission["original_pr_oci"], root)
+    selected_oci = oci_input(admission)
+    if admission["kind"] == c2_recovered.VARIANT:
+        unpack_original(archive, selected_oci, root, product=product)
+    else:
+        unpack_original(archive, selected_oci, root)
     output = destination / "export"
     output.mkdir()
     profile = admission["profile"]
@@ -1362,7 +1553,7 @@ def stage(
                 "kind": "legacy_exact_oci_publication/v1",
                 "admission_sha256": digest(admission),
                 "images": images,
-                "candidate_seal_sha256": admission["original_pr_oci"]["seal_sha256"],
+                "candidate_seal_sha256": selected_oci["seal_sha256"],
                 "registry_readback_pass": True,
                 "rebuilt": False,
             }
@@ -1383,12 +1574,13 @@ def stage(
                 "kind": "legacy_exact_oci_publication/v1",
                 "admission_sha256": digest(admission),
                 "images": image_references(admission, manifest),
-                "candidate_seal_sha256": admission["original_pr_oci"]["seal_sha256"],
+                "candidate_seal_sha256": selected_oci["seal_sha256"],
                 "registry_readback_pass": True,
                 "rebuilt": False,
             }
             require(
-                publication == expected, "native publisher receipt differs from admitted exact OCI"
+                publication == expected,
+                "native publisher receipt differs from admitted exact OCI",
             )
             if command == "runtime":
                 result = execute_runtime(
@@ -1476,7 +1668,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("prepare", "publish", "runtime", "attest-inputs", "verify-signatures", "consume"),
+        choices=(
+            "prepare",
+            "publish",
+            "runtime",
+            "attest-inputs",
+            "verify-signatures",
+            "consume",
+        ),
     )
     parser.add_argument("--control", type=Path, required=True)
     parser.add_argument("--product", type=Path, required=True)

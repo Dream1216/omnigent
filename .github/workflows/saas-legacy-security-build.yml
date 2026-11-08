@@ -8,9 +8,21 @@ on:
         type: choice
         required: true
         options: [Core, Gateway, Model, Compatibility018]
+      compat018_raw_run_id:
+        description: Optional actual fixed C2 recovery raw run ID; empty preserves original PR source
+        type: string
+        required: false
+      compat018_sealed_run_id:
+        description: Optional actual C2 scan/seal run ID; defaults to the raw run ID
+        type: string
+        required: false
 
 permissions:
   contents: read
+
+env:
+  COMPAT018_RAW_RUN_ID: ${{ inputs.compat018_raw_run_id }}
+  COMPAT018_SEALED_RUN_ID: ${{ inputs.compat018_sealed_run_id }}
 
 concurrency:
   group: saas-legacy-security-${{ inputs.component }}
