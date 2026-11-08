@@ -360,6 +360,18 @@
         }
       ]
     },
+    "source_advisory_record_correction": {
+      "corrected_sha256": "0c7062c10b4d61e522b89a48e75589018c64046904bd21be38fca5181c56df60",
+      "restored_sha256": "3636b3dbc9d37d5d2efd768b823735780e441c276ccf0a333ac6badf3fe5a08f",
+      "reason": "Exact independently reviewed one-line rate_limit advisory compatibility. Invert only this unique Boolean expression before every existing correction, whole-file and preserved/approved function hash. Advisory records remain excluded from qualification; all non-rate responses remain mandatory.",
+      "independent_source_review_sha256": "cce76d3ea22956e4a966a823de5edf3fd5d0aa892174a67cf448187758258537",
+      "inverse_fragments": [
+        {
+          "before": "            and \"response\" in prior,\n",
+          "after": "            and (\"response\" in prior or endpoint == \"rate_limit\"),\n"
+        }
+      ]
+    },
     "source_native_response_capacity_correction": {
       "corrected_sha256": "3636b3dbc9d37d5d2efd768b823735780e441c276ccf0a333ac6badf3fe5a08f",
       "restored_sha256": "822681644f8826e23ceb42af52befd87a59203d9c76749a0e3c640007b9e113a",

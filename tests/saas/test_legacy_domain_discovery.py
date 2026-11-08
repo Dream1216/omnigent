@@ -659,6 +659,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "source_advisory_record_correction",
         "runtime_condition_admission_correction",
         "source_native_response_capacity_correction",
         "same_attempt_source_qualification_reuse_correction",
@@ -696,6 +697,7 @@ def reviewed_source_bytes(root, relative, expected):
 @pytest.mark.parametrize(
     ("relative", "correction_name"),
     [
+        ("saas/scripts/legacy_initial_publisher.py", "source_advisory_record_correction"),
         ("saas/scripts/legacy_initial_publisher.py", "source_native_response_capacity_correction"),
         (
             "saas/scripts/legacy_initial_publisher.py",
