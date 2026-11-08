@@ -1309,6 +1309,30 @@ async def test_external_native_cold_inputs_ack_before_shared_bootstrap(
         await runner.aclose()
 
 
+async def test_external_native_cold_inputs_are_durable_before_request_policy(
+    startup_env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cold policy lookup must not hold accepted input only in its HTTP caller."""
+    durable = asyncio.Event()
+    enqueue = startup_env.app.state.startup_inputs.enqueue
+
+    async def observe_saved(*args: Any, **kwargs: Any):
+        saved = await enqueue(*args, **kwargs)
+        durable.set()
+        return saved
+
+    async def policy_after_save(*_: Any, **__: Any) -> None:
+        await durable.wait()
+
+    monkeypatch.setattr(startup_env.app.state.startup_inputs, "enqueue", observe_saved)
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.routes_events._evaluate_input_policy", policy_after_save
+    )
+    await test_external_native_cold_inputs_ack_before_shared_bootstrap(
+        startup_env, monkeypatch, cancel_before_ack=True
+    )
+
+
 async def test_external_native_queue_and_workers_stay_workspace_scoped(
     startup_env: _Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:

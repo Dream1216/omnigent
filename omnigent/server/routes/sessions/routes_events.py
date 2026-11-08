@@ -1456,6 +1456,22 @@ def register_events_routes(
             await validate_saved_selection(cast("Request", request), conv, conv.model_override)
 
         startup = getattr(request.app.state, "startup_inputs", None)
+        cold_native_input = False
+        if (
+            not isinstance(request, (StartupInputContext, _RunnerEventContext))
+            and startup is not None
+            and body.type == "message"
+            and body.data.get("role") == "user"
+            and _is_native_terminal_session(conv)
+            and conv.host_id is not None
+            and startup.hosts.get(conv.host_id) is not None
+        ):
+            initializer = getattr(request.app.state, "runner_session_initializer", None)
+            if initializer is not None:
+                cold_runner = await _get_runner_client(session_id, runner_router)
+                cold_native_input = cold_runner is not None and not initializer.is_initialized(
+                    conv, cold_runner
+                )
         if (
             not isinstance(request, (StartupInputContext, _RunnerEventContext))
             and startup is not None
@@ -1463,7 +1479,7 @@ def register_events_routes(
                 (body.type == "message" and body.data.get("role") == "user")
                 or (body.type == _SLASH_COMMAND_TYPE and body.data.get("kind") == "skill")
             )
-            and await startup.accepts(conv, request.app)
+            and (cold_native_input or await startup.accepts(conv, request.app))
         ):
             if peer_message:
                 await asyncio.to_thread(

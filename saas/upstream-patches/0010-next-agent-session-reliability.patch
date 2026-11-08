@@ -1466,3 +1466,27 @@ index 476f4f3a73b..a4be9958c87 100644
 +    _serve_inherited_listener(
 +        sys.argv[1], int(sys.argv[2]), int(sys.argv[3]) if len(sys.argv) > 3 else None
 +    )
+diff --git a/omnigent/server/routes/sessions/routes_events.py b/omnigent/server/routes/sessions/routes_events.py
+index ff3fd32791e..efaf6393eaf 100644
+--- a/omnigent/server/routes/sessions/routes_events.py
++++ b/omnigent/server/routes/sessions/routes_events.py
+@@ -1458,0 +1459,16 @@ def register_events_routes(
++        cold_native_input = False
++        if (
++            not isinstance(request, (StartupInputContext, _RunnerEventContext))
++            and startup is not None
++            and body.type == "message"
++            and body.data.get("role") == "user"
++            and _is_native_terminal_session(conv)
++            and conv.host_id is not None
++            and startup.hosts.get(conv.host_id) is not None
++        ):
++            initializer = getattr(request.app.state, "runner_session_initializer", None)
++            if initializer is not None:
++                cold_runner = await _get_runner_client(session_id, runner_router)
++                cold_native_input = cold_runner is not None and not initializer.is_initialized(
++                    conv, cold_runner
++                )
+@@ -1466 +1482 @@ def register_events_routes(
+-            and await startup.accepts(conv, request.app)
++            and (cold_native_input or await startup.accepts(conv, request.app))

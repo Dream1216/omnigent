@@ -460,3 +460,13 @@ SDK spawn composition reads the private binding for non-native harnesses;
 native panes enforce the same binding in TerminalRegistry. Unmanaged lightweight
 registry interfaces and the original native relay/agent-switch paths remain
 compatible. The owning Runner tests cover both guarded execution boundaries.
+
+Cold native input on an online host with an available, uninitialized Runner now
+uses the existing durable startup queue before request policy/spec lookup. The
+original background dispatcher still authorizes and applies policy before
+initialization or delivery. Provider selection validation stays before saving.
+Patch 0010 carries this bounded route change; the owning integration scenario
+adds a deterministic policy-after-save gate while retaining cancellation,
+shared initialization, stable-id conflict and data preservation assertions. The
+previous native CI timeout remains unproven; this closes the separately
+reproduced pre-ACK durability window without extending any timeout.
