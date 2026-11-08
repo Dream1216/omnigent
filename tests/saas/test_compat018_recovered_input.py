@@ -304,6 +304,57 @@ def test_exact_nine_plus_two_zip_refuses_additional_files(native_origin, extra):
         m.verify_sealed_zip(archive, archive.stat().st_size, crc=True)
 
 
+@pytest.mark.parametrize("fault", [None, "retained-load", "host-second", "first-rebuilt"])
+def test_retained_pair_origin_requires_successful_load_and_both_independent_builds(
+    native_origin, tmp_path, fault
+):
+    control, archive, data, _calls, _downloaded, prefix = native_origin
+    with zipfile.ZipFile(archive) as bundle:
+        bodies = {name: bundle.read(name) for name in bundle.namelist()}
+    bodies["saas-image-candidate.json"] = json.dumps(
+        {"clean_context_reproducibility": {"comparison_profile": "clean-C2-pair"}}
+    ).encode()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+        for name, body in bodies.items():
+            bundle.writestr(name, body)
+    meta = data[prefix + "artifacts/502"]
+    meta.update(
+        size_in_bytes=archive.stat().st_size,
+        digest="sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest(),
+    )
+    job = data[prefix + "jobs/301"]
+    template = copy.deepcopy(job["steps"][0])
+    job["steps"].insert(
+        0,
+        {
+            **template,
+            "name": "Authenticate and load the exact retained first pair without rebuilding it",
+        },
+    )
+    for step in job["steps"][1:3]:
+        step["conclusion"] = "skipped"
+    index = next(
+        i for i, s in enumerate(job["steps"]) if s["name"] == "Confirm exact C2 comparison profile"
+    )
+    job["steps"].insert(index, {**template, "name": "Independently build C2 Host without cache"})
+    for i, step in enumerate(job["steps"]):
+        step["number"] = i + 1
+    if fault == "retained-load":
+        job["steps"][0]["conclusion"] = "skipped"
+    elif fault == "host-second":
+        next(s for s in job["steps"] if s["name"] == "Independently build C2 Host without cache")[
+            "conclusion"
+        ] = "failure"
+    elif fault == "first-rebuilt":
+        job["steps"][1]["conclusion"] = "success"
+    if fault:
+        with pytest.raises(ValueError):
+            m.collect(control, PROFILE, (101, 202), m.HISTORICAL, tmp_path / "paired")
+    else:
+        result = m.collect(control, PROFILE, (101, 202), m.HISTORICAL, tmp_path / "paired")
+        assert result["producer"]["comparison_profile"] == "clean-C2-pair"
+
+
 def test_new_dispatch_values_do_not_change_original_profile_or_protected_execution():
     workflow = yaml.load((ROOT / publisher.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
     assert set(workflow["on"]["workflow_dispatch"]["inputs"]) == {
@@ -517,10 +568,23 @@ def test_collect_original_branches_only_for_explicit_c2_ids(
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "raw-identity", "proof-hash", "host", "server", "old-claim", "seal"]
+    "fault",
+    [
+        None,
+        "raw-identity",
+        "proof-hash",
+        "host",
+        "server",
+        "old-claim",
+        "seal",
+        "host-origin",
+        "host-claim",
+        "host-hash",
+    ],
 )
+@pytest.mark.parametrize("paired", [False, True])
 def test_sealed_proofs_bind_actual_raw_builder_host_server_and_seal(
-    recovered_admission, tmp_path, monkeypatch, fault
+    recovered_admission, tmp_path, monkeypatch, fault, paired
 ):
     clean = importlib.import_module("saas.scripts.compat018_clean_context")
     admission, _ = recovered_admission
@@ -535,6 +599,7 @@ def test_sealed_proofs_bind_actual_raw_builder_host_server_and_seal(
         "facts": {"server": server_facts},
         "historical_comparison": {"artifact_id": recovery.REPORT_ID},
         "historical_Server_facts_equal": False,
+        "new_Host_matches_historical_independent_pair": True,
     }
     native = {
         "workflow_path": recovery.WORKFLOW,
@@ -583,6 +648,27 @@ def test_sealed_proofs_bind_actual_raw_builder_host_server_and_seal(
             "omnigent-saas-server": server,
         },
     }
+    if paired:
+        descriptor["producer"]["comparison_profile"] = clean.PAIR_PROFILE
+        first["new_Host_matches_historical_independent_pair"] = False
+        first["facts"]["host"] = copy.deepcopy(server_facts)
+        stored = {**copy.deepcopy(first), "native_builder": copy.deepcopy(native)}
+        if fault == "raw-identity":
+            stored["native_builder"]["run_id"] = 999
+        (root / "clean-context-first.json").write_text(json.dumps(stored))
+        proof.update(
+            kind=clean.PAIR_KIND,
+            comparison_profile=clean.PAIR_PROFILE,
+            first_proof_sha256=recovery.sha256(root / "clean-context-first.json"),
+            new_Host_matches_historical_independent_pair=False,
+            independent_Host_archive_sha256="d" * 64,
+            old_Host_byte_identity_claimed=False,
+            historical_Host_facts=copy.deepcopy(host),
+            retained_first_input=copy.deepcopy(recovery.RETAINED_FIRST),
+        )
+        candidate["images"]["omnigent-saas-host"] = copy.deepcopy(server)
+    elif fault in {"host-origin", "host-claim", "host-hash"}:
+        proof["unregistered_Host_field"] = True
     if fault == "proof-hash":
         proof["first_proof_sha256"] = "0" * 64
     if fault == "host":
@@ -593,8 +679,14 @@ def test_sealed_proofs_bind_actual_raw_builder_host_server_and_seal(
         proof["old_Server_byte_identity_claimed"] = True
     if fault == "seal":
         (root / "oci-promotion-manifest.json").write_bytes(b"tampered-seal")
+    if paired and fault == "host-origin":
+        proof["retained_first_input"]["run_id"] = 999
+    if paired and fault == "host-claim":
+        proof["old_Host_byte_identity_claimed"] = True
+    if paired and fault == "host-hash":
+        proof["independent_Host_archive_sha256"] = None
     (root / "saas-image-candidate.json").write_text(json.dumps(candidate))
-    monkeypatch.setattr(clean, "verify_first", lambda *_a: copy.deepcopy(first))
+    monkeypatch.setattr(clean, "first_for_profile", lambda *_a: copy.deepcopy(first))
     monkeypatch.setattr(
         m.recovery,
         "original_evidence",

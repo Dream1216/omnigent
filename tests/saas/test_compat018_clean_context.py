@@ -68,6 +68,10 @@ def layer(mutation=None):
         entries[-1] = (name, b"", mode, "unexpected")
     elif mutation == "ui-entrypoint":
         entries = [row for row in entries if not row[0].endswith("/login.html")]
+    return archive_entries(entries)
+
+
+def archive_entries(entries):
     result = io.BytesIO()
     with tarfile.open(fileobj=result, mode="w") as archive:
         for name, body, mode, link in entries:
@@ -91,16 +95,17 @@ EXPECTED = {
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "host", "runtime-layer", "labels", "history", "architecture"]
+    "fault", [None, "host", "runtime-layer", "labels", "history", "architecture", "host-layer"]
 )
+@pytest.mark.parametrize("paired_host", [False, True])
 def test_first_requires_original_Host_and_only_Source_copy_layer_changes(
-    tmp_path, monkeypatch, fault
+    tmp_path, monkeypatch, fault, paired_host
 ):
     platform = {
         "manifest_digest": "old-manifest",
         "config_digest": "old-config",
-        "layers": [{"digest": "old"} for _ in range(4)],
-        "rootfs_diff_ids": ["old"] * 4,
+        "layers": [{"digest": "old"} for _ in range(15)],
+        "rootfs_diff_ids": ["old"] * 15,
         "labels": copy.deepcopy(recovery.LABELS),
         "history": [{"created": "fixed"}],
     }
@@ -108,6 +113,7 @@ def test_first_requires_original_Host_and_only_Source_copy_layer_changes(
     facts = {
         "platforms": {arch: copy.deepcopy(platform) for arch in architectures},
         "attestations": dict.fromkeys(architectures, True),
+        "attestation_descriptor_count": 2,
     }
     pair = {
         "first": copy.deepcopy(facts),
@@ -123,6 +129,11 @@ def test_first_requires_original_Host_and_only_Source_copy_layer_changes(
         value.update(manifest_digest="new-manifest", config_digest="new-config")
         value["layers"][3] = {"digest": "sha256:" + "a" * 64}
         value["rootfs_diff_ids"][3] = "new-source"
+    if paired_host:
+        for value in actual["host"]["platforms"].values():
+            value.update(manifest_digest="new-host-manifest", config_digest="new-host-config")
+            value["layers"][14] = {"digest": "sha256:" + "a" * 64}
+            value["rootfs_diff_ids"][14] = "new-installed-source"
     server = actual["server"]["platforms"]["linux/amd64"]
     if fault == "host":
         actual["host"]["attestations"] = {}
@@ -134,6 +145,8 @@ def test_first_requires_original_Host_and_only_Source_copy_layer_changes(
         server["history"] = []
     elif fault == "architecture":
         actual["server"]["platforms"].pop("linux/arm64")
+    elif fault == "host-layer":
+        actual["host"]["platforms"]["linux/amd64"]["layers"][0] = {"digest": "wrong-base"}
     monkeypatch.setattr(
         recovery, "original_evidence", lambda _path: (copy.deepcopy(original), {}, b"")
     )
@@ -144,19 +157,24 @@ def test_first_requires_original_Host_and_only_Source_copy_layer_changes(
     monkeypatch.setattr(
         m, "verify_context_layer", lambda _stream, _inputs: {"tracked_inputs": 1772}
     )
-    with tarfile.open(tmp_path / "server-1.tar", "w") as bundle:
-        member = tarfile.TarInfo("blobs/sha256/" + "a" * 64)
-        member.size = 5
-        bundle.addfile(member, io.BytesIO(b"layer"))
-    (tmp_path / "host-1.tar").write_bytes(b"host")
+    monkeypatch.setattr(
+        m, "verify_host_install_layer", lambda _stream, _inputs: {"runtime_Python_files": 1275}
+    )
+    for role in ("server", "host"):
+        with tarfile.open(tmp_path / f"{role}-1.tar", "w") as bundle:
+            member = tarfile.TarInfo("blobs/sha256/" + "a" * 64)
+            member.size = 5
+            bundle.addfile(member, io.BytesIO(b"layer"))
     if fault:
         with pytest.raises(ValueError):
-            m.verify_first(tmp_path, REPO)
+            m.verify_first(tmp_path, REPO, paired_host=paired_host)
     else:
-        result = m.verify_first(tmp_path, REPO)
-        assert result["new_Host_matches_historical_independent_pair"] is True
+        result = m.verify_first(tmp_path, REPO, paired_host=paired_host)
+        assert result["new_Host_matches_historical_independent_pair"] is (not paired_host)
         assert result["historical_Server_facts_equal"] is False
         assert set(result["source_proofs"]) == architectures
+        if paired_host:
+            assert set(result["Host_source_proofs"]) == architectures
 
 
 def test_source_modes_symlink_and_actual_UI_copies():
@@ -183,12 +201,125 @@ def test_context_refuses_real_byte_mode_link_or_UI_mutation(mutation):
         m.verify_context_layer(layer(mutation), EXPECTED)
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "source",
+        "missing",
+        "extra",
+        "identity",
+        "identity-code",
+        "duplicate",
+        "resource",
+        "symlink",
+    ],
+)
+def test_installed_Host_audit_binds_Git_and_rejects_code_or_identity_drift(fault):
+    prefix = "opt/venv/lib/python3.12/site-packages/"
+    identity = (
+        '"""Auto-generated for an immutable Omnigent runtime image; do not edit."""\n'
+        "from __future__ import annotations\n\n"
+        f"BUILD_TIME_EPOCH: int = {recovery.EPOCH}\n"
+        f"COMMIT_SHA: str = {recovery.PRODUCT!r}\n"
+    ).encode()
+    expected = {
+        "omnigent/main.py": ("100644", b"fixed = True\n"),
+        "saas/runtime.py": ("100644", b"binding = True\n"),
+        "omnigent/data.json": ("100644", b"{}"),
+        "saas/login_web/scripts/preview.py": ("100644", b"excluded by setuptools"),
+    }
+    entries = [
+        (prefix + name, body, 0o644, None)
+        for name, (_, body) in expected.items()
+        if not name.startswith("saas/login_web/")
+    ]
+    entries.append((prefix + "omnigent/_build_info.py", identity, 0o644, None))
+    if fault == "source":
+        entries[0] = (entries[0][0], b"different = True", 0o644, None)
+    elif fault == "missing":
+        entries.pop(0)
+    elif fault == "extra":
+        entries.append((prefix + "saas/unregistered.py", b"unexpected", 0o644, None))
+    elif fault in {"identity", "identity-code"}:
+        body = (
+            identity.replace(recovery.PRODUCT.encode(), b"a" * 40)
+            if fault == "identity"
+            else identity + b"raise RuntimeError('extra code')\n"
+        )
+        entries[-1] = (entries[-1][0], body, 0o644, None)
+    elif fault == "duplicate":
+        entries.append(entries[0])
+    elif fault == "resource":
+        entries[2] = (entries[2][0], b"changed", 0o644, None)
+    elif fault == "symlink":
+        entries[0] = (entries[0][0], b"", 0o777, "elsewhere.py")
+    if fault:
+        with pytest.raises(ValueError):
+            m.verify_host_install_layer(archive_entries(entries), expected)
+    else:
+        result = m.verify_host_install_layer(archive_entries(entries), expected)
+        assert result["runtime_Python_files"] == 2
+        assert result["tracked_resources"] == 1
+        assert result["build_identity"]["COMMIT_SHA"] == recovery.PRODUCT
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "host-match", "host-history", "host-facts", "origin", "second-missing"]
+)
+def test_new_pair_requires_real_Host_second_and_retains_historical_record(
+    first, monkeypatch, fault
+):
+    root, value, repeated = first
+    value.update(kind=m.PAIR_KIND, new_Host_matches_historical_independent_pair=False)
+    value["facts"]["host"] = {"test_fact": "new-Host"}
+    monkeypatch.setattr(m, "first_for_profile", lambda *_a: copy.deepcopy(value))
+    m.audit(root, REPO, m.PAIR_PROFILE)
+    (root / "host-2.tar").write_bytes(b"actual fixture second Host, not an image")
+    (root / "retained-first-native.json").write_text(json.dumps(recovery.RETAINED_FIRST))
+    host = {
+        "first": copy.deepcopy(value["facts"]["host"]),
+        "matching_platform_manifest_and_config": True,
+        "history_created_by_equal": True,
+    }
+
+    def compare(left, right, **kwargs):
+        right.read_bytes()
+        return copy.deepcopy(host if left.name.startswith("host-") else repeated)
+
+    monkeypatch.setattr(m, "compare_archives", compare)
+    if fault == "host-match":
+        host["matching_platform_manifest_and_config"] = False
+    elif fault == "host-history":
+        host["history_created_by_equal"] = False
+    elif fault == "host-facts":
+        host["first"] = {"historical": "forged"}
+    elif fault == "origin":
+        (root / "retained-first-native.json").write_text("{}")
+    elif fault == "second-missing":
+        (root / "host-2.tar").unlink()
+    if fault:
+        with pytest.raises((ValueError, FileNotFoundError)):
+            m.comparison(root, REPO, m.PAIR_PROFILE)
+    else:
+        report = m.confirm(root, REPO, m.PAIR_PROFILE)
+        proof = report["clean_context_reproducibility"]
+        assert proof["old_Host_byte_identity_claimed"] is False
+        assert proof["new_Host_matches_historical_independent_pair"] is False
+        assert proof["historical_Host_facts"] == {"historical": "host"}
+        assert proof["retained_first_input"] == recovery.RETAINED_FIRST
+        assert len(proof["independent_Host_archive_sha256"]) == 64
+        assert report["images"]["omnigent-saas-host"] == host
+        m.verify_complete(root, REPO, m.PAIR_PROFILE)
+
+
 @pytest.fixture
 def first(tmp_path, monkeypatch):
     value = {
         "kind": m.KIND,
         "facts": {"server": {"test_fact": "server"}},
         "historical_Server_facts_equal": False,
+        "new_Host_matches_historical_independent_pair": True,
         "historical_comparison": {"artifact_id": recovery.REPORT_ID},
     }
     monkeypatch.setattr(m, "verify_first", lambda root, repo: copy.deepcopy(value))
@@ -294,7 +425,7 @@ def test_clean_raw_refuses_stale_scan_payload(tmp_path, monkeypatch):
         recovery.verify_raw(tmp_path, comparison_profile="clean-C2-server")
 
 
-def test_workflow_preserves_original_export_and_builds_only_Server_second():
+def test_workflow_preserves_original_export_and_only_adds_Host_second_for_pair():
     import yaml
 
     text = (ROOT / ".github/workflows/saas-compat018-oci-recovery.yml").read_text()
@@ -313,7 +444,18 @@ def test_workflow_preserves_original_export_and_builds_only_Server_second():
         if s.get("uses") == "./saas/actions/build-oci-candidate"
         and s.get("with", {}).get("attempt") == "2"
     ]
-    assert len(second) == 1 and second[0]["with"]["artifact"] == "server"
+    assert [s["with"]["artifact"] for s in second] == ["server", "host"]
+    assert second[1]["if"] == "inputs.comparison_profile == 'clean-C2-pair'"
+    assert "clean-C2-server" in second[0]["if"]
+    first_builds = [
+        s
+        for s in steps
+        if s.get("uses") == "./saas/actions/build-oci-candidate" and s["with"]["attempt"] == "1"
+    ]
+    assert all(s["if"] == "inputs.phase == 'build'" for s in first_builds)
+    retained = next(s for s in steps if s.get("id") == "retained")
+    assert retained["if"] == "inputs.phase == 'complete-retained'"
+    assert "retained-first --root" in retained["run"]
     assert (
         names.index("Audit actual fixed C2 source, UI, and historical Host")
         < names.index("Independently build only C2 Server without cache")

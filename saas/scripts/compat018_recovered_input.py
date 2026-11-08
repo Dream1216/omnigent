@@ -263,7 +263,7 @@ def validate_coordinates(value: Any) -> dict[str, Any]:
         and value["schema_version"] == 1
         and value["product_revision"] == recovery.PRODUCT
         and value["product_tree"] == recovery.TREE
-        and value["comparison_profile"] in {"historical", "clean-C2-server"},
+        and value["comparison_profile"] in {"historical", "clean-C2-server", "clean-C2-pair"},
         "unknown or unfrozen C2 recovery registration",
     )
     for role, job_key in (
@@ -540,11 +540,7 @@ def collect(
     sealed, sealed_run, sealed_code = _derive_row(control, run_ids[1], sealed=True)
     code = {"raw": raw_code, "sealed": sealed_code}
     steps = [
-        "Recover Server using its existing first-attempt build cache",
-        "Recover Host using its existing first-attempt build cache",
         "Audit actual fixed C2 source, UI, and historical Host",
-    ]
-    steps += [
         "Confirm exact C2 comparison profile",
         "Preserve actual OCI before any fresh vulnerability scan",
     ]
@@ -591,16 +587,38 @@ def collect(
             "sealed_oci": sealed,
         }
     )
-    if value["comparison_profile"] == "clean-C2-server":
-        complete_steps = (
-            *steps[:3],
+    paired = value["comparison_profile"] == "clean-C2-pair"
+    first_steps = (
+        ("Authenticate and load the exact retained first pair without rebuilding it",)
+        if paired
+        else (
+            "Recover Server using its existing first-attempt build cache",
+            "Recover Host using its existing first-attempt build cache",
+        )
+    )
+    second_steps = (
+        ()
+        if value["comparison_profile"] == "historical"
+        else (
             "Independently build only C2 Server without cache",
-            *steps[3:],
+            *(("Independently build C2 Host without cache",) if paired else ()),
         )
-        require(
-            _job(raw, "builder_job_id", "build-compat018-product", complete_steps) == builder,
-            "C2 raw builder changed during clean comparison validation",
-        )
+    )
+    complete_steps = (*first_steps, steps[0], *second_steps, *steps[1:])
+    require(
+        _job(raw, "builder_job_id", "build-compat018-product", complete_steps) == builder,
+        "C2 raw builder changed during clean comparison validation",
+    )
+    if paired:
+        for name in (
+            "Recover Server using its existing first-attempt build cache",
+            "Recover Host using its existing first-attempt build cache",
+        ):
+            matches = [s for s in builder["steps"] if s.get("name") == name]
+            require(
+                len(matches) == 1 and matches[0].get("conclusion") == "skipped",
+                "retained C2 first pair was rebuilt",
+            )
     upload = next(s for s in scanner["steps"] if s["name"] == scan_steps[-1])
     verify_job_artifact_identity(
         metadata,
@@ -743,7 +761,9 @@ def verify_payload(root: Path, descriptor: dict[str, Any], product: Path) -> Non
         "source_date_epoch": recovery.EPOCH,
     }
     validate_descriptor(descriptor, profile)
-    first = clean.verify_first(root, product)
+    comparison_profile = descriptor["producer"]["comparison_profile"]
+    paired = comparison_profile == clean.PAIR_PROFILE
+    first = clean.first_for_profile(root, product, comparison_profile)
     stored = json.loads((root / "clean-context-first.json").read_text())
     native = stored.pop("native_builder", None)
     raw = descriptor["producer"]["raw_checkpoint"]
@@ -763,23 +783,31 @@ def verify_payload(root: Path, descriptor: dict[str, Any], product: Path) -> Non
     candidate = json.loads((root / "saas-image-candidate.json").read_text())
     original, _, _ = recovery.original_evidence(root / "original-report.zip")
     proof = candidate.get("clean_context_reproducibility", {})
-    comparison_profile = descriptor["producer"]["comparison_profile"]
+    keys = {
+        "kind",
+        "comparison_profile",
+        "native_builder",
+        "product_revision",
+        "product_tree",
+        "source_date_epoch",
+        "historical_comparison",
+        "first_proof_sha256",
+        "independent_Server_archive_sha256",
+        "old_Server_byte_identity_claimed",
+        "new_Host_matches_historical_independent_pair",
+    }
+    if paired:
+        keys.update(
+            {
+                "independent_Host_archive_sha256",
+                "old_Host_byte_identity_claimed",
+                "historical_Host_facts",
+                "retained_first_input",
+            }
+        )
     require(
-        set(proof)
-        == {
-            "kind",
-            "comparison_profile",
-            "native_builder",
-            "product_revision",
-            "product_tree",
-            "source_date_epoch",
-            "historical_comparison",
-            "first_proof_sha256",
-            "independent_Server_archive_sha256",
-            "old_Server_byte_identity_claimed",
-            "new_Host_matches_historical_independent_pair",
-        }
-        and proof.get("kind") == clean.KIND
+        set(proof) == keys
+        and proof.get("kind") == (clean.PAIR_KIND if paired else clean.KIND)
         and proof.get("comparison_profile") == comparison_profile
         and proof.get("product_revision") == recovery.PRODUCT
         and proof.get("product_tree") == recovery.TREE
@@ -788,16 +816,39 @@ def verify_payload(root: Path, descriptor: dict[str, Any], product: Path) -> Non
         and proof.get("historical_comparison") == first["historical_comparison"]
         and proof.get("first_proof_sha256") == recovery.sha256(root / "clean-context-first.json")
         and proof.get("old_Server_byte_identity_claimed") is (comparison_profile == "historical")
-        and proof.get("new_Host_matches_historical_independent_pair") is True
+        and proof.get("new_Host_matches_historical_independent_pair")
+        is first["new_Host_matches_historical_independent_pair"]
         and candidate.get("product_revision") == recovery.PRODUCT
         and candidate.get("source_date_epoch") == recovery.EPOCH
         and candidate.get("upstream_revision") == recovery.UPSTREAM
         and candidate.get("status") == "pass"
         and candidate.get("violations") == []
-        and set(candidate.get("images", {})) == {"omnigent-saas-server", "omnigent-saas-host"}
-        and candidate["images"]["omnigent-saas-host"] == original["images"]["omnigent-saas-host"],
+        and set(candidate.get("images", {})) == {"omnigent-saas-server", "omnigent-saas-host"},
         "C2 admitted comparison/proof/original Host roles differ",
     )
+    host = candidate["images"]["omnigent-saas-host"]
+    if paired:
+        independent_host = proof.get("independent_Host_archive_sha256")
+        require(
+            isinstance(independent_host, str)
+            and re.fullmatch(r"[0-9a-f]{64}", independent_host) is not None
+            and proof.get("old_Host_byte_identity_claimed") is False
+            and proof.get("historical_Host_facts") == original["images"]["omnigent-saas-host"]
+            and proof.get("retained_first_input") == recovery.RETAINED_FIRST
+            and host.get("first") == first["facts"]["host"]
+            and host.get("second", {}).get("platforms") == first["facts"]["host"]["platforms"]
+            and host.get("second", {}).get("attestations")
+            == first["facts"]["host"]["attestations"]
+            and host.get("matching_platform_manifest_and_config") is True
+            and host.get("history_created_by_equal") is True,
+            "C2 Host has no actual independent pair or retained native origin",
+        )
+    else:
+        require(
+            first["new_Host_matches_historical_independent_pair"] is True
+            and host == original["images"]["omnigent-saas-host"],
+            "C2 historical Host pair differs",
+        )
     server = candidate["images"]["omnigent-saas-server"]
     require(
         server.get("first") == first["facts"]["server"]

@@ -22,6 +22,8 @@ from saas.scripts import compat018_oci_recovery as recovery
 from saas.scripts.compare_oci_rebuilds import compare_archives, inspect_oci_archive
 
 KIND = "compat018_4e_clean_context_independent_Server/v1"
+PAIR_KIND = "compat018_4e_clean_context_independent_Server_Host/v2"
+PAIR_PROFILE = "clean-C2-pair"
 TREE = recovery.TREE
 require = recovery.require
 
@@ -135,19 +137,79 @@ def verify_context_layer(stream: Any, expected: dict[str, tuple[str, bytes]]) ->
     return {"tracked_inputs": len(expected), "generated_UI": ui_proofs}
 
 
-def verify_first(root: Path, repo: Path) -> dict[str, Any]:
+def verify_host_install_layer(
+    stream: Any, expected: dict[str, tuple[str, bytes]]
+) -> dict[str, Any]:
+    """Bind installed application code to Git, including generated build identity."""
+    prefix = "opt/venv/lib/python3.12/site-packages/"
+    python = {
+        name: body
+        for name, (_, body) in expected.items()
+        if name.endswith(".py")
+        and name.startswith(("omnigent/", "saas/"))
+        and not name.startswith("saas/login_web/")
+    }
+    require(bool(python), "frozen Host runtime Python input is empty")
+    seen, resources, build_info = set(), 0, None
+    with tarfile.open(fileobj=stream, mode="r:*") as layer:
+        members = layer.getmembers()
+        names = [member.name.removeprefix("./") for member in members]
+        require(len(names) == len(set(names)), "duplicate installed Host path")
+        for name, member in zip(names, members, strict=True):
+            if not name.startswith(prefix):
+                continue
+            relative = name.removeprefix(prefix)
+            if relative == "omnigent/_build_info.py":
+                require(member.isfile(), "Host build identity is not regular")
+                build_info = _member_bytes(layer, member)
+            elif relative in python:
+                require(
+                    member.isfile() and _member_bytes(layer, member) == python[relative],
+                    "installed Host runtime Python differs from frozen source",
+                )
+                seen.add(relative)
+            elif relative.endswith(".py") and relative.startswith(("omnigent/", "saas/")):
+                raise ValueError("installed Host contains unregistered application Python")
+            elif relative in expected and member.isfile():
+                require(
+                    _member_bytes(layer, member) == expected[relative][1],
+                    "installed Host tracked resource differs from frozen source",
+                )
+                resources += 1
+    require(seen == set(python), "installed Host runtime Python is missing")
+    expected_build_info = (
+        '"""Auto-generated for an immutable Omnigent runtime image; do not edit."""\n'
+        "from __future__ import annotations\n\n"
+        f"BUILD_TIME_EPOCH: int = {recovery.EPOCH}\n"
+        f"COMMIT_SHA: str = {recovery.PRODUCT!r}\n"
+    ).encode()
+    require(
+        build_info == expected_build_info,
+        "installed Host generated build identity differs",
+    )
+    return {
+        "runtime_Python_files": len(seen),
+        "tracked_resources": resources,
+        "build_identity": {"BUILD_TIME_EPOCH": recovery.EPOCH, "COMMIT_SHA": recovery.PRODUCT},
+    }
+
+
+def verify_first(root: Path, repo: Path, *, paired_host: bool = False) -> dict[str, Any]:
     original, _, _ = recovery.original_evidence(root / "original-report.zip")
     facts = {
         role: inspect_oci_archive(root / f"{role}-1.tar", label_profile="executable")
         for role in ("server", "host")
     }
     historical_host = original["images"]["omnigent-saas-host"]
-    require(
+    host_matches = (
         historical_host["first"] == facts["host"]
         and historical_host["second"]["platforms"] == facts["host"]["platforms"]
         and historical_host["second"]["attestations"] == facts["host"]["attestations"]
         and historical_host["matching_platform_manifest_and_config"] is True
-        and historical_host["history_created_by_equal"] is True,
+        and historical_host["history_created_by_equal"] is True
+    )
+    require(
+        paired_host or host_matches,
         "new C2 Host does not equal its actual historical independent pair",
     )
     expected = source_inputs(repo)
@@ -175,8 +237,35 @@ def verify_first(root: Path, repo: Path) -> dict[str, Any]:
             layer_digest = actual["layers"][3]["digest"]
             body = _member_bytes(archive, "blobs/sha256/" + layer_digest.removeprefix("sha256:"))
             source_proofs[platform] = verify_context_layer(io.BytesIO(body), expected)
-    return {
-        "kind": KIND,
+    host_proofs = {}
+    if paired_host:
+        require(
+            set(facts["host"]["platforms"]) == {"linux/amd64", "linux/arm64"}
+            and facts["host"]["attestations"] == historical_host["first"]["attestations"]
+            and facts["host"]["attestation_descriptor_count"]
+            == historical_host["first"]["attestation_descriptor_count"],
+            "C2 Host requires both original architectures and attestations",
+        )
+        with tarfile.open(root / "host-1.tar") as archive:
+            for platform, actual in facts["host"]["platforms"].items():
+                historical = historical_host["first"]["platforms"][platform]
+                require(
+                    actual["labels"] == recovery.LABELS and len(actual["layers"]) > 14,
+                    "C2 Host labels or installed source layer differ",
+                )
+                projected = copy.deepcopy(historical)
+                for key in ("manifest_digest", "config_digest"):
+                    projected[key] = actual[key]
+                projected["layers"][14] = actual["layers"][14]
+                projected["rootfs_diff_ids"][14] = actual["rootfs_diff_ids"][14]
+                require(
+                    projected == actual, "C2 Host differs beyond its frozen installed venv layer"
+                )
+                digest = actual["layers"][14]["digest"]
+                body = _member_bytes(archive, "blobs/sha256/" + digest.removeprefix("sha256:"))
+                host_proofs[platform] = verify_host_install_layer(io.BytesIO(body), expected)
+    result = {
+        "kind": PAIR_KIND if paired_host else KIND,
         "product_revision": recovery.PRODUCT,
         "product_tree": recovery.TREE,
         "source_date_epoch": recovery.EPOCH,
@@ -187,17 +276,28 @@ def verify_first(root: Path, repo: Path) -> dict[str, Any]:
         },
         "historical_Server_facts_equal": facts["server"]
         == original["images"]["omnigent-saas-server"]["first"],
-        "new_Host_matches_historical_independent_pair": True,
+        "new_Host_matches_historical_independent_pair": host_matches,
         "facts": facts,
         "source_proofs": source_proofs,
         "archive_sha256": {
             role: recovery.sha256(root / f"{role}-1.tar") for role in ("server", "host")
         },
     }
+    if paired_host:
+        result["Host_source_proofs"] = host_proofs
+    return result
 
 
-def audit(root: Path, repo: Path) -> dict[str, Any]:
-    first = verify_first(root, repo)
+def first_for_profile(root: Path, repo: Path, profile: str) -> dict[str, Any]:
+    return (
+        verify_first(root, repo, paired_host=True)
+        if profile == PAIR_PROFILE
+        else verify_first(root, repo)
+    )
+
+
+def audit(root: Path, repo: Path, profile: str = "clean-C2-server") -> dict[str, Any]:
+    first = first_for_profile(root, repo, profile)
     native = {
         "workflow_path": recovery.WORKFLOW,
         "controller_revision": os.environ.get("GITHUB_WORKFLOW_SHA"),
@@ -225,10 +325,10 @@ def audit(root: Path, repo: Path) -> dict[str, Any]:
 
 def comparison(root: Path, repo: Path, profile: str) -> dict[str, Any]:
     require(
-        profile in {"historical", "clean-C2-server"},
+        profile in {"historical", "clean-C2-server", PAIR_PROFILE},
         "unknown finite C2 comparison profile",
     )
-    first = verify_first(root, repo)
+    first = first_for_profile(root, repo, profile)
     retained = json.loads((root / "clean-context-first.json").read_text())
     native_builder = retained.pop("native_builder", None)
     require(
@@ -255,8 +355,21 @@ def comparison(root: Path, repo: Path, profile: str) -> dict[str, Any]:
         )
         report["images"]["omnigent-saas-server"] = repeated
         independent_sha = recovery.sha256(root / "server-2.tar")
+    host_independent_sha = None
+    if profile == PAIR_PROFILE:
+        host = compare_archives(
+            root / "host-1.tar", root / "host-2.tar", label_profile="executable"
+        )
+        require(
+            host["matching_platform_manifest_and_config"] is True
+            and host["history_created_by_equal"] is True
+            and host["first"] == first["facts"]["host"],
+            "independent clean C2 Host pair differs",
+        )
+        report["images"]["omnigent-saas-host"] = host
+        host_independent_sha = recovery.sha256(root / "host-2.tar")
     report["clean_context_reproducibility"] = {
-        "kind": KIND,
+        "kind": PAIR_KIND if profile == PAIR_PROFILE else KIND,
         "comparison_profile": profile,
         "native_builder": native_builder,
         "product_revision": recovery.PRODUCT,
@@ -266,8 +379,21 @@ def comparison(root: Path, repo: Path, profile: str) -> dict[str, Any]:
         "first_proof_sha256": recovery.sha256(root / "clean-context-first.json"),
         "independent_Server_archive_sha256": independent_sha,
         "old_Server_byte_identity_claimed": profile == "historical",
-        "new_Host_matches_historical_independent_pair": True,
+        "new_Host_matches_historical_independent_pair": first[
+            "new_Host_matches_historical_independent_pair"
+        ],
     }
+    if profile == PAIR_PROFILE:
+        retained_input = json.loads((root / "retained-first-native.json").read_text())
+        require(
+            retained_input == recovery.RETAINED_FIRST, "C2 retained first native origin differs"
+        )
+        report["clean_context_reproducibility"].update(
+            independent_Host_archive_sha256=host_independent_sha,
+            old_Host_byte_identity_claimed=False,
+            historical_Host_facts=original["images"]["omnigent-saas-host"],
+            retained_first_input=retained_input,
+        )
     return report
 
 
@@ -294,12 +420,12 @@ def main() -> None:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument(
         "--comparison-profile",
-        choices=("historical", "clean-C2-server"),
+        choices=("historical", "clean-C2-server", PAIR_PROFILE),
         default="clean-C2-server",
     )
     args = parser.parse_args()
     if args.command == "audit":
-        audit(args.root, args.repo)
+        audit(args.root, args.repo, args.comparison_profile)
     elif args.command == "confirm":
         confirm(args.root, args.repo, args.comparison_profile)
     else:

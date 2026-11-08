@@ -291,6 +291,90 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(received["labels"], m.LABELS)
         self.assertEqual(received["source_date_epoch"], m.EPOCH)
 
+    def test_retained_failed_first_pair_has_a_single_exact_origin(self):
+        pinned = m.RETAINED_FIRST
+        log = b"ValueError: new C2 Host does not equal its actual historical independent pair\n"
+        run = {
+            **self.run,
+            "id": pinned["run_id"],
+            "head_sha": pinned["controller_revision"],
+            "status": "completed",
+            "conclusion": "failure",
+        }
+        names = [
+            "Verify product checkout and install its existing locked helpers",
+            "Build the original locked React18 login export before the original OCI action",
+            "Recover Server using its existing first-attempt build cache",
+            "Recover Host using its existing first-attempt build cache",
+            "Stage actual OCI before cleanup or inspection can fail",
+            "Audit actual fixed C2 source, UI, and historical Host",
+            "Preserve actual OCI before any fresh vulnerability scan",
+        ]
+        job = {
+            **self.job,
+            "id": pinned["builder_job_id"],
+            "run_id": pinned["run_id"],
+            "head_sha": pinned["controller_revision"],
+            "conclusion": "failure",
+            "steps": [
+                {
+                    "name": name,
+                    "conclusion": "failure" if i == 5 else "success",
+                    "started_at": "2026-11-08T17:20:00Z",
+                    "completed_at": "2026-11-08T17:25:00Z",
+                }
+                for i, name in enumerate(names)
+            ],
+        }
+        metadata = {
+            **self.meta,
+            "id": pinned["artifact_id"],
+            "name": f"compat018-raw-{m.PRODUCT}-{pinned['run_id']}",
+            "size_in_bytes": pinned["zip_size"],
+            "digest": "sha256:" + pinned["zip_sha256"],
+            "workflow_run": {"id": pinned["run_id"], "head_sha": pinned["controller_revision"]},
+            "created_at": "2026-11-08T17:22:00Z",
+        }
+        with patch.dict(m.RETAINED_FIRST, original_log_sha256=digest(log)):
+            m.verify_retained_first_native(run, job, metadata, log)
+            cases = [
+                (run, "id", 1),
+                (run, "conclusion", "success"),
+                (run, "head_sha", m.PRODUCT),
+                (run, "run_attempt", 2),
+                (job, "id", 1),
+                (job, "conclusion", "success"),
+                (job, "labels", ["self-hosted"]),
+                (job["steps"][2], "conclusion", "skipped"),
+                (job["steps"][3], "conclusion", "failure"),
+                (job["steps"][5], "conclusion", "success"),
+                (metadata, "id", 2),
+                (metadata, "expired", True),
+                (metadata, "digest", "sha256:" + "0" * 64),
+                (metadata, "size_in_bytes", pinned["zip_size"] - 1),
+                (metadata, "created_at", "2026-11-08T17:19:00Z"),
+            ]
+            for target, key, value in cases:
+                with self.subTest(key=key, value=value):
+                    previous = target[key]
+                    target[key] = value
+                    with self.assertRaises(ValueError):
+                        m.verify_retained_first_native(run, job, metadata, log)
+                    target[key] = previous
+            with self.assertRaises(ValueError):
+                m.verify_retained_first_native(run, job, metadata, log + b"changed")
+        # The ordinary successful raw producer guard still rejects this failed job.
+        with self.assertRaises(ValueError):
+            m.verify_raw_producer(
+                run,
+                [job],
+                metadata,
+                pinned["run_id"],
+                pinned["artifact_id"],
+                pinned["zip_sha256"],
+                pinned["controller_revision"],
+            )
+
     def test_workflow_preserves_before_inspection_and_scanning(self):
         workflow = HERE / "saas-compat018-oci-recovery.yml"
         if not workflow.is_file():
@@ -301,7 +385,8 @@ class RecoveryTests(unittest.TestCase):
             s.index("retention-days: 30"), s.index("saas.scripts.scan_oci_candidates --image")
         )
         self.assertIn(
-            "if: always() && steps.server.outcome == 'success' && steps.host.outcome == 'success'",
+            "if: always() && ((steps.server.outcome == 'success' "
+            "&& steps.host.outcome == 'success') || steps.retained.outcome == 'success')",
             s,
         )
         self.assertIn('--controller "$RAW_CONTROLLER"', s)

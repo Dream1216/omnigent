@@ -24,6 +24,16 @@ REPORT_ID = 13354100637
 REPORT_SIZE = 692811
 REPORT_SHA = "a8e83dac2d6947b404f2bc4259c0b23306d231d4f35dece8c4dd11f2a10cc272"
 OLD_SEAL_SHA = "fcb031afbb2cc0f9341bd27df19bbc500b04280630fe1e8442d2f39cda727406"
+RETAINED_FIRST: dict[str, Any] = {
+    "controller_revision": "2f051d9c91540383943841f69ea671427a4709ee",
+    "run_id": 42499062491,
+    "attempt": 1,
+    "builder_job_id": 128787789677,
+    "artifact_id": 13626562662,
+    "zip_size": 5090605679,
+    "zip_sha256": "43aa73c367f489c32c0f133714d8e67216bafa28e0a3ec07a81d69c26abb86c3",
+    "original_log_sha256": "a91b2294db2dddb5ca6a7d0a7fe1605c98a801b54b70cee2720b1fe8ff4a5f15",
+}
 LABELS = {
     "org.opencontainers.image.revision": PRODUCT,
     "ai.omnigent.upstream.revision": UPSTREAM,
@@ -190,11 +200,11 @@ def verify_raw(directory: Path, *, comparison_profile: str = "historical") -> di
     from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
 
     require(
-        comparison_profile in {"historical", "clean-C2-server"},
+        comparison_profile in {"historical", "clean-C2-server", "clean-C2-pair"},
         "unknown C2 comparison profile",
     )
     if (
-        comparison_profile == "clean-C2-server"
+        comparison_profile in {"clean-C2-server", "clean-C2-pair"}
         or (directory / "clean-context-first.json").exists()
     ):
         from saas.scripts import compat018_clean_context as clean
@@ -349,6 +359,110 @@ def download_raw(
         verify_raw(root, comparison_profile=comparison_profile)
 
 
+def verify_retained_first_native(
+    run: dict[str, Any], job: dict[str, Any], metadata: dict[str, Any], log: bytes
+) -> None:
+    """Authenticate one rejected input; this never grants builder success."""
+    value = RETAINED_FIRST
+    require(
+        run.get("id") == value["run_id"]
+        and run.get("head_sha") == value["controller_revision"]
+        and run.get("head_branch") == "main"
+        and run.get("event") == "workflow_dispatch"
+        and run.get("path") == WORKFLOW
+        and run.get("run_attempt") == 1
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "failure"
+        and run.get("repository", {}).get("full_name") == REPOSITORY,
+        "retained first input is not the exact rejected controller run",
+    )
+    steps = job.get("steps", [])
+    required = (
+        "Verify product checkout and install its existing locked helpers",
+        "Build the original locked React18 login export before the original OCI action",
+        "Recover Server using its existing first-attempt build cache",
+        "Recover Host using its existing first-attempt build cache",
+        "Stage actual OCI before cleanup or inspection can fail",
+        "Preserve actual OCI before any fresh vulnerability scan",
+    )
+    for name in (*required, "Audit actual fixed C2 source, UI, and historical Host"):
+        require(
+            len([step for step in steps if step.get("name") == name]) == 1,
+            "retained first native step is missing or duplicated",
+        )
+    by_name = {step["name"]: step for step in steps}
+    require(
+        job.get("id") == value["builder_job_id"]
+        and job.get("run_id") == value["run_id"]
+        and job.get("run_attempt") == 1
+        and job.get("head_sha") == value["controller_revision"]
+        and job.get("name") == "build-compat018-product"
+        and job.get("status") == "completed"
+        and job.get("conclusion") == "failure"
+        and job.get("runner_group_name") == "GitHub Actions"
+        and "ubuntu-24.04" in job.get("labels", [])
+        and all(by_name[name].get("conclusion") == "success" for name in required)
+        and [step.get("name") for step in steps if step.get("conclusion") == "failure"]
+        == ["Audit actual fixed C2 source, UI, and historical Host"],
+        "retained first archive has another failure or unproved build/upload",
+    )
+    require(
+        metadata.get("id") == value["artifact_id"]
+        and metadata.get("name") == f"compat018-raw-{PRODUCT}-{value['run_id']}"
+        and metadata.get("size_in_bytes") == value["zip_size"]
+        and metadata.get("digest") == "sha256:" + str(value["zip_sha256"])
+        and metadata.get("expired") is False
+        and metadata.get("workflow_run", {}).get("id") == value["run_id"]
+        and metadata.get("workflow_run", {}).get("head_sha") == value["controller_revision"]
+        and hashlib.sha256(log).hexdigest() == value["original_log_sha256"]
+        and b"ValueError: new C2 Host does not equal its actual historical independent pair"
+        in log,
+        "retained first artifact or original refusal log differs",
+    )
+    upload = by_name[required[-1]]
+    require(
+        datetime.fromisoformat(upload["started_at"])
+        <= datetime.fromisoformat(metadata["created_at"])
+        <= datetime.fromisoformat(upload["completed_at"]),
+        "retained first artifact was not created by the successful original upload",
+    )
+
+
+def download_retained_first(root: Path) -> dict[str, Any]:
+    """Reuse the exact first archives; source audit and both fresh pairs remain required."""
+    from saas.scripts.legacy_artifact_download import download_artifact_bytes
+    from saas.scripts.legacy_source_ci import download_job_log
+    from saas.scripts.oci_promotion import extract_artifact
+
+    value = RETAINED_FIRST
+    prefix = f"repos/{REPOSITORY}/actions"
+    run = api(f"{prefix}/runs/{value['run_id']}")
+    job = api(f"{prefix}/jobs/{value['builder_job_id']}")
+    metadata = api(f"{prefix}/artifacts/{value['artifact_id']}")
+    log = root.with_suffix(".original-rejection.log")
+    download_job_log(int(value["builder_job_id"]), log)
+    verify_retained_first_native(run, job, metadata, log.read_bytes())
+    archive = root.with_suffix(".zip")
+    download_artifact_bytes(
+        int(value["artifact_id"]),
+        archive,
+        expected_size=int(value["zip_size"]),
+        expected_sha256=str(value["zip_sha256"]),
+    )
+    extract_artifact(archive, root, zip_sha256=str(value["zip_sha256"]))
+    require(
+        {p.name for p in root.iterdir()} == {"server-1.tar", "host-1.tar", "original-report.zip"},
+        "retained first archive inventory differs",
+    )
+    original_evidence(root / "original-report.zip")
+    # GitHub retains the immutable original ZIP; remove only this verified local copy.
+    archive.unlink()
+    (root / "retained-first-native.json").write_text(
+        json.dumps(value, sort_keys=True, indent=2) + "\n"
+    )
+    return dict(value)
+
+
 def seal(root: Path) -> dict[str, Any]:
     from saas.scripts.oci_promotion import seal_candidate
 
@@ -366,7 +480,8 @@ def seal(root: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("inspect-original", "prepare", "verify", "download", "seal")
+        "command",
+        choices=("inspect-original", "prepare", "verify", "download", "seal", "retained-first"),
     )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--run-id", type=int)
@@ -375,7 +490,7 @@ def main() -> None:
     parser.add_argument("--controller")
     parser.add_argument(
         "--comparison-profile",
-        choices=("historical", "clean-C2-server"),
+        choices=("historical", "clean-C2-server", "clean-C2-pair"),
         default="historical",
     )
     args = parser.parse_args()
@@ -393,6 +508,8 @@ def main() -> None:
                 }
             )
         )
+    elif args.command == "retained-first":
+        download_retained_first(args.root)
     elif args.command == "prepare":
         prepare(args.root)
     elif args.command == "verify":
