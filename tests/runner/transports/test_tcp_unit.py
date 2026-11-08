@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from omnigent.runner.transports import tcp
 from omnigent.runner.transports.tcp import (
     RunnerTCPSubprocess,
     _is_tcp_listening,
@@ -117,6 +118,43 @@ def test_runner_tcp_subprocess_defaults() -> None:
     assert sub.port == 0
     assert sub.startup_timeout_s == 30.0
     assert sub._process is None
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_spawn_transfers_the_bound_socket_without_starting_a_parent_listener(platform) -> None:
+    listener = MagicMock()
+    listener.__enter__.return_value = listener
+    listener.getsockname.return_value = ("127.0.0.1", 43210)
+    listener.fileno.return_value = 17
+    listener.share.return_value = b"shared-owned-listener"
+    process = MagicMock()
+    process.poll.return_value = None
+    stdin = process.stdin
+
+    def spawn(*args, **kwargs):
+        listener.bind.assert_called_once()
+        listener.listen.assert_not_called()
+        return process
+
+    with (
+        patch.object(tcp.sys, "platform", platform),
+        patch.object(tcp.socket, "SO_EXCLUSIVEADDRUSE", 4, create=True),
+        patch.object(tcp.socket, "socket", return_value=listener),
+        patch.object(tcp.subprocess, "Popen", side_effect=spawn) as popen,
+        patch.object(tcp, "_is_tcp_listening", return_value=True),
+    ):
+        runner = RunnerTCPSubprocess().__enter__()
+    assert runner.port == 43210
+    listener.__exit__.assert_called_once()
+    if platform == "win32":
+        assert "pass_fds" not in popen.call_args.kwargs
+        listener.share.assert_called_once_with(process.pid)
+        stdin.write.assert_called_once_with(b"shared-owned-listener")
+        stdin.close.assert_called_once()
+        assert process.stdin is None
+    else:
+        assert popen.call_args.kwargs["pass_fds"] == (17,)
+        listener.share.assert_not_called()
 
 
 def test_runner_tcp_subprocess_kill_noop_when_no_process() -> None:

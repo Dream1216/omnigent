@@ -7,9 +7,13 @@ change.
 
 from __future__ import annotations
 
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 import httpx
 import pytest
 
+from omnigent.runner.transports import tcp
 from omnigent.runner.transports.tcp import (
     RunnerTCPSubprocess,
     create_tcp_client,
@@ -59,8 +63,12 @@ def test_runner_tcp_subprocess_cleans_up_on_exit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_round_trip_via_tcp() -> None:
+async def test_health_round_trip_via_tcp(monkeypatch) -> None:
     """The flagship Phase 3 test: server → TCP → uvicorn → runner FastAPI."""
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.setenv(name, "http://127.0.0.1:1")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(name, "")
     with RunnerTCPSubprocess(extra_env=_FAKE_SERVER_ENV) as runner:
         async with create_tcp_client(runner.base_url) as client:
             response = await client.get("/health")
@@ -86,6 +94,42 @@ async def test_post_session_events_stub_via_tcp() -> None:
                 json={"type": "message", "role": "user", "content": []},
             )
             assert response.status_code == 501
+
+
+@pytest.mark.asyncio
+async def test_tcp_subprocess_does_not_use_another_listeners_response(monkeypatch) -> None:
+    class ForeignHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(404)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    original_pick = tcp._pick_free_port
+    foreign_servers = []
+
+    def occupy_released_port():
+        port = original_pick()
+        server = ThreadingHTTPServer(("127.0.0.1", port), ForeignHandler)
+        foreign_servers.append(server)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return port
+
+    monkeypatch.setattr(tcp, "_pick_free_port", occupy_released_port)
+    try:
+        with RunnerTCPSubprocess(extra_env=_FAKE_SERVER_ENV) as runner:
+            async with create_tcp_client(runner.base_url) as client:
+                response = await client.post(
+                    "/v1/sessions/conv_test/events",
+                    json={"type": "message", "role": "user", "content": []},
+                )
+                assert response.status_code == 501
+                assert response.json()["error"] == "not_implemented"
+    finally:
+        for server in foreign_servers:
+            server.shutdown()
+            server.server_close()
 
 
 # ── Failure modes ────────────────────────────────────────

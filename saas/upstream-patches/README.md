@@ -8,7 +8,7 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (220 files, 6,529 net lines, nine patches, .85).
+`saas/upstream-baseline.json` (226 files, 6,685 net lines, nine patches, .85).
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
@@ -18,6 +18,24 @@ sub-agent, session override and loader implementation. Page ACLs and Agent rows
 are still read on every request; failed/missing results are not cached. This
 does not cache authorization or bypass execution-time path validation. Existing
 workspace, revision, override, artifact-failure and revocation assertions remain.
+
+## Owned TCP transport listener (2026-11-09)
+
+Source / SaaS Runtime owns the bounded `0010-next-agent-session-reliability.patch`
+extension for `omnigent/runner/transports/tcp.py`. Transfer a bound, unlistened
+socket directly to the runner child, using an inherited descriptor on POSIX and
+an exclusive shared socket on Windows. Only the owning child starts listening;
+no released-port probe can make another service satisfy readiness. Loopback
+clients reuse the SDK's existing proxy-bypass predicate. Business routes, the
+original HTTP 501 contract, the 30-second startup bound and cleanup remain.
+
+Tests extend `tests/runner/transports/test_tcp_transport.py` and
+`tests/runner/transports/test_tcp_unit.py`; retain the actual native Main failure
+and deterministic foreign-listener and invalid-proxy counterexamples. First and
+last replay target is `ee728a02004749e7f6971beee6c66d990bfbd216`; no upstream
+issue or PR has been opened. Remove this extension when upstream provides the
+same owned-listener handoff and direct loopback transport. This replay establishes
+source equality only, with no CI, OCI, business or release qualification.
 
 ## Managed normal-session startup binding (2026-11-07)
 

@@ -84,32 +84,53 @@ class RunnerTCPSubprocess:
     _process: subprocess.Popen[bytes] | None = None
 
     def __enter__(self) -> RunnerTCPSubprocess:
-        if self.port == 0:
-            self.port = _pick_free_port()
-        cmd = [
-            sys.executable,
-            "-P",
-            "-m",
-            "uvicorn",
-            "--factory",
-            self.app_factory_path,
-            "--host",
-            self.host,
-            "--port",
-            str(self.port),
-            "--log-level",
-            "warning",
-        ]
         env: dict[str, str] | None = None
         if self.extra_env:
             env = {**os.environ, **self.extra_env}
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            **_proc.spawn_kwargs(),
-        )
+        family, kind, protocol, _, address = socket.getaddrinfo(
+            self.host, self.port, type=socket.SOCK_STREAM
+        )[0]
+        # Keep the bound socket through exec; only the child starts listening.
+        with socket.socket(family, kind, protocol) as listener:
+            if sys.platform == "win32":
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            listener.bind(address)
+            self.port = listener.getsockname()[1]
+            cmd = [
+                sys.executable,
+                "-P",
+                "-m",
+                "omnigent.runner.transports.tcp",
+                self.app_factory_path,
+                str(listener.fileno()),
+            ]
+            if sys.platform == "win32":
+                self._process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    **_proc.spawn_kwargs(),
+                )
+                try:
+                    assert self._process.stdin is not None
+                    self._process.stdin.write(listener.share(self._process.pid))
+                    self._process.stdin.close()
+                    self._process.stdin = None
+                except BaseException:
+                    self._kill()
+                    raise
+            else:
+                self._process = subprocess.Popen(
+                    cmd,
+                    pass_fds=(listener.fileno(),),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    **_proc.spawn_kwargs(),
+                )
         deadline = time.time() + self.startup_timeout_s
         while time.time() < deadline:
             if self._process.poll() is not None:
@@ -164,4 +185,25 @@ def create_tcp_client(
         every request so the runner auth middleware accepts
         the call.
     """
-    return httpx.AsyncClient(base_url=base_url, headers=auth_headers or {})
+    from omnigent_client._http import is_loopback_url
+
+    return httpx.AsyncClient(
+        base_url=base_url, headers=auth_headers or {}, trust_env=not is_loopback_url(base_url)
+    )
+
+
+def _serve_inherited_listener(factory: str, descriptor: int) -> None:
+    import uvicorn
+
+    if sys.platform == "win32":
+        listener = socket.fromshare(sys.stdin.buffer.read())
+    else:
+        listener = socket.socket(fileno=descriptor)
+    with listener:
+        uvicorn.Server(uvicorn.Config(factory, factory=True, log_level="warning")).run(
+            sockets=[listener]
+        )
+
+
+if __name__ == "__main__":
+    _serve_inherited_listener(sys.argv[1], int(sys.argv[2]))
