@@ -1,0 +1,198 @@
+name: Recover accepted M165 OCI bytes
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/saas-accepted-oci-recovery.yml"
+      - "saas/scripts/accepted_oci_recovery.py"
+      - "tests/saas/test_accepted_oci_recovery.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/saas-accepted-oci-recovery.yml"
+      - "saas/scripts/accepted_oci_recovery.py"
+      - "tests/saas/test_accepted_oci_recovery.py"
+  workflow_dispatch:
+    inputs:
+      policy_revision:
+        description: Exact reviewed main controller SHA; product remains M165
+        required: true
+        type: string
+      phase:
+        description: Recover cached bytes, or rescan the retained raw checkpoint
+        type: choice
+        options: [build, scan]
+        default: build
+      raw_run_id:
+        type: string
+      raw_artifact_id:
+        type: string
+      raw_artifact_sha256:
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: accepted-M165-recovery
+  cancel-in-progress: false
+
+env:
+  PRODUCT_REVISION: 165cebe8585a1a5fa8588e2a55f37505f89f3e55
+  SOURCE_REVISION: 165cebe8585a1a5fa8588e2a55f37505f89f3e55
+  SOURCE_DATE_EPOCH: "1794108147"
+  UPSTREAM_REVISION: ee728a02004749e7f6971beee6c66d990bfbd216
+  ADAPTER_CONTRACT_VERSION: "0.2.0"
+  CONTROL_PLANE_SCHEMA_REVISION: p0s000000018
+  PYTHON_IMAGE: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+  RUNTIME_IMAGE: cgr.dev/chainguard/wolfi-base@sha256:1c451d46a0d5c4e9f2b38e0e8d3e299564a1aa95c21973efcc1980a9d1d2e73e
+  NODE_IMAGE: node:22-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
+  GO_IMAGE: golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d
+
+jobs:
+  verify-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --group dev --extra saas
+      - run: uv run pytest tests/saas/test_accepted_oci_recovery.py --reruns 0 -q
+
+  build-accepted-product:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'build'
+    needs: verify-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.raw.outputs.artifact-id }}
+      artifact-sha256: ${{ steps.raw.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --extra saas
+      - name: Authenticate accepted CI and original successful comparison steps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run python -m saas.scripts.accepted_oci_recovery prepare --root "$RUNNER_TEMP/accepted-raw"
+          cp saas/scripts/accepted_oci_recovery.py "$RUNNER_TEMP/accepted_oci_recovery.py"
+      - name: Checkout unchanged accepted business product
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.PRODUCT_REVISION }}
+          persist-credentials: false
+      - name: Verify product checkout and install its existing locked helpers
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$PRODUCT_REVISION" ]]
+          [[ -z "$(git status --porcelain)" ]]
+          uv sync --frozen --extra saas
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Recover Server using its existing first-attempt build cache
+        id: server
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "1"
+      - name: Recover Host using its existing first-attempt build cache
+        id: host
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: host
+          target: host
+          attempt: "1"
+      - name: Match actual four-platform bytes to original independent comparisons
+        id: compare
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          mv "$RUNNER_TEMP/server-1.tar" "$RUNNER_TEMP/accepted-raw/"
+          mv "$RUNNER_TEMP/host-1.tar" "$RUNNER_TEMP/accepted-raw/"
+          uv run python "$RUNNER_TEMP/accepted_oci_recovery.py" verify --root "$RUNNER_TEMP/accepted-raw"
+      - name: Preserve actual OCI before any fresh vulnerability scan
+        id: raw
+        if: always() && steps.server.outcome == 'success' && steps.host.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: accepted-raw-${{ env.PRODUCT_REVISION }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/accepted-raw/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+  scan-and-admit-same-oci:
+    if: always() && !cancelled() && needs.verify-contract.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && (needs.build-accepted-product.result == 'success' || inputs.phase == 'scan')
+    needs: [verify-contract, build-accepted-product]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ env.PRODUCT_REVISION }}
+          evidence-revision: d404ce0e80e5f5b10b9dd8dec8673fb02382f3ec
+      - name: Download and independently recheck the same real raw checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_RUN: ${{ inputs.raw_run_id || github.run_id }}
+          RAW_ID: ${{ inputs.raw_artifact_id || needs.build-accepted-product.outputs.artifact-id }}
+          RAW_SHA: ${{ inputs.raw_artifact_sha256 || needs.build-accepted-product.outputs.artifact-sha256 }}
+        run: |
+          python -m saas.scripts.accepted_oci_recovery download --root "$RUNNER_TEMP/same-oci" --run-id "$RAW_RUN" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA" --policy "$GITHUB_SHA"
+      - name: Fresh scan and seal without rebuilding or relaxing any gate
+        id: seal
+        run: |
+          python -m saas.scripts.scan_oci_candidates --image "server=$RUNNER_TEMP/same-oci/server-1.tar" --image "host=$RUNNER_TEMP/same-oci/host-1.tar" --output "$RUNNER_TEMP/same-oci/grype"
+          python -m saas.scripts.oci_promotion seal --root "$RUNNER_TEMP/same-oci" --revision "$PRODUCT_REVISION" --source-date-epoch "$SOURCE_DATE_EPOCH" >> "$GITHUB_OUTPUT"
+      - name: Retain actually admitted immutable OCI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-oci-promotion-${{ env.PRODUCT_REVISION }}
+          path: |
+            ${{ runner.temp }}/same-oci/server-1.tar
+            ${{ runner.temp }}/same-oci/host-1.tar
+            ${{ runner.temp }}/same-oci/saas-image-candidate.json
+            ${{ runner.temp }}/same-oci/oci-promotion-manifest.json
+            ${{ runner.temp }}/same-oci/grype/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve raw rejection and original checkpoint on every outcome
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: accepted-same-oci-scan-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/same-oci/grype/
+            ${{ runner.temp }}/same-oci/unadmitted-build.json
+            ${{ runner.temp }}/same-oci/saas-image-candidate.json
+            ${{ runner.temp }}/same-oci/oci-promotion-manifest.json
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 30
