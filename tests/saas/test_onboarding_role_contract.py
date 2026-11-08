@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -9,6 +10,117 @@ DATABASE_SQL = (ROOT / "saas/control_plane/postgresql_database.sql").read_text(e
 VERTICAL_MIGRATION = (
     ROOT / "saas/control_plane/migrations/versions/p0s000000002_onboarding_vertical_chain.py"
 ).read_text(encoding="utf-8")
+
+
+def test_real_postgresql_onboarding_lock_exception_tracks_bootstrap_identity(
+    isolated_postgres_url: str,
+) -> None:
+    import sqlalchemy as sa
+
+    start = ROLE_SQL.index("-- Public registration and background Tenant onboarding")
+    start = ROLE_SQL.index("FROM pg_proc AS routine", start)
+    start = ROLE_SQL.index("AND NOT (", start) + len("AND NOT ")
+    end = ROLE_SQL.index("\n        UNION ALL", start)
+    predicate = ROLE_SQL[start:end].strip()
+    engine = sa.create_engine(isolated_postgres_url)
+    try:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            try:
+                assert (
+                    connection.execute(
+                        sa.text(
+                            "SELECT bool_and(proowner=10) FROM pg_proc WHERE oid IN ("
+                            "'pg_catalog.pg_advisory_xact_lock(bigint)'::regprocedure,"
+                            "'pg_catalog.pg_try_advisory_xact_lock(bigint)'::regprocedure)"
+                        )
+                    ).scalar_one()
+                    is True
+                )
+                legacy_oid = connection.execute(
+                    sa.text("SELECT oid FROM pg_roles WHERE rolname='next_beta_bootstrap'")
+                ).scalar_one_or_none()
+                if legacy_oid is None:
+                    connection.exec_driver_sql("CREATE ROLE next_beta_bootstrap NOLOGIN")
+                    legacy_oid = connection.execute(
+                        sa.text("SELECT oid FROM pg_roles WHERE rolname='next_beta_bootstrap'")
+                    ).scalar_one()
+                foreign_oid = (
+                    legacy_oid
+                    if legacy_oid != 10
+                    else connection.execute(
+                        sa.text("SELECT oid FROM pg_roles WHERE rolname='saas_registration'")
+                    ).scalar_one()
+                )
+                cases = [
+                    {
+                        "name": role,
+                        "signature": "pg_catalog.pg_advisory_xact_lock(bigint)",
+                        "recipient": role,
+                        "owner_oid": 10,
+                        "grantor_oid": 10,
+                        "privilege": "EXECUTE",
+                        "grantable": False,
+                        "schema": "pg_catalog",
+                        "expected": True,
+                    }
+                    for role in ("saas_registration", "saas_onboarding", "saas_executor")
+                ]
+                valid = cases[-1]
+                cases.append(
+                    {
+                        **valid,
+                        "name": "try-lock",
+                        "signature": "pg_catalog.pg_try_advisory_xact_lock(bigint)",
+                    }
+                )
+                for name, change in (
+                    (
+                        "nonbootstrap-owner-even-if-legacy-name",
+                        {"owner_oid": foreign_oid, "grantor_oid": foreign_oid},
+                    ),
+                    ("foreign-grantor", {"grantor_oid": foreign_oid}),
+                    ("wrong-function", {"signature": "pg_catalog.pg_advisory_lock(bigint)"}),
+                    (
+                        "wrong-overload",
+                        {"signature": "pg_catalog.pg_advisory_xact_lock(integer,integer)"},
+                    ),
+                    ("wrong-schema", {"schema": "public"}),
+                    ("wrong-recipient", {"recipient": "saas_runner_agent"}),
+                    ("grant-option", {"grantable": True}),
+                    ("wrong-privilege", {"privilege": "USAGE"}),
+                    (
+                        "try-lock-wrong-recipient",
+                        {
+                            "signature": "pg_catalog.pg_try_advisory_xact_lock(bigint)",
+                            "recipient": "saas_onboarding",
+                        },
+                    ),
+                ):
+                    cases.append({**valid, **change, "name": name, "expected": False})
+                rows = connection.execute(
+                    sa.text(
+                        "WITH cases AS (SELECT * FROM jsonb_to_recordset(CAST(:cases AS jsonb)) "
+                        "AS c(name text,signature text,recipient text,owner_oid oid,"
+                        "grantor_oid oid,"
+                        "privilege text,grantable boolean,schema text,expected boolean)) "
+                        f"SELECT c.name,c.expected,{predicate} FROM cases c "
+                        "JOIN pg_proc original ON original.oid=to_regprocedure(c.signature) "
+                        "CROSS JOIN LATERAL (SELECT original.oid,original.proname,"
+                        "c.owner_oid AS proowner) routine "
+                        "CROSS JOIN LATERAL (SELECT c.recipient AS rolname) grantee "
+                        "CROSS JOIN LATERAL (SELECT c.schema AS nspname) namespace "
+                        "CROSS JOIN LATERAL (SELECT c.grantor_oid AS grantor,"
+                        "c.privilege AS privilege_type,c.grantable AS is_grantable) acl"
+                    ),
+                    {"cases": json.dumps(cases)},
+                ).all()
+                assert len(rows) == len(cases)
+                assert all(expected is actual for _, expected, actual in rows), rows
+            finally:
+                transaction.rollback()
+    finally:
+        engine.dispose()
 
 
 def _write_grants(role: str, privilege: str) -> dict[str, frozenset[str]]:
@@ -632,6 +744,8 @@ def test_all_onboarding_authorities_converge_stale_catalog_acl_channels() -> Non
     assert "routine.proowner = caller_role" in convergence
     assert "REVOKE ALL PRIVILEGES ON FUNCTION ' || target_signature" in convergence
     assert "foreign owner ACL drifted" in convergence
+    assert "routine.proowner = 10" in convergence
+    assert "pg_get_userbyid(routine.proowner) = 'next_beta_bootstrap'" not in convergence
     assert "defaults.defaclrole <> caller_role" in convergence
     assert "defaults.defaclobjtype NOT IN ('r', 'S', 'f')" in convergence
 
