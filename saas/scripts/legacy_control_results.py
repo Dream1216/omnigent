@@ -10,6 +10,7 @@ import os
 import re
 import zipfile
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
@@ -121,6 +122,23 @@ def verify_pg_job(
         numbers.append(matches[0]["number"])
     require(numbers == sorted(set(numbers)) and numbers[0] > 0, "native PG steps are out of order")
     return result
+
+
+def _complete_pg_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Read delayed step metadata from the same immutable native job."""
+    if job.get("steps") != []:
+        return job
+    identity = {key: value for key, value in job.items() if key != "steps"}
+    for attempt in range(3):
+        current = api(f"{_PREFIX}/actions/jobs/{job['id']}")
+        require(
+            {key: value for key, value in current.items() if key != "steps"} == identity,
+            "native PG job identity changed while completing step metadata",
+        )
+        if current.get("steps") != [] or attempt == 2:
+            return current
+        sleep(2)
+    raise AssertionError("unreachable native PG metadata bound")
 
 
 def verify_pg_archive(archive: Path, *, source: dict[str, Any], major: int) -> dict[str, Any]:
@@ -240,7 +258,7 @@ def _collect_pg_receipts(
             evidence.stage = f"PG{major}-native-job"
             matching_jobs = [job for job in jobs if job.get("name") == f"legacy-pg ({major})"]
             require(len(matching_jobs) == 1, "native PG matrix job is missing or duplicated")
-            job = matching_jobs[0]
+            job = _complete_pg_job(matching_jobs[0])
             selected_ids[major] = job["id"]
             steps = verify_pg_job(
                 job, major=major, run_id=run_id, attempt=attempt, control_revision=control_revision

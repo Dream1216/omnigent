@@ -359,6 +359,47 @@ def test_original_source_artifact_entrypoint_still_rejects_active_runs():
         )
 
 
+@pytest.mark.parametrize(
+    "scenario", [{"pg_inputs": True, "control_workflow": True}], indirect=True
+)
+@pytest.mark.parametrize("fault", [None, "identity", "empty", "skipped", "duplicate"])
+def test_PG_list_step_visibility_uses_same_job_details_and_keeps_strict_guards(
+    pg_native, monkeypatch, fault
+):
+    original = capture._native_api
+    reads, sleeps = [], []
+
+    def api(endpoint):
+        result = original(endpoint)
+        if "/jobs?" in endpoint:
+            for job in result["jobs"]:
+                job["steps"] = []
+        elif "/actions/jobs/" in endpoint:
+            reads.append(endpoint)
+            if fault == "identity":
+                result["run_attempt"] += 1
+            elif fault == "empty":
+                result["steps"] = []
+            elif fault == "skipped":
+                result["steps"][-2]["conclusion"] = "skipped"
+            elif fault == "duplicate":
+                result["steps"].append(copy.deepcopy(result["steps"][-2]))
+        return result
+
+    monkeypatch.setattr(capture, "_native_api", api)
+    monkeypatch.setattr(consumer, "sleep", sleeps.append)
+    if fault:
+        with pytest.raises(ValueError):
+            pg_native["invoke"]()
+        assert pg_native["downloads"] == 0
+    else:
+        result = pg_native["invoke"]()
+        assert [row["XML_result"]["tests"] for row in result["PG16_and_PG18"]] == [4, 7]
+        assert pg_native["downloads"] == 2
+    assert len(reads) == (4 if fault is None else 3 if fault == "empty" else 1)
+    assert sleeps == ([2, 2] if fault == "empty" else [])
+
+
 def test_PG_receipt_job_depends_on_both_original_matrix_results_and_has_no_publish_privilege():
     import yaml
 

@@ -1025,16 +1025,18 @@ def collect_bootstrap_positive_origin(profile, identity, policy, destination):
         download_job_log(rule["job_id"], log_path)
         require(
             hashlib.sha256(_native_file(MAIN_WORKFLOW, run["head_sha"])).hexdigest()
-            == MAIN_WORKFLOW_SHA256
+            == registered_attachment_workflow(profile, identity, rule)
             and hashlib.sha256(_native_file(_GATE, rule["trusted_checkout_revision"])).hexdigest()
             == rule["trusted_gate_sha256"],
             "executed original domain bytes changed",
         )
-        results.append(
-            verify_main_domain_refusal(
-                profile, identity, rule, run, jobs[0], check, log_path.read_bytes().decode("utf-8")
-            )
+        receipt = verify_main_domain_refusal(
+            profile, identity, rule, run, jobs[0], check, log_path.read_bytes().decode("utf-8")
         )
+        attachment = registered_attachment_workflow(profile, identity, rule)
+        if attachment != MAIN_WORKFLOW_SHA256:
+            receipt["attachment_workflow_sha256"] = attachment
+        results.append(receipt)
         require(
             api(endpoint) == run
             and _job_pages(rule["run_id"], rule["attempt"]) == jobs

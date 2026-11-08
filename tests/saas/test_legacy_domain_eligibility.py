@@ -647,6 +647,63 @@ def test_bootstrap_positive_collector_reuses_native_refusal_without_global_claim
     assert not any("/actions/workflows/" in endpoint for endpoint in native_domain["calls"])
 
 
+@pytest.mark.parametrize("fault", [None, "workflow", "gate", "coordinate", "log"])
+def test_bootstrap_reuses_registered_original_fixed_runner_attachment(
+    tmp_path, monkeypatch, fault
+):
+    data = json.loads(
+        (
+            ROOT / "tests/saas/resources/legacy_compatibility_fixed_runner_refusal_native.json"
+        ).read_text()
+    )
+    policy = json.loads(
+        (ROOT / "saas/supply_chain/legacy-source-qualification-profiles.json").read_text()
+    )["profiles"]["Compatibility018"]
+    # This scenario owns one refusal; separate existing cases cover audit joins.
+    for field in (
+        "domain_non_execution",
+        "domain_infrastructure_cancellation",
+        "domain_refusal_cancellation",
+    ):
+        policy[field] = {}
+    assert policy["domain_not_applicable"][domain.MAIN_WORKFLOW] == [data["rule"]]
+    if fault == "coordinate":
+        data["rule"]["job_id"] += 1
+        policy["domain_not_applicable"][domain.MAIN_WORKFLOW] = [data["rule"]]
+    elif fault == "log":
+        data["log"] += "changed"
+
+    def api(endpoint):
+        if "/check-runs/" in endpoint:
+            return copy.deepcopy(data["check"])
+        if "/actions/runs/" in endpoint:
+            return copy.deepcopy(data["run"])
+        raise AssertionError(endpoint)
+
+    def native_file(path, revision):
+        assert revision == "c724abb9d43c40717e83154a7da9270150f3d418"
+        kind = "workflow" if path == domain.MAIN_WORKFLOW else "gate"
+        return b"changed" if fault == kind else data[kind + "_text"].encode()
+
+    monkeypatch.setattr(domain, "api", api)
+    monkeypatch.setattr(domain, "_native_file", native_file)
+    monkeypatch.setattr(domain, "_job_pages", lambda *_: [copy.deepcopy(data["job"])])
+    monkeypatch.setattr(
+        domain, "download_job_log", lambda _id, path: path.write_bytes(data["log"].encode())
+    )
+    args = data["profile"], data["identity"], policy, tmp_path / "positive"
+    if fault:
+        with pytest.raises(ValueError):
+            domain.collect_bootstrap_positive_origin(*args)
+    else:
+        result = domain.collect_bootstrap_positive_origin(*args)
+        assert result.refusals[0]["attachment_workflow_sha256"] == (
+            domain.native.FIXED_RUNNER_WORKFLOW_SHA256
+        )
+        assert result.refusals[0]["technical_gate_waiver"] is False
+        assert result.discovery_sha256 is None
+
+
 @pytest.mark.parametrize("scenario", [{"main_domain": True}], indirect=True)
 @pytest.mark.parametrize(
     "field,value",
