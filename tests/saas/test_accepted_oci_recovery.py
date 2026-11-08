@@ -101,6 +101,15 @@ def test_workflow_keeps_fixed_product_and_preserves_before_scan():
         ("server", "1"),
         ("host", "1"),
     }
+    stage_index = next(
+        index for index, step in enumerate(steps) if "Stage actual OCI" in step.get("name", "")
+    )
+    cleanup_index = next(
+        index for index, step in enumerate(steps) if "Reclaim only" in step.get("name", "")
+    )
+    compare_index = next(index for index, step in enumerate(steps) if step.get("id") == "compare")
+    assert stage_index < cleanup_index < compare_index
+    assert "mv " not in steps[compare_index]["run"]
     preserve = next(step for step in steps if step.get("id") == "raw")
     assert "always()" in preserve["if"]
     assert preserve["with"]["retention-days"] == "30"

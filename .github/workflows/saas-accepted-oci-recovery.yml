@@ -118,6 +118,10 @@ jobs:
           artifact: host
           target: host
           attempt: "1"
+      - name: Stage actual OCI before any cleanup or inspection can fail
+        run: |
+          mv "$RUNNER_TEMP/server-1.tar" "$RUNNER_TEMP/accepted-raw/"
+          mv "$RUNNER_TEMP/host-1.tar" "$RUNNER_TEMP/accepted-raw/"
       - name: Reclaim only this ephemeral builder cache before OCI inspection
         env:
           RECOVERY_BUILDER: ${{ steps.recovery-builder.outputs.name }}
@@ -130,8 +134,6 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          mv "$RUNNER_TEMP/server-1.tar" "$RUNNER_TEMP/accepted-raw/"
-          mv "$RUNNER_TEMP/host-1.tar" "$RUNNER_TEMP/accepted-raw/"
           uv run python "$RUNNER_TEMP/accepted_oci_recovery.py" verify --root "$RUNNER_TEMP/accepted-raw"
       - name: Preserve actual OCI before any fresh vulnerability scan
         id: raw
