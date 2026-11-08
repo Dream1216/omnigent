@@ -8,6 +8,8 @@ on:
       - "saas/scripts/accepted_m165_promotion.py"
       - "tests/saas/test_resume_oci_promotion.py"
       - "tests/saas/test_accepted_m165_promotion.py"
+      - "saas/actions/setup-pinned-crane/**"
+      - "tests/saas/test_pinned_crane_action.py"
   push:
     branches: ["main"]
     paths:
@@ -16,6 +18,8 @@ on:
       - "saas/scripts/accepted_m165_promotion.py"
       - "tests/saas/test_resume_oci_promotion.py"
       - "tests/saas/test_accepted_m165_promotion.py"
+      - "saas/actions/setup-pinned-crane/**"
+      - "tests/saas/test_pinned_crane_action.py"
   workflow_dispatch:
     inputs:
       policy_revision:
@@ -56,14 +60,13 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --group dev --extra saas
-      - uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
-        with:
-          version: v0.21.6
+      - uses: ./saas/actions/setup-pinned-crane
+        timeout-minutes: 3
       - name: Exercise unchanged admission gates and real OCI round-trip
         run: |
           set -euo pipefail
           export OCI_PROMOTION_TEST_CRANE="$(command -v crane)"
-          uv run pytest tests/saas/test_accepted_m165_promotion.py tests/saas/test_resume_oci_promotion.py tests/saas/test_oci_promotion.py tests/saas/test_image_supply_chain.py --reruns 0 -q
+          uv run pytest tests/saas/test_pinned_crane_action.py tests/saas/test_accepted_m165_promotion.py tests/saas/test_resume_oci_promotion.py tests/saas/test_oci_promotion.py tests/saas/test_image_supply_chain.py --reruns 0 -q
 
   admit-original:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha
@@ -236,9 +239,8 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up crane
-        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
-        with:
-          version: v0.21.6
+        uses: ./saas/actions/setup-pinned-crane
+        timeout-minutes: 3
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
@@ -663,9 +665,8 @@ jobs:
             --subject "sha256:$(sha256sum "$wheel" | cut -d' ' -f1)" \
             --policy-revision "$SIGNING_POLICY_REVISION" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
       - name: Set up crane
-        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
-        with:
-          version: v0.21.6
+        uses: ./saas/actions/setup-pinned-crane
+        timeout-minutes: 3
       - name: Log in to image registry for independent readback
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
