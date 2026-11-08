@@ -103,6 +103,7 @@ jobs:
           uv sync --frozen --extra saas
       - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        id: recovery-builder
       - name: Recover Server using its existing first-attempt build cache
         id: server
         uses: ./saas/actions/build-oci-candidate
@@ -117,6 +118,13 @@ jobs:
           artifact: host
           target: host
           attempt: "1"
+      - name: Reclaim only this ephemeral builder cache before OCI inspection
+        env:
+          RECOVERY_BUILDER: ${{ steps.recovery-builder.outputs.name }}
+        run: |
+          [[ "$RECOVERY_BUILDER" =~ ^builder-[a-zA-Z0-9][a-zA-Z0-9_-]{1,90}$ ]]
+          docker buildx prune --builder "$RECOVERY_BUILDER" --all --force
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Match actual four-platform bytes to original independent comparisons
         id: compare
         env:
