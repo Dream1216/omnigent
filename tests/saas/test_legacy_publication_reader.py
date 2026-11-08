@@ -37,8 +37,20 @@ def test_frozen_c2_data_registration_requires_all_six_exact_original_rows(tmp_pa
         write(path, {"schema_version": 1, key: {"Compatibility018": row}})
         before[path] = path.read_bytes()
     if fault:
-        with pytest.raises(ValueError, match="source origin changed"):
-            reader.trusted_entries(tmp_path, "Compatibility018")
+        entries = reader.trusted_entries(tmp_path, "Compatibility018")
+        assert (
+            "bootstrap_positive_origin" not in entries["legacy-source-qualification-profiles.json"]
+        )
+        with pytest.raises(ValueError, match="bootstrap origin registration fields differ"):
+            reader.require_publication_source_origin(
+                tmp_path,
+                entries["legacy-security-build-profiles.json"],
+                {
+                    "domain_qualification_kind": reader.BOOTSTRAP_KIND,
+                    "complete_domain_discovery": False,
+                },
+                entries=entries,
+            )
     else:
         assert reader.trusted_entries(tmp_path, "Compatibility018") == reader.trusted_entries(
             ROOT, "Compatibility018"

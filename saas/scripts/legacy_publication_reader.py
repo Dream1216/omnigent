@@ -22,6 +22,7 @@ from saas.scripts.legacy_control_results import _collect_pg_receipts, verify_con
 from saas.scripts.legacy_domain_eligibility import (
     BOOTSTRAP_KIND,
     bootstrap_registration,
+    native_digest,
     require_publication_source_origin,
 )
 from saas.scripts.legacy_native_evidence import preserve_native_evidence
@@ -36,6 +37,7 @@ TRUSTED_STORES = (
     "legacy-security-transfer-profiles.json",
     "legacy-source-qualification-profiles.json",
 )
+_FROZEN_C2_BUNDLE_SHA256 = "8f960409bd18a2c26b635f081f6cf371b678d9c2ed9496cab0ae34e22be2a719"
 
 
 def trusted_entries(control: Path, component: str) -> dict[str, Any]:
@@ -59,14 +61,16 @@ def trusted_entries(control: Path, component: str) -> dict[str, Any]:
     # The frozen product's data checkout predates this exact controller opt-in.
     # Authenticate all six original rows; never alter the immutable data files.
     policy_name = "legacy-source-qualification-profiles.json"
-    if component == "Compatibility018" and "bootstrap_positive_origin" not in entries[policy_name]:
+    if (
+        component == "Compatibility018"
+        and "bootstrap_positive_origin" not in entries[policy_name]
+        and native_digest(entries) == _FROZEN_C2_BUNDLE_SHA256
+    ):
         entries[policy_name] = {
             **entries[policy_name],
             "bootstrap_positive_origin": {
                 "kind": BOOTSTRAP_KIND,
-                "source_bundle_sha256": (
-                    "8f960409bd18a2c26b635f081f6cf371b678d9c2ed9496cab0ae34e22be2a719"
-                ),
+                "source_bundle_sha256": _FROZEN_C2_BUNDLE_SHA256,
             },
         }
         bootstrap_registration(
