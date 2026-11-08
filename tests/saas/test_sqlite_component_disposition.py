@@ -394,6 +394,7 @@ def test_deleting_cli_from_self_reported_inventory_never_authenticates_it(tmp_pa
     ],
 )
 def test_existing_release_image_validator_keeps_finite_raw_evidence(tmp_path, monkeypatch, fault):
+    monkeypatch.setenv("OMNIGENT_RUNTIME_EVIDENCE_REPO", str(tmp_path))
     import base64
 
     from saas.production.admission import admission_signature_payload
