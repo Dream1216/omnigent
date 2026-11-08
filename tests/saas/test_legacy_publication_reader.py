@@ -23,6 +23,29 @@ ROOT = Path(__file__).resolve().parents[2]
 MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
 
 
+@pytest.mark.parametrize("fault", [None, *reader.TRUSTED_STORES])
+def test_frozen_c2_data_registration_requires_all_six_exact_original_rows(tmp_path, fault):
+    before = {}
+    for name in reader.TRUSTED_STORES:
+        store = json.loads((ROOT / "saas/supply_chain" / name).read_bytes())
+        key = "inputs" if name == "legacy-security-original-inputs.json" else "profiles"
+        row = store[key]["Compatibility018"]
+        row.pop("bootstrap_positive_origin", None)
+        if name == fault:
+            row["unreviewed_change"] = True
+        path = tmp_path / "saas/supply_chain" / name
+        write(path, {"schema_version": 1, key: {"Compatibility018": row}})
+        before[path] = path.read_bytes()
+    if fault:
+        with pytest.raises(ValueError, match="source origin changed"):
+            reader.trusted_entries(tmp_path, "Compatibility018")
+    else:
+        assert reader.trusted_entries(tmp_path, "Compatibility018") == reader.trusted_entries(
+            ROOT, "Compatibility018"
+        )
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+
+
 def write(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value))

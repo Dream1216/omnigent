@@ -888,11 +888,18 @@ _BOOTSTRAP_ORIGINS = {
         "codex/legacy-validation-model-7cea0940",
         "acab3dd70720755d62c19b969b0ef91c9208848da1b3feec6aaef7ca6d5f9ccd",
     ),
+    "Compatibility018": (
+        "4e11681dd3809febeb42cb5d752d423b5f751f82",
+        "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+        223,
+        "codex/p18-a7-validation-base-20261102",
+        "8f960409bd18a2c26b635f081f6cf371b678d9c2ed9496cab0ae34e22be2a719",
+    ),
 }
 
 
 def bootstrap_registration(control, profile, policy, *, entries=None):
-    """Only the three reviewed frozen source-CI bundles can opt in."""
+    """Only the reviewed frozen source-CI bundles can opt in."""
     registration = policy.get("bootstrap_positive_origin")
     require(
         isinstance(registration, dict) and set(registration) == {"kind", "source_bundle_sha256"},
@@ -944,7 +951,7 @@ def bootstrap_registration(control, profile, policy, *, entries=None):
         "bootstrap six-table source origin changed",
     )
     require(
-        len(identity["workflows"]) == 16
+        len(identity["workflows"]) == (15 if component == "Compatibility018" else 16)
         and sum(
             plan["kind"] == "pytest"
             for jobs in selected["job_evidence"].values()

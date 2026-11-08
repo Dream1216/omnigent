@@ -19,7 +19,11 @@ import yaml
 
 from saas.scripts import legacy_initial_publisher as publisher
 from saas.scripts.legacy_control_results import _collect_pg_receipts, verify_control_run
-from saas.scripts.legacy_domain_eligibility import require_publication_source_origin
+from saas.scripts.legacy_domain_eligibility import (
+    BOOTSTRAP_KIND,
+    bootstrap_registration,
+    require_publication_source_origin,
+)
 from saas.scripts.legacy_native_evidence import preserve_native_evidence
 from saas.scripts.legacy_source_qualification import _qualify_source_ci
 from saas.scripts.oci_promotion import read_json, require
@@ -52,6 +56,25 @@ def trusted_entries(control: Path, component: str) -> dict[str, Any]:
         )
         store = cast(dict[str, Any], store)
         entries[name] = store[key][component]
+    # The frozen product's data checkout predates this exact controller opt-in.
+    # Authenticate all six original rows; never alter the immutable data files.
+    policy_name = "legacy-source-qualification-profiles.json"
+    if component == "Compatibility018" and "bootstrap_positive_origin" not in entries[policy_name]:
+        entries[policy_name] = {
+            **entries[policy_name],
+            "bootstrap_positive_origin": {
+                "kind": BOOTSTRAP_KIND,
+                "source_bundle_sha256": (
+                    "8f960409bd18a2c26b635f081f6cf371b678d9c2ed9496cab0ae34e22be2a719"
+                ),
+            },
+        }
+        bootstrap_registration(
+            control,
+            entries["legacy-security-build-profiles.json"],
+            entries[policy_name],
+            entries=entries,
+        )
     return entries
 
 

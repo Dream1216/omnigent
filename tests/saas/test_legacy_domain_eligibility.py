@@ -573,7 +573,7 @@ def test_registered_head_evidence_never_qualifies_with_undiscovered_later_domain
     assert receipt["source_ci_pass"] is False
 
 
-@pytest.mark.parametrize("component", ["Core", "Gateway", "Model"])
+@pytest.mark.parametrize("component", ["Core", "Gateway", "Model", "Compatibility018"])
 def test_bootstrap_registration_binds_only_original_six_tables(component):
     from saas.scripts.protected_legacy_initial_build import load_profile
 
@@ -598,14 +598,15 @@ def test_bootstrap_registration_binds_only_original_six_tables(component):
         *domain._BOOTSTRAP_STORES,
     ],
 )
-def test_bootstrap_registration_rejects_unknown_or_changed_origin(fault):
+@pytest.mark.parametrize("component", ["Core", "Compatibility018"])
+def test_bootstrap_registration_rejects_unknown_or_changed_origin(component, fault):
     from saas.scripts.protected_legacy_initial_build import load_profile
 
-    profile = load_profile(ROOT, "Core")
+    profile = load_profile(ROOT, component)
     entries = {}
     for name in domain._BOOTSTRAP_STORES:
         store = json.loads((ROOT / "saas/supply_chain" / name).read_text())
-        entries[name] = store["inputs" if "original-inputs" in name else "profiles"]["Core"]
+        entries[name] = store["inputs" if "original-inputs" in name else "profiles"][component]
     policy = entries["legacy-source-qualification-profiles.json"]
     if fault == "unknown-component":
         profile["component"] = "Future"
@@ -703,19 +704,20 @@ def test_bootstrap_complete_source_join_keeps_technical_and_all_app_checks(
         "unknown-history",
     ],
 )
-def test_bootstrap_consumers_reject_incomplete_or_forged_typed_claims(fault):
+@pytest.mark.parametrize("component", ["Core", "Compatibility018"])
+def test_bootstrap_consumers_reject_incomplete_or_forged_typed_claims(component, fault):
     from saas.scripts.protected_legacy_initial_build import load_profile
 
-    profile = load_profile(ROOT, "Core")
+    profile = load_profile(ROOT, component)
     entries = {
         name: json.loads((ROOT / "saas/supply_chain" / name).read_text())[
             "inputs" if "original-inputs" in name else "profiles"
-        ]["Core"]
+        ][component]
         for name in domain._BOOTSTRAP_STORES
     }
     policy = entries["legacy-source-qualification-profiles.json"]
     result = {
-        "component": "Core",
+        "component": component,
         "product_revision": profile["product_revision"],
         "product_tree": profile["product_tree"],
         "domain_qualification_kind": domain.BOOTSTRAP_KIND,

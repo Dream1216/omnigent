@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 import yaml
 
 from saas.scripts.run_production_admission import (
@@ -140,7 +142,9 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     )
     assert "refs/heads/main" in preflight
     assert '"$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION"' in preflight
-    assert '[[ -z "$RUNTIME_EVIDENCE_REVISION" || -n "$RECEIPT_REQUEST_JSON" ]]' in preflight
+    assert (
+        '[[ -z "$RUNTIME_EVIDENCE_REVISION" || -z "$REVIEW_EXCEPTION_REQUEST_JSON" ]]' in preflight
+    )
     context = next(
         step
         for step in job["steps"]
@@ -148,7 +152,7 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     )
     assert (
         context["if"]
-        == "inputs.runtime_evidence_revision != '' && inputs.receipt_request_json != ''"
+        == "inputs.runtime_evidence_revision != '' && inputs.review_exception_request_json == ''"
     )
     assert context["with"] == {
         "product-revision": "${{ inputs.product_revision }}",
@@ -166,6 +170,9 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     assert "--require-ready" in command
     assert "--product-revision" in command
     assert "--evidence-revision" in command
+    assert '--controller-revision "$TRUSTED_REF_REVISION"' in command
+    assert '--evidence-revision "${RUNTIME_EVIDENCE_REVISION:-$EVIDENCE_REVISION}"' in command
+    assert '--evidence-repo "${OMNIGENT_RUNTIME_EVIDENCE_REPO:-$GITHUB_WORKSPACE}"' in command
     upload = next(
         step for step in job["steps"] if step.get("name") == "Upload immutable admission reports"
     )
@@ -220,3 +227,77 @@ def test_image_candidate_composite_preserves_reproducible_build_contract() -> No
         "ADAPTER_CONTRACT_VERSION",
     ):
         assert f"{name}=${{{{ env.{name} }}}}" in options["build-args"]
+
+
+@pytest.mark.parametrize("fault", [None, "controller", "source", "dirty", "evidence"])
+def test_final_admission_separates_controller_product_and_immutable_data(
+    tmp_path, monkeypatch, fault
+):
+    from saas.scripts import run_production_admission as runner
+    from saas.scripts.runtime_evidence_intake import ADMISSION_POLICY
+    from tests.saas import test_evidence_admission as signed
+    from tests.saas.test_production_readiness import _git
+
+    controller, data = tmp_path / "controller", tmp_path / "data"
+    controller.mkdir()
+    policy, _ = signed._fixture(controller)
+    path = controller / ADMISSION_POLICY
+    path.parent.mkdir(parents=True)
+    image_path = "saas/acceptance/p0-production-image-evidence.json"
+    next(row for row in policy["evidence_sources"] if row["kind"] == "image")["path"] = image_path
+    path.write_text(json.dumps(policy))
+    image = controller / image_path
+    image.parent.mkdir(parents=True)
+    image.write_text("{}")
+    for args in (
+        ("init",),
+        ("config", "user.email", "test@example.invalid"),
+        ("config", "user.name", "Test"),
+        ("add", "."),
+        ("commit", "-m", "product"),
+    ):
+        _git(controller, *args)
+    product = _git(controller, "rev-parse", "HEAD")
+    image.write_text('{"data_only": true}')
+    if fault == "source":
+        (controller / "runtime.py").write_text("raise RuntimeError('data must never execute')")
+    _git(controller, "add", ".")
+    _git(controller, "commit", "-m", "data")
+    evidence = _git(controller, "rev-parse", "HEAD")
+    _git(controller, "worktree", "add", "--detach", str(data), evidence)
+    _git(controller, "checkout", "--detach", product)
+    (controller / "control.py").write_text("# independent protected controller increment\n")
+    _git(controller, "add", ".")
+    _git(controller, "commit", "-m", "controller")
+    control = _git(controller, "rev-parse", "HEAD")
+    if fault == "dirty":
+        (data / image_path).write_text("{}")
+    calls = []
+
+    def verify(root, *args, **kwargs):
+        calls.append(root)
+        return {"status": "pass", "production_readiness": "blocked", "violations": []}
+
+    monkeypatch.setattr(runner, "validate_evidence_admission", verify)
+    monkeypatch.setattr(runner, "validate_production_readiness", verify)
+    arguments = {
+        "product_revision": product,
+        "evidence_revision": "b" * 40 if fault == "evidence" else evidence,
+        "controller_revision": "b" * 40 if fault == "controller" else control,
+        "evidence_repo": data,
+        "now": _NOW,
+    }
+    if fault in {"source", "dirty"}:
+        with pytest.raises(ValueError, match="dirty lineage"):
+            runner.build_production_admission_bundle(controller, **arguments)
+        assert calls == []
+    else:
+        bundle = runner.build_production_admission_bundle(controller, **arguments)["bundle"]
+        assert calls == [data, data]
+        assert bundle["product_revision"] == product
+        assert bundle["controller_revision"] == arguments["controller_revision"]
+        assert bundle["evidence_revision"] == arguments["evidence_revision"]
+        assert bundle["status"] == ("pass" if fault is None else "fail")
+        assert bundle["release_decision"] == "NO-GO"
+        assert _git(controller, "rev-parse", "HEAD") == control
+        assert image.read_text() == "{}"

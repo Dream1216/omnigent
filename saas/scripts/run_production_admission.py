@@ -14,6 +14,7 @@ from typing import Any
 
 from saas.production.admission import validate_evidence_admission
 from saas.production.readiness import validate_production_readiness
+from saas.scripts.runtime_evidence_intake import validate_evidence_context
 
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _OUTPUT_FILES = {
@@ -46,6 +47,8 @@ def build_production_admission_bundle(
     *,
     product_revision: str,
     evidence_revision: str,
+    evidence_repo: Path | None = None,
+    controller_revision: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Run both authoritative verifiers and bind their bytes to one bundle."""
@@ -54,11 +57,22 @@ def build_production_admission_bundle(
     if current.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     violations: list[str] = []
+    controller_head = _git_head(repo)
+    controller_revision = controller_revision or controller_head
+    if (
+        controller_revision is None
+        or _GIT_SHA.fullmatch(controller_revision) is None
+        or controller_revision != controller_head
+    ):
+        violations.append("checked-out controller HEAD does not match controller_revision")
+    evidence_repo = evidence_repo or repo
+    if evidence_repo.resolve() != repo.resolve():
+        validate_evidence_context(repo, evidence_repo, product_revision=product_revision)
     if _GIT_SHA.fullmatch(product_revision) is None:
         violations.append("product_revision must be a full lowercase Git SHA")
     if _GIT_SHA.fullmatch(evidence_revision) is None:
         violations.append("evidence_revision must be a full lowercase Git SHA")
-    head = _git_head(repo)
+    head = _git_head(evidence_repo)
     if head is None:
         violations.append("evidence repository HEAD cannot be resolved")
     elif head != evidence_revision:
@@ -68,13 +82,13 @@ def build_production_admission_bundle(
         (repo / "saas/production/evidence-admission-policy.json").read_text(encoding="utf-8")
     )
     admission = validate_evidence_admission(
-        repo,
+        evidence_repo,
         policy,
         expected_product_revision=product_revision,
         now=current,
     )
     readiness = validate_production_readiness(
-        repo,
+        evidence_repo,
         expected_product_revision=product_revision,
         now=current,
     )
@@ -105,6 +119,7 @@ def build_production_admission_bundle(
         "contract": "omnigent-saas-final-production-admission-v1",
         "generated_at": current.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "product_revision": product_revision,
+        "controller_revision": controller_revision,
         "evidence_revision": evidence_revision,
         "status": "pass" if structural_pass else "fail",
         "production_readiness": "ready" if ready else "blocked",
@@ -159,6 +174,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--product-revision", required=True)
     parser.add_argument("--evidence-revision", required=True)
+    parser.add_argument("--evidence-repo", type=Path)
+    parser.add_argument("--controller-revision")
     parser.add_argument("--output-directory", default="artifacts/production-admission")
     parser.add_argument("--require-ready", action="store_true")
     args = parser.parse_args()
@@ -168,6 +185,8 @@ def main() -> int:
             repo,
             product_revision=args.product_revision,
             evidence_revision=args.evidence_revision,
+            evidence_repo=args.evidence_repo,
+            controller_revision=args.controller_revision,
         )
         output = _output_directory(repo, args.output_directory)
         output.mkdir(parents=True, exist_ok=True)

@@ -932,11 +932,9 @@ def test_registered_source_policy_validates_exact_source_or_rejects_pending(comp
         )
         assert original["name"].endswith("head=" + profile["product_revision"])
     if component == "Compatibility018":
-        assert "bootstrap_positive_origin" not in policy
         for field in (
             "domain_unattributed_zero_execution",
             "domain_unattributed_bootstrap_cancellation",
         ):
             assert set(policy[field]) == {GOV}
-    else:
-        qualifier.bootstrap_registration(ROOT, profile, policy)
+    qualifier.bootstrap_registration(ROOT, profile, policy)

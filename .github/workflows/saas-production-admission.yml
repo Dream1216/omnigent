@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       evidence_revision:
-        description: Exact 40-character evidence-only revision SHA
+        description: Exact captured protected Main controller SHA
         required: true
         type: string
       review_exception_request_json:
@@ -17,7 +17,7 @@ on:
       receipt_request_json:
         description: Optional canonical receipt request JSON; empty runs final admission
       runtime_evidence_revision:
-        description: Optional immutable evidence-only data revision for an image receipt
+        description: Optional immutable evidence-only data revision for receipt or final admission
         required: false
         type: string
 
@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]] && [[ "$EVIDENCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
           [[ -z "$REVIEW_EXCEPTION_REQUEST_JSON" || -z "$RECEIPT_REQUEST_JSON" ]]
-          [[ -z "$RUNTIME_EVIDENCE_REVISION" || -n "$RECEIPT_REQUEST_JSON" ]]
+          [[ -z "$RUNTIME_EVIDENCE_REVISION" || -z "$REVIEW_EXCEPTION_REQUEST_JSON" ]]
           [[ "$TRUSTED_REF" == "refs/heads/main" ]] && [[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -68,8 +68,8 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --extra saas
-      - name: Prepare separate immutable image receipt data
-        if: inputs.runtime_evidence_revision != '' && inputs.receipt_request_json != ''
+      - name: Prepare separate immutable evidence data
+        if: inputs.runtime_evidence_revision != '' && inputs.review_exception_request_json == ''
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ inputs.product_revision }}
@@ -97,7 +97,9 @@ jobs:
         run: >-
           uv run python -m saas.scripts.run_production_admission
           --product-revision "$PRODUCT_REVISION"
-          --evidence-revision "$EVIDENCE_REVISION"
+          --controller-revision "$TRUSTED_REF_REVISION"
+          --evidence-revision "${RUNTIME_EVIDENCE_REVISION:-$EVIDENCE_REVISION}"
+          --evidence-repo "${OMNIGENT_RUNTIME_EVIDENCE_REPO:-$GITHUB_WORKSPACE}"
           --output-directory artifacts/production-admission
           --require-ready
       - if: inputs.receipt_request_json != ''

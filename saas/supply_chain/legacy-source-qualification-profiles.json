@@ -17757,6 +17757,10 @@
     },
     "Compatibility018": {
       "component": "Compatibility018",
+      "bootstrap_positive_origin": {
+        "kind": "legacy_bootstrap_positive_origin/v1",
+        "source_bundle_sha256": "8f960409bd18a2c26b635f081f6cf371b678d9c2ed9496cab0ae34e22be2a719"
+      },
       "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
       "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
       "identity_contract_sha256": "76acbf997414e00d82c89f061ad23faad45edfd156a435860c442ddf96424093",
