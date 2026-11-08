@@ -659,6 +659,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "compat018_recovered_publication_correction",
         "source_advisory_record_correction",
         "runtime_condition_admission_correction",
         "source_native_response_capacity_correction",
@@ -697,6 +698,11 @@ def reviewed_source_bytes(root, relative, expected):
 @pytest.mark.parametrize(
     ("relative", "correction_name"),
     [
+        ("saas/scripts/legacy_initial_publisher.py", "compat018_recovered_publication_correction"),
+        (
+            ".github/workflows/saas-legacy-security-build.yml",
+            "compat018_recovered_publication_correction",
+        ),
         ("saas/scripts/legacy_initial_publisher.py", "source_advisory_record_correction"),
         ("saas/scripts/legacy_initial_publisher.py", "source_native_response_capacity_correction"),
         (
