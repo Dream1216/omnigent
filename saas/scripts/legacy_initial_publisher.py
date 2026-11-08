@@ -603,7 +603,7 @@ def collect_qualified_source(
         require(
             isinstance(endpoint, str)
             and (endpoint.startswith(PREFIX + "/") or endpoint == "rate_limit")
-            and "response" in prior,
+            and ("response" in prior or endpoint == "rate_limit"),
             "source producer response is not native",
         )
         assert isinstance(endpoint, str)

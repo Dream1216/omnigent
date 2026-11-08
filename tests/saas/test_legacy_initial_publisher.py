@@ -183,6 +183,10 @@ def test_source_interface_requires_strict_exact_qualification(publication_data, 
         "foreign_endpoint",
         "failed_http",
         "bad_etag",
+        "advisory_observed",
+        "advisory_unknown",
+        "rate_response",
+        "missing_native_response",
     ],
 )
 def test_same_attempt_source_reuse_requires_current_native_origin(
@@ -234,17 +238,28 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
     records = []
     for number in (1, 2):
         path = root / "native-api" / f"response-{number:06d}.json"
-        publisher.write_json(
-            path,
-            {
-                "endpoint": endpoint,
-                "response": old,
-                "http_observation": {
-                    "status": 403 if fault == "failed_http" else 200,
-                    "headers": {"etag": etag} if etag is not None else {},
-                },
+        response = {
+            "endpoint": endpoint,
+            "response": old,
+            "http_observation": {
+                "status": 403 if fault == "failed_http" else 200,
+                "headers": {"etag": etag} if etag is not None else {},
             },
-        )
+        }
+        if number == 1 and fault in {"advisory_observed", "advisory_unknown"}:
+            response = {
+                "endpoint": "rate_limit",
+                "advisory": (
+                    {"status": "OBSERVED_ADVISORY_ONLY", "core": {"remaining": 0}}
+                    if fault == "advisory_observed"
+                    else {"status": "UNKNOWN", "reason": "unrecognized-rate-fields"}
+                ),
+            }
+        elif number == 1 and fault == "rate_response":
+            response["endpoint"] = "rate_limit"
+        elif number == 1 and fault == "missing_native_response":
+            del response["response"]
+        publisher.write_json(path, response)
         records.append(
             {"path": path.name, "bytes": path.stat().st_size, "sha256": file_sha256(path)}
         )
@@ -313,7 +328,16 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
             tmp_path / "source-revalidation",
         )
 
-    if fault not in {None, "changed", "changed_listing", "no_etag", "record_boundary"}:
+    if fault not in {
+        None,
+        "changed",
+        "changed_listing",
+        "no_etag",
+        "record_boundary",
+        "advisory_observed",
+        "advisory_unknown",
+        "rate_response",
+    }:
         with pytest.raises(ValueError if fault != "rate_limit" else native.NativeEvidenceFailure):
             collect()
         assert bool(recalculations) is (fault == "changed_blocked")
