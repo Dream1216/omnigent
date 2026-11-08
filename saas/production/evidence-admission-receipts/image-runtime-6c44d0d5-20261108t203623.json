@@ -1,0 +1,14 @@
+{
+  "evidence_kind": "image",
+  "evidence_path": "saas/acceptance/p0-production-image-evidence.json",
+  "evidence_sha256": "27bd7fc703361af4cdf52e38d8bb2dd50bdf2f9322830f387e10cd29a94961d2",
+  "expires_at": "2026-11-11T10:40:00Z",
+  "issued_at": "2026-11-08T20:36:23Z",
+  "payload_type": "application/vnd.omnigent.production-evidence-admission.v1+json",
+  "product_revision": "6c44d0d569262154e78f5a620ea5266fc9291439",
+  "receipt_id": "image-runtime-6c44d0d5-20261108t203623",
+  "schema_version": 1,
+  "signature": "Uy/ve1bnc6SMxQ4rOAO5MCrm3ZPKULDD6T2cR/v7J0WIe0vV7iCrP82yNeQZHUbZWfM/Y/H/8i/EMvgn0kGtCA==",
+  "signer_key_id": "openbao-ed25519-production-evidence-20261021-v1",
+  "workflow_identity": "Dream1216/omnigent/.github/workflows/saas-production-admission.yml@refs/heads/main"
+}
