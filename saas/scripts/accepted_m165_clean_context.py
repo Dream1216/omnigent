@@ -76,12 +76,18 @@ def verify_parent(run: dict[str, Any], job: dict[str, Any], artifact: dict[str, 
     )
 
 
-def source_inputs(repo: Path) -> dict[str, tuple[str, bytes]]:
+def source_inputs(repo: Path, *, product_profile: str = "M165") -> dict[str, tuple[str, bytes]]:
+    require(product_profile in {"M165", "M8c"}, "unapproved clean source profile")
+    product, expected_tree = (
+        (recovery.M8C_PRODUCT, recovery.M8C_TREE)
+        if product_profile == "M8c"
+        else (recovery.PRODUCT, TREE)
+    )
     tree = subprocess.check_output(
-        ["git", "rev-parse", f"{recovery.PRODUCT}^{{tree}}"], cwd=repo, text=True
+        ["git", "rev-parse", f"{product}^{{tree}}"], cwd=repo, text=True
     ).strip()
-    require(tree == TREE, "frozen product tree differs")
-    entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", recovery.PRODUCT], cwd=repo)
+    require(tree == expected_tree, "frozen product tree differs")
+    entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", product], cwd=repo)
     selected = []
     for entry in entries.split(b"\0"):
         if not entry:
@@ -127,11 +133,22 @@ def _member_bytes(archive: tarfile.TarFile, member: tarfile.TarInfo | str) -> by
         return stream.read()
 
 
-def verify_context_layer(stream: Any, expected: dict[str, tuple[str, bytes]]) -> dict[str, Any]:
+def verify_context_layer(
+    stream: Any, expected: dict[str, tuple[str, bytes]], *, forbid_bytecode: bool = False
+) -> dict[str, Any]:
     """Check actual copied source and generated UI without ignoring the old layer drift."""
     with tarfile.open(fileobj=stream, mode="r:*") as layer:
         members = layer.getmembers()
         require(len({member.name for member in members}) == len(members), "duplicate layer path")
+        if forbid_bytecode:
+            require(
+                not any(
+                    "__pycache__" in Path(member.name).parts
+                    or member.name.endswith((".pyc", ".pyo"))
+                    for member in members
+                ),
+                "host Python bytecode contaminated the copied source layer",
+            )
         by_name = {member.name: member for member in members}
         for name, (mode, body) in expected.items():
             member = by_name.get("build/" + name)
@@ -175,6 +192,68 @@ def verify_context_layer(stream: Any, expected: dict[str, tuple[str, bytes]]) ->
                 ).hexdigest(),
             }
     return {"tracked_inputs": len(expected), "generated_UI": ui_proofs}
+
+
+def verify_m8c_first(root: Path, repo: Path) -> dict[str, Any]:
+    """Prove a newly built clean Server; the cached original remains history only."""
+    origin = json.loads((root / "m8c-retained-origin.json").read_text())
+    require(
+        origin.get("kind") == "accepted_M8c_original_Server/v1"
+        and origin.get("product_revision") == recovery.M8C_PRODUCT
+        and origin.get("product_tree") == recovery.M8C_TREE
+        and origin.get("source_date_epoch") == recovery.M8C_EPOCH
+        and origin.get("original_run_id") == recovery.M8C_RUN
+        and origin.get("original_job_id") == recovery.M8C_JOB
+        and origin.get("first_archive_sha256") == recovery.M8C_FIRST_SHA256,
+        "clean M8c original history differs",
+    )
+    archive = root / "server-1.tar"
+    archive_sha = file_sha256(archive)
+    facts = inspect_oci_archive(archive, label_profile="executable")
+    sdk = json.loads((root / "server-candidate-runtime.json").read_text())
+    require(
+        archive_sha != recovery.M8C_FIRST_SHA256
+        and sdk.get("source_revision") == recovery.M8C_PRODUCT
+        and sdk.get("archive_sha256") == archive_sha
+        and sdk.get("root_digest") == recovery.archive_index_digest(archive)
+        and sdk.get("passed") is True
+        and sdk.get("e2b_version") == "2.31.0"
+        and {row["platform"] for row in sdk.get("platforms", [])}
+        == set(facts["platforms"])
+        == {"linux/amd64", "linux/arm64"},
+        "new clean M8c Server lacks its own exact executable SDK proof",
+    )
+    expected = source_inputs(repo, product_profile="M8c")
+    source_proofs = {}
+    with tarfile.open(archive) as bundle:
+        for platform, actual in facts["platforms"].items():
+            sdk_rows = [row for row in sdk["platforms"] if row["platform"] == platform]
+            require(
+                len(sdk_rows) == 1
+                and all(
+                    sdk_rows[0][key] == actual[key] for key in ("manifest_digest", "config_digest")
+                )
+                and actual["labels"]["org.opencontainers.image.revision"] == recovery.M8C_PRODUCT,
+                "new clean M8c Server platform or SDK identity differs",
+            )
+            digest = actual["layers"][3]["digest"]
+            body = _member_bytes(bundle, "blobs/sha256/" + digest.removeprefix("sha256:"))
+            source_proofs[platform] = verify_context_layer(
+                io.BytesIO(body), expected, forbid_bytecode=True
+            )
+    return {
+        "kind": "accepted_M8c_clean_context_first/v1",
+        "product_revision": recovery.M8C_PRODUCT,
+        "product_tree": recovery.M8C_TREE,
+        "source_date_epoch": recovery.M8C_EPOCH,
+        "archive_sha256": archive_sha,
+        "facts": facts,
+        "source_proofs": source_proofs,
+        "host_bytecode_members": 0,
+        "original_Server_promoted": False,
+        "origin_sha256": file_sha256(root / "m8c-retained-origin.json"),
+        "SDK_sha256": file_sha256(root / "server-candidate-runtime.json"),
+    }
 
 
 def verify_first(root: Path, repo: Path) -> dict[str, Any]:

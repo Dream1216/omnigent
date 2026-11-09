@@ -81,10 +81,21 @@ def _member_bytes(archive: tarfile.TarFile, member: tarfile.TarInfo | str) -> by
         return stream.read()
 
 
-def verify_context_layer(stream: Any, expected: dict[str, tuple[str, bytes]]) -> dict[str, Any]:
+def verify_context_layer(
+    stream: Any, expected: dict[str, tuple[str, bytes]], *, forbid_bytecode: bool = False
+) -> dict[str, Any]:
     """Check actual copied source and generated UI without ignoring the old layer drift."""
     with tarfile.open(fileobj=stream, mode="r:*") as layer:
         members = layer.getmembers()
+        if forbid_bytecode:
+            require(
+                not any(
+                    "__pycache__" in Path(member.name).parts
+                    or member.name.endswith((".pyc", ".pyo"))
+                    for member in members
+                ),
+                "host Python bytecode contaminated the registered copied source layer",
+            )
         require(
             len({member.name for member in members}) == len(members),
             "duplicate layer path",
@@ -286,7 +297,7 @@ def registered_first(
                 ordinal = 3 if role == "server" else 14
                 with blobs.blob(manifest["layers"][ordinal]["digest"]) as stream:
                     source = (
-                        verify_context_layer(stream, expected)
+                        verify_context_layer(stream, expected, forbid_bytecode=True)
                         if role == "server"
                         else verify_host_install_layer(
                             stream, expected, revision=revision, epoch=epoch
@@ -543,7 +554,10 @@ def verify_complete(root: Path, repo: Path, profile: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("audit", "confirm", "verify", "registered-audit"))
+    parser.add_argument(
+        "command",
+        choices=("audit", "confirm", "verify", "registered-audit", "registered-repair-audit"),
+    )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--control", type=Path, default=Path(__file__).resolve().parents[2])
@@ -553,7 +567,13 @@ def main() -> None:
         default="clean-C2-server",
     )
     args = parser.parse_args()
-    if args.command == "registered-audit":
+    if args.command == "registered-repair-audit":
+        require(
+            registered_first(args.root, args.repo, args.control, write=False)
+            == json.loads((args.root / "reviewed-subject-image-facts.json").read_text()),
+            "retained registered C2 source audit differs from the original first facts",
+        )
+    elif args.command == "registered-audit":
         registered_first(args.root, args.repo, args.control)
     elif args.command == "audit":
         audit(args.root, args.repo, args.comparison_profile)

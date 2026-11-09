@@ -34,6 +34,17 @@ RETAINED_FIRST: dict[str, Any] = {
     "zip_sha256": "43aa73c367f489c32c0f133714d8e67216bafa28e0a3ec07a81d69c26abb86c3",
     "original_log_sha256": "a91b2294db2dddb5ca6a7d0a7fe1605c98a801b54b70cee2720b1fe8ff4a5f15",
 }
+REGISTERED_FAILED_PAIR = {
+    "controller_revision": "6a8c72b06d84648acf9bd86f827746a353143fc2",
+    "run_id": 42585053625,
+    "attempt": 1,
+    "builder_job_id": 129053047394,
+    "artifact_id": 13664516341,
+    "zip_size": 10181585741,
+    "zip_sha256": "0a37aa2b96bb09ac2bba4c3c4d129895fef3a65b01ef3daaa7755c5e8a2d4647",
+    "product_revision": "27503d14973b751a2031c6febf12a581b42b06d1",
+    "product_tree": "a02ea9f17664bd0290eb5025f864672c0025075c",
+}
 LABELS = {
     "org.opencontainers.image.revision": PRODUCT,
     "ai.omnigent.upstream.revision": UPSTREAM,
@@ -500,6 +511,130 @@ def registered_profile() -> dict[str, Any]:
     return profile
 
 
+def verify_registered_failed_pair(run, job, metadata) -> None:
+    """Only the preserved 275 four-build parent may supply this one-Server repair."""
+    value = REGISTERED_FAILED_PAIR
+    steps = job.get("steps", [])
+    names = [step.get("name") for step in steps]
+    required = (
+        "Recover Server using its existing first-attempt build cache",
+        "Recover Host using its existing first-attempt build cache",
+        "Audit actual fixed C2 source, UI, and historical Host",
+        "Independently build only C2 Server without cache",
+        "Independently build C2 Host without cache",
+        "Stage actual independent C2 Host and reclaim only its builder cache",
+        "Preserve actual OCI before any fresh vulnerability scan",
+    )
+    require(
+        run.get("id") == value["run_id"]
+        and run.get("head_sha") == value["controller_revision"]
+        and run.get("run_attempt") == 1
+        and run.get("head_branch") == "main"
+        and run.get("path") == WORKFLOW
+        and run.get("event") == "workflow_dispatch"
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "failure"
+        and run.get("repository", {}).get("full_name") == REPOSITORY
+        and job.get("id") == value["builder_job_id"]
+        and job.get("run_id") == value["run_id"]
+        and job.get("run_attempt") == 1
+        and job.get("head_sha") == value["controller_revision"]
+        and job.get("name") == "build-compat018-product"
+        and job.get("status") == "completed"
+        and job.get("conclusion") == "failure"
+        and job.get("runner_group_name") == "GitHub Actions"
+        and job.get("labels") == ["ubuntu-24.04"]
+        and len(names) == len(set(names))
+        and all(
+            any(step.get("name") == name and step.get("conclusion") == "success" for step in steps)
+            for name in required
+        )
+        and [step.get("name") for step in steps if step.get("conclusion") == "failure"]
+        == ["Confirm exact C2 comparison profile"]
+        and metadata.get("id") == value["artifact_id"]
+        and metadata.get("name") == f"compat018-raw-{value['product_revision']}-{value['run_id']}"
+        and metadata.get("size_in_bytes") == value["zip_size"]
+        and metadata.get("digest") == "sha256:" + value["zip_sha256"]
+        and metadata.get("expired") is False
+        and metadata.get("workflow_run", {}).get("id") == value["run_id"]
+        and metadata.get("workflow_run", {}).get("head_sha") == value["controller_revision"],
+        "registered C2 repair requires the exact failed comparison "
+        "and successful original four builds",
+    )
+
+
+def prepare_registered_server_repair(root: Path, github_env: Path) -> None:
+    from saas.scripts.compare_oci_rebuilds import compare_archives
+    from saas.scripts.legacy_artifact_download import download_artifact_bytes
+    from saas.scripts.oci_promotion import extract_artifact
+
+    value = REGISTERED_FAILED_PAIR
+    profile = registered_profile()
+    require(
+        all(profile[key] == value[key] for key in ("product_revision", "product_tree")),
+        "registered C2 repair cannot retarget the original product",
+    )
+    prefix = f"repos/{REPOSITORY}/actions"
+    run = api(f"{prefix}/runs/{value['run_id']}")
+    job = api(f"{prefix}/jobs/{value['builder_job_id']}")
+    metadata = api(f"{prefix}/artifacts/{value['artifact_id']}")
+    verify_registered_failed_pair(run, job, metadata)
+    archive = root.with_suffix(".zip")
+    download_artifact_bytes(
+        value["artifact_id"],
+        archive,
+        expected_size=value["zip_size"],
+        expected_sha256=value["zip_sha256"],
+    )
+    extract_artifact(archive, root, zip_sha256=value["zip_sha256"])
+    archive.unlink()
+    require(
+        json.loads((root / "registered-source-profile.json").read_text()) == profile,
+        "retained registered C2 profile differs",
+    )
+    first = json.loads((root / "reviewed-subject-image-facts.json").read_text())
+    host = compare_archives(root / "host-1.tar", root / "host-2.tar", label_profile="executable")
+    require(
+        host["matching_platform_manifest_and_config"] is True
+        and host["history_created_by_equal"] is True
+        and host["first"] == first["images"]["host"]["facts"]
+        and sha256(root / "host-1.tar") == first["images"]["host"]["archive_sha256"]
+        and sha256(root / "server-1.tar") == first["images"]["server"]["archive_sha256"],
+        "retained registered C2 first Server or independently equal Host pair differs",
+    )
+    # Retain the rejected second archive; it is never one of the new compared pair.
+    history = root / "original-failed-pair"
+    history.mkdir()
+    (root / "server-2.tar").rename(history / "server-2.tar")
+    (root / "registered-server-repair-parent.json").write_text(
+        json.dumps(
+            {
+                **value,
+                "original_job_conclusion": "failure",
+                "new_Server_builds": 1,
+                "first_Server_and_both_Host_reused": True,
+                "rejected_second_Server_archive_sha256": sha256(history / "server-2.tar"),
+            },
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    )
+    require(
+        api(f"{prefix}/runs/{value['run_id']}") == run
+        and api(f"{prefix}/artifacts/{value['artifact_id']}") == metadata,
+        "registered C2 original producer changed during retention",
+    )
+    with github_env.open("a") as stream:
+        for key, item in {
+            "PRODUCT_REVISION": profile["product_revision"],
+            "SOURCE_REVISION": profile["product_revision"],
+            "PRODUCT_TREE": profile["product_tree"],
+            "SOURCE_DATE_EPOCH": str(profile["source_date_epoch"]),
+        }.items():
+            stream.write(f"{key}={item}\n")
+
+
 def registered_raw(root: Path, *, write: bool = False) -> dict[str, Any]:
     """Bind a raw checkpoint to its own registered profile and two actual pairs."""
     from saas.scripts.compare_oci_rebuilds import compare_archives
@@ -555,6 +690,23 @@ def registered_raw(root: Path, *, write: bool = False) -> dict[str, Any]:
         "registered_first_facts_sha256": sha256(root / "reviewed-subject-image-facts.json"),
         "historical_4e_byte_identity_claimed": False,
     }
+    parent_path = root / "registered-server-repair-parent.json"
+    if parent_path.exists():
+        parent = json.loads(parent_path.read_text())
+        require(
+            parent
+            == {
+                **REGISTERED_FAILED_PAIR,
+                "original_job_conclusion": "failure",
+                "new_Server_builds": 1,
+                "first_Server_and_both_Host_reused": True,
+                "rejected_second_Server_archive_sha256": sha256(
+                    root / "original-failed-pair/server-2.tar"
+                ),
+            },
+            "registered C2 repair parent or preserved rejected archive differs",
+        )
+        report["registered_server_repair_parent_sha256"] = sha256(parent_path)
     path = root / "saas-image-candidate.json"
     if write:
         require(not path.exists(), "registered comparison already exists")
@@ -577,6 +729,7 @@ def main() -> None:
             "retained-first",
             "registered-prepare",
             "registered-confirm",
+            "registered-server-repair",
         ),
     )
     parser.add_argument("--root", type=Path, required=True)
@@ -594,7 +747,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.registered_subject and args.command not in {"verify", "download", "seal"}:
         parser.error("registered subject flag is limited to raw verification/scan/seal")
-    if args.command == "registered-prepare":
+    if args.command == "registered-server-repair":
+        require(
+            args.github_env is not None, "registered repair requires native environment output"
+        )
+        prepare_registered_server_repair(args.root, args.github_env)
+    elif args.command == "registered-prepare":
         profile = registered_profile()
         args.root.mkdir(parents=True, exist_ok=False)
         (args.root / "registered-source-profile.json").write_text(

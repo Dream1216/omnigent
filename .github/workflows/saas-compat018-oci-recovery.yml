@@ -27,7 +27,7 @@ on:
       phase:
         description: Recover cached bytes, or rescan the retained raw checkpoint
         type: choice
-        options: [build, complete-retained, build-reviewed, scan, scan-reviewed, observe-reviewed-arm64]
+        options: [build, complete-retained, build-reviewed, repair-reviewed-server, scan, scan-reviewed, observe-reviewed-arm64]
         default: build
       comparison_profile:
         description: Fixed C2 comparison; clean pair completes retained first OCI with two real no-cache builds
@@ -138,13 +138,15 @@ jobs:
       - run: uv run pytest tests/saas/test_compat018_oci_recovery.py tests/saas/test_compat018_clean_context.py --reruns 0 -q
 
   build-compat018-product:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && ((inputs.phase == 'build' && inputs.comparison_profile != 'clean-C2-pair') || (inputs.phase == 'complete-retained' && inputs.comparison_profile == 'clean-C2-pair') || (inputs.phase == 'build-reviewed' && inputs.comparison_profile == 'clean-C2-pair'))
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && ((inputs.phase == 'build' && inputs.comparison_profile != 'clean-C2-pair') || (inputs.phase == 'complete-retained' && inputs.comparison_profile == 'clean-C2-pair') || (inputs.phase == 'build-reviewed' && inputs.comparison_profile == 'clean-C2-pair') || (inputs.phase == 'repair-reviewed-server' && inputs.comparison_profile == 'clean-C2-pair'))
     needs: verify-contract
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
       actions: read
+    env:
+      PYTHONDONTWRITEBYTECODE: ${{ (inputs.phase == 'build-reviewed' || inputs.phase == 'repair-reviewed-server') && '1' || '' }}
     outputs:
       artifact-id: ${{ steps.raw.outputs.artifact-id }}
       artifact-sha256: ${{ steps.raw.outputs.artifact-digest }}
@@ -164,6 +166,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: uv run python -m saas.scripts.compat018_oci_recovery retained-first --root "$RUNNER_TEMP/compat018-raw"
+      - name: Authenticate exact failed registered pair for one Server repair
+        id: registered-retained
+        if: inputs.phase == 'repair-reviewed-server'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python -m saas.scripts.compat018_oci_recovery registered-server-repair --root "$RUNNER_TEMP/compat018-raw" --github-env "$GITHUB_ENV"
       - name: Authenticate original C2 PR producer and retained comparison evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -188,7 +196,7 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$PRODUCT_REVISION" ]]
           [[ "$(git rev-parse HEAD^{tree})" == "$PRODUCT_TREE" ]]
           [[ -z "$(git status --porcelain)" ]]
-          if [[ "${{ inputs.phase }}" == "build-reviewed" ]]; then
+          if [[ "${{ inputs.phase }}" == "build-reviewed" || "${{ inputs.phase }}" == "repair-reviewed-server" ]]; then
             PYTHONPATH="$RUNNER_TEMP/compat018-control" python -P - <<'PYTHON'
           from pathlib import Path
           from saas.scripts.protected_legacy_initial_build import load_profile, verify_source_delta
@@ -240,7 +248,9 @@ jobs:
           PYTHONPATH: ${{ runner.temp }}/compat018-control
           COMPARISON_PROFILE: ${{ inputs.comparison_profile }}
         run: |
-          if [[ "${{ inputs.phase }}" == "build-reviewed" ]]; then
+          if [[ "${{ inputs.phase }}" == "repair-reviewed-server" ]]; then
+            uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_clean_context.py" registered-repair-audit --root "$RUNNER_TEMP/compat018-raw"
+          elif [[ "${{ inputs.phase }}" == "build-reviewed" ]]; then
             uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_clean_context.py" registered-audit --root "$RUNNER_TEMP/compat018-raw"
           else
             uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_clean_context.py" audit --root "$RUNNER_TEMP/compat018-raw" --comparison-profile "$COMPARISON_PROFILE"
@@ -293,7 +303,7 @@ jobs:
           [[ "$RECOVERY_BUILDER" =~ ^builder-[a-zA-Z0-9][a-zA-Z0-9_-]{1,90}$ ]]
           docker buildx prune --builder "$RECOVERY_BUILDER" --all --force
       - name: Independently build C2 Host without cache
-        if: inputs.comparison_profile == 'clean-C2-pair'
+        if: inputs.comparison_profile == 'clean-C2-pair' && inputs.phase != 'repair-reviewed-server'
         id: independent-host
         uses: ./saas/actions/build-oci-candidate
         with:
@@ -301,7 +311,7 @@ jobs:
           target: host
           attempt: "2"
       - name: Stage actual independent C2 Host and reclaim only its builder cache
-        if: inputs.comparison_profile == 'clean-C2-pair'
+        if: inputs.comparison_profile == 'clean-C2-pair' && inputs.phase != 'repair-reviewed-server'
         env:
           RECOVERY_BUILDER: ${{ steps.recovery-builder.outputs.name }}
         run: |
@@ -314,7 +324,7 @@ jobs:
           PYTHONPATH: ${{ runner.temp }}/compat018-control
           COMPARISON_PROFILE: ${{ inputs.comparison_profile }}
         run: |
-          if [[ "${{ inputs.phase }}" == "build-reviewed" ]]; then
+          if [[ "${{ inputs.phase }}" == "build-reviewed" || "${{ inputs.phase }}" == "repair-reviewed-server" ]]; then
             uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_oci_recovery.py" registered-confirm --root "$RUNNER_TEMP/compat018-raw"
           else
             uv run python "$RUNNER_TEMP/compat018-control/saas/scripts/compat018_clean_context.py" confirm --root "$RUNNER_TEMP/compat018-raw" --comparison-profile "$COMPARISON_PROFILE"
@@ -322,7 +332,7 @@ jobs:
           fi
       - name: Preserve actual OCI before any fresh vulnerability scan
         id: raw
-        if: always() && ((steps.server.outcome == 'success' && steps.host.outcome == 'success') || steps.retained.outcome == 'success')
+        if: always() && ((steps.server.outcome == 'success' && steps.host.outcome == 'success') || steps.retained.outcome == 'success' || steps.registered-retained.outcome == 'success')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: compat018-raw-${{ env.PRODUCT_REVISION }}-${{ github.run_id }}
@@ -332,7 +342,7 @@ jobs:
           retention-days: 30
 
       - name: Preserve completed OCI bytes from a failed registered build as unqualified
-        if: failure() && !cancelled() && inputs.phase == 'build-reviewed'
+        if: failure() && !cancelled() && (inputs.phase == 'build-reviewed' || inputs.phase == 'repair-reviewed-server')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         timeout-minutes: 10
         with:
@@ -348,7 +358,7 @@ jobs:
           retention-days: 1
 
   scan-and-seal-same-oci:
-    if: always() && !cancelled() && needs.verify-contract.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && ((needs.build-compat018-product.result == 'success' && inputs.phase != 'build-reviewed') || inputs.phase == 'scan' || (inputs.phase == 'scan-reviewed' && inputs.comparison_profile == 'clean-C2-pair'))
+    if: always() && !cancelled() && needs.verify-contract.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && ((needs.build-compat018-product.result == 'success' && inputs.phase != 'build-reviewed' && inputs.phase != 'repair-reviewed-server') || inputs.phase == 'scan' || (inputs.phase == 'scan-reviewed' && inputs.comparison_profile == 'clean-C2-pair'))
     needs: [verify-contract, build-compat018-product]
     runs-on: ubuntu-24.04
     timeout-minutes: 60

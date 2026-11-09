@@ -37,6 +37,7 @@ from saas.scripts.scan_oci_candidates import file_sha256
 
 PRODUCT = recovery.PRODUCT
 EPOCH = recovery.EPOCH
+PROFILE = "M165"
 REPOSITORY = recovery.REPOSITORY
 WORKFLOW = ".github/workflows/saas-oci-promotion-accepted-m165.yml"
 CI_PATHS = (
@@ -47,17 +48,50 @@ CI_PATHS = (
 
 
 def configure_product_profile(name: str) -> None:
-    global PRODUCT, EPOCH
-    require(name in {"M165", "M8c-retained-first"}, "unapproved accepted product profile")
+    global PRODUCT, EPOCH, PROFILE
+    require(
+        name in {"M165", "M8c-retained-first", "M8c-clean-context"},
+        "unapproved accepted product profile",
+    )
+    PROFILE = name
     PRODUCT, EPOCH = (
         (recovery.M8C_PRODUCT, recovery.M8C_EPOCH)
-        if name == "M8c-retained-first"
+        if name != "M165"
         else (recovery.PRODUCT, recovery.EPOCH)
     )
 
 
 def _m8c() -> bool:
     return PRODUCT == recovery.M8C_PRODUCT
+
+
+def _m8c_clean() -> bool:
+    return _m8c() and PROFILE == "M8c-clean-context"
+
+
+def _comparison_profile() -> str:
+    if _m8c_clean():
+        return "clean-M8c-server-pair"
+    return "retained-M8c-first-server" if _m8c() else "clean-M165-server"
+
+
+def _original_m8c_server(*, promoted: bool) -> dict[str, Any]:
+    return {
+        "artifact": {
+            "id": recovery.M8C_FIRST[0],
+            "bytes": recovery.M8C_FIRST[1],
+            "sha256": recovery.M8C_FIRST[2],
+        },
+        "archive_sha256": recovery.M8C_FIRST_SHA256,
+        "index_digest": recovery.M8C_INDEX,
+        **({"promoted": False} if not promoted else {"never_rebuilt": True}),
+    }
+
+
+def _m8c_recovery_scope() -> dict[str, Any]:
+    if _m8c_clean():
+        return {"builds_performed": 4, "server": 2, "host": 2, "original_Server_reused": False}
+    return {"missing_builds_performed": 3, "first_Server_reused": True}
 
 
 def _scan_job_name() -> str:
@@ -159,6 +193,22 @@ def verify_producer(run: dict[str, Any], job: dict[str, Any], builder: dict[str,
             )
             for name in (
                 (
+                    "Build new clean M8c Server attempt 1",
+                    "Verify new clean M8c Server SDK on both architectures",
+                    "Prove clean M8c source and preflight before independent builds",
+                    "Preserve cached original M8c Server as history only",
+                    *(
+                        "Authenticate and retain exact original M8c first Server",
+                        "Complete original Server preflight before missing builds",
+                        "Independently build only missing M8c Server attempt 2",
+                        "Build only missing M8c Host attempt 1",
+                        "Independently build only missing M8c Host attempt 2",
+                        "Compare exact original M8c independent Server and Host pairs",
+                        "Retain complete original M8c four OCI raw checkpoint",
+                    ),
+                )
+                if _m8c_clean()
+                else (
                     "Authenticate and retain exact original M8c first Server",
                     "Complete original Server preflight before missing builds",
                     "Independently build only missing M8c Server attempt 2",
@@ -220,16 +270,48 @@ def report_binding(root: Path, completed_at: str) -> dict[str, Any]:
             and proof.get("original_run_id") == recovery.M8C_RUN
             and proof.get("original_job_id") == recovery.M8C_JOB
             and proof.get("first_archive_sha256") == recovery.M8C_FIRST_SHA256
-            and raw.get("kind") == "accepted_M8c_complete_retained_first/v1"
+            and raw.get("kind")
+            == (
+                "accepted_M8c_complete_clean_context/v1"
+                if _m8c_clean()
+                else "accepted_M8c_complete_retained_first/v1"
+            )
             and raw.get("original_first_archive_sha256") == recovery.M8C_FIRST_SHA256
-            and manifest.get("images", {}).get("server", {}).get("archive_sha256")
-            == recovery.M8C_FIRST_SHA256
-            and manifest["images"]["server"]["index_digest"] == recovery.M8C_INDEX
-            and manifest["images"]["server"]["facts"] == proof.get("first_facts")
+            and (
+                _m8c_clean()
+                or (
+                    manifest.get("images", {}).get("server", {}).get("archive_sha256")
+                    == recovery.M8C_FIRST_SHA256
+                    and manifest["images"]["server"]["index_digest"] == recovery.M8C_INDEX
+                    and manifest["images"]["server"]["facts"] == proof.get("first_facts")
+                )
+            )
             and comparison.get("status") == "pass"
             and comparison.get("violations") == [],
             "M8c original parent, Server or complete comparison differs",
         )
+        if _m8c_clean():
+            first = read_json(root / "clean-context-first.json")
+            require(
+                first.get("kind") == "accepted_M8c_clean_context_first/v1"
+                and first.get("product_revision") == PRODUCT
+                and first.get("product_tree") == recovery.M8C_TREE
+                and first.get("source_date_epoch") == EPOCH
+                and first.get("host_bytecode_members") == 0
+                and first.get("original_Server_promoted") is False
+                and first.get("origin_sha256") == file_sha256(root / "m8c-retained-origin.json")
+                and first.get("SDK_sha256") == file_sha256(root / "server-candidate-runtime.json")
+                and first.get("archive_sha256")
+                == manifest["images"]["server"]["archive_sha256"]
+                != recovery.M8C_FIRST_SHA256
+                and first.get("facts") == manifest["images"]["server"]["facts"]
+                and set(first.get("source_proofs", {})) == {"linux/amd64", "linux/arm64"}
+                and raw.get("clean_context_first_sha256")
+                == file_sha256(root / "clean-context-first.json")
+                and raw.get("original_Server_promoted") is False
+                and raw.get("recovery_builds") == {"server": 2, "host": 2},
+                "new clean M8c source, executable SDK or accurate recovery scope differs",
+            )
         for role in ("server", "host"):
             repeated = comparison["images"][f"omnigent-saas-{role}"]
             require(
@@ -451,7 +533,7 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
             if _m8c()
             else clean.PARENT
         ),
-        "comparison_profile": "retained-M8c-first-server" if _m8c() else "clean-M165-server",
+        "comparison_profile": _comparison_profile(),
         "producer_control_equivalence": controller_sources,
         ("retained_origin_sha256" if _m8c() else "clean_context_first_sha256"): file_sha256(
             root / ("m8c-retained-origin.json" if _m8c() else "clean-context-first.json")
@@ -469,19 +551,14 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
             {
                 "product_tree": recovery.M8C_TREE,
                 "runtime_evidence_revision": recovery.M8C_DATA,
-                "retained_first_server": {
-                    "artifact": {
-                        "id": recovery.M8C_FIRST[0],
-                        "bytes": recovery.M8C_FIRST[1],
-                        "sha256": recovery.M8C_FIRST[2],
-                    },
-                    "archive_sha256": recovery.M8C_FIRST_SHA256,
-                    "index_digest": recovery.M8C_INDEX,
-                    "never_rebuilt": True,
-                },
-                "recovery": {"missing_builds_performed": 3, "first_Server_reused": True},
+                (
+                    "original_first_server" if _m8c_clean() else "retained_first_server"
+                ): _original_m8c_server(promoted=not _m8c_clean()),
+                "recovery": _m8c_recovery_scope(),
             }
         )
+        if _m8c_clean():
+            result["clean_context_first_sha256"] = file_sha256(root / "clean-context-first.json")
     binding_path().write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     if os.environ.get("GITHUB_OUTPUT"):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
@@ -526,8 +603,7 @@ def binding() -> dict[str, Any]:
             if _m8c()
             else clean.PARENT
         )
-        and value.get("comparison_profile")
-        == ("retained-M8c-first-server" if _m8c() else "clean-M165-server")
+        and value.get("comparison_profile") == _comparison_profile()
         and value.get("rebuilt") is (not _m8c())
         and value.get("signing_rebuilt_oci") is False
         and value.get("production_authority") is False,
@@ -537,22 +613,19 @@ def binding() -> dict[str, Any]:
         require(
             value.get("product_tree") == recovery.M8C_TREE
             and value.get("runtime_evidence_revision") == recovery.M8C_DATA
-            and value.get("retained_first_server")
-            == {
-                "artifact": {
-                    "id": recovery.M8C_FIRST[0],
-                    "bytes": recovery.M8C_FIRST[1],
-                    "sha256": recovery.M8C_FIRST[2],
-                },
-                "archive_sha256": recovery.M8C_FIRST_SHA256,
-                "index_digest": recovery.M8C_INDEX,
-                "never_rebuilt": True,
-            }
-            and value.get("recovery")
-            == {"missing_builds_performed": 3, "first_Server_reused": True}
+            and value.get("original_first_server" if _m8c_clean() else "retained_first_server")
+            == _original_m8c_server(promoted=not _m8c_clean())
+            and value.get("recovery") == _m8c_recovery_scope()
             and re.fullmatch(r"[0-9a-f]{64}", value.get("retained_origin_sha256", "")) is not None,
             "M8c fixed runtime data, original Server or completion scope differs",
         )
+        if _m8c_clean():
+            require(
+                "retained_first_server" not in value
+                and re.fullmatch(r"[0-9a-f]{64}", value.get("clean_context_first_sha256", ""))
+                is not None,
+                "clean M8c binding cannot claim to promote the cached original Server",
+            )
     return value
 
 
@@ -583,9 +656,17 @@ def download(root: Path) -> None:
             and origin.get("product_tree") == recovery.M8C_TREE
             and origin.get("original_run_id") == recovery.M8C_RUN
             and origin.get("first_archive_sha256") == recovery.M8C_FIRST_SHA256
-            and file_sha256(root / "server-1.tar") == recovery.M8C_FIRST_SHA256,
+            and (_m8c_clean() or file_sha256(root / "server-1.tar") == recovery.M8C_FIRST_SHA256),
             "M8c exact preserved Server or source lineage differs",
         )
+        if _m8c_clean():
+            require(
+                file_sha256(root / "clean-context-first.json")
+                == value["clean_context_first_sha256"]
+                and clean.verify_m8c_first(root, Path.cwd())
+                == read_json(root / "clean-context-first.json"),
+                "new clean M8c sealed source or exact executable SDK proof differs",
+            )
     else:
         require(
             file_sha256(root / "clean-context-first.json") == value["clean_context_first_sha256"]

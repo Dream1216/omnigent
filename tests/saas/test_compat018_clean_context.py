@@ -158,7 +158,9 @@ def test_registered_first_binds_own_four_targets_and_refuses_changed_installed_b
     monkeypatch.setattr(m, "inspect_oci_archive", lambda *_a, **_kw: {"platforms": platforms})
     monkeypatch.setattr(components, "image_blobs", blobs)
     monkeypatch.setattr(components, "component_inventory", lambda *_a, **_kw: inventory)
-    monkeypatch.setattr(m, "verify_context_layer", lambda *_a: {"existing_Source_audit": True})
+    monkeypatch.setattr(
+        m, "verify_context_layer", lambda *_a, **_k: {"existing_Source_audit": True}
+    )
     monkeypatch.setattr(m, "verify_host_install_layer", lambda *_a, **kw: kw)
     for role in ("server", "host"):
         (tmp_path / f"{role}-1.tar").write_bytes(b"synthetic unit fixture")
@@ -534,7 +536,9 @@ def test_workflow_preserves_original_export_and_only_adds_Host_second_for_pair()
         and s.get("with", {}).get("attempt") == "2"
     ]
     assert [s["with"]["artifact"] for s in second] == ["server", "host"]
-    assert second[1]["if"] == "inputs.comparison_profile == 'clean-C2-pair'"
+    assert second[1]["if"] == (
+        "inputs.comparison_profile == 'clean-C2-pair' && inputs.phase != 'repair-reviewed-server'"
+    )
     assert "clean-C2-server" in second[0]["if"]
     first_builds = [
         s

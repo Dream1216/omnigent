@@ -141,7 +141,10 @@ def producer_records():
         "attempt",
     ],
 )
-def test_current_M8c_uses_its_actual_complete_producer_and_preserved_first(monkeypatch, fault):
+@pytest.mark.parametrize("clean_context", [False, True])
+def test_current_M8c_uses_its_actual_complete_producer_and_preserved_first(
+    monkeypatch, fault, clean_context
+):
     monkeypatch.setattr(promotion, "PRODUCT", recovery.M8C_PRODUCT)
     monkeypatch.setattr(promotion, "EPOCH", recovery.M8C_EPOCH)
     run, scan, builder = producer_records()
@@ -162,6 +165,17 @@ def test_current_M8c_uses_its_actual_complete_producer_and_preserved_first(monke
             )
         ],
     )
+    if clean_context:
+        monkeypatch.setattr(promotion, "PROFILE", "M8c-clean-context")
+        builder["steps"] += [
+            {"name": name, "conclusion": "success"}
+            for name in (
+                "Build new clean M8c Server attempt 1",
+                "Verify new clean M8c Server SDK on both architectures",
+                "Prove clean M8c source and preflight before independent builds",
+                "Preserve cached original M8c Server as history only",
+            )
+        ]
     if fault == "old-product":
         run["head_sha"] = recovery.PRODUCT
         scan["head_sha"] = builder["head_sha"] = recovery.PRODUCT
@@ -523,7 +537,10 @@ def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(recover
     assert bound["native_scan_job"]["id"] != bound["candidate_build_job_id"]
 
 
-def test_M8c_complete_preflight_and_download_need_only_its_original_proof(recovered, monkeypatch):
+@pytest.mark.parametrize("clean_context", [False, True])
+def test_M8c_complete_preflight_and_download_need_only_its_original_proof(
+    recovered, monkeypatch, clean_context
+):
     source = recovered["source"]
     manifest = json.loads((source / MANIFEST_NAME).read_text())
     comparison = json.loads((source / "saas-image-candidate.json").read_text())
@@ -537,7 +554,9 @@ def test_M8c_complete_preflight_and_download_need_only_its_original_proof(recove
     monkeypatch.setattr(recovery, "M8C_EPOCH", EPOCH)
     monkeypatch.setattr(recovery, "M8C_CI", recovery.CI)
     monkeypatch.setattr(
-        recovery, "M8C_FIRST_SHA256", manifest["images"]["server"]["archive_sha256"]
+        recovery,
+        "M8C_FIRST_SHA256",
+        "f" * 64 if clean_context else manifest["images"]["server"]["archive_sha256"],
     )
     monkeypatch.setattr(recovery, "M8C_INDEX", manifest["images"]["server"]["index_digest"])
     proof = {
@@ -566,7 +585,42 @@ def test_M8c_complete_preflight_and_download_need_only_its_original_proof(recove
             },
         },
     )
-    (source / "clean-context-first.json").unlink()
+    if clean_context:
+        monkeypatch.setattr(promotion, "PROFILE", "M8c-clean-context")
+        write_json(source / "server-candidate-runtime.json", {"own-new-executable-SDK": True})
+        first = {
+            "kind": "accepted_M8c_clean_context_first/v1",
+            "product_revision": REVISION,
+            "product_tree": recovery.M8C_TREE,
+            "source_date_epoch": EPOCH,
+            "host_bytecode_members": 0,
+            "original_Server_promoted": False,
+            "origin_sha256": hashlib.sha256(
+                (source / "m8c-retained-origin.json").read_bytes()
+            ).hexdigest(),
+            "SDK_sha256": hashlib.sha256(
+                (source / "server-candidate-runtime.json").read_bytes()
+            ).hexdigest(),
+            "archive_sha256": manifest["images"]["server"]["archive_sha256"],
+            "facts": manifest["images"]["server"]["facts"],
+            "source_proofs": {
+                platform: {"tracked_inputs": 2064} for platform in ("linux/amd64", "linux/arm64")
+            },
+        }
+        write_json(source / "clean-context-first.json", first)
+        monkeypatch.setattr(clean, "verify_m8c_first", lambda _root, _repo: copy.deepcopy(first))
+        raw = json.loads((source / "unadmitted-build.json").read_text())
+        raw.update(
+            kind="accepted_M8c_complete_clean_context/v1",
+            clean_context_first_sha256=hashlib.sha256(
+                (source / "clean-context-first.json").read_bytes()
+            ).hexdigest(),
+            original_Server_promoted=False,
+            recovery_builds={"server": 2, "host": 2},
+        )
+        write_json(source / "unadmitted-build.json", raw)
+    else:
+        (source / "clean-context-first.json").unlink()
     workflow = yaml.safe_load(Path(recovery.WORKFLOW).read_text())
     recovered["scan"].update(name="scan-and-admit-m8c-same-oci", head_sha=PRODUCER_CONTROLLER)
     recovered["builder"].update(
@@ -601,13 +655,26 @@ def test_M8c_complete_preflight_and_download_need_only_its_original_proof(recove
         bound["retained_origin_sha256"]
         == hashlib.sha256((source / "m8c-retained-origin.json").read_bytes()).hexdigest()
     )
-    assert "clean_context_first_sha256" not in bound
-    assert bound["rebuilt"] is False and bound["recovery"]["missing_builds_performed"] == 3
+    if clean_context:
+        assert bound["original_first_server"]["promoted"] is False
+        assert "retained_first_server" not in bound
+        assert bound["clean_context_first_sha256"] == raw["clean_context_first_sha256"]
+        assert bound["comparison_profile"] == "clean-M8c-server-pair"
+        assert bound["recovery"] == {
+            "builds_performed": 4,
+            "server": 2,
+            "host": 2,
+            "original_Server_reused": False,
+        }
+    else:
+        assert "clean_context_first_sha256" not in bound
+        assert bound["recovery"]["missing_builds_performed"] == 3
+    assert bound["rebuilt"] is False
     promotion.download(root / "downloaded")
     assert (root / "downloaded/server-1.tar").read_bytes() == (
         source / "server-1.tar"
     ).read_bytes()
-    assert not (root / "downloaded/clean-context-first.json").exists()
+    assert (root / "downloaded/clean-context-first.json").exists() is clean_context
 
 
 @pytest.mark.parametrize(
@@ -977,6 +1044,7 @@ def test_M8c_workflows_only_complete_missing_builds_and_use_fixed_profile():
         s["with"]
         for s in builder["steps"]
         if s.get("uses") == "./saas/actions/build-oci-candidate"
+        and s.get("if") != "inputs.phase == 'build-clean-m8c'"
     ]
     assert builds == [
         {"artifact": "server", "target": "runtime", "attempt": "2"},
@@ -999,6 +1067,7 @@ def test_M8c_workflows_only_complete_missing_builds_and_use_fixed_profile():
     assert profile["default"] == "M165" and set(profile["options"]) == {
         "M165",
         "M8c-retained-first",
+        "M8c-clean-context",
     }
     for job in signer["jobs"].values():
         selectors = [
@@ -1006,11 +1075,94 @@ def test_M8c_workflows_only_complete_missing_builds_and_use_fixed_profile():
             for s in job["steps"]
             if s.get("name") == "Select only the exact retained M8c product profile"
         ]
-        assert (
-            len(selectors) == 1
-            and selectors[0]["if"] == "inputs.product_profile == 'M8c-retained-first'"
+        assert len(selectors) == 1 and selectors[0]["if"] == (
+            "(inputs.product_profile == 'M8c-retained-first' "
+            "|| inputs.product_profile == 'M8c-clean-context')"
         )
         assert (
             recovery.M8C_PRODUCT in selectors[0]["run"]
             and str(recovery.M8C_EPOCH) in selectors[0]["run"]
         )
+
+
+def test_clean_M8c_workflow_preflights_exact_new_source_before_expensive_independent_builds():
+    workflow = yaml.load(Path(recovery.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    builder = workflow["jobs"]["complete-m8c-first-server"]
+    assert builder["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
+    steps = builder["steps"]
+    new_first = next(s for s in steps if s.get("name") == "Build new clean M8c Server attempt 1")
+    assert new_first["if"] == "inputs.phase == 'build-clean-m8c'"
+    assert new_first["with"] == {"artifact": "server", "target": "runtime", "attempt": "1"}
+    names = [s.get("name") for s in steps]
+    assert names.index("Complete original Server preflight before missing builds") < names.index(
+        new_first["name"]
+    )
+    assert names.index(new_first["name"]) < names.index(
+        "Verify new clean M8c Server SDK on both architectures"
+    )
+    assert names.index(
+        "Prove clean M8c source and preflight before independent builds"
+    ) < names.index("Independently build only missing M8c Server attempt 2")
+    verify = next(
+        s
+        for s in steps
+        if s.get("name") == "Prove clean M8c source and preflight before independent builds"
+    )
+    assert verify["env"]["PYTHONPATH"] == "${{ runner.temp }}/accepted-m8c-control"
+    assert "m8c-clean-first" in verify["run"] and "server-preflight" in verify["run"]
+    scan = workflow["jobs"]["scan-and-admit-m8c-same-oci"]
+    download = next(s for s in scan["steps"] if "m8c-download" in s.get("run", ""))
+    assert "--clean-context" in download["env"]["CLEAN_CONTEXT"]
+    for step in scan["steps"]:
+        if "upload-artifact" in step.get("uses", ""):
+            assert "clean-context-first.json" in step["with"]["path"]
+            assert "server-candidate-runtime.json" in step["with"]["path"]
+            assert "unadmitted-build.json" in step["with"]["path"]
+
+    publisher = yaml.load(Path(promotion.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    publish_steps = publisher["jobs"]["publish-signed"]["steps"]
+    upload = next(
+        s for s in publish_steps if s.get("name") == "Upload signed release candidate facts"
+    )
+    for name in (
+        "clean-context-first.json",
+        "server-candidate-runtime.json",
+        "m8c-retained-origin.json",
+    ):
+        assert "artifacts/" + name in upload["with"]["path"]
+        assert any(
+            '"$RUNNER_TEMP/admitted-oci/' + name + '"' in s.get("run", "") for s in publish_steps
+        )
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "Build new clean M8c Server attempt 1",
+        "Verify new clean M8c Server SDK on both architectures",
+        "Prove clean M8c source and preflight before independent builds",
+        "Preserve cached original M8c Server as history only",
+    ],
+)
+def test_clean_profile_cannot_borrow_a_retained_producer_with_missing_new_proof(
+    monkeypatch, missing
+):
+    monkeypatch.setattr(promotion, "PRODUCT", recovery.M8C_PRODUCT)
+    monkeypatch.setattr(promotion, "PROFILE", "M8c-clean-context")
+    run, scan, builder = producer_records()
+    scan.update(name="scan-and-admit-m8c-same-oci", head_sha=PRODUCER_CONTROLLER)
+    workflow = yaml.safe_load(Path(recovery.WORKFLOW).read_text())
+    builder.update(
+        name="complete-m8c-first-server",
+        head_sha=PRODUCER_CONTROLLER,
+        steps=[
+            {
+                "name": step["name"],
+                "conclusion": "skipped" if step["name"] == missing else "success",
+            }
+            for step in workflow["jobs"]["complete-m8c-first-server"]["steps"]
+            if "name" in step
+        ],
+    )
+    with pytest.raises(ValueError):
+        promotion.verify_producer(run, scan, builder)

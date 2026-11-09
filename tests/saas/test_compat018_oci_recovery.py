@@ -33,6 +33,54 @@ def encode(value):
     return (json.dumps(value, indent=2) + "\n").encode()
 
 
+def registered_failed_parent_records():
+    value = m.REGISTERED_FAILED_PAIR
+    run = {
+        "id": value["run_id"],
+        "head_sha": value["controller_revision"],
+        "run_attempt": 1,
+        "head_branch": "main",
+        "path": m.WORKFLOW,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "failure",
+        "repository": {"full_name": m.REPOSITORY},
+    }
+    job = {
+        "id": value["builder_job_id"],
+        "run_id": value["run_id"],
+        "run_attempt": 1,
+        "head_sha": value["controller_revision"],
+        "name": "build-compat018-product",
+        "status": "completed",
+        "conclusion": "failure",
+        "labels": ["ubuntu-24.04"],
+        "runner_group_name": "GitHub Actions",
+        "steps": [
+            {"name": name, "conclusion": "success"}
+            for name in (
+                "Recover Server using its existing first-attempt build cache",
+                "Recover Host using its existing first-attempt build cache",
+                "Audit actual fixed C2 source, UI, and historical Host",
+                "Independently build only C2 Server without cache",
+                "Independently build C2 Host without cache",
+                "Stage actual independent C2 Host and reclaim only its builder cache",
+                "Preserve actual OCI before any fresh vulnerability scan",
+            )
+        ]
+        + [{"name": "Confirm exact C2 comparison profile", "conclusion": "failure"}],
+    }
+    metadata = {
+        "id": value["artifact_id"],
+        "name": f"compat018-raw-{value['product_revision']}-{value['run_id']}",
+        "size_in_bytes": value["zip_size"],
+        "digest": "sha256:" + value["zip_sha256"],
+        "expired": False,
+        "workflow_run": {"id": value["run_id"], "head_sha": value["controller_revision"]},
+    }
+    return run, job, metadata
+
+
 class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -415,7 +463,8 @@ class RecoveryTests(unittest.TestCase):
         )
         self.assertIn(
             "if: always() && ((steps.server.outcome == 'success' "
-            "&& steps.host.outcome == 'success') || steps.retained.outcome == 'success')",
+            "&& steps.host.outcome == 'success') || steps.retained.outcome == 'success' "
+            "|| steps.registered-retained.outcome == 'success')",
             s,
         )
         self.assertIn('--controller "$RAW_CONTROLLER"', s)
@@ -425,7 +474,9 @@ class RecoveryTests(unittest.TestCase):
         preservation = s[s.index("      - name: Preserve completed OCI bytes from a failed") :]
         preservation = preservation[: preservation.index("\n  scan-and-seal-same-oci:")]
         self.assertIn(
-            "if: failure() && !cancelled() && inputs.phase == 'build-reviewed'", preservation
+            "if: failure() && !cancelled() && (inputs.phase == 'build-reviewed' "
+            "|| inputs.phase == 'repair-reviewed-server')",
+            preservation,
         )
         self.assertIn("name: compat018-unqualified-partial-", preservation)
         self.assertIn("${{ runner.temp }}/server-2.tar", preservation)
@@ -553,6 +604,158 @@ class RecoveryTests(unittest.TestCase):
                         pairs["omnigent-saas-server"]["matching_platform_manifest_and_config"] = (
                             True
                         )
+
+    def test_registered_repair_accepts_only_exact_four_build_failed_comparison_parent(self):
+        run, job, metadata = registered_failed_parent_records()
+        m.verify_registered_failed_pair(run, job, metadata)
+        for section, field, replacement in (
+            (run, "id", 1),
+            (run, "head_sha", "f" * 40),
+            (run, "run_attempt", 2),
+            (run, "head_branch", "feature"),
+            (run, "path", "other.yml"),
+            (run, "conclusion", "success"),
+            (run, "event", "push"),
+            (job, "id", 1),
+            (job, "run_id", 1),
+            (job, "run_attempt", 2),
+            (job, "head_sha", "f" * 40),
+            (job, "conclusion", "success"),
+            (job, "runner_group_name", "private"),
+            (job, "labels", ["self-hosted"]),
+            (metadata, "id", 1),
+            (metadata, "size_in_bytes", 1),
+            (metadata, "digest", "sha256:" + "f" * 64),
+            (metadata, "expired", True),
+        ):
+            with self.subTest(field=field, replacement=replacement):
+                saved = section[field]
+                section[field] = replacement
+                with self.assertRaises(ValueError):
+                    m.verify_registered_failed_pair(run, job, metadata)
+                section[field] = saved
+        for index in range(len(job["steps"]) - 1):
+            with self.subTest(missing_success=job["steps"][index]["name"]):
+                job["steps"][index]["conclusion"] = "skipped"
+                with self.assertRaises(ValueError):
+                    m.verify_registered_failed_pair(run, job, metadata)
+                job["steps"][index]["conclusion"] = "success"
+        job["steps"].append(deepcopy(job["steps"][0]))
+        with self.assertRaises(ValueError):
+            m.verify_registered_failed_pair(run, job, metadata)
+
+    def test_registered_repair_workflow_reuses_three_good_archives_and_builds_only_Server(self):
+        import yaml
+
+        workflow = yaml.load((HERE.parents[1] / m.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+        builder = workflow["jobs"]["build-compat018-product"]
+        steps = builder["steps"]
+        self.assertIn("repair-reviewed-server", builder["if"])
+        self.assertIn("repair-reviewed-server", builder["env"]["PYTHONDONTWRITEBYTECODE"])
+        retained = next(s for s in steps if s.get("id") == "registered-retained")
+        self.assertEqual(retained["if"], "inputs.phase == 'repair-reviewed-server'")
+        self.assertIn("registered-server-repair", retained["run"])
+        builds = [s for s in steps if s.get("uses") == "./saas/actions/build-oci-candidate"]
+        self.assertEqual(len(builds), 4)
+        self.assertEqual(
+            builds[0]["if"], "inputs.phase == 'build' || inputs.phase == 'build-reviewed'"
+        )
+        self.assertEqual(builds[1]["if"], builds[0]["if"])
+        self.assertIn("inputs.phase != 'repair-reviewed-server'", builds[3]["if"])
+        self.assertEqual(
+            builds[2]["with"], {"artifact": "server", "target": "runtime", "attempt": "2"}
+        )
+        audit = next(
+            s
+            for s in steps
+            if s.get("name") == "Audit actual fixed C2 source, UI, and historical Host"
+        )
+        self.assertIn("registered-repair-audit", audit["run"])
+        self.assertLess(steps.index(audit), steps.index(builds[2]))
+        self.assertIn(
+            "registered-confirm", next(s for s in steps if s.get("id") == "compare")["run"]
+        )
+        self.assertIn(
+            "steps.registered-retained.outcome == 'success'",
+            next(s for s in steps if s.get("id") == "raw")["if"],
+        )
+        self.assertIn(
+            "inputs.phase != 'repair-reviewed-server'",
+            workflow["jobs"]["scan-and-seal-same-oci"]["if"],
+        )
+
+    def test_registered_repair_download_checks_whole_zip_and_preserves_rejected_bytes(self):
+        import importlib
+        import shutil
+
+        compare_oci_rebuilds = importlib.import_module("saas.scripts.compare_oci_rebuilds")
+        legacy_artifact_download = importlib.import_module("saas.scripts.legacy_artifact_download")
+
+        original = self.root / "repair-fixture.zip"
+        profile = {
+            key: m.REGISTERED_FAILED_PAIR[key] for key in ("product_revision", "product_tree")
+        }
+        profile["source_date_epoch"] = 1794205843
+        first = {
+            "images": {
+                role: {"facts": self.facts[role], "archive_sha256": digest(role.encode())}
+                for role in ("server", "host")
+            }
+        }
+        with zipfile.ZipFile(original, "w") as bundle:
+            bundle.writestr("registered-source-profile.json", encode(profile))
+            bundle.writestr("reviewed-subject-image-facts.json", encode(first))
+            for role in ("server", "host"):
+                for attempt in (1, 2):
+                    bundle.writestr(f"{role}-{attempt}.tar", role.encode())
+        value = {
+            **m.REGISTERED_FAILED_PAIR,
+            "zip_size": original.stat().st_size,
+            "zip_sha256": digest(original.read_bytes()),
+        }
+        checked = []
+
+        def download(identifier, destination, **kwargs):
+            self.assertEqual(identifier, value["artifact_id"])
+            self.assertEqual(
+                kwargs,
+                {"expected_size": value["zip_size"], "expected_sha256": value["zip_sha256"]},
+            )
+            checked.append(identifier)
+            shutil.copyfile(original, destination)
+
+        root, environment = self.root / "repaired", self.root / "github-env"
+        with patch.object(m, "REGISTERED_FAILED_PAIR", value):
+            run, job, metadata = registered_failed_parent_records()
+
+            def api(endpoint):
+                return (
+                    metadata if "/artifacts/" in endpoint else job if "/jobs/" in endpoint else run
+                )
+
+            with (
+                patch.object(m, "api", side_effect=api),
+                patch.object(m, "registered_profile", return_value=profile),
+                patch.object(
+                    legacy_artifact_download, "download_artifact_bytes", side_effect=download
+                ),
+                patch.object(
+                    compare_oci_rebuilds,
+                    "compare_archives",
+                    return_value=deepcopy(self.report["images"]["omnigent-saas-host"]),
+                ),
+            ):
+                m.prepare_registered_server_repair(root, environment)
+        self.assertEqual(checked, [value["artifact_id"]])
+        self.assertFalse((root / "server-2.tar").exists())
+        self.assertEqual((root / "original-failed-pair/server-2.tar").read_bytes(), b"server")
+        for name in ("server-1.tar", "host-1.tar", "host-2.tar"):
+            self.assertTrue((root / name).is_file())
+        parent = json.loads((root / "registered-server-repair-parent.json").read_text())
+        self.assertEqual(parent["rejected_second_Server_archive_sha256"], digest(b"server"))
+        self.assertEqual(parent["original_job_conclusion"], "failure")
+        self.assertEqual(parent["new_Server_builds"], 1)
+        self.assertIn("PRODUCT_REVISION=" + profile["product_revision"], environment.read_text())
 
 
 if __name__ == "__main__":

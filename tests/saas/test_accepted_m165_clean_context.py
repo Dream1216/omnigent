@@ -15,9 +15,10 @@ from saas.scripts import accepted_oci_recovery as recovery
 from tests.saas.test_oci_promotion import candidate
 
 
+@pytest.mark.parametrize("product_profile", ["M165", "M8c"])
 @pytest.mark.parametrize("fault", [None, "tree", "workspace", "batch-identity"])
 def test_frozen_git_source_and_only_original_Dockerfile_transform_are_expected(
-    tmp_path, monkeypatch, fault
+    tmp_path, monkeypatch, fault, product_profile
 ):
     source = b"[project]\nname='source'\n\n[tool.uv.workspace]\nmembers=[]\n\n[tool.pytest]\n"
     if fault == "workspace":
@@ -26,7 +27,16 @@ def test_frozen_git_source_and_only_original_Dockerfile_transform_are_expected(
 
     def git(command, **_kwargs):
         if command[1] == "rev-parse":
-            return "wrong" if fault == "tree" else clean.TREE
+            assert (
+                command[2]
+                == (recovery.M8C_PRODUCT if product_profile == "M8c" else recovery.PRODUCT)
+                + "^{tree}"
+            )
+            return (
+                "wrong"
+                if fault == "tree"
+                else (recovery.M8C_TREE if product_profile == "M8c" else clean.TREE)
+            )
         if command[1] == "ls-tree":
             return f"100644 blob {blob}\tpyproject.toml\0".encode()
         identity = "b" * 40 if fault == "batch-identity" else blob
@@ -35,9 +45,9 @@ def test_frozen_git_source_and_only_original_Dockerfile_transform_are_expected(
     monkeypatch.setattr(clean.subprocess, "check_output", git)
     if fault:
         with pytest.raises(ValueError):
-            clean.source_inputs(tmp_path)
+            clean.source_inputs(tmp_path, product_profile=product_profile)
     else:
-        assert clean.source_inputs(tmp_path) == {
+        assert clean.source_inputs(tmp_path, product_profile=product_profile) == {
             "pyproject.toml": ("100644", b"[project]\nname='source'\n\n[tool.pytest]\n")
         }
 
@@ -132,7 +142,19 @@ def test_first_proof_requires_exact_Host_and_limits_Server_change_to_the_copied_
 
 @pytest.mark.parametrize(
     "fault",
-    [None, "source", "mode", "symlink", "UI-copy", "UI-link", "missing-entry", "duplicate"],
+    [
+        None,
+        "source",
+        "mode",
+        "symlink",
+        "UI-copy",
+        "UI-link",
+        "missing-entry",
+        "duplicate",
+        "pyc",
+        "pyo",
+        "cache-directory",
+    ],
 )
 def test_actual_context_requires_tracked_bytes_modes_links_and_complete_UI(fault):
     expected = {
@@ -176,12 +198,22 @@ def test_actual_context_requires_tracked_bytes_modes_links_and_complete_UI(fault
                     bundle.addfile(item, io.BytesIO(data) if item.isfile() else None)
         if fault == "duplicate":
             bundle.addfile(tarfile.TarInfo("build/pyproject.toml"))
+        if fault in {"pyc", "pyo", "cache-directory"}:
+            name = (
+                "build/omnigent/__pycache__"
+                if fault == "cache-directory"
+                else "build/omnigent/contamination." + fault
+            )
+            item = tarfile.TarInfo(name)
+            if fault == "cache-directory":
+                item.type = tarfile.DIRTYPE
+            bundle.addfile(item)
     stream.seek(0)
     if fault:
         with pytest.raises(ValueError):
-            clean.verify_context_layer(stream, expected)
+            clean.verify_context_layer(stream, expected, forbid_bytecode=True)
     else:
-        result = clean.verify_context_layer(stream, expected)
+        result = clean.verify_context_layer(stream, expected, forbid_bytecode=True)
         assert result["tracked_inputs"] == 3
         assert result["generated_UI"]["omnigent/server/static/web-ui/"]["files"] == 1
         assert result["generated_UI"]["saas/login_ui/static/"]["files"] == 4
@@ -311,4 +343,128 @@ def test_confirmation_compares_two_actual_Server_archives_and_preserves_Host_his
         assert (
             result["clean_context_reproducibility"]["parent_raw_checkpoint"]["job_conclusion"]
             == "failure"
+        )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "bytecode",
+        "tracked-source",
+        "SDK-archive",
+        "SDK-index",
+        "SDK-platform",
+        "SDK-config",
+        "SDK-failed",
+        "origin",
+        "old-archive",
+        "source-label",
+    ],
+)
+def test_new_clean_M8c_first_requires_own_SDK_and_exact_cache_free_source(
+    tmp_path, monkeypatch, fault
+):
+    expected = {"pyproject.toml": ("100644", b"frozen project")}
+    layer = io.BytesIO()
+    with tarfile.open(fileobj=layer, mode="w:gz") as bundle:
+        files = {
+            "build/pyproject.toml": b"changed" if fault == "tracked-source" else b"frozen project"
+        }
+        for base in ("build/", "build/build/lib/"):
+            for prefix, names in (
+                ("omnigent/server/static/web-ui/", ["index.html"]),
+                (
+                    "saas/login_ui/static/",
+                    ["login.html", "signup.html", "signup-verify.html", "signup-status.html"],
+                ),
+            ):
+                files.update({base + prefix + name: b"generated" for name in names})
+        if fault == "bytecode":
+            files["build/omnigent/__pycache__/__init__.cpython-312.pyc"] = b"host cache"
+        for name, body in files.items():
+            item = tarfile.TarInfo(name)
+            item.mode, item.size = 0o644, len(body)
+            bundle.addfile(item, io.BytesIO(body))
+    body = layer.getvalue()
+    digest = clean.hashlib.sha256(body).hexdigest()
+    with tarfile.open(tmp_path / "server-1.tar", "w") as archive:
+        item = tarfile.TarInfo("blobs/sha256/" + digest)
+        item.size = len(body)
+        archive.addfile(item, io.BytesIO(body))
+    archive_sha = recovery.file_sha256(tmp_path / "server-1.tar")
+    facts = {
+        "platforms": {
+            platform: {
+                "manifest_digest": "sha256:" + "a" * 64,
+                "config_digest": "sha256:" + "b" * 64,
+                "labels": {"org.opencontainers.image.revision": recovery.M8C_PRODUCT},
+                "layers": [{"digest": "sha256:" + digest}] * 4,
+            }
+            for platform in ("linux/amd64", "linux/arm64")
+        }
+    }
+    sdk = {
+        "source_revision": recovery.M8C_PRODUCT,
+        "passed": True,
+        "e2b_version": "2.31.0",
+        "archive_sha256": archive_sha,
+        "root_digest": "sha256:" + "c" * 64,
+        "platforms": [
+            {"platform": platform, **{k: row[k] for k in ("manifest_digest", "config_digest")}}
+            for platform, row in facts["platforms"].items()
+        ],
+    }
+    origin = {
+        "kind": "accepted_M8c_original_Server/v1",
+        "product_revision": recovery.M8C_PRODUCT,
+        "product_tree": recovery.M8C_TREE,
+        "source_date_epoch": recovery.M8C_EPOCH,
+        "original_run_id": recovery.M8C_RUN,
+        "original_job_id": recovery.M8C_JOB,
+        "first_archive_sha256": recovery.M8C_FIRST_SHA256,
+    }
+    if fault == "SDK-archive":
+        sdk["archive_sha256"] = "f" * 64
+    elif fault == "SDK-index":
+        sdk["root_digest"] = "sha256:" + "f" * 64
+    elif fault == "SDK-platform":
+        sdk["platforms"].pop()
+    elif fault == "SDK-config":
+        sdk["platforms"][0]["config_digest"] = "sha256:" + "f" * 64
+    elif fault == "SDK-failed":
+        sdk["passed"] = False
+    elif fault == "origin":
+        origin["product_tree"] = "f" * 40
+    elif fault == "old-archive":
+        monkeypatch.setattr(recovery, "M8C_FIRST_SHA256", archive_sha)
+        origin["first_archive_sha256"] = archive_sha
+    elif fault == "source-label":
+        facts["platforms"]["linux/amd64"]["labels"]["org.opencontainers.image.revision"] = "f" * 40
+    for name, value in (
+        ("server-candidate-runtime.json", sdk),
+        ("m8c-retained-origin.json", origin),
+    ):
+        (tmp_path / name).write_text(json.dumps(value))
+    monkeypatch.setattr(clean, "inspect_oci_archive", lambda *_args, **_kwargs: facts)
+    monkeypatch.setattr(recovery, "archive_index_digest", lambda _path: "sha256:" + "c" * 64)
+    monkeypatch.setattr(
+        clean,
+        "source_inputs",
+        lambda _repo, **kwargs: (
+            expected
+            if kwargs == {"product_profile": "M8c"}
+            else pytest.fail("wrong source profile")
+        ),
+    )
+    if fault:
+        with pytest.raises(ValueError):
+            clean.verify_m8c_first(tmp_path, Path.cwd())
+    else:
+        proof = clean.verify_m8c_first(tmp_path, Path.cwd())
+        assert proof["archive_sha256"] == archive_sha
+        assert proof["host_bytecode_members"] == 0 and proof["original_Server_promoted"] is False
+        assert set(proof["source_proofs"]) == {"linux/amd64", "linux/arm64"}
+        assert proof["SDK_sha256"] == recovery.file_sha256(
+            tmp_path / "server-candidate-runtime.json"
         )

@@ -4,6 +4,8 @@ import base64
 import copy
 import hashlib
 import json
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,6 +34,34 @@ _KINDS = (
     "commercial",
     "enterprise",
 )
+
+
+def test_registered_metadata_reader_import_does_not_load_business_modules(tmp_path):
+    repo = Path(__file__).resolve().parents[2]
+    script = """
+import json
+import socket
+import sys
+sys.path.insert(0, sys.argv[1])
+sys.dont_write_bytecode = True
+def no_network(*args, **kwargs):
+    raise AssertionError('metadata reader attempted network access')
+socket.socket.connect = no_network
+from saas.scripts.issue_evidence_receipt import registered_compatibility_receipt_repo
+loaded = [name for name in sys.modules if name == 'omnigent' or name.startswith('omnigent.')]
+print(json.dumps(sorted(loaded)))
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script, str(repo)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    assert json.loads(result.stdout) == []
+
+
 _REVISION = "a" * 40
 _NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
 

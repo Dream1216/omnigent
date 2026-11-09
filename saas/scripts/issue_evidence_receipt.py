@@ -14,8 +14,6 @@ from saas.production.admission import (
     finalize_evidence_admission_receipt,
     prepare_evidence_admission_receipt,
 )
-from saas.production.readiness import validate_candidate_revision
-from saas.scripts.prepare_evidence_receipt import _safe_output
 
 _REQUEST_FIELDS = {
     "action",
@@ -144,6 +142,8 @@ def process_evidence_receipt_request(
             report[field] = value if isinstance(value, str) else None
         report["signature_present"] = bool(request.get("signature_base64"))
         if enforce_lineage:
+            from saas.production.readiness import validate_candidate_revision
+
             lineage = validate_candidate_revision(product_revision, repo)
             if lineage["status"] != "pass" or lineage["production_readiness"] != "ready":
                 failures = [*lineage.get("violations", []), *lineage.get("blockers", [])]
@@ -214,6 +214,8 @@ def registered_compatibility_receipt_repo(
 
 
 def main() -> int:
+    from saas.scripts.prepare_evidence_receipt import _safe_output
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--request-json", required=True)
     parser.add_argument("--product-revision", required=True)

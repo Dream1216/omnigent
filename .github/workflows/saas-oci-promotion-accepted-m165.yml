@@ -31,7 +31,7 @@ on:
         type: choice
         required: true
         default: M165
-        options: [M165, M8c-retained-first]
+        options: [M165, M8c-retained-first, M8c-clean-context]
       candidate_run_id:
         description: Actual completed exact-profile recovery run; no future or historical failed run
         required: true
@@ -59,7 +59,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Select only the exact retained M8c product profile
-        if: inputs.product_profile == 'M8c-retained-first'
+        if: (inputs.product_profile == 'M8c-retained-first' || inputs.product_profile == 'M8c-clean-context')
         run: |
           set -euo pipefail
           echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
@@ -120,7 +120,7 @@ jobs:
       oci-artifact-sha256: ${{ steps.accepted.outputs.oci-artifact-sha256 }}
     steps:
       - name: Select only the exact retained M8c product profile
-        if: inputs.product_profile == 'M8c-retained-first'
+        if: (inputs.product_profile == 'M8c-retained-first' || inputs.product_profile == 'M8c-clean-context')
         run: |
           set -euo pipefail
           echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
@@ -137,7 +137,7 @@ jobs:
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ env.PRODUCT_REVISION }}
-          evidence-revision: ${{ inputs.product_profile == 'M8c-retained-first' && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
+          evidence-revision: ${{ (inputs.product_profile == 'M8c-retained-first' || inputs.product_profile == 'M8c-clean-context') && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
       - name: Authenticate actual recovered producer and signing controller Main CI
         id: accepted
         env:
@@ -177,7 +177,7 @@ jobs:
       CANDIDATE_MANIFEST_SHA256: ${{ needs.admit-original.outputs.manifest-sha256 }}
     steps:
       - name: Select only the exact retained M8c product profile
-        if: inputs.product_profile == 'M8c-retained-first'
+        if: (inputs.product_profile == 'M8c-retained-first' || inputs.product_profile == 'M8c-clean-context')
         run: |
           set -euo pipefail
           echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
@@ -208,7 +208,7 @@ jobs:
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ env.PRODUCT_REVISION }}
-          evidence-revision: ${{ inputs.product_profile == 'M8c-retained-first' && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
+          evidence-revision: ${{ (inputs.product_profile == 'M8c-retained-first' || inputs.product_profile == 'M8c-clean-context') && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
       - name: Download and validate original admitted OCI artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -642,6 +642,11 @@ jobs:
             '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, signing_policy_revision: $policy_revision, signing_run_id: $run_id, signing_run_attempt: $run_attempt, original_candidate_run_id: $original_candidate_run_id, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation, product_promotion_attestation: $server_product_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation, product_promotion_attestation: $host_product_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: $promotion_rebuilt, signing_rebuilt_oci: false}, production_deployment_receipt: null}' \
             > artifacts/signed-release-candidate.json
           cp "$OMNIGENT_M165_BINDING" artifacts/accepted-m165-binding.json
+          if [[ "${OMNIGENT_ACCEPTED_PRODUCT_PROFILE:-M165}" == "M8c-clean-context" ]]; then
+            cp "$RUNNER_TEMP/admitted-oci/clean-context-first.json" \
+              "$RUNNER_TEMP/admitted-oci/server-candidate-runtime.json" \
+              "$RUNNER_TEMP/admitted-oci/m8c-retained-origin.json" artifacts/
+          fi
       - name: Upload signed release candidate facts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -649,6 +654,9 @@ jobs:
           path: |
             artifacts/signed-release-candidate.json
             artifacts/accepted-m165-binding.json
+            artifacts/clean-context-first.json
+            artifacts/server-candidate-runtime.json
+            artifacts/m8c-retained-origin.json
             artifacts/original-wheel-verification.json
             artifacts/*.whl
             artifacts/*verified-signatures.json
@@ -678,7 +686,7 @@ jobs:
       CANDIDATE_MANIFEST_SHA256: ${{ needs.admit-original.outputs.manifest-sha256 }}
     steps:
       - name: Select only the exact retained M8c product profile
-        if: inputs.product_profile == 'M8c-retained-first'
+        if: (inputs.product_profile == 'M8c-retained-first' || inputs.product_profile == 'M8c-clean-context')
         run: |
           set -euo pipefail
           echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
@@ -697,7 +705,7 @@ jobs:
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ env.PRODUCT_REVISION }}
-          evidence-revision: ${{ inputs.product_profile == 'M8c-retained-first' && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
+          evidence-revision: ${{ (inputs.product_profile == 'M8c-retained-first' || inputs.product_profile == 'M8c-clean-context') && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
       - name: Independently authenticate the exact original recovered producer
         env:
           GH_TOKEN: ${{ github.token }}

@@ -25,7 +25,7 @@ on:
       phase:
         description: Recover cached bytes, or rescan the retained raw checkpoint
         type: choice
-        options: [build, confirm-server, scan, complete-m8c]
+        options: [build, confirm-server, scan, complete-m8c, build-clean-m8c]
         default: build
       comparison_profile:
         description: Historical exact pair, or the independently confirmed clean M165 Server pair
@@ -60,7 +60,7 @@ env:
 
 jobs:
   complete-m8c-first-server:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'complete-m8c'
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && (inputs.phase == 'complete-m8c' || inputs.phase == 'build-clean-m8c')
     needs: verify-contract
     runs-on: ubuntu-24.04
     timeout-minutes: 240
@@ -72,6 +72,7 @@ jobs:
       artifact-sha256: ${{ steps.raw.outputs.artifact-digest }}
     env:
       GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - name: Checkout exact protected M8c recovery controller
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -91,8 +92,7 @@ jobs:
           uv run python -m saas.scripts.accepted_oci_recovery m8c-prepare \
             --root "$RUNNER_TEMP/accepted-m8c-raw" --github-env "$GITHUB_ENV"
           mkdir "$RUNNER_TEMP/accepted-m8c-control"
-          cp saas/scripts/accepted_oci_recovery.py saas/scripts/scan_oci_candidates.py \
-            "$RUNNER_TEMP/accepted-m8c-control/"
+          git archive "$GITHUB_SHA" saas | tar -x -C "$RUNNER_TEMP/accepted-m8c-control"
       - name: Checkout unchanged M8c product for missing builds
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -115,7 +115,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/scan_oci_candidates.py" \
+          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/saas/scripts/scan_oci_candidates.py" \
             --scope server-preflight --image "server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar" \
             --output "$RUNNER_TEMP/accepted-m8c-raw/grype-preflight"
       - name: Set up original isolated M8c Docker runtime
@@ -126,6 +126,113 @@ jobs:
       - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
         id: m8c-builder
+      - name: Preserve cached original M8c Server as history only
+        if: inputs.phase == 'build-clean-m8c'
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/accepted-m8c-raw/original-history"
+          mv "$RUNNER_TEMP/accepted-m8c-raw/server-1.tar" "$RUNNER_TEMP/accepted-m8c-raw/original-history/"
+      - name: Build new clean M8c Server attempt 1
+        if: inputs.phase == 'build-clean-m8c'
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "1"
+      - name: Verify new clean M8c Server SDK on both architectures
+        if: inputs.phase == 'build-clean-m8c'
+        env:
+          CANDIDATE_REVISION: ${{ env.PRODUCT_REVISION }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, secrets, subprocess, tarfile
+          from pathlib import Path
+          from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+          archive = Path(os.environ["RUNNER_TEMP"]) / "server-1.tar"
+          revision = os.environ["CANDIDATE_REVISION"]
+          facts = inspect_oci_archive(archive, label_profile="executable")
+          with tarfile.open(archive) as stream:
+              descriptors = json.load(stream.extractfile("index.json"))["manifests"]
+          assert len(descriptors) == 1
+          root = descriptors[0]["digest"]
+          subprocess.run(["docker", "load", "-i", str(archive)], check=True)
+          verified = []
+          owner = secrets.token_hex(16)
+          probe_names = []
+          errors = []
+          try:
+              actual = json.loads(subprocess.check_output([
+                  "docker", "image", "inspect", root,
+              ]))[0]
+              assert actual["Descriptor"]["digest"] == root and actual["Id"] == root
+              for arch in ("amd64", "arm64"):
+                  platform = f"linux/{arch}"
+                  actual = json.loads(subprocess.check_output([
+                      "docker", "image", "inspect", "--platform", platform, root,
+                  ]))[0]
+                  expected = facts["platforms"][platform]
+                  assert actual["Descriptor"]["digest"] == actual["Id"] == expected["manifest_digest"]
+                  assert actual["RootFS"]["Layers"] == expected["rootfs_diff_ids"]
+                  name = f"omnigent-sdk-{owner}-{arch}"
+                  probe_names.append(name)
+                  subprocess.run([
+                      "docker", "run", "--pull", "never", "--platform", platform,
+                      "--name", name, "--label", f"io.omnigent.sdk-probe={owner}",
+                      "--no-healthcheck",
+                      "--network", "none", "--user", "1000:1000", "--cap-drop", "ALL",
+                      "--security-opt", "no-new-privileges:true", "--read-only",
+                      "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
+                      "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
+                      "--entrypoint", "/opt/venv/bin/python", root, "-B", "-I", "-c",
+                      'import os,sys,kubernetes;from pathlib import Path;from importlib.metadata import version;from omnigent import _build_info;import saas.production.aliyun_server_profile as profile;import saas.production.aliyun_model_ingress;assert version("e2b")=="2.31.0";assert version("alibabacloud-sandbox20260820")=="1.2.0";assert version("alibabacloud-sts20150401")=="1.2.0";assert version("alibabacloud-oss-v2")=="1.4.0";assert version("defusedxml")=="0.7.1";import saas.production.aliyun_artifacts;import saas.production.aliyun_storage_admission;import saas.production.aliyun_sts_issuer;assert _build_info.COMMIT_SHA==sys.argv[1];assert os.getuid()==1000;assert Path(profile.__file__).resolve().is_relative_to(Path("/opt/venv"))',
+                      revision,
+                  ], check=True, timeout=180)
+                  verified.append({"platform": platform, "config_digest": expected["config_digest"], "manifest_digest": expected["manifest_digest"]})
+          except BaseException as error:
+              errors.append(error)
+          finally:
+              for name in probe_names:
+                  try:
+                      identifiers = subprocess.check_output([
+                          "docker", "container", "ls", "--all", "--no-trunc",
+                          "--filter", f"name=^/{name}$",
+                          "--filter", f"label=io.omnigent.sdk-probe={owner}",
+                          "--format", "{{.ID}}",
+                      ], text=True, timeout=30).splitlines()
+                      for identifier in identifiers:
+                          assert re.fullmatch(r"[0-9a-f]{64}", identifier)
+                          subprocess.run(["docker", "container", "rm", "--force", identifier], check=True, timeout=30)
+                  except BaseException as error:
+                      errors.append(error)
+              try:
+                  subprocess.run(["docker", "image", "rm", root], check=True, timeout=30)
+              except BaseException as error:
+                  errors.append(error)
+              if len(errors) == 1:
+                  raise errors[0]
+              if errors:
+                  raise BaseExceptionGroup("SDK verification and cleanup failed", errors)
+          with archive.open("rb") as stream:
+              archive_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          Path("artifacts/server-candidate-runtime.json").write_text(json.dumps({
+              "schema_version": 1, "source_revision": revision,
+              "archive_sha256": archive_sha256, "root_digest": root,
+              "e2b_version": "2.31.0", "platforms": verified, "passed": True,
+          }, sort_keys=True, indent=2) + "\n")
+          PY
+      - name: Prove clean M8c source and preflight before independent builds
+        if: inputs.phase == 'build-clean-m8c'
+        env:
+          PYTHONPATH: ${{ runner.temp }}/accepted-m8c-control
+        run: |
+          set -euo pipefail
+          mv "$RUNNER_TEMP/server-1.tar" "$RUNNER_TEMP/accepted-m8c-raw/"
+          cp artifacts/server-candidate-runtime.json "$RUNNER_TEMP/accepted-m8c-raw/"
+          .venv/bin/python -m saas.scripts.accepted_oci_recovery m8c-clean-first --root "$RUNNER_TEMP/accepted-m8c-raw"
+          .venv/bin/python -m saas.scripts.scan_oci_candidates --scope server-preflight \
+            --image "server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar" \
+            --output "$RUNNER_TEMP/accepted-m8c-raw/grype-clean-preflight"
       - name: Independently build only missing M8c Server attempt 2
         id: m8c-server-2
         uses: ./saas/actions/build-oci-candidate
@@ -162,15 +269,16 @@ jobs:
           echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Compare exact original M8c independent Server and Host pairs
         env:
-          PYTHONPATH: ${{ github.workspace }}
+          PYTHONPATH: ${{ runner.temp }}/accepted-m8c-control
+          CLEAN_CONTEXT: ${{ inputs.phase == 'build-clean-m8c' && '--clean-context' || '' }}
         run: |
           set -euo pipefail
           .venv/bin/python -m saas.scripts.compare_oci_rebuilds --label-profile executable \
             --image "omnigent-saas-server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar,$RUNNER_TEMP/accepted-m8c-raw/server-2.tar" \
             --image "omnigent-saas-host=$RUNNER_TEMP/accepted-m8c-raw/host-1.tar,$RUNNER_TEMP/accepted-m8c-raw/host-2.tar" \
             --output "$RUNNER_TEMP/accepted-m8c-raw/saas-image-candidate.json"
-          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/accepted_oci_recovery.py" \
-            m8c-verify --root "$RUNNER_TEMP/accepted-m8c-raw"
+          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/saas/scripts/accepted_oci_recovery.py" \
+            m8c-verify --root "$RUNNER_TEMP/accepted-m8c-raw" $CLEAN_CONTEXT
       - name: Retain complete original M8c four OCI raw checkpoint
         id: raw
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -188,6 +296,7 @@ jobs:
           name: accepted-m8c-unqualified-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/accepted-m8c-raw/
+            ${{ runner.temp }}/server-1.tar
             ${{ runner.temp }}/server-2.tar
             ${{ runner.temp }}/host-1.tar
             ${{ runner.temp }}/host-2.tar
@@ -389,7 +498,7 @@ jobs:
           retention-days: 30
 
   scan-and-admit-m8c-same-oci:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'complete-m8c'
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && (inputs.phase == 'complete-m8c' || inputs.phase == 'build-clean-m8c')
     needs: [verify-contract, complete-m8c-first-server]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -426,8 +535,9 @@ jobs:
           RAW_RUN: ${{ github.run_id }}
           RAW_ID: ${{ needs.complete-m8c-first-server.outputs.artifact-id }}
           RAW_SHA: ${{ needs.complete-m8c-first-server.outputs.artifact-sha256 }}
+          CLEAN_CONTEXT: ${{ inputs.phase == 'build-clean-m8c' && '--clean-context' || '' }}
         run: |
-          uv run python -m saas.scripts.accepted_oci_recovery m8c-download --root "$RUNNER_TEMP/same-m8c-oci" --run-id "$RAW_RUN" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA" --policy "$GITHUB_SHA"
+          uv run python -m saas.scripts.accepted_oci_recovery m8c-download --root "$RUNNER_TEMP/same-m8c-oci" --run-id "$RAW_RUN" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA" --policy "$GITHUB_SHA" $CLEAN_CONTEXT
       - name: Fresh scan and seal without rebuilding or relaxing any gate
         id: seal
         run: |
@@ -445,6 +555,9 @@ jobs:
             ${{ runner.temp }}/same-m8c-oci/oci-promotion-manifest.json
             ${{ runner.temp }}/same-m8c-oci/grype/
             ${{ runner.temp }}/same-m8c-oci/m8c-retained-origin.json
+            ${{ runner.temp }}/same-m8c-oci/clean-context-first.json
+            ${{ runner.temp }}/same-m8c-oci/server-candidate-runtime.json
+            ${{ runner.temp }}/same-m8c-oci/unadmitted-build.json
             ${{ runner.temp }}/same-m8c-oci/original-report.zip
           compression-level: 0
           if-no-files-found: error
@@ -460,6 +573,8 @@ jobs:
             ${{ runner.temp }}/same-m8c-oci/saas-image-candidate.json
             ${{ runner.temp }}/same-m8c-oci/oci-promotion-manifest.json
             ${{ runner.temp }}/same-m8c-oci/m8c-retained-origin.json
+            ${{ runner.temp }}/same-m8c-oci/clean-context-first.json
+            ${{ runner.temp }}/same-m8c-oci/server-candidate-runtime.json
             ${{ runner.temp }}/same-m8c-oci/original-report.zip
           compression-level: 0
           if-no-files-found: warn

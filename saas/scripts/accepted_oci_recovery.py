@@ -297,7 +297,7 @@ def prepare_m8c_first(root: Path, github_env: Path) -> None:
             output.write(f"{key}={value}\n")
 
 
-def verify_m8c_complete(root: Path) -> dict[str, Any]:
+def verify_m8c_complete(root: Path, *, clean_context: bool = False) -> dict[str, Any]:
     require(
         subprocess.check_output(["git", "rev-parse", M8C_PRODUCT + "^{tree}"], text=True).strip()
         == M8C_TREE,
@@ -310,7 +310,10 @@ def verify_m8c_complete(root: Path) -> dict[str, Any]:
         and origin.get("original_run_id") == M8C_RUN
         and origin.get("original_job_id") == M8C_JOB
         and origin.get("first_archive_sha256") == M8C_FIRST_SHA256
-        and file_sha256(root / "server-1.tar") == M8C_FIRST_SHA256,
+        and file_sha256(
+            root / ("original-history/server-1.tar" if clean_context else "server-1.tar")
+        )
+        == M8C_FIRST_SHA256,
         "M8c retained original Server identity changed",
     )
     report = json.loads((root / "saas-image-candidate.json").read_text())
@@ -344,12 +347,25 @@ def verify_m8c_complete(root: Path) -> dict[str, Any]:
                 "M8c completed OCI source differs",
             )
             images[path.name] = {"archive_sha256": file_sha256(path), "facts": facts}
-    require(
-        images["server-1.tar"]["facts"] == origin["first_facts"],
-        "M8c original first Server facts changed",
-    )
-    receipt = {
-        "kind": "accepted_M8c_complete_retained_first/v1",
+    if clean_context:
+        from saas.scripts.accepted_m165_clean_context import verify_m8c_first
+
+        first = verify_m8c_first(root, Path.cwd())
+        require(
+            first == json.loads((root / "clean-context-first.json").read_text()),
+            "new clean M8c first proof changed",
+        )
+    else:
+        require(
+            images["server-1.tar"]["facts"] == origin["first_facts"],
+            "M8c original first Server facts changed",
+        )
+    receipt: dict[str, Any] = {
+        "kind": (
+            "accepted_M8c_complete_clean_context/v1"
+            if clean_context
+            else "accepted_M8c_complete_retained_first/v1"
+        ),
         "product_revision": M8C_PRODUCT,
         "product_tree": M8C_TREE,
         "original_first_archive_sha256": M8C_FIRST_SHA256,
@@ -359,6 +375,10 @@ def verify_m8c_complete(root: Path) -> dict[str, Any]:
         "fresh_scans_passed": False,
         "signed_or_production_admitted": False,
     }
+    if clean_context:
+        receipt["clean_context_first_sha256"] = file_sha256(root / "clean-context-first.json")
+        receipt["original_Server_promoted"] = False
+        receipt["recovery_builds"] = {"server": 2, "host": 2}
     (root / "unadmitted-build.json").write_text(
         json.dumps(receipt, sort_keys=True, indent=2) + "\n"
     )
@@ -393,7 +413,15 @@ def verify_m8c_recovery_run(run, job, policy: str, name: str, *, active: bool = 
     )
 
 
-def download_m8c_raw(root: Path, run_id: int, artifact_id: int, sha: str, policy: str) -> None:
+def download_m8c_raw(
+    root: Path,
+    run_id: int,
+    artifact_id: int,
+    sha: str,
+    policy: str,
+    *,
+    clean_context: bool = False,
+) -> None:
     prefix = f"repos/{REPOSITORY}/actions"
     run = api(f"{prefix}/runs/{run_id}")
     inventory = api(f"{prefix}/runs/{run_id}/attempts/1/jobs?per_page=100")
@@ -422,7 +450,7 @@ def download_m8c_raw(root: Path, run_id: int, artifact_id: int, sha: str, policy
     archive.unlink()
     origin = json.loads((root / "m8c-retained-origin.json").read_text())
     require(origin.get("controller_revision") == policy, "M8c raw operator differs")
-    verify_m8c_complete(root)
+    verify_m8c_complete(root, clean_context=clean_context)
     require(api(f"{prefix}/artifacts/{artifact_id}") == metadata, "M8c raw artifact changed")
 
 
@@ -597,7 +625,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("prepare", "verify", "download", "m8c-prepare", "m8c-verify", "m8c-download"),
+        choices=(
+            "prepare",
+            "verify",
+            "download",
+            "m8c-prepare",
+            "m8c-verify",
+            "m8c-download",
+            "m8c-clean-first",
+        ),
     )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--run-id", type=int)
@@ -605,6 +641,7 @@ def main() -> None:
     parser.add_argument("--sha256")
     parser.add_argument("--policy")
     parser.add_argument("--github-env", type=Path)
+    parser.add_argument("--clean-context", action="store_true")
     parser.add_argument(
         "--comparison-profile", choices=("historical", "clean-M165-server"), default="historical"
     )
@@ -614,12 +651,26 @@ def main() -> None:
             bool(args.run_id and args.artifact_id and args.sha256 and args.policy),
             "M8c exact raw coordinates required",
         )
-        download_m8c_raw(args.root, args.run_id, args.artifact_id, args.sha256, args.policy)
+        download_m8c_raw(
+            args.root,
+            args.run_id,
+            args.artifact_id,
+            args.sha256,
+            args.policy,
+            clean_context=args.clean_context,
+        )
     elif args.command == "m8c-prepare":
         require(args.github_env is not None, "M8c native environment output is required")
         prepare_m8c_first(args.root, args.github_env)
     elif args.command == "m8c-verify":
-        verify_m8c_complete(args.root)
+        verify_m8c_complete(args.root, clean_context=args.clean_context)
+    elif args.command == "m8c-clean-first":
+        from saas.scripts.accepted_m165_clean_context import verify_m8c_first
+
+        result = verify_m8c_first(args.root, Path.cwd())
+        (args.root / "clean-context-first.json").write_text(
+            json.dumps(result, sort_keys=True, indent=2) + "\n"
+        )
     elif args.command == "prepare":
         prepare(args.root)
     elif args.command == "verify":
