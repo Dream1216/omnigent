@@ -112,10 +112,10 @@ jobs:
           evidence-revision: 1da1acd35a63ab3c14a14dff030f0061e1f74314
       - name: Complete original Server preflight before missing builds
         env:
-          PYTHONPATH: ${{ github.workspace }}
+          PYTHONPATH: ${{ runner.temp }}/accepted-m8c-control
         run: |
           set -euo pipefail
-          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/saas/scripts/scan_oci_candidates.py" \
+          .venv/bin/python -P "$RUNNER_TEMP/accepted-m8c-control/saas/scripts/scan_oci_candidates.py" \
             --scope server-preflight --image "server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar" \
             --output "$RUNNER_TEMP/accepted-m8c-raw/grype-preflight"
       - name: Set up original isolated M8c Docker runtime
@@ -230,8 +230,8 @@ jobs:
           set -euo pipefail
           mv "$RUNNER_TEMP/server-1.tar" "$RUNNER_TEMP/accepted-m8c-raw/"
           cp artifacts/server-candidate-runtime.json "$RUNNER_TEMP/accepted-m8c-raw/"
-          .venv/bin/python -m saas.scripts.accepted_oci_recovery m8c-clean-first --root "$RUNNER_TEMP/accepted-m8c-raw"
-          .venv/bin/python -m saas.scripts.scan_oci_candidates --scope server-preflight \
+          .venv/bin/python -P -m saas.scripts.accepted_oci_recovery m8c-clean-first --root "$RUNNER_TEMP/accepted-m8c-raw"
+          .venv/bin/python -P -m saas.scripts.scan_oci_candidates --scope server-preflight \
             --image "server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar" \
             --output "$RUNNER_TEMP/accepted-m8c-raw/grype-clean-preflight"
       - name: Independently build only missing M8c Server attempt 2
@@ -274,11 +274,11 @@ jobs:
           CLEAN_CONTEXT: ${{ inputs.phase == 'build-clean-m8c' && '--clean-context' || '' }}
         run: |
           set -euo pipefail
-          .venv/bin/python -m saas.scripts.compare_oci_rebuilds --label-profile executable \
+          .venv/bin/python -P -m saas.scripts.compare_oci_rebuilds --label-profile executable \
             --image "omnigent-saas-server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar,$RUNNER_TEMP/accepted-m8c-raw/server-2.tar" \
             --image "omnigent-saas-host=$RUNNER_TEMP/accepted-m8c-raw/host-1.tar,$RUNNER_TEMP/accepted-m8c-raw/host-2.tar" \
             --output "$RUNNER_TEMP/accepted-m8c-raw/saas-image-candidate.json"
-          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/saas/scripts/accepted_oci_recovery.py" \
+          .venv/bin/python -P "$RUNNER_TEMP/accepted-m8c-control/saas/scripts/accepted_oci_recovery.py" \
             m8c-verify --root "$RUNNER_TEMP/accepted-m8c-raw" $CLEAN_CONTEXT
       - name: Retain complete original M8c four OCI raw checkpoint
         id: raw

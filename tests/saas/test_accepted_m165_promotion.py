@@ -1181,3 +1181,68 @@ def test_clean_SDK_step_prepares_report_destination_in_empty_runner_workspace(tm
     result = subprocess.run(["bash", "-c", shell], cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "artifacts").is_dir()
+
+
+def test_post_checkout_launcher_uses_reviewed_controller_instead_of_frozen_product(tmp_path):
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    product = tmp_path / "frozen-product"
+    selected = [
+        "saas/__init__.py",
+        "saas/scripts/__init__.py",
+        "saas/scripts/accepted_oci_recovery.py",
+        "saas/scripts/scan_oci_candidates.py",
+        "saas/scripts/compare_oci_rebuilds.py",
+    ]
+    for name in selected:
+        destination = product / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(
+            subprocess.check_output(["git", "show", recovery.M8C_PRODUCT + ":" + name], cwd=repo)
+        )
+    environment = {**os.environ, "PYTHONPATH": str(repo), "PYTHONDONTWRITEBYTECODE": "1"}
+    environment.pop("PYTHONSAFEPATH", None)
+    probe = """
+import ast,importlib.util,json
+result={}
+for name in ('accepted_oci_recovery','scan_oci_candidates','compare_oci_rebuilds'):
+    path=importlib.util.find_spec('saas.scripts.'+name).origin
+    source=ast.parse(open(path).read())
+    commands=[n.value for n in ast.walk(source) if isinstance(n,ast.Constant)]
+    result[name]={'path':path,'new_command':'m8c-clean-first' in commands}
+print(json.dumps(result))
+"""
+    for safe in (False, True):
+        command = [sys.executable, *(["-P"] if safe else []), "-c", probe]
+        result = subprocess.run(
+            command, cwd=product, env=environment, text=True, capture_output=True, timeout=30
+        )
+        assert result.returncode == 0, result.stderr
+        facts = json.loads(result.stdout)
+        for name, fact in facts.items():
+            assert Path(fact["path"]) == (repo if safe else product) / "saas/scripts" / (
+                name + ".py"
+            )
+        assert facts["accepted_oci_recovery"]["new_command"] is safe
+    workflow = yaml.load((repo / recovery.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["complete-m8c-first-server"]["steps"]
+    control_steps = [s for s in steps if "PYTHONPATH" in s.get("env", {})]
+    assert len(control_steps) == 3
+    for step in control_steps:
+        assert step["env"]["PYTHONPATH"] == "${{ runner.temp }}/accepted-m8c-control"
+        commands = [
+            line.strip()
+            for line in step["run"].splitlines()
+            if line.strip().startswith(".venv/bin/python")
+        ]
+        assert commands and all(line.startswith(".venv/bin/python -P ") for line in commands)
+    result = subprocess.run(
+        [sys.executable, "-P", "-m", "saas.scripts.accepted_oci_recovery", "--help"],
+        cwd=product,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0 and "m8c-clean-first" in result.stdout, result.stderr
