@@ -440,7 +440,7 @@ jobs:
             done
           done
           rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server" "${RUNNER_TEMP:?}/admitted-layouts/host"
-          "${RUNNER_TEMP}/supply-chain-tools/grype" db status -o json \
+          "${RUNNER_TEMP}/supply-chain-tools/grype" -c "${RUNNER_TEMP}/sbom-grype-database/grype.json" db status -o json \
             > artifacts/supply-chain/grype-database.json
           find artifacts/supply-chain -type f ! -name SHA256SUMS -print0 \
             | sort -z | xargs -0 sha256sum > artifacts/supply-chain/SHA256SUMS

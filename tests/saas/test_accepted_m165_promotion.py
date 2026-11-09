@@ -44,6 +44,8 @@ PRODUCER_BUILD_JOB = 82
             ("server", "amd64", fault)
             for fault in (
                 "new-fresh",
+                "legacy-fresh",
+                "legacy-stale",
                 "no-findings",
                 "new-stale",
                 "at24",
@@ -74,6 +76,8 @@ def test_registry_sbom_scan_preserves_exact_database_and_component_authority(
     from tests.saas import test_oci_promotion as oci_case
 
     product = "9" * 40 if fault == "other-product" else db_age.PRODUCT
+    if fault in {"legacy-fresh", "legacy-stale"}:
+        product = "165cebe8585a1a5fa8588e2a55f37505f89f3e55"
     images = tmp_path / "images"
     images.mkdir()
     monkeypatch.setattr(oci_case, "REVISION", product)
@@ -106,6 +110,8 @@ def test_registry_sbom_scan_preserves_exact_database_and_component_authority(
         "product_tree": "9" * 40 if fault == "other-product" else promotion.recovery.M8C_TREE,
     }
     monkeypatch.setattr(promotion, "PRODUCT", product)
+    if fault in {"legacy-fresh", "legacy-stale"}:
+        value.pop("product_tree")
     monkeypatch.setattr(promotion, "binding", lambda: value)
     now = (
         datetime.fromisoformat(
@@ -129,7 +135,7 @@ def test_registry_sbom_scan_preserves_exact_database_and_component_authority(
 
     def latest():
         latest_calls.append(True)
-        changed = fault in {"new-fresh", "new-stale"} or (
+        changed = fault in {"new-fresh", "new-stale", "legacy-fresh"} or (
             fault == "latest-changed" and len(latest_calls) > 1
         )
         return {**db_age.LATEST, **({"checksum": "sha256:" + "e" * 64} if changed else {})}
@@ -151,7 +157,9 @@ def test_registry_sbom_scan_preserves_exact_database_and_component_authority(
 
     monkeypatch.setattr(promotion, "file_sha256", digest)
     status = (
-        {**db_age.status(), "built": now.isoformat()} if fault == "new-fresh" else db_age.status()
+        {**db_age.status(), "built": now.isoformat()}
+        if fault in {"new-fresh", "legacy-fresh"}
+        else db_age.status()
     )
     monkeypatch.setattr(promotion.subprocess, "check_output", lambda *_a, **_k: json.dumps(status))
     report = root / "registry.raw.grype.json"
@@ -206,7 +214,7 @@ def test_registry_sbom_scan_preserves_exact_database_and_component_authority(
             output=output,
         )
 
-    if fault not in (None, "new-fresh", "at24", "no-findings"):
+    if fault not in (None, "new-fresh", "legacy-fresh", "at24", "no-findings"):
         with pytest.raises(ValueError):
             call()
         assert not output.exists()
@@ -1110,6 +1118,7 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
     assert '--image "${RUNNER_TEMP}/admitted-layouts/${artifact}"' in scan["run"]
     assert '--report "${prefix}.raw.grype.json"' in scan["run"]
     assert '--output "${prefix}.component-disposition.json"' in scan["run"]
+    assert '-c "${RUNNER_TEMP}/sbom-grype-database/grype.json" db status -o json' in scan["run"]
     retention = next(s for s in steps if s.get("name") == "Upload exact signed-image scan reports")
     assert retention["if"] == "always()"
     assert "artifacts/supply-chain/*.json" in retention["with"]["path"].splitlines()

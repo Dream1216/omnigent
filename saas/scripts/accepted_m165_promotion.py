@@ -800,6 +800,7 @@ def scan_registry_sbom(
         "registry scan seal differs",
     )
     platform = f"linux/{architecture}"
+    product_tree = value.get("product_tree", clean.TREE)
     sealed = manifest["images"][role]
     expected = sealed["facts"]["platforms"][platform]
     with image_blobs(image) as blobs:
@@ -820,13 +821,13 @@ def scan_registry_sbom(
         "manifest_digest": digest,
         "config_digest": config_digest,
         "source_revision": PRODUCT,
-        "product_tree": value["product_tree"],
+        "product_tree": product_tree,
     }
     now = datetime.now(UTC)
     latest = scan.official_database_latest()
     temporary = (
         scan.temporary_database_age_enabled()
-        and scan.TEMPORARY_DATABASE_AGE["products"].get(PRODUCT) == value["product_tree"]
+        and scan.TEMPORARY_DATABASE_AGE["products"].get(PRODUCT) == product_tree
         and scan.approved_database_is_latest(latest)
         and datetime.fromisoformat(scan.TEMPORARY_DATABASE_AGE["built"].replace("Z", "+00:00"))
         + timedelta(hours=24)
