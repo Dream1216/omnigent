@@ -2,11 +2,11 @@
   "profiles": {
     "Compatibility018": {
       "component": "Compatibility018",
-      "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
-      "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+      "product_revision": "a933d1ad3243c3eba967b1d548d65b679cb2742e",
+      "product_tree": "7d3fe6fe7551ce567b52fa06c45a88885ef01a8a",
       "schema_version": 1,
-      "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-      "validation_pr": 223,
+      "validation_base_ref": "codex/legacy-compat018-expat210-20261103",
+      "validation_pr": 258,
       "workflows": [
         {
           "attempt": 1,
@@ -289,7 +289,7 @@
                 {
                   "name": "Check out trust check from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -300,7 +300,7 @@
           },
           "name": "CI",
           "path": ".github/workflows/ci.yml",
-          "run_id": 41849014094,
+          "run_id": 42533631559,
           "source_sha256": "ea4fde43ab964d47e77d6c9279e36bd9ce74b82ba684835d1b0b2d5c61af1b42"
         },
         {
@@ -324,7 +324,7 @@
                 {
                   "name": "Check out trust check from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -335,7 +335,7 @@
           },
           "name": "Docker build",
           "path": ".github/workflows/docker-build.yml",
-          "run_id": 41849013946,
+          "run_id": 42533631557,
           "source_sha256": "a78ddf58c06232be410641656b54f4838441d626e112c199972e670a7662090a"
         },
         {
@@ -351,7 +351,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 0/10)": {
@@ -364,7 +364,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 1/10)": {
@@ -377,7 +377,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 2/10)": {
@@ -390,7 +390,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 3/10)": {
@@ -403,7 +403,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 4/10)": {
@@ -416,7 +416,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 5/10)": {
@@ -429,7 +429,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 6/10)": {
@@ -442,7 +442,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 7/10)": {
@@ -455,7 +455,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 8/10)": {
@@ -468,7 +468,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "E2E UI Tests (shard 9/10)": {
@@ -481,7 +481,7 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             },
             "build codex-parity sidecar": {
@@ -502,7 +502,7 @@
                 {
                   "name": "Check out trust check from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -526,8 +526,8 @@
           },
           "name": "E2E UI Tests",
           "path": ".github/workflows/e2e-ui.yml",
-          "run_id": 41849013989,
-          "source_sha256": "3a7d5ecfd4859c0697df27c1c922bf3074cbd480c62843eb65ccbd5f53aecd4b"
+          "run_id": 42533631841,
+          "source_sha256": "169d3e4a3decbb5febaf0c728dbef69750ef00e213469fae5a66ab9807b99ea7"
         },
         {
           "attempt": 1,
@@ -589,7 +589,7 @@
                 {
                   "name": "Check out trust check from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -613,7 +613,7 @@
           },
           "name": "E2E Tests",
           "path": ".github/workflows/e2e.yml",
-          "run_id": 41849014073,
+          "run_id": 42533631583,
           "source_sha256": "6d652a385a9b611a2d751cfca64594de97932fcf20fe366ed7e6526db4ac504e"
         },
         {
@@ -637,7 +637,7 @@
                 {
                   "name": "Check out trust check from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -661,7 +661,7 @@
           },
           "name": "Integration Tests",
           "path": ".github/workflows/integration.yml",
-          "run_id": 41849014004,
+          "run_id": 42533631628,
           "source_sha256": "70db493196bd4b133e075d3e4e17ac7011cccb42e47ac70d01c79baa896b79cb"
         },
         {
@@ -698,7 +698,7 @@
                 {
                   "name": "Check out trust check from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -709,83 +709,8 @@
           },
           "name": "Lint",
           "path": ".github/workflows/lint.yml",
-          "run_id": 41849014122,
+          "run_id": 42533631592,
           "source_sha256": "ad768fcf2f8891d090c5a8334572d151c9afc919e14d8c647c48807200e963ce"
-        },
-        {
-          "attempt": 2,
-          "jobs": {
-            "build-candidate": {
-              "checkouts": [
-                {
-                  "name": "Checkout immutable candidate",
-                  "number": 3,
-                  "revision": "product"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "publish-signed": {
-              "checkouts": [],
-              "conclusion": "skipped",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "verify-candidate-preflight": {
-              "checkouts": [
-                {
-                  "name": "Checkout immutable preflight candidate",
-                  "number": 2,
-                  "revision": "product"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...": {
-              "checkouts": [
-                {
-                  "name": "Checkout immutable migration replay candidate",
-                  "number": 3,
-                  "revision": "product"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...": {
-              "checkouts": [
-                {
-                  "name": "Checkout immutable migration replay candidate",
-                  "number": 3,
-                  "revision": "product"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "verify-published-source": {
-              "checkouts": [],
-              "conclusion": "skipped",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            }
-          },
-          "name": "SaaS image candidate",
-          "path": ".github/workflows/saas-image-candidate.yml",
-          "run_id": 41849013923,
-          "source_sha256": "9a42ad4fff59764287f673a5798b742b7be63afd41c3edf53b97dff84aba3707"
         },
         {
           "attempt": 1,
@@ -837,9 +762,9 @@
               ]
             }
           },
-          "name": "SaaS N-1 pull_request pr=223 base=a7b5cf29294556084216e9e2746125ccafc9cda0 head=4e11681dd3809febeb42cb5d752d423b5f751f82",
+          "name": "SaaS N-1 pull_request pr=258 base=4e11681dd3809febeb42cb5d752d423b5f751f82 head=a933d1ad3243c3eba967b1d548d65b679cb2742e",
           "path": ".github/workflows/saas-n1-compat-image.yml",
-          "run_id": 41849014127,
+          "run_id": 42533631556,
           "source_sha256": "2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
         },
         {
@@ -855,14 +780,14 @@
               ],
               "conclusion": "success",
               "labels": [
-                "ubuntu-latest"
+                "ubuntu-24.04"
               ]
             }
           },
           "name": "SaaS upstream compatibility",
           "path": ".github/workflows/saas-upstream-compat.yml",
-          "run_id": 41849013905,
-          "source_sha256": "09c926531635b053140b6da199814d8d08bfef4f62c256a66ebcd6d1171e681d"
+          "run_id": 42533631519,
+          "source_sha256": "93bb610c555fdbf8333be70817f55e2ccad58979a5f99d5518a7c78c336135e6"
         },
         {
           "attempt": 1,
@@ -872,7 +797,7 @@
                 {
                   "name": "Check out scanner from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -883,139 +808,30 @@
           },
           "name": "Security Scan",
           "path": ".github/workflows/security-scan.yml",
-          "run_id": 41849013959,
+          "run_id": 42533631558,
           "source_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
           "trusted_security_policy": {
             "attempt": 1,
             "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
-            "check_id": 126639981686,
-            "check_sha256": "0e5b0e66ecba20b65e793cfd22e301297bda40f3e7a3a11f3b9ef0511d254a46",
-            "check_suite_id": 113399229011,
+            "check_id": 128893033429,
+            "check_sha256": "cb7f71c6ffee107f1e5e48943aa62e3c12c2c85d41970fbe376328a7c9fc7d65",
+            "check_suite_id": 115211522047,
             "component": "Compatibility018",
-            "job_id": 126639981686,
-            "job_log_sha256": "6cf1e7e12c4ce90a61502b16aa63e81d3dcd2ec87d82c354d0f34d0e830f8f24",
-            "job_sha256": "1ad1a8016f906cff078b6bbb0d8c9c3f69f2c009b0fd52b4438af5cdd672ae56",
+            "job_id": 128893033429,
+            "job_log_sha256": "46aeb56b84ebe5c7196fbc36234b7712aa1079dce2ee15bd11fddcfbd5669ac4",
+            "job_sha256": "5509c691ce9cdba73fc9b3e8e86d80aa1e57aa1ad2ed8033388a55ccb6f6a1e5",
             "kind": "legacy_original_OWNER_security_policy_decision/v1",
             "load_maintainers_sha256": "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78",
-            "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
-            "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
-            "run_id": 41849013959,
-            "run_sha256": "57cd67fed2ef88fa3ab17acb53645292d7cb03c4c82d392678ba5cd19c2285d7",
+            "product_revision": "a933d1ad3243c3eba967b1d548d65b679cb2742e",
+            "product_tree": "7d3fe6fe7551ce567b52fa06c45a88885ef01a8a",
+            "run_id": 42533631558,
+            "run_sha256": "3f0023e6b994c4890169cf366a27260c065abf770ed013f78905ebe4aff5935d",
             "should_scan_sha256": "ef682dbda4e903303af3b670cf256140dfd1ecd8711d9fb3148a6ad64e37d250",
-            "trusted_checkout_revision": "c724abb9d43c40717e83154a7da9270150f3d418",
-            "validation_base_ref": "codex/p18-a7-validation-base-20261102",
-            "validation_pr": 223,
+            "trusted_checkout_revision": "6c44d0d569262154e78f5a620ea5266fc9291439",
+            "validation_base_ref": "codex/legacy-compat018-expat210-20261103",
+            "validation_pr": 258,
             "workflow_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd"
           }
-        },
-        {
-          "attempt": 1,
-          "jobs": {
-            "Backcompat e2e (server ${{ matrix.server }} / runner ${{ matrix.runner }}, shard ${{ matrix.shard_id }}/${{ matrix.num_shards }})": {
-              "checkouts": [],
-              "conclusion": "skipped",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "Backcompat e2e-ui (Config ${{ matrix.config }}: ${{ (((matrix.config == 'A') && matrix.server) || matrix.ui) }}, shard ${{ matrix.shard_id }}/${{ matrix.num_shards }})": {
-              "checkouts": [],
-              "conclusion": "skipped",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "Backcompat integration (server ${{ matrix.server }} / runner ${{ matrix.runner }}, ${{ matrix.harness }})": {
-              "checkouts": [],
-              "conclusion": "skipped",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "Compat smoke \u2013 Config 1 (new server / old runner v0.20.0)": {
-              "checkouts": [
-                {
-                  "name": "Checkout",
-                  "number": 2,
-                  "revision": "product-merge"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "Compat smoke \u2013 Config 2 (new runner / old server v0.20.0)": {
-              "checkouts": [
-                {
-                  "name": "Checkout",
-                  "number": 2,
-                  "revision": "product-merge"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "Compat smoke \u2013 UI Config A (new SPA / old server v0.20.0)": {
-              "checkouts": [
-                {
-                  "name": "Checkout",
-                  "number": 2,
-                  "revision": "product-merge"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "Compat smoke \u2013 UI Config B (old SPA v0.20.0 / new server)": {
-              "checkouts": [
-                {
-                  "name": "Checkout",
-                  "number": 2,
-                  "revision": "product-merge"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "Resolve latest stable tag": {
-              "checkouts": [
-                {
-                  "name": "Checkout (tags only)",
-                  "number": 2,
-                  "revision": "product-merge"
-                }
-              ],
-              "conclusion": "success",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "setup": {
-              "checkouts": [],
-              "conclusion": "skipped",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            },
-            "setup-ui": {
-              "checkouts": [],
-              "conclusion": "skipped",
-              "labels": [
-                "ubuntu-latest"
-              ]
-            }
-          },
-          "name": "Backwards-Compat",
-          "path": ".github/workflows/server-compat.yml",
-          "run_id": 41849013994,
-          "source_sha256": "a9b8d80f5528f1bb7a2853863012cb65b633ccca265a700c86499bc4685af3cf"
         },
         {
           "attempt": 1,
@@ -1036,7 +852,7 @@
           },
           "name": "Harness CLI action pin consistency",
           "path": ".github/workflows/setup-harness-cli-pin-test.yml",
-          "run_id": 41849014321,
+          "run_id": 42533631503,
           "source_sha256": "f69f27f6ffe5ac023533c1191367d7ab68e542d193964e092a89dbffcf7e9275"
         },
         {
@@ -1073,7 +889,7 @@
                 {
                   "name": "Check out trust check from main",
                   "number": 2,
-                  "revision": "c724abb9d43c40717e83154a7da9270150f3d418"
+                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
                 }
               ],
               "conclusion": "success",
@@ -1084,7 +900,7 @@
           },
           "name": "Trivy CVE Scan",
           "path": ".github/workflows/trivy.yml",
-          "run_id": 41849014137,
+          "run_id": 42533631585,
           "source_sha256": "882f5238d8e7147eb095b37c838e9f1ad707ae81c0d8314f49460627bb29f6f3"
         },
         {
@@ -1113,7 +929,7 @@
           },
           "name": "UI Snapshot",
           "path": ".github/workflows/ui-snapshot.yml",
-          "run_id": 41849013876,
+          "run_id": 42533631507,
           "source_sha256": "1b62597512c7e76293d0836abf1872969d5545cb9d3b2e7f0bbc942646e53f1a"
         },
         {
@@ -1135,7 +951,7 @@
           },
           "name": "Windows (native)",
           "path": ".github/workflows/windows.yml",
-          "run_id": 41849014082,
+          "run_id": 42533631596,
           "source_sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
         }
       ]

@@ -252,16 +252,24 @@ def test_empty_control_profiles_deny_before_any_remote_API_call(tmp_path, monkey
 
 
 @pytest.mark.parametrize("corruption", [None, "wrong_PR", "moved_base", "ambiguous", "fork"])
-def test_native_run_cannot_borrow_another_PR_with_the_same_head(native, corruption):
+@pytest.mark.parametrize("validation_base", [None, "4e11681dd3809febeb42cb5d752d423b5f751f82"])
+def test_native_run_cannot_borrow_another_PR_with_the_same_head(
+    native, corruption, validation_base
+):
     run = native["original_run"]
     profile = {
         "product_revision": run["head_sha"],
         "baseline_revision": "2c5a9a45f1a576439fc9c5aa0a91022d461389ab",
     }
+    if validation_base is not None:
+        profile.update(component="Compatibility018", validation_base_revision=validation_base)
+        run["pull_requests"][0]["base"]["sha"] = validation_base
     if corruption == "wrong_PR":
         run["pull_requests"][0]["number"] = 160
     if corruption == "moved_base":
-        run["pull_requests"][0]["base"]["sha"] = "a" * 40
+        run["pull_requests"][0]["base"]["sha"] = (
+            profile["baseline_revision"] if validation_base is not None else "a" * 40
+        )
     if corruption == "ambiguous":
         run["pull_requests"].append(copy.deepcopy(run["pull_requests"][0]))
     if corruption == "fork":

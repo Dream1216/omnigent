@@ -894,7 +894,7 @@ def test_registered_compatibility_profile_has_no_original_path_filter_matches():
         qualifier._required_technical_workflows(policy, identity, catalog, profile)
         == qualifier._MANDATORY_TECHNICAL - catalog.keys()
     )
-    assert len(profile["source_delta"]) == 114
+    assert len(profile["source_delta"]) == 130
 
 
 @pytest.mark.parametrize("component", ["Core", "Gateway", "Model", "Compatibility018"])
@@ -906,9 +906,9 @@ def test_registered_source_policy_validates_exact_source_or_rejects_pending(comp
     )["profiles"][component]
     if stored["product_revision"] != profile["product_revision"]:
         assert component == "Compatibility018"
-        assert profile["product_revision"] == "4e11681dd3809febeb42cb5d752d423b5f751f82"
+        assert profile["product_revision"] == "a933d1ad3243c3eba967b1d548d65b679cb2742e"
         assert qualifier._digest(stored) == (
-            "59bbbf48d5754235ff162db5ec352fcaec05a9c26481fa8881047e2df7de93ef"
+            "8ce9a78cc2798f9f5134f8894eecefa48afe6a3b816fec2269145f623d11f416"
         )
         with pytest.raises(ValueError, match="no exact reviewed source qualification policy"):
             qualifier.load_qualification_policy(ROOT, profile)

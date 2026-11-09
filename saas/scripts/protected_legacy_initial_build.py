@@ -23,7 +23,7 @@ from saas.scripts.resume_oci_promotion import (
 REPOSITORY = "Dream1216/omnigent"
 WORKFLOW = ".github/workflows/saas-legacy-security-build.yml"
 COMPATIBILITY_COMPONENT = "Compatibility018"
-_COMPATIBILITY_PROFILE_SHA256 = "f89d78f3174990019c10416b5cd9f4971d10ad68cd73484c78dbe62798ad8c01"
+_COMPATIBILITY_PROFILE_SHA256 = "fd599f8d6796b995033fcd819de5ee5b70d775126d04a5864892f3e9a1ace1ba"
 BASELINES = {
     "Core": "dc1e9a9735d4c996b74e601ed7f4ecb49e83f9ec",
     "Gateway": "3319b59a5d75a411f339b294cbe6b4133bfb851a",
@@ -413,6 +413,21 @@ def verify_metadata_delta(path: str, before: bytes, after: bytes, profile: dict[
     )
 
 
+def validation_base_revision(profile: dict[str, Any]) -> str:
+    """Keep the reviewed CI base separate from the complete source-delta baseline."""
+    if "validation_base_revision" not in profile:
+        return profile["baseline_revision"]
+    revision = profile["validation_base_revision"]
+    require(
+        profile.get("component") == COMPATIBILITY_COMPONENT
+        and isinstance(revision, str)
+        and _SHA.fullmatch(revision) is not None
+        and revision != profile["product_revision"],
+        "only the frozen compatibility profile may select its exact validation base",
+    )
+    return revision
+
+
 def verify_pr_tree(
     pull: dict[str, Any],
     commit: dict[str, Any],
@@ -428,6 +443,7 @@ def verify_pr_tree(
     tests. Those remain separate mandatory checks.
     """
     validate_profile(profile, profile["component"])
+    validation_base = validation_base_revision(profile)
     require(
         type(number) is int
         and number > 0
@@ -442,7 +458,7 @@ def verify_pr_tree(
         and pull.get("draft") is False
         and pull.get("head", {}).get("sha") == profile["product_revision"]
         and pull.get("head", {}).get("repo", {}).get("full_name") == REPOSITORY
-        and pull.get("base", {}).get("sha") == profile["baseline_revision"]
+        and pull.get("base", {}).get("sha") == validation_base
         and pull.get("base", {}).get("ref") == base_ref
         and pull.get("base", {}).get("repo", {}).get("full_name") == REPOSITORY,
         "validation PR base, head or repository differs",
@@ -461,8 +477,7 @@ def verify_pr_tree(
         isinstance(parents, list)
         and len(parents) == 2
         and all(isinstance(row, dict) for row in parents)
-        and [row.get("sha") for row in parents]
-        == [profile["baseline_revision"], profile["product_revision"]],
+        and [row.get("sha") for row in parents] == [validation_base, profile["product_revision"]],
         "actual PR merge parents differ from the frozen base and product",
     )
     return cast(str, merge)

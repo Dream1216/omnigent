@@ -588,6 +588,7 @@ def main() -> int:
     mode.add_argument("--materials-root", type=Path)
     mode.add_argument("--evidence-revision")
     parser.add_argument("--evidence-directory", type=Path)
+    parser.add_argument("--registered-product-repo", type=Path)
     parser.add_argument("--operator-record")
     parser.add_argument("--operator-review")
     parser.add_argument("--product-revision", required=True)
@@ -601,13 +602,24 @@ def main() -> int:
         if args.evidence_revision:
             if args.evidence_directory is None or args.output or args.image_evidence:
                 raise ValueError("evidence context requires only a fresh evidence directory")
+            product_repo = repo
+            if args.registered_product_repo is not None:
+                from saas.scripts.issue_evidence_receipt import (
+                    registered_compatibility_receipt_repo,
+                )
+
+                product_repo = registered_compatibility_receipt_repo(
+                    repo, args.registered_product_repo, product_revision=args.product_revision
+                )
             prepare_evidence_context(
-                repo,
+                product_repo,
                 product_revision=args.product_revision,
                 evidence_revision=args.evidence_revision,
                 destination=args.evidence_directory,
             )
             return 0
+        if args.registered_product_repo is not None:
+            raise ValueError("registered compatibility subjects support only evidence context")
         if args.operator_record or args.operator_review:
             if not args.operator_record or not args.operator_review or not args.output:
                 raise ValueError("native producer requires both original records and an output")

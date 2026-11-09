@@ -230,6 +230,32 @@ class RecoveryTests(unittest.TestCase):
     def test_actual_controller_is_separate_from_fixed_product(self):
         self.producer()
         self.assertNotEqual(self.controller, m.PRODUCT)
+        registered_product = "8" * 40
+        self.meta["name"] = f"compat018-raw-{registered_product}-1"
+        with self.assertRaises(ValueError):
+            self.producer()
+        m.verify_raw_producer(
+            self.run,
+            [self.job],
+            self.meta,
+            1,
+            2,
+            self.zipsha,
+            self.controller,
+            product_revision=registered_product,
+        )
+        self.meta["name"] = f"compat018-raw-{m.PRODUCT}-1"
+        with self.assertRaises(ValueError):
+            m.verify_raw_producer(
+                self.run,
+                [self.job],
+                self.meta,
+                1,
+                2,
+                self.zipsha,
+                self.controller,
+                product_revision=registered_product,
+            )
 
     def test_producer_identity_mismatches_refused(self):
         for key, value in (
@@ -393,6 +419,86 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotIn("d404ce0e80e5f5b10b9dd8dec8673fb02382f3ec", s)
         self.assertNotIn("saas.scripts.oci_promotion seal", s)
         self.assertIn("Source must integrate its own Source + PG16/18 jobs in the SAME", s)
+
+    def test_registered_raw_binds_own_profile_pair_and_rejects_drift(self):
+        from saas.scripts import compare_oci_rebuilds
+
+        profile = {
+            "product_revision": "8" * 40,
+            "product_tree": "9" * 40,
+            "source_date_epoch": 123,
+        }
+        pairs = deepcopy(self.report["images"])
+        first = {**profile, "historical_4e_byte_identity_claimed": False, "images": {}}
+        for role in ("server", "host"):
+            for attempt in (1, 2):
+                (self.root / f"{role}-{attempt}.tar").write_bytes(role.encode())
+            pair = pairs["omnigent-saas-" + role]
+            for side in ("first", "second"):
+                for actual in pair[side]["platforms"].values():
+                    actual["labels"]["org.opencontainers.image.revision"] = "8" * 40
+            first["images"][role] = {
+                "facts": deepcopy(pair["first"]),
+                "archive_sha256": digest(role.encode()),
+            }
+        (self.root / "registered-source-profile.json").write_bytes(encode(profile))
+        original = self.root / "reviewed-subject-image-facts.json"
+        original.write_bytes(encode(first))
+        with (
+            patch.object(m, "registered_profile", return_value=profile),
+            patch.object(
+                compare_oci_rebuilds,
+                "compare_archives",
+                side_effect=lambda a, _b, **_kw: pairs["omnigent-saas-" + a.name.split("-")[0]],
+            ),
+        ):
+            result = m.registered_raw(self.root, write=True)
+            self.assertEqual(result["product_revision"], "8" * 40)
+            self.assertFalse(result["production_ready"])
+            self.assertFalse(result["historical_4e_byte_identity_claimed"])
+            self.assertEqual(m.registered_raw(self.root), result)
+            actual_second = pairs["omnigent-saas-host"]["second"]
+            for field, replacement in (
+                ("attestation_descriptor_count", 1),
+                ("platforms", {"linux/amd64": actual_second["platforms"]["linux/amd64"]}),
+            ):
+                with self.subTest(second_pair_field=field):
+                    saved = actual_second[field]
+                    actual_second[field] = replacement
+                    with self.assertRaisesRegex(ValueError, "provenance/SBOM"):
+                        m.registered_raw(self.root)
+                    actual_second[field] = saved
+            for fault in ("profile", "first-facts", "archive", "pair", "report"):
+                with self.subTest(fault=fault):
+                    path = None
+                    if fault == "profile":
+                        path = self.root / "registered-source-profile.json"
+                    elif fault == "first-facts":
+                        path = original
+                    elif fault == "archive":
+                        path = self.root / "server-1.tar"
+                    elif fault == "report":
+                        path = self.root / "saas-image-candidate.json"
+                    if path is not None:
+                        saved = path.read_bytes()
+                        if fault == "archive":
+                            path.write_bytes(b"different archive")
+                        else:
+                            changed = json.loads(saved)
+                            changed["product_revision"] = m.PRODUCT
+                            path.write_bytes(encode(changed))
+                    else:
+                        pairs["omnigent-saas-server"]["matching_platform_manifest_and_config"] = (
+                            False
+                        )
+                    with self.assertRaises(ValueError):
+                        m.registered_raw(self.root)
+                    if path is not None:
+                        path.write_bytes(saved)
+                    else:
+                        pairs["omnigent-saas-server"]["matching_platform_manifest_and_config"] = (
+                            True
+                        )
 
 
 if __name__ == "__main__":

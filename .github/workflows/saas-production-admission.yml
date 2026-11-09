@@ -20,6 +20,12 @@ on:
         description: Optional immutable evidence-only data revision for receipt or final admission
         required: false
         type: string
+      receipt_product:
+        description: Original current product or the exact registered Compatibility018 receipt subject
+        required: false
+        type: choice
+        default: current
+        options: [current, Compatibility018]
 
 permissions: {contents: read, actions: read}
 
@@ -46,6 +52,7 @@ jobs:
       REVIEW_EXCEPTION_REQUEST_JSON: ${{ inputs.review_exception_request_json }}
       RECEIPT_REQUEST_JSON: ${{ inputs.receipt_request_json }}
       RUNTIME_EVIDENCE_REVISION: ${{ inputs.runtime_evidence_revision }}
+      RECEIPT_PRODUCT: ${{ inputs.receipt_product || 'current' }}
       TRUSTED_REF: ${{ github.ref }}
       TRUSTED_REF_REVISION: ${{ github.sha }}
       WORKFLOW_IDENTITY: ${{ github.workflow_ref }}
@@ -58,6 +65,13 @@ jobs:
           [[ -z "$REVIEW_EXCEPTION_REQUEST_JSON" || -z "$RECEIPT_REQUEST_JSON" ]]
           [[ -z "$RUNTIME_EVIDENCE_REVISION" || -z "$REVIEW_EXCEPTION_REQUEST_JSON" ]]
           [[ "$TRUSTED_REF" == "refs/heads/main" ]] && [[ "$EVIDENCE_REVISION" == "$TRUSTED_REF_REVISION" ]]
+          case "$RECEIPT_PRODUCT" in
+            current) ;;
+            Compatibility018)
+              [[ -n "$RECEIPT_REQUEST_JSON" && "$RUNTIME_EVIDENCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+              ;;
+            *) exit 1 ;;
+          esac
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.sha }}
@@ -68,12 +82,21 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --frozen --extra saas
+      - name: Checkout registered compatibility receipt subject without executing it
+        if: inputs.receipt_product == 'Compatibility018'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.product_revision }}
+          path: receipt-product
+          fetch-depth: 0
+          persist-credentials: false
       - name: Prepare separate immutable evidence data
         if: inputs.runtime_evidence_revision != '' && inputs.review_exception_request_json == ''
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ inputs.product_revision }}
           evidence-revision: ${{ inputs.runtime_evidence_revision }}
+          registered-product-repo: ${{ inputs.receipt_product == 'Compatibility018' && format('{0}/receipt-product', github.workspace) || '' }}
       - if: inputs.review_exception_request_json != ''
         run: >-
           uv run python -m saas.scripts.prepare_review_exception
@@ -103,13 +126,19 @@ jobs:
           --output-directory artifacts/production-admission
           --require-ready
       - if: inputs.receipt_request_json != ''
-        run: >-
-          uv run python -m saas.scripts.issue_evidence_receipt
-          --request-json "$RECEIPT_REQUEST_JSON"
-          --product-revision "$PRODUCT_REVISION"
-          --workflow-identity "$WORKFLOW_IDENTITY"
-          --output-directory artifacts/evidence-receipt
-          --evidence-repo "${OMNIGENT_RUNTIME_EVIDENCE_REPO:-$GITHUB_WORKSPACE}"
+        run: |
+          set -euo pipefail
+          subject_args=()
+          if [[ "$RECEIPT_PRODUCT" == "Compatibility018" ]]; then
+            subject_args+=(--registered-product-repo "$GITHUB_WORKSPACE/receipt-product")
+          fi
+          uv run python -m saas.scripts.issue_evidence_receipt \
+            --request-json "$RECEIPT_REQUEST_JSON" \
+            --product-revision "$PRODUCT_REVISION" \
+            --workflow-identity "$WORKFLOW_IDENTITY" \
+            --output-directory artifacts/evidence-receipt \
+            --evidence-repo "${OMNIGENT_RUNTIME_EVIDENCE_REPO:-$GITHUB_WORKSPACE}" \
+            "${subject_args[@]}"
       - name: Upload immutable review authorization
         if: inputs.review_exception_request_json != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

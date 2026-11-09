@@ -539,7 +539,7 @@ def compatibility_owner(owner, monkeypatch):
     component = "Compatibility018"
     row = data["spec"]["trusted_security_policy"]
     checkout = _COMPATIBILITY_OWNER_ROW["trusted_checkout_revision"]
-    base_ref = "codex/p18-a7-validation-base-20261102"
+    base_ref = policy._COMPATIBILITY_VALIDATION_REF
     monkeypatch.setitem(
         data["reader"].verify_pr_tree.__globals__["BASELINES"],
         component,

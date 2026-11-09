@@ -26,6 +26,7 @@ from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import (
     REPOSITORY,
     load_profile,
+    validation_base_revision,
     verify_pr_tree,
 )
 
@@ -231,7 +232,7 @@ def verify_run_pull_request(run: dict[str, Any], profile: dict[str, Any], number
         pull.get("number") == number
         and pull.get("url") == f"{repository_url}/pulls/{number}"
         and pull.get("head", {}).get("sha") == profile["product_revision"]
-        and pull.get("base", {}).get("sha") == profile["baseline_revision"]
+        and pull.get("base", {}).get("sha") == validation_base_revision(profile)
         and pull.get("head", {}).get("repo", {}).get("url") == repository_url
         and pull.get("base", {}).get("repo", {}).get("url") == repository_url,
         "native run belongs to another PR, source or frozen base",

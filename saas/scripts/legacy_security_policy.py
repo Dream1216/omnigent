@@ -14,11 +14,16 @@ from saas.scripts.oci_promotion import require
 WORKFLOW = ".github/workflows/security-scan.yml"
 MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
 _CURRENT_MAIN = "796b5da14fed424f9eec11170db05a3316da3a12"
-_CURRENT_MAIN_SOURCE_REVISIONS = {_CURRENT_MAIN, "c724abb9d43c40717e83154a7da9270150f3d418"}
+_CURRENT_MAIN_SOURCE_REVISIONS = {
+    _CURRENT_MAIN,
+    "c724abb9d43c40717e83154a7da9270150f3d418",
+    "6c44d0d569262154e78f5a620ea5266fc9291439",
+}
 _REVIEWED_MAIN_CHECKOUTS = {MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe", _CURRENT_MAIN}
 _COMPATIBILITY_OWNER_POLICY_SHA256 = (
-    "458ec2c388aaf9980983b065715a4807f5dbea9e08fc88a4061dfd7a2ebe0ba6"
+    "b67a5b42d73db2c43bc25ffc294f89f44a8984a3eeb081fad26ac560fe61ffb7"
 )
+_COMPATIBILITY_VALIDATION_REF = "codex/legacy-compat018-expat210-20261103"
 KIND = "legacy_original_OWNER_security_policy_decision/v1"
 SOURCES = {
     WORKFLOW: "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
@@ -128,7 +133,12 @@ def validate_registration(profile, identity, specification):
             row[k] == identity[k]
             for k in ("validation_pr", "validation_base_ref", "product_revision", "product_tree")
         )
-        and row["validation_base_ref"] == VALIDATION_REFS.get(profile["component"])
+        and row["validation_base_ref"]
+        == (
+            _COMPATIBILITY_VALIDATION_REF
+            if compatibility
+            else VALIDATION_REFS.get(profile["component"])
+        )
         and row["validation_base_ref"] != "main"
         and type(row["validation_pr"]) is int
         and row["validation_pr"] > 0,

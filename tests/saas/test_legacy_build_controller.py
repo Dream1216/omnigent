@@ -1462,12 +1462,12 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
                         records["Compatibility018"], sort_keys=True, separators=(",", ":")
                     ).encode()
                 ).hexdigest()
-                == "76acbf997414e00d82c89f061ad23faad45edfd156a435860c442ddf96424093"
+                == "779f06731ce8b9ad2d2484add8d8fa59bda5d67a9955017be692a6fccdfebb53"
             )
         else:
             reviewed_compatibility = {
                 "legacy-security-pg-profiles.json": (
-                    "d277ce27d22f072443a77a9f59eec4adb09e9c3a60364a27cd417a4115408919"
+                    "8a9b68819309e20402ad58cada026396cb002b881398248999dd19eaf432aa6f"
                 ),
                 "legacy-security-original-inputs.json": (
                     "7fcc22a64abd185216416cdfddafc37a062f3d51386f7093f3940e56de518a61"
@@ -1618,3 +1618,84 @@ def test_compatibility_added_source_still_requires_complete_exact_Git_objects(
             core.verify_source_delta(source, profile)
     else:
         core.verify_source_delta(source, profile)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "revision", "head", "dirty", "registration", "policy", "keys", "symlink"],
+)
+def test_compatibility_receipt_subject_requires_registered_source_and_controller_trust(
+    product, tmp_path, monkeypatch, fault
+):
+    from saas.scripts.issue_evidence_receipt import registered_compatibility_receipt_repo
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    source, profile = product
+    control = tmp_path / "control"
+    control.mkdir()
+    policy_path = "saas/production/evidence-admission-policy.json"
+    keys_path = "saas/production/fixture-trusted-keys.json"
+    material = {
+        policy_path: json.dumps({"trusted_key_registry": keys_path}).encode(),
+        keys_path: b'{"fixture_key":"unchanged"}\n',
+    }
+    for relative, raw in material.items():
+        for root in (source, control):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        profile["source_delta"].append(
+            {
+                "path": relative,
+                "before": None,
+                "after": {"mode": "100644", "sha256": hashlib.sha256(raw).hexdigest()},
+            }
+        )
+
+    def git(*arguments):
+        return subprocess.check_output(["git", *arguments], cwd=source, text=True).strip()
+
+    git("add", ".")
+    git("commit", "-qm", "fixture registered receipt policy and keys")
+    profile.update(
+        component="Compatibility018",
+        product_revision=git("rev-parse", "HEAD"),
+        product_tree=git("rev-parse", "HEAD^{tree}"),
+        source_date_epoch=int(git("show", "-s", "--format=%ct", "HEAD")),
+    )
+    monkeypatch.setitem(
+        load_profile.__globals__,
+        "_COMPATIBILITY_PROFILE_SHA256",
+        hashlib.sha256(
+            json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    )
+    revision = profile["product_revision"]
+    if fault == "revision":
+        revision = profile["baseline_revision"]
+    elif fault == "head":
+        git("checkout", "--detach", "-q", profile["baseline_revision"])
+    elif fault == "dirty":
+        (source / "uv.lock").write_text("unsealed working tree\n")
+    elif fault == "registration":
+        profile["product_tree"] = "0" * 40
+    elif fault in {"policy", "keys"}:
+        (control / (policy_path if fault == "policy" else keys_path)).write_bytes(b"{}\n")
+    elif fault == "symlink":
+        link = tmp_path / "untrusted-subject-link"
+        link.symlink_to(source, target_is_directory=True)
+        source = link
+    registry = control / "saas/supply_chain/legacy-security-build-profiles.json"
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        json.dumps({"schema_version": 1, "profiles": {"Compatibility018": profile}})
+    )
+
+    if fault:
+        with pytest.raises(ValueError):
+            registered_compatibility_receipt_repo(control, source, product_revision=revision)
+    else:
+        assert (
+            registered_compatibility_receipt_repo(control, source, product_revision=revision)
+            == source
+        )

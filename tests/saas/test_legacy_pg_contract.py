@@ -197,13 +197,13 @@ def test_compatibility_PG_profile_reuses_exact_source_and21_path_contract(
 def test_registered_compatibility_PG_inputs_preserve_the_generic_path_inventory():
     store = json.loads((ROOT / "saas/supply_chain/legacy-security-pg-profiles.json").read_text())
     profile = store["profiles"]["Compatibility018"]
-    assert profile["product_revision"] == "4e11681dd3809febeb42cb5d752d423b5f751f82"
-    assert profile["product_tree"] == "cd9cbd2f918df17a44dc63423ac29a5ddd887820"
+    assert profile["product_revision"] == "a933d1ad3243c3eba967b1d548d65b679cb2742e"
+    assert profile["product_tree"] == "7d3fe6fe7551ce567b52fa06c45a88885ef01a8a"
     assert set(profile["trusted_inputs"]) == set(pg.trusted_pg_paths(ROOT))
     assert len(profile["trusted_inputs"]) == 21
     assert (
         hashlib.sha256(
             json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-        == "d277ce27d22f072443a77a9f59eec4adb09e9c3a60364a27cd417a4115408919"
+        == "8a9b68819309e20402ad58cada026396cb002b881398248999dd19eaf432aa6f"
     )

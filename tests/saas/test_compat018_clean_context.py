@@ -1,11 +1,13 @@
 """Local bytes/refusal tests; synthetic layers are not a qualified C2 image."""
 
 import copy
+import hashlib
 import importlib
 import importlib.util
 import io
 import json
 import tarfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -92,6 +94,86 @@ EXPECTED = {
     "source.py": ("100755", b"print('fixed')\n"),
     "alias": ("120000", b"source.py"),
 }
+
+
+@pytest.mark.parametrize("fault", [None, "caller", "libc", "labels", "manifest", "architecture"])
+def test_registered_first_binds_own_four_targets_and_refuses_changed_installed_bytes(
+    tmp_path, monkeypatch, fault
+):
+    import saas.scripts.issue_evidence_receipt as issuer
+    import saas.scripts.oci_promotion as promotion
+    import saas.scripts.protected_legacy_initial_build as profiles
+    import saas.scripts.sqlite_component_disposition as components
+
+    profile = {"product_revision": "8" * 40, "product_tree": "9" * 40, "source_date_epoch": 123}
+    expected = {path: ("100644", (path + "\n").encode()) for path in m._NATIVE_BOUNDARIES}
+    prefix = "opt/venv/lib/python3.12/site-packages/"
+    inventory = [
+        {"path": prefix + path, "type": "0", "sha256": hashlib.sha256(body).hexdigest()}
+        for path, (_, body) in expected.items()
+    ] + [{"path": "usr/lib/libc.so.6", "type": "0", "sha256": "a" * 64}]
+    if fault == "caller":
+        inventory[0]["sha256"] = "f" * 64
+    elif fault == "libc":
+        inventory.pop()
+    labels = {"revision": profile["product_revision"]}
+    platforms = {
+        p: {"labels": labels, "manifest_digest": "manifest", "config_digest": "config"}
+        for p in ("linux/amd64", "linux/arm64")
+    }
+    if fault == "labels":
+        platforms["linux/amd64"]["labels"] = {"revision": recovery.PRODUCT}
+    elif fault == "manifest":
+        platforms["linux/amd64"]["manifest_digest"] = "another"
+    elif fault == "architecture":
+        platforms.pop("linux/arm64")
+
+    class Blobs:
+        def platform(self, platform):
+            return "manifest", {
+                "config": {"digest": "config"},
+                "layers": [{"digest": "layer"}] * 15,
+            }
+
+        @contextmanager
+        def blob(self, digest):
+            yield io.BytesIO(b"existing audit boundary")
+
+    @contextmanager
+    def blobs(_archive):
+        yield Blobs()
+
+    monkeypatch.setattr(profiles, "load_profile", lambda *_: profile)
+    verified = []
+    monkeypatch.setattr(
+        issuer,
+        "registered_compatibility_receipt_repo",
+        lambda control, repo, **kw: verified.append((control, repo, kw)),
+    )
+    monkeypatch.setattr(m, "source_inputs", lambda repo, **kw: expected)
+    monkeypatch.setattr(promotion, "expected_labels", lambda *_: labels)
+    monkeypatch.setattr(m, "inspect_oci_archive", lambda *_a, **_kw: {"platforms": platforms})
+    monkeypatch.setattr(components, "image_blobs", blobs)
+    monkeypatch.setattr(components, "component_inventory", lambda *_a, **_kw: inventory)
+    monkeypatch.setattr(m, "verify_context_layer", lambda *_a: {"existing_Source_audit": True})
+    monkeypatch.setattr(m, "verify_host_install_layer", lambda *_a, **kw: kw)
+    for role in ("server", "host"):
+        (tmp_path / f"{role}-1.tar").write_bytes(b"synthetic unit fixture")
+    if fault:
+        with pytest.raises(ValueError):
+            m.registered_first(tmp_path, REPO, ROOT)
+        assert not (tmp_path / "reviewed-subject-image-facts.json").exists()
+    else:
+        result = m.registered_first(tmp_path, REPO, ROOT)
+        assert verified == [(ROOT, REPO, {"product_revision": "8" * 40})]
+        assert result["product_revision"] == profile["product_revision"]
+        assert result["historical_4e_byte_identity_claimed"] is False
+        assert result["independent_rebuild_or_runtime_or_High_or_signature_qualified"] is False
+        assert all(len(row["targets"]) == 2 for row in result["images"].values())
+        assert result["images"]["host"]["targets"]["linux/arm64"]["source_proof"] == {
+            "revision": "8" * 40,
+            "epoch": 123,
+        }
 
 
 @pytest.mark.parametrize(

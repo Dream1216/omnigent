@@ -28,12 +28,14 @@ TREE = recovery.TREE
 require = recovery.require
 
 
-def source_inputs(repo: Path) -> dict[str, tuple[str, bytes]]:
-    tree = subprocess.check_output(
-        ["git", "rev-parse", f"{recovery.PRODUCT}^{{tree}}"], cwd=repo, text=True
+def source_inputs(
+    repo: Path, *, revision: str = recovery.PRODUCT, tree: str = TREE
+) -> dict[str, tuple[str, bytes]]:
+    actual_tree = subprocess.check_output(
+        ["git", "rev-parse", f"{revision}^{{tree}}"], cwd=repo, text=True
     ).strip()
-    require(tree == TREE, "frozen product tree differs")
-    entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", recovery.PRODUCT], cwd=repo)
+    require(actual_tree == tree, "frozen product tree differs")
+    entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", revision], cwd=repo)
     selected = []
     for entry in entries.split(b"\0"):
         if not entry:
@@ -138,7 +140,11 @@ def verify_context_layer(stream: Any, expected: dict[str, tuple[str, bytes]]) ->
 
 
 def verify_host_install_layer(
-    stream: Any, expected: dict[str, tuple[str, bytes]]
+    stream: Any,
+    expected: dict[str, tuple[str, bytes]],
+    *,
+    revision: str = recovery.PRODUCT,
+    epoch: int = recovery.EPOCH,
 ) -> dict[str, Any]:
     """Bind installed application code to Git, including generated build identity."""
     prefix = "opt/venv/lib/python3.12/site-packages/"
@@ -180,8 +186,8 @@ def verify_host_install_layer(
     expected_build_info = (
         '"""Auto-generated for an immutable Omnigent runtime image; do not edit."""\n'
         "from __future__ import annotations\n\n"
-        f"BUILD_TIME_EPOCH: int = {recovery.EPOCH}\n"
-        f"COMMIT_SHA: str = {recovery.PRODUCT!r}\n"
+        f"BUILD_TIME_EPOCH: int = {epoch}\n"
+        f"COMMIT_SHA: str = {revision!r}\n"
     ).encode()
     require(
         build_info == expected_build_info,
@@ -190,8 +196,127 @@ def verify_host_install_layer(
     return {
         "runtime_Python_files": len(seen),
         "tracked_resources": resources,
-        "build_identity": {"BUILD_TIME_EPOCH": recovery.EPOCH, "COMMIT_SHA": recovery.PRODUCT},
+        "build_identity": {"BUILD_TIME_EPOCH": epoch, "COMMIT_SHA": revision},
     }
+
+
+_NATIVE_BOUNDARIES = (
+    "omnigent/inner/bwrap_sandbox.py",
+    "omnigent/inner/os_env.py",
+    "omnigent/inner/sandbox.py",
+    "omnigent/inner/terminal.py",
+    "saas/control_plane/isolation.py",
+    "saas/production/preview_edge.py",
+    "saas/production/preview_owner.py",
+    "saas/production/preview_readiness.py",
+    "saas/production/preview_relay.py",
+    "saas/production/repository_mirror.py",
+    "saas/production/runner_agent.py",
+    "saas/production/runner_control.py",
+    "saas/production/runner_executor.py",
+    "saas/production/runner_readiness.py",
+    "saas/production/runtime_locale.py",
+    "saas/production/server.py",
+    "saas/production/worker.py",
+    "saas/runner_adapter/isolation.py",
+    "saas/production/tenant_sandbox.py",
+    "omnigent/onboarding/sandboxes/kubernetes.py",
+    "saas/production/platform_model_sandbox_host.py",
+    "saas/production/platform_model_host.py",
+    "saas/runner_adapter/process_policy.py",
+    "saas/production/tenant_model_keys.py",
+)
+
+
+def registered_first(root: Path, repo: Path, control: Path) -> dict[str, Any]:
+    """Audit the registered replacement's own bytes, without borrowing 4e facts."""
+    from saas.scripts.issue_evidence_receipt import registered_compatibility_receipt_repo
+    from saas.scripts.oci_promotion import expected_labels
+    from saas.scripts.protected_legacy_initial_build import load_profile
+    from saas.scripts.sqlite_component_disposition import component_inventory, image_blobs
+
+    profile = load_profile(control, "Compatibility018")
+    revision, tree, epoch = (
+        profile["product_revision"],
+        profile["product_tree"],
+        profile["source_date_epoch"],
+    )
+    require(revision != recovery.PRODUCT, "registered replacement cannot relabel historical 4e")
+    registered_compatibility_receipt_repo(control, repo, product_revision=revision)
+    expected = source_inputs(repo, revision=revision, tree=tree)
+    labels = expected_labels(repo, revision)
+    prefix = "opt/venv/lib/python3.12/site-packages/"
+    selected = frozenset({"usr/lib/libc.so.6", *(prefix + path for path in _NATIVE_BOUNDARIES)})
+    images = {}
+    for role in ("server", "host"):
+        archive = root / f"{role}-1.tar"
+        facts = inspect_oci_archive(archive, label_profile="executable")
+        require(
+            set(facts["platforms"]) == {"linux/amd64", "linux/arm64"},
+            "registered C2 needs both original architectures",
+        )
+        targets = {}
+        with image_blobs(archive) as blobs:
+            for platform, actual in facts["platforms"].items():
+                manifest_digest, manifest = blobs.platform(platform)
+                require(
+                    actual["labels"] == labels
+                    and actual["manifest_digest"] == manifest_digest
+                    and actual["config_digest"] == manifest["config"]["digest"],
+                    "registered C2 source labels or manifest/config differ",
+                )
+                inventory = component_inventory(blobs, manifest, additional_paths=selected)
+                by_path = {row["path"]: row for row in inventory}
+                for relative in _NATIVE_BOUNDARIES:
+                    entry = by_path.get(prefix + relative)
+                    require(
+                        entry is not None
+                        and entry.get("type") == "0"
+                        and entry.get("sha256")
+                        == hashlib.sha256(expected[relative][1]).hexdigest(),
+                        "installed C2 caller or guard differs from its registered Git bytes",
+                    )
+                libc = by_path.get("usr/lib/libc.so.6")
+                require(
+                    libc is not None and libc.get("type") == "0" and libc.get("sha256"),
+                    "registered C2 actual libc ELF is missing",
+                )
+                ordinal = 3 if role == "server" else 14
+                with blobs.blob(manifest["layers"][ordinal]["digest"]) as stream:
+                    source = (
+                        verify_context_layer(stream, expected)
+                        if role == "server"
+                        else verify_host_install_layer(
+                            stream, expected, revision=revision, epoch=epoch
+                        )
+                    )
+                targets[platform] = {
+                    "manifest_digest": manifest_digest,
+                    "config_digest": manifest["config"]["digest"],
+                    "source_proof": source,
+                    "installed_component_inventory": inventory,
+                }
+        images[role] = {
+            "archive_sha256": recovery.sha256(archive),
+            "facts": facts,
+            "targets": targets,
+        }
+    result = {
+        "kind": "registered_compat018_first_pair_actual_source_facts/v1",
+        "product_revision": revision,
+        "product_tree": tree,
+        "source_date_epoch": epoch,
+        "profile_sha256": hashlib.sha256(
+            json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest(),
+        "images": images,
+        "historical_4e_byte_identity_claimed": False,
+        "independent_rebuild_or_runtime_or_High_or_signature_qualified": False,
+    }
+    (root / "reviewed-subject-image-facts.json").write_text(
+        json.dumps(result, sort_keys=True, indent=2) + "\n"
+    )
+    return result
 
 
 def verify_first(root: Path, repo: Path, *, paired_host: bool = False) -> dict[str, Any]:
@@ -415,16 +540,19 @@ def verify_complete(root: Path, repo: Path, profile: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("audit", "confirm", "verify"))
+    parser.add_argument("command", choices=("audit", "confirm", "verify", "registered-audit"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--repo", type=Path, default=Path.cwd())
+    parser.add_argument("--control", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument(
         "--comparison-profile",
         choices=("historical", "clean-C2-server", PAIR_PROFILE),
         default="clean-C2-server",
     )
     args = parser.parse_args()
-    if args.command == "audit":
+    if args.command == "registered-audit":
+        registered_first(args.root, args.repo, args.control)
+    elif args.command == "audit":
         audit(args.root, args.repo, args.comparison_profile)
     elif args.command == "confirm":
         confirm(args.root, args.repo, args.comparison_profile)

@@ -289,6 +289,8 @@ def verify_raw_producer(
     artifact_id: int,
     sha: str,
     controller: str,
+    *,
+    product_revision: str = PRODUCT,
 ) -> None:
     require(
         re.fullmatch(r"[0-9a-f]{40}", controller) and re.fullmatch(r"[0-9a-f]{64}", sha),
@@ -317,7 +319,7 @@ def verify_raw_producer(
     )
     require(
         metadata.get("id") == artifact_id
-        and metadata.get("name") == f"compat018-raw-{PRODUCT}-{run_id}"
+        and metadata.get("name") == f"compat018-raw-{product_revision}-{run_id}"
         and metadata.get("digest") == f"sha256:{sha}"
         and metadata.get("expired") is False
         and metadata.get("workflow_run", {}).get("id") == run_id
@@ -336,6 +338,7 @@ def download_raw(
     root: Path,
     *,
     comparison_profile: str = "historical",
+    registered_subject: bool = False,
 ) -> None:
     from saas.scripts.legacy_artifact_download import download_artifact_bytes
     from saas.scripts.oci_promotion import extract_artifact
@@ -344,7 +347,17 @@ def download_raw(
     run = api(f"{prefix}/actions/runs/{run_id}")
     jobs = api(f"{prefix}/actions/runs/{run_id}/attempts/1/jobs?per_page=100")["jobs"]
     metadata = api(f"{prefix}/actions/artifacts/{artifact_id}")
-    verify_raw_producer(run, jobs, metadata, run_id, artifact_id, sha, controller)
+    profile = registered_profile() if registered_subject else None
+    verify_raw_producer(
+        run,
+        jobs,
+        metadata,
+        run_id,
+        artifact_id,
+        sha,
+        controller,
+        product_revision=profile["product_revision"] if profile is not None else PRODUCT,
+    )
     archive = root.with_suffix(".zip")
     download_artifact_bytes(
         artifact_id,
@@ -353,7 +366,9 @@ def download_raw(
         expected_sha256=sha,
     )
     extract_artifact(archive, root, zip_sha256=sha)
-    if comparison_profile == "historical" and not (root / "clean-context-first.json").exists():
+    if registered_subject:
+        registered_raw(root)
+    elif comparison_profile == "historical" and not (root / "clean-context-first.json").exists():
         verify_raw(root)
     else:
         verify_raw(root, comparison_profile=comparison_profile)
@@ -477,24 +492,126 @@ def seal(root: Path) -> dict[str, Any]:
     return result
 
 
+def registered_profile() -> dict[str, Any]:
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    profile = load_profile(Path(__file__).resolve().parents[2], "Compatibility018")
+    require(profile["product_revision"] != PRODUCT, "replacement cannot relabel historical 4e")
+    return profile
+
+
+def registered_raw(root: Path, *, write: bool = False) -> dict[str, Any]:
+    """Bind a raw checkpoint to its own registered profile and two actual pairs."""
+    from saas.scripts.compare_oci_rebuilds import compare_archives
+
+    profile = registered_profile()
+    require(
+        json.loads((root / "registered-source-profile.json").read_text()) == profile,
+        "raw C2 source profile changed",
+    )
+    first = json.loads((root / "reviewed-subject-image-facts.json").read_text())
+    require(
+        all(
+            first.get(key) == profile[key]
+            for key in ("product_revision", "product_tree", "source_date_epoch")
+        )
+        and first.get("historical_4e_byte_identity_claimed") is False,
+        "raw C2 source facts belong to another subject",
+    )
+    labels = {**LABELS, "org.opencontainers.image.revision": profile["product_revision"]}
+    images = {}
+    for role in ("server", "host"):
+        comparison = compare_archives(
+            root / f"{role}-1.tar", root / f"{role}-2.tar", label_profile="executable"
+        )
+        require(
+            comparison["matching_platform_manifest_and_config"] is True
+            and comparison["history_created_by_equal"] is True
+            and comparison["first"] == first["images"][role]["facts"]
+            and sha256(root / f"{role}-1.tar") == first["images"][role]["archive_sha256"],
+            "registered C2 actual independent pair or audited first archive differs",
+        )
+        for side in ("first", "second"):
+            actual = comparison[side]
+            require(
+                actual.get("attestation_descriptor_count", 0) >= 2
+                and set(actual["platforms"]) == {"linux/amd64", "linux/arm64"}
+                and all(row["labels"] == labels for row in actual["platforms"].values()),
+                "registered C2 complete platform labels or provenance/SBOM descriptors differ",
+            )
+        images["omnigent-saas-" + role] = comparison
+    report = {
+        "candidate_evidence_version": 3,
+        "status": "pass",
+        "violations": [],
+        "product_revision": profile["product_revision"],
+        "source_date_epoch": profile["source_date_epoch"],
+        "upstream_revision": labels["ai.omnigent.upstream.revision"],
+        "adapter_contract_version": labels["ai.omnigent.saas.adapter-contract-version"],
+        "label_profile": "executable",
+        "images": images,
+        "production_ready": False,
+        "registered_source_profile_sha256": sha256(root / "registered-source-profile.json"),
+        "registered_first_facts_sha256": sha256(root / "reviewed-subject-image-facts.json"),
+        "historical_4e_byte_identity_claimed": False,
+    }
+    path = root / "saas-image-candidate.json"
+    if write:
+        require(not path.exists(), "registered comparison already exists")
+        path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
+    else:
+        require(json.loads(path.read_text()) == report, "registered comparison changed")
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("inspect-original", "prepare", "verify", "download", "seal", "retained-first"),
+        choices=(
+            "inspect-original",
+            "prepare",
+            "verify",
+            "download",
+            "seal",
+            "retained-first",
+            "registered-prepare",
+            "registered-confirm",
+        ),
     )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--run-id", type=int)
     parser.add_argument("--artifact-id", type=int)
     parser.add_argument("--sha256")
     parser.add_argument("--controller")
+    parser.add_argument("--github-env", type=Path)
+    parser.add_argument("--registered-subject", action="store_true")
     parser.add_argument(
         "--comparison-profile",
         choices=("historical", "clean-C2-server", "clean-C2-pair"),
         default="historical",
     )
     args = parser.parse_args()
-    if args.command == "inspect-original":
+    if args.registered_subject and args.command not in {"verify", "download", "seal"}:
+        parser.error("registered subject flag is limited to raw verification/scan/seal")
+    if args.command == "registered-prepare":
+        profile = registered_profile()
+        args.root.mkdir(parents=True, exist_ok=False)
+        (args.root / "registered-source-profile.json").write_text(
+            json.dumps(profile, sort_keys=True, indent=2) + "\n"
+        )
+        if args.github_env:
+            with args.github_env.open("a") as stream:
+                for key, value in {
+                    "PRODUCT_REVISION": profile["product_revision"],
+                    "SOURCE_REVISION": profile["product_revision"],
+                    "PRODUCT_TREE": profile["product_tree"],
+                    "SOURCE_DATE_EPOCH": str(profile["source_date_epoch"]),
+                }.items():
+                    stream.write(f"{key}={value}\n")
+    elif args.command == "registered-confirm":
+        registered_raw(args.root, write=True)
+    elif args.command == "inspect-original":
         original_evidence(args.root)
         print(
             json.dumps(
@@ -513,9 +630,30 @@ def main() -> None:
     elif args.command == "prepare":
         prepare(args.root)
     elif args.command == "verify":
-        verify_raw(args.root, comparison_profile=args.comparison_profile)
+        if args.registered_subject:
+            registered_raw(args.root)
+        else:
+            verify_raw(args.root, comparison_profile=args.comparison_profile)
     elif args.command == "seal":
-        seal(args.root)
+        if args.registered_subject:
+            from saas.scripts.oci_promotion import seal_candidate
+
+            registered_raw(args.root)
+            profile = registered_profile()
+            result = seal_candidate(
+                args.root,
+                labels={
+                    **LABELS,
+                    "org.opencontainers.image.revision": profile["product_revision"],
+                },
+                source_date_epoch=profile["source_date_epoch"],
+                now=datetime.now(UTC),
+            )
+            path = args.root / "oci-promotion-manifest.json"
+            path.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+            print(f"manifest-sha256={sha256(path)}")
+        else:
+            seal(args.root)
     else:
         require(
             bool(args.run_id and args.artifact_id and args.sha256 and args.controller),
@@ -528,6 +666,7 @@ def main() -> None:
             args.controller,
             args.root,
             comparison_profile=args.comparison_profile,
+            registered_subject=args.registered_subject,
         )
 
 

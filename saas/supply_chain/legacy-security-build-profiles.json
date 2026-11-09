@@ -3,18 +3,18 @@
     "Compatibility018": {
       "application_version": "0.18.0.dev20261006",
       "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
-      "budget_file_cap": 225,
+      "budget_file_cap": 229,
       "component": "Compatibility018",
-      "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
-      "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+      "product_revision": "a933d1ad3243c3eba967b1d548d65b679cb2742e",
+      "product_tree": "7d3fe6fe7551ce567b52fa06c45a88885ef01a8a",
       "repository": "Dream1216/omnigent",
       "schema_version": 1,
-      "source_date_epoch": 1793801374,
+      "source_date_epoch": 1794179105,
       "source_delta": [
         {
           "after": {
             "mode": "100755",
-            "sha256": "d3f14221627602314eda75334b13ac61330270abc909da4a9496e36632fe2453"
+            "sha256": "67febac63b65ed11c3a5df1ae3b6b6200c2a5f9bdd8e0b2b285e08811a9f2380"
           },
           "before": {
             "mode": "100755",
@@ -25,7 +25,18 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "9a42ad4fff59764287f673a5798b742b7be63afd41c3edf53b97dff84aba3707"
+            "sha256": "169d3e4a3decbb5febaf0c728dbef69750ef00e213469fae5a66ab9807b99ea7"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "3a7d5ecfd4859c0697df27c1c922bf3074cbd480c62843eb65ccbd5f53aecd4b"
+          },
+          "path": ".github/workflows/e2e-ui.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "67a8dcf5c33c4c968e4f50c784ddfc4c2083e3611b93497738639556d4e5a42c"
           },
           "before": {
             "mode": "100644",
@@ -69,7 +80,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "09c926531635b053140b6da199814d8d08bfef4f62c256a66ebcd6d1171e681d"
+            "sha256": "93bb610c555fdbf8333be70817f55e2ccad58979a5f99d5518a7c78c336135e6"
           },
           "before": {
             "mode": "100644",
@@ -91,7 +102,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "bda7212e8c615d1cae06c91f35f4c667e2e50fb913a8d04d4a15ebe839fe9d41"
+            "sha256": "d3d5d0678058651b1a42320974567de036ffc5416914a249330ec92867c81655"
           },
           "before": {
             "mode": "100644",
@@ -157,6 +168,28 @@
           },
           "before": null,
           "path": "omnigent/db/migrations/versions/nf12ab34cd56_index_conversations_by_host.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "5165e540f5584dab6acff5b2e0327db24e7c342f3c5efd94f0edab10a119c7db"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "bc91f54f10abef793f273104688cb89613e81723113bab3365890877be99ad21"
+          },
+          "path": "omnigent/inner/os_env.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "53b35d5b8e061780c04d8cf5a9804bfcb8f43d27eb262c1d55bcf1b8af85ea83"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "3039fea49103a91a0ef97813933c31eab2e8d339ba683a175bd399d084da4501"
+          },
+          "path": "omnigent/inner/terminal.py"
         },
         {
           "after": {
@@ -297,7 +330,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "97fb940ef673f594f170a7d2f47737650db0a22dfb59ad359877fc11d25d381d"
+            "sha256": "3c3eba9306bcbbd90a6d342446f6e6aba423b6e27bfe17e3c5cc8041609f465a"
           },
           "before": {
             "mode": "100644",
@@ -461,6 +494,28 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "349bbceebd2a00ce23291345fde24f282296fad6af5fa1dfcdb9dc3871263ee2"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "5dc038e3adeb57d1971fb7605339c0dcebe8243764f140a3049a1fc7379b92da"
+          },
+          "path": "saas/production/preview_edge.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "c6a8467aeea8fb0d905526b5db4a65babeeeeef6711c55a0b55b10d4a3cb2966"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "d8011bb8b1efb9735f8b8915cfc757c14ebf07f8d1e5b56a61cc8064aa30f54d"
+          },
+          "path": "saas/production/preview_owner.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "859a5b8347992cf59103576791764a99caf670b4b29c1f265c7e3f271299105f"
           },
           "before": {
@@ -468,6 +523,28 @@
             "sha256": "685ca99559f1b9eab945618996fa8be478473e56ca9bf5ab907ca71068ff05ef"
           },
           "path": "saas/production/recovery-policy.json"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "ec2a1e3b8a4dc6527d584595ba8d40db1d272f0e6ae24174e718bde5bc4713c9"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "1be6a45b02cf19af692edd1901c67b6be8c9dc8b8b0971fdba70ee66586a8335"
+          },
+          "path": "saas/production/runner_agent.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "72ab215114f28c0812f4dd584ad7ec804c1d3c07d75b125767fc3a601e6175dc"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "f88ff60f40bbddb2b720110afa6abb9193f08a9cd56f5a4ba852a26fcce4d312"
+          },
+          "path": "saas/production/runner_control.py"
         },
         {
           "after": {
@@ -483,7 +560,15 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "61ffb4443a575c8e8a36668fd2649a21f84ccc6561ec59371c971861981d3a8f"
+            "sha256": "89e54a498a2e2d11fe0b8ef64308ef144bc262b0754ff47fe0488faea80d60ec"
+          },
+          "before": null,
+          "path": "saas/production/runtime_locale.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "687e8f3acace9dc8b7e6aa30d3f79a5764e2422956c68c0335392813491e672b"
           },
           "before": {
             "mode": "100644",
@@ -535,6 +620,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "6b350f48c46cc25d3f10cd19816cca377a7d2b782755bdedb858bfbb332dae25"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "caf587a65aaeb2b0c566528ae62cab85c26aad6e39f4593df8a155b03594c283"
+          },
+          "path": "saas/production/worker.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "f917c22ed8b2134e0dc64104055df3db618ae90e0a37685588c7fd4684e2a25a"
           },
           "before": null,
@@ -550,6 +646,17 @@
             "sha256": "23de21c9bcac9ecc07561094bc0364ff8e859e717298c2d31ea148129656c185"
           },
           "path": "saas/scripts/check_image_supply_chain.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "ece93d41299182d593dd8142f25cb83720b93f80f3359815fe733a3135b6dcb7"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "a359c055a4c6fd9f5cf967885dffac6638ce0e777b5fe5b2ad9c4b13cd78ee96"
+          },
+          "path": "saas/scripts/check_wheel_contents.py"
         },
         {
           "after": {
@@ -661,7 +768,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "e8050ac25407510c79d1bbc61d7cce70969dec43eaf414e898af893b4ecf1018"
+            "sha256": "dc65c8602cdc8e819c771d399eacdede5d528f7950edc367c570fd2148a80f15"
           },
           "before": {
             "mode": "100644",
@@ -683,7 +790,18 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "3eb0f06b7f3e0e8143c79daa174e6dd7551a9741ad0da01fb9ff8c9632b074dd"
+            "sha256": "dfcffccddfc51b9c456df446b33b20cdc47b6dccac232c14ab6c653ff9e6083f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "263dd1fa710afac39318b9b0b6b07cb75fd3d765bd0563d1068c568e4775708b"
+          },
+          "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "df3f2467fab031acfd9cfb8ff13c482a75f12d1fda2220b21eccb7ed70036b51"
           },
           "before": {
             "mode": "100644",
@@ -756,6 +874,28 @@
             "sha256": "df66e3cb9b216ec80e974056b75a41746f5077c24663b78b7163a2b29210446c"
           },
           "path": "tests/e2e_ui/conftest.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "d4d622ea052fa46a41643cb9919fe61ee1ae3dd89d976971462ebf955ccb0948"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "1ca30c90668341abb51ab0b0364fea71ed517d1c7ef8f5de6631315135ae1bbc"
+          },
+          "path": "tests/inner/test_os_env.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b2d84a7a063a7993a3d8066c75e0cd41c8e512434c02546179002da0c853bee8"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "aefee29fb20d48ac05f108d6037b92f5023c4ee7accb2c1c05fc68ba31ed9918"
+          },
+          "path": "tests/inner/test_terminal.py"
         },
         {
           "after": {
@@ -855,6 +995,17 @@
             "sha256": "d5db6f7cc3feb7a8a9de64da88bab036ba7b6e57be4043e36c29736d462811c1"
           },
           "path": "tests/saas/test_n1_outbox_admission.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "fe4ca4bb93559a30c9554d2c5bdeeb9d20001f2429669d607f96d5a59c1a0430"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "3b76d14bd11c940d96bd69cbc0cff7d49060a8a195d92dfec4fea74a15bb39c2"
+          },
+          "path": "tests/saas/test_onboarding_role_contract.py"
         },
         {
           "after": {
@@ -970,6 +1121,14 @@
             "sha256": "3212366d4d615971b1a386831abb47280d2d94332c1876b7552a371dbfc34ee2"
           },
           "path": "tests/saas/test_production_runner_postgresql.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "bdc3829e9fe16d12fe6ce4773bb488477ff4abb588ec229d31eb6c1bb3326db3"
+          },
+          "before": null,
+          "path": "tests/saas/test_production_runtime_locale.py"
         },
         {
           "after": {
@@ -1188,15 +1347,27 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "afe67928d1c69c8e5741f1e42c1a21396bb8f3dc88883ae6490039c6423d94af"
+            "sha256": "999ee1a45afab567bd922d7270a6e9f4ee5efd6219606f9ee52399e8f4e427c2"
           },
           "before": {
             "mode": "100644",
             "sha256": "7eaca975d581092e8d35217ab8ad2ab15c7c9fac018145a5e0f507af867642e6"
           },
           "path": "tests/saas/test_upstream_delta.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "95aa35b2c705f0769adaf8bdbcb893f136e31e003e51b4864a13c0ad5777f1ac"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "8c4aef4e0da8a83415effabc4f9b4e946756145729a88ee43c466f994a35730f"
+          },
+          "path": "uv.lock"
         }
-      ]
+      ],
+      "validation_base_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82"
     },
     "Core": {
       "application_version": "0.18.0.dev20261006",

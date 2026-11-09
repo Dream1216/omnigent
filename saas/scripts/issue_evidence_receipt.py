@@ -183,6 +183,36 @@ def process_evidence_receipt_request(
     return report, result
 
 
+def registered_compatibility_receipt_repo(
+    control: Path, product_repo: Path, *, product_revision: str
+) -> Path:
+    """Read a complete registered legacy subject without executing its code."""
+    from saas.scripts.protected_legacy_initial_build import (
+        COMPATIBILITY_COMPONENT,
+        load_profile,
+        verify_source_delta,
+    )
+    from saas.scripts.runtime_evidence_intake import ADMISSION_POLICY, _material_file
+
+    profile = load_profile(control, COMPATIBILITY_COMPONENT)
+    if product_revision != profile["product_revision"] or product_repo.is_symlink():
+        raise ValueError("receipt product differs from the registered compatibility subject")
+    verify_source_delta(product_repo, profile)
+    policy_raw = _material_file(control, ADMISSION_POLICY).read_bytes()
+    if _material_file(product_repo, ADMISSION_POLICY).read_bytes() != policy_raw:
+        raise ValueError("registered receipt product changed protected policy or keys")
+    policy = json.loads(policy_raw)
+    key_registry = policy.get("trusted_key_registry") if isinstance(policy, dict) else None
+    if not isinstance(key_registry, str):
+        raise ValueError("protected admission policy lacks its trusted key registry")
+    if (
+        _material_file(control, key_registry).read_bytes()
+        != _material_file(product_repo, key_registry).read_bytes()
+    ):
+        raise ValueError("registered receipt product changed protected policy or keys")
+    return product_repo
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--request-json", required=True)
@@ -190,13 +220,24 @@ def main() -> int:
     parser.add_argument("--workflow-identity", required=True)
     parser.add_argument("--output-directory", default="artifacts/evidence-receipt")
     parser.add_argument("--evidence-repo", type=Path)
+    parser.add_argument("--registered-product-repo", type=Path)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     directory = Path(args.output_directory)
     if directory.is_absolute() or ".." in directory.parts or directory == Path("."):
         parser.error("output directory must be safe and repository-relative")
+    product_repo = repo
+    if args.registered_product_repo is not None:
+        if args.evidence_repo is None:
+            parser.error("registered compatibility receipts require separate image evidence")
+        try:
+            product_repo = registered_compatibility_receipt_repo(
+                repo, args.registered_product_repo, product_revision=args.product_revision
+            )
+        except (OSError, ValueError, KeyError) as error:
+            parser.error(str(error))
     report, result = process_evidence_receipt_request(
-        repo,
+        product_repo,
         args.request_json,
         product_revision=args.product_revision,
         workflow_identity=args.workflow_identity,
@@ -209,7 +250,7 @@ def main() -> int:
                 from saas.scripts.runtime_evidence_intake import _material_file
 
                 raw = _material_file(
-                    args.evidence_repo or repo, receipt_subject["evidence_path"]
+                    args.evidence_repo or product_repo, receipt_subject["evidence_path"]
                 ).read_bytes()
                 if hashlib.sha256(raw).hexdigest() != receipt_subject["evidence_sha256"]:
                     raise ValueError("image document changed after receipt preparation")

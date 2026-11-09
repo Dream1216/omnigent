@@ -7,6 +7,10 @@ inputs:
   evidence-revision:
     required: true
     description: Exact evidence-only data revision
+  registered-product-repo:
+    required: false
+    default: ""
+    description: Optional checkout of the exact registered Compatibility018 subject
 runs:
   using: composite
   steps:
@@ -16,12 +20,17 @@ runs:
         GH_TOKEN: ${{ github.token }}
         PRODUCT_SOURCE: ${{ inputs.product-revision }}
         EVIDENCE_DATA: ${{ inputs.evidence-revision }}
+        REGISTERED_PRODUCT_REPO: ${{ inputs.registered-product-repo }}
       run: |
         set -euo pipefail
         uv sync --frozen --extra saas --inexact
         data_root="${RUNNER_TEMP}/runtime-evidence-data"
+        subject_args=()
+        if [[ -n "$REGISTERED_PRODUCT_REPO" ]]; then
+          subject_args+=(--registered-product-repo "$REGISTERED_PRODUCT_REPO")
+        fi
         uv run --no-sync python -m saas.scripts.runtime_evidence_intake \
           --product-revision "$PRODUCT_SOURCE" --evidence-revision "$EVIDENCE_DATA" \
-          --evidence-directory "$data_root"
+          --evidence-directory "$data_root" "${subject_args[@]}"
         printf '%s\n' "OMNIGENT_RUNTIME_EVIDENCE_REPO=$data_root" >> "$GITHUB_ENV"
         printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
