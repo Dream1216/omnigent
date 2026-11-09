@@ -66,11 +66,15 @@ jobs:
       - name: Select actual image inputs and record the release plan
         id: plan
         env:
-          BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_REVISION: ${{ github.event.before || github.event.pull_request.base.sha }}
+          FALLBACK_BASE: ${{ github.event.pull_request.base.sha }}
           REUSE_RUN: ${{ inputs.candidate_run_id || '0' }}
         run: |
           set -euo pipefail
           base_args=()
+          if [[ -n "$BASE_REVISION" ]] && ! git cat-file -e "${BASE_REVISION}^{commit}" 2>/dev/null; then
+            BASE_REVISION="$FALLBACK_BASE"
+          fi
           if [[ "$BASE_REVISION" =~ ^[0-9a-f]{40}$ && "$BASE_REVISION" != 0000000000000000000000000000000000000000 ]]; then
             base_args=(--base "$BASE_REVISION")
           fi
