@@ -122,3 +122,15 @@ def test_workflow_reclaims_after_builds_without_removing_any_gate():
     )
     assert "continue-on-error" not in steps[cleanup]
     assert 'echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"' in steps[cleanup]["run"]
+    retained = steps[names.index("Retain unqualified OCI after failed candidate build")]
+    assert "failure() && !cancelled()" in retained["if"]
+    assert "github.ref == 'refs/heads/main'" in retained["if"]
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in retained["if"]
+    assert retained["with"]["name"].startswith("unqualified-oci-")
+    assert retained["with"]["compression-level"] == 0
+    assert retained["with"]["if-no-files-found"] == "warn"
+    assert retained["with"]["retention-days"] == 1
+    assert retained["with"]["path"].splitlines() == [
+        "${{ runner.temp }}/" + name
+        for name in ("server-1.tar", "server-2.tar", "host-1.tar", "host-2.tar")
+    ]
