@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import tarfile
@@ -19,6 +20,9 @@ GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
 GRYPE_ASSET_ID = 616618032
 GRYPE_ARCHIVE_BYTES = 32270829
+GRYPE_ARM64_ASSET_ID = 616618024
+GRYPE_ARM64_ARCHIVE_BYTES = 29446856
+GRYPE_ARM64_SHA256 = "29f47391dc283aa79fcc38e65224cd61f64dec0ecfd0db7074128ebf8ff23514"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 SEVERITIES = ("Critical", "High")
 SCAN_SCOPES = {
@@ -471,8 +475,23 @@ def validate_image_scope(images: dict[str, Path], scope: str) -> None:
 
 
 def install_grype(destination: Path) -> Path:
+    architecture = platform.machine().lower()
+    if architecture in {"x86_64", "amd64"}:
+        asset_id, archive_bytes, archive_sha256 = (
+            GRYPE_ASSET_ID,
+            GRYPE_ARCHIVE_BYTES,
+            GRYPE_SHA256,
+        )
+    elif architecture in {"aarch64", "arm64"}:
+        asset_id, archive_bytes, archive_sha256 = (
+            GRYPE_ARM64_ASSET_ID,
+            GRYPE_ARM64_ARCHIVE_BYTES,
+            GRYPE_ARM64_SHA256,
+        )
+    else:
+        raise ValueError(f"Unsupported Grype runtime architecture: {architecture}")
     request = urllib.request.Request(
-        f"https://api.github.com/repos/anchore/grype/releases/assets/{GRYPE_ASSET_ID}",
+        f"https://api.github.com/repos/anchore/grype/releases/assets/{asset_id}",
         headers={"Accept": "application/octet-stream", "User-Agent": "omnigent-grype-supply"},
     )
     if token := os.environ.get("GH_TOKEN"):
@@ -483,11 +502,11 @@ def install_grype(destination: Path) -> Path:
         downloaded = 0
         while chunk := response.read(1024 * 1024):
             downloaded += len(chunk)
-            if downloaded > GRYPE_ARCHIVE_BYTES:
+            if downloaded > archive_bytes:
                 raise ValueError("Grype release archive size mismatch")
             digest.update(chunk)
             stream.write(chunk)
-    if downloaded != GRYPE_ARCHIVE_BYTES or digest.hexdigest() != GRYPE_SHA256:
+    if downloaded != archive_bytes or digest.hexdigest() != archive_sha256:
         archive.unlink(missing_ok=True)
         raise ValueError("Grype release archive size or hash mismatch")
     subprocess.run(["tar", "-xzf", str(archive), "-C", str(destination), "grype"], check=True)

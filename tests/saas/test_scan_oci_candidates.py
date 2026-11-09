@@ -22,11 +22,19 @@ from saas.scripts.scan_oci_candidates import (
 
 
 @pytest.mark.parametrize("fault", [None, "short", "oversized", "hash", "version"])
-def test_fixed_grype_API_bytes_must_pass_before_extraction(monkeypatch, tmp_path, fault):
+@pytest.mark.parametrize("architecture", ["x86_64", "aarch64", "arm64"])
+def test_fixed_grype_API_bytes_must_pass_before_extraction(
+    monkeypatch, tmp_path, fault, architecture
+):
     monkeypatch.setenv("GH_TOKEN", "fixed-readonly-test-token")
+    monkeypatch.setattr(scan_oci_candidates.platform, "machine", lambda: architecture)
     payload = b"one exact official archive"
-    monkeypatch.setattr(scan_oci_candidates, "GRYPE_ARCHIVE_BYTES", len(payload))
-    monkeypatch.setattr(scan_oci_candidates, "GRYPE_SHA256", hashlib.sha256(payload).hexdigest())
+    prefix = "GRYPE_" if architecture == "x86_64" else "GRYPE_ARM64_"
+    monkeypatch.setattr(scan_oci_candidates, prefix + "ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(
+        scan_oci_candidates, prefix + "SHA256", hashlib.sha256(payload).hexdigest()
+    )
+    asset_id = 616618032 if architecture == "x86_64" else 616618024
     received = (
         payload[:-1] if fault == "short" else payload + b"x" if fault == "oversized" else payload
     )
@@ -36,7 +44,7 @@ def test_fixed_grype_API_bytes_must_pass_before_extraction(monkeypatch, tmp_path
 
     def download(request, *, timeout):
         assert request.full_url == (
-            "https://api.github.com/repos/anchore/grype/releases/assets/616618032"
+            f"https://api.github.com/repos/anchore/grype/releases/assets/{asset_id}"
         )
         assert request.get_header("Accept") == "application/octet-stream"
         assert request.get_header("Authorization") == "Bearer fixed-readonly-test-token"
@@ -64,6 +72,17 @@ def test_fixed_grype_API_bytes_must_pass_before_extraction(monkeypatch, tmp_path
         ):
             scan_oci_candidates.install_grype(tmp_path)
     assert bool(calls) is (fault in {None, "version"})
+
+
+def test_unsupported_grype_runtime_architecture_rejects_before_download(monkeypatch, tmp_path):
+    monkeypatch.setattr(scan_oci_candidates.platform, "machine", lambda: "riscv64")
+
+    def unexpected_download(*_args, **_kwargs):
+        pytest.fail("unsupported architecture must not download a scanner")
+
+    monkeypatch.setattr(scan_oci_candidates.urllib.request, "urlopen", unexpected_download)
+    with pytest.raises(ValueError, match="Unsupported Grype runtime architecture"):
+        scan_oci_candidates.install_grype(tmp_path)
 
 
 def test_database_must_be_fresh_and_timezone_bound() -> None:
