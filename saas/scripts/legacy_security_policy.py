@@ -18,11 +18,18 @@ _CURRENT_MAIN_SOURCE_REVISIONS = {
     _CURRENT_MAIN,
     "c724abb9d43c40717e83154a7da9270150f3d418",
     "6c44d0d569262154e78f5a620ea5266fc9291439",
+    "13ed5b17d3872a3010c9173738d965834d8e482d",
 }
 _REVIEWED_MAIN_CHECKOUTS = {MAIN, "95ad31ca3a45b52ec7c071beeb4351f5e39a39fe", _CURRENT_MAIN}
 _COMPATIBILITY_OWNER_POLICY_SHA256 = (
     "b67a5b42d73db2c43bc25ffc294f89f44a8984a3eeb081fad26ac560fe61ffb7"
 )
+# One actual current native tuple; historical A933 registration remains unchanged.
+_CURRENT_COMPATIBILITY_OWNER_POLICY_SHA256 = {
+    "27503d14973b751a2031c6febf12a581b42b06d1": (
+        "d2e9c08dda711cddac1bc53297f8b8063706d93726e9141916b282df64492864"
+    ),
+}
 _COMPATIBILITY_VALIDATION_REF = "codex/legacy-compat018-expat210-20261103"
 KIND = "legacy_original_OWNER_security_policy_decision/v1"
 SOURCES = {
@@ -120,7 +127,10 @@ def validate_registration(profile, identity, specification):
     compatibility = profile["component"] == "Compatibility018"
     if compatibility:
         require(
-            digest(row) == _COMPATIBILITY_OWNER_POLICY_SHA256,
+            digest(row)
+            == _CURRENT_COMPATIBILITY_OWNER_POLICY_SHA256.get(
+                profile["product_revision"], _COMPATIBILITY_OWNER_POLICY_SHA256
+            ),
             "compatibility OWNER decision differs from the exact reviewed native tuple",
         )
     require(

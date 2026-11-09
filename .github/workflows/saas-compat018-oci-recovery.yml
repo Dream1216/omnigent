@@ -331,6 +331,22 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Preserve completed OCI bytes from a failed registered build as unqualified
+        if: failure() && !cancelled() && inputs.phase == 'build-reviewed'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        timeout-minutes: 10
+        with:
+          name: compat018-unqualified-partial-${{ env.PRODUCT_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/server-2.tar
+            ${{ runner.temp }}/host-2.tar
+            ${{ runner.temp }}/compat018-raw/*.tar
+            ${{ runner.temp }}/compat018-raw/registered-source-profile.json
+            ${{ runner.temp }}/compat018-raw/reviewed-subject-image-facts.json
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 1
+
   scan-and-seal-same-oci:
     if: always() && !cancelled() && needs.verify-contract.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && ((needs.build-compat018-product.result == 'success' && inputs.phase != 'build-reviewed') || inputs.phase == 'scan' || (inputs.phase == 'scan-reviewed' && inputs.comparison_profile == 'clean-C2-pair'))
     needs: [verify-contract, build-compat018-product]

@@ -5,16 +5,16 @@
       "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
       "budget_file_cap": 229,
       "component": "Compatibility018",
-      "product_revision": "a933d1ad3243c3eba967b1d548d65b679cb2742e",
-      "product_tree": "7d3fe6fe7551ce567b52fa06c45a88885ef01a8a",
+      "product_revision": "27503d14973b751a2031c6febf12a581b42b06d1",
+      "product_tree": "a02ea9f17664bd0290eb5025f864672c0025075c",
       "repository": "Dream1216/omnigent",
       "schema_version": 1,
-      "source_date_epoch": 1794179105,
+      "source_date_epoch": 1794205843,
       "source_delta": [
         {
           "after": {
             "mode": "100755",
-            "sha256": "67febac63b65ed11c3a5df1ae3b6b6200c2a5f9bdd8e0b2b285e08811a9f2380"
+            "sha256": "2e89c09df9b2a627994855f904734793b6d5edbcc1a5c5093339f7ecf24d20c6"
           },
           "before": {
             "mode": "100755",
@@ -25,7 +25,29 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "169d3e4a3decbb5febaf0c728dbef69750ef00e213469fae5a66ab9807b99ea7"
+            "sha256": "8f017ae0249e1cfd82cf69c0b31940a35cebdceb7fcd40a4b9a1b70a7165e3eb"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "1d44433897ddad4f59a5943b28ccd2c20684c52f8f546d0f3624b30fdaec59d5"
+          },
+          "path": ".github/actions/e2e-run/action.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "8751d7628bc5438ad915ade51649a069b438a2c3dd9b5ae9b95d7fd812a134b5"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "ea4fde43ab964d47e77d6c9279e36bd9ce74b82ba684835d1b0b2d5c61af1b42"
+          },
+          "path": ".github/workflows/ci.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "a5f0c52c6cd97a2d631a0bf6370e43999f9c673464d4619c92f565196d78c3a5"
           },
           "before": {
             "mode": "100644",
@@ -43,6 +65,17 @@
             "sha256": "3cb218a4045fad8f0f3cc8f6bfb872f6c691407f51b529f87fb0edce0a99825c"
           },
           "path": ".github/workflows/saas-image-candidate.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "712453cd76b29857fae658da2adea212b3ce799489321552f40fb5bce979498f"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
+          },
+          "path": ".github/workflows/saas-n1-compat-image.yml"
         },
         {
           "after": {
@@ -190,6 +223,22 @@
             "sha256": "3039fea49103a91a0ef97813933c31eab2e8d339ba683a175bd399d084da4501"
           },
           "path": "omnigent/inner/terminal.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "383728141dbd88956fe9ddcb8fe29ec0e621ab5d2a51943b9e88d8f68d54bcfd"
+          },
+          "before": null,
+          "path": "saas/actions/setup-pinned-crane/action.yml"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "a95722921bc5f0f9bc8a09d958db92a6678ab0de2f9e8a90b2504768cdcb7db1"
+          },
+          "before": null,
+          "path": "saas/actions/setup-pinned-parity-v8/action.yml"
         },
         {
           "after": {
@@ -671,6 +720,17 @@
         },
         {
           "after": {
+            "mode": "100755",
+            "sha256": "0b9e7d3c02b9c836131ab834a0f0a666103c90be000db99705c8df630953a53b"
+          },
+          "before": {
+            "mode": "100755",
+            "sha256": "4a9d59ae1edf54db6080c7d8d9c8acc768881f94e3ccaf67bfb7622ab65b8b98"
+          },
+          "path": "saas/scripts/install-saas-harness-cli.sh"
+        },
+        {
+          "after": {
             "mode": "100644",
             "sha256": "db2694e3930aed1a5780c6dbc714ed3b2df0150cd9cb913bf07be195291dab2b"
           },
@@ -768,7 +828,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "dc65c8602cdc8e819c771d399eacdede5d528f7950edc367c570fd2148a80f15"
+            "sha256": "f6c90142d586d25335d12695d275b734b0cdaa23e58ffe4191d010fb926903d1"
           },
           "before": {
             "mode": "100644",
@@ -1014,6 +1074,14 @@
           },
           "before": null,
           "path": "tests/saas/test_outbox_business_delivery.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
+            "sha256": "b19bcf13ff22616e14d21d756d1fefef05cf7bb0dcdfa0a935f61120044c32ac"
+          },
+          "before": null,
+          "path": "tests/saas/test_pinned_crane_action.py"
         },
         {
           "after": {
@@ -1317,6 +1385,17 @@
         {
           "after": {
             "mode": "100644",
+            "sha256": "40ee175cdb56e6f99f66c49084696492aa6ef8c0301d8f8fa864184533f583f2"
+          },
+          "before": {
+            "mode": "100644",
+            "sha256": "fc08dfa77fbec128f430690aee86505a278591099b827f3d65c774af95dd7a20"
+          },
+          "path": "tests/saas/test_saas_harness_cli_installer.py"
+        },
+        {
+          "after": {
+            "mode": "100644",
             "sha256": "973f2f470e5366d2f6f4039e34930efdae031e00f32ae95411f4f38c7f01a1cc"
           },
           "before": {
@@ -1347,7 +1426,7 @@
         {
           "after": {
             "mode": "100644",
-            "sha256": "999ee1a45afab567bd922d7270a6e9f4ee5efd6219606f9ee52399e8f4e427c2"
+            "sha256": "0146d8d5a6684b0aa38d231ab91213f79377806c5a34347b06b08f6a8c11717f"
           },
           "before": {
             "mode": "100644",

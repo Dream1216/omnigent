@@ -499,7 +499,12 @@ def test_compatibility_owner_registration_is_one_exact_native_tuple(field):
     }
     if field is None:
         assert policy.validate_registration(profile, identity, specification) == row
-        assert policy.digest(row) == policy._COMPATIBILITY_OWNER_POLICY_SHA256
+        assert policy.digest(row) == (
+            "d2e9c08dda711cddac1bc53297f8b8063706d93726e9141916b282df64492864"
+        )
+        assert policy._COMPATIBILITY_OWNER_POLICY_SHA256 == (
+            "b67a5b42d73db2c43bc25ffc294f89f44a8984a3eeb081fad26ac560fe61ffb7"
+        )
         return
     row[field] = row[field] + 1 if type(row[field]) is int else "changed:" + row[field]
     with pytest.raises(ValueError, match="exact reviewed native tuple"):

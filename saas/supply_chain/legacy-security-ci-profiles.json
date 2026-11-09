@@ -2,8 +2,8 @@
   "profiles": {
     "Compatibility018": {
       "component": "Compatibility018",
-      "product_revision": "a933d1ad3243c3eba967b1d548d65b679cb2742e",
-      "product_tree": "7d3fe6fe7551ce567b52fa06c45a88885ef01a8a",
+      "product_revision": "27503d14973b751a2031c6febf12a581b42b06d1",
+      "product_tree": "a02ea9f17664bd0290eb5025f864672c0025075c",
       "schema_version": 1,
       "validation_base_ref": "codex/legacy-compat018-expat210-20261103",
       "validation_pr": 258,
@@ -300,8 +300,8 @@
           },
           "name": "CI",
           "path": ".github/workflows/ci.yml",
-          "run_id": 42533631559,
-          "source_sha256": "ea4fde43ab964d47e77d6c9279e36bd9ce74b82ba684835d1b0b2d5c61af1b42"
+          "run_id": 42573722642,
+          "source_sha256": "8751d7628bc5438ad915ade51649a069b438a2c3dd9b5ae9b95d7fd812a134b5"
         },
         {
           "attempt": 1,
@@ -335,7 +335,7 @@
           },
           "name": "Docker build",
           "path": ".github/workflows/docker-build.yml",
-          "run_id": 42533631557,
+          "run_id": 42573722744,
           "source_sha256": "a78ddf58c06232be410641656b54f4838441d626e112c199972e670a7662090a"
         },
         {
@@ -526,8 +526,8 @@
           },
           "name": "E2E UI Tests",
           "path": ".github/workflows/e2e-ui.yml",
-          "run_id": 42533631841,
-          "source_sha256": "169d3e4a3decbb5febaf0c728dbef69750ef00e213469fae5a66ab9807b99ea7"
+          "run_id": 42573722834,
+          "source_sha256": "a5f0c52c6cd97a2d631a0bf6370e43999f9c673464d4619c92f565196d78c3a5"
         },
         {
           "attempt": 1,
@@ -613,7 +613,7 @@
           },
           "name": "E2E Tests",
           "path": ".github/workflows/e2e.yml",
-          "run_id": 42533631583,
+          "run_id": 42573722578,
           "source_sha256": "6d652a385a9b611a2d751cfca64594de97932fcf20fe366ed7e6526db4ac504e"
         },
         {
@@ -661,7 +661,7 @@
           },
           "name": "Integration Tests",
           "path": ".github/workflows/integration.yml",
-          "run_id": 42533631628,
+          "run_id": 42573722710,
           "source_sha256": "70db493196bd4b133e075d3e4e17ac7011cccb42e47ac70d01c79baa896b79cb"
         },
         {
@@ -709,7 +709,7 @@
           },
           "name": "Lint",
           "path": ".github/workflows/lint.yml",
-          "run_id": 42533631592,
+          "run_id": 42573722627,
           "source_sha256": "ad768fcf2f8891d090c5a8334572d151c9afc919e14d8c647c48807200e963ce"
         },
         {
@@ -762,10 +762,10 @@
               ]
             }
           },
-          "name": "SaaS N-1 pull_request pr=258 base=4e11681dd3809febeb42cb5d752d423b5f751f82 head=a933d1ad3243c3eba967b1d548d65b679cb2742e",
+          "name": "SaaS N-1 pull_request pr=258 base=4e11681dd3809febeb42cb5d752d423b5f751f82 head=27503d14973b751a2031c6febf12a581b42b06d1",
           "path": ".github/workflows/saas-n1-compat-image.yml",
-          "run_id": 42533631556,
-          "source_sha256": "2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
+          "run_id": 42573722628,
+          "source_sha256": "712453cd76b29857fae658da2adea212b3ce799489321552f40fb5bce979498f"
         },
         {
           "attempt": 1,
@@ -786,7 +786,7 @@
           },
           "name": "SaaS upstream compatibility",
           "path": ".github/workflows/saas-upstream-compat.yml",
-          "run_id": 42533631519,
+          "run_id": 42573722582,
           "source_sha256": "93bb610c555fdbf8333be70817f55e2ccad58979a5f99d5518a7c78c336135e6"
         },
         {
@@ -797,7 +797,7 @@
                 {
                   "name": "Check out scanner from main",
                   "number": 2,
-                  "revision": "6c44d0d569262154e78f5a620ea5266fc9291439"
+                  "revision": "13ed5b17d3872a3010c9173738d965834d8e482d"
                 }
               ],
               "conclusion": "success",
@@ -808,26 +808,26 @@
           },
           "name": "Security Scan",
           "path": ".github/workflows/security-scan.yml",
-          "run_id": 42533631558,
+          "run_id": 42573722718,
           "source_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd",
           "trusted_security_policy": {
             "attempt": 1,
             "baseline_revision": "a7b5cf29294556084216e9e2746125ccafc9cda0",
-            "check_id": 128893033429,
-            "check_sha256": "cb7f71c6ffee107f1e5e48943aa62e3c12c2c85d41970fbe376328a7c9fc7d65",
-            "check_suite_id": 115211522047,
+            "check_id": 129016660939,
+            "check_sha256": "1958c86e40914e9054117922f0e5043fdfdac84c18e3f4e7ee73afc5654b8f46",
+            "check_suite_id": 115312999986,
             "component": "Compatibility018",
-            "job_id": 128893033429,
-            "job_log_sha256": "46aeb56b84ebe5c7196fbc36234b7712aa1079dce2ee15bd11fddcfbd5669ac4",
-            "job_sha256": "5509c691ce9cdba73fc9b3e8e86d80aa1e57aa1ad2ed8033388a55ccb6f6a1e5",
+            "job_id": 129016660939,
+            "job_log_sha256": "73c9b242aa0aa2c45de3a9b0b535c4ea000390459a584ba252f636a56f5f52ac",
+            "job_sha256": "52ffdcf485a8d67d485a77b9d4bd6dd68a796bc9051e7119fa0dea0b79ed317e",
             "kind": "legacy_original_OWNER_security_policy_decision/v1",
             "load_maintainers_sha256": "f6fe003317676e4f946c14bfbf578b6cafcbd83a3dea59d9f55a494b7bf9aa78",
-            "product_revision": "a933d1ad3243c3eba967b1d548d65b679cb2742e",
-            "product_tree": "7d3fe6fe7551ce567b52fa06c45a88885ef01a8a",
-            "run_id": 42533631558,
-            "run_sha256": "3f0023e6b994c4890169cf366a27260c065abf770ed013f78905ebe4aff5935d",
+            "product_revision": "27503d14973b751a2031c6febf12a581b42b06d1",
+            "product_tree": "a02ea9f17664bd0290eb5025f864672c0025075c",
+            "run_id": 42573722718,
+            "run_sha256": "652cc32c31515722cf9148279636152fa0a4b3ac7014544f37a74de67fc6b515",
             "should_scan_sha256": "ef682dbda4e903303af3b670cf256140dfd1ecd8711d9fb3148a6ad64e37d250",
-            "trusted_checkout_revision": "6c44d0d569262154e78f5a620ea5266fc9291439",
+            "trusted_checkout_revision": "13ed5b17d3872a3010c9173738d965834d8e482d",
             "validation_base_ref": "codex/legacy-compat018-expat210-20261103",
             "validation_pr": 258,
             "workflow_sha256": "26a1962ee265653208068df49404b5a04f2e1d4d3fc651be4458e4c15f4763cd"
@@ -852,7 +852,7 @@
           },
           "name": "Harness CLI action pin consistency",
           "path": ".github/workflows/setup-harness-cli-pin-test.yml",
-          "run_id": 42533631503,
+          "run_id": 42573722567,
           "source_sha256": "f69f27f6ffe5ac023533c1191367d7ab68e542d193964e092a89dbffcf7e9275"
         },
         {
@@ -900,7 +900,7 @@
           },
           "name": "Trivy CVE Scan",
           "path": ".github/workflows/trivy.yml",
-          "run_id": 42533631585,
+          "run_id": 42573722685,
           "source_sha256": "882f5238d8e7147eb095b37c838e9f1ad707ae81c0d8314f49460627bb29f6f3"
         },
         {
@@ -929,7 +929,7 @@
           },
           "name": "UI Snapshot",
           "path": ".github/workflows/ui-snapshot.yml",
-          "run_id": 42533631507,
+          "run_id": 42573722553,
           "source_sha256": "1b62597512c7e76293d0836abf1872969d5545cb9d3b2e7f0bbc942646e53f1a"
         },
         {
@@ -951,7 +951,7 @@
           },
           "name": "Windows (native)",
           "path": ".github/workflows/windows.yml",
-          "run_id": 42533631596,
+          "run_id": 42573722550,
           "source_sha256": "a185d471cba3d7bd80c6c93b7e114a34bd8ea06f6b0a29692a2e7b6d49158233"
         }
       ]

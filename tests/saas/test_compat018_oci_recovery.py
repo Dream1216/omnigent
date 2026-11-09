@@ -422,6 +422,19 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotIn("d404ce0e80e5f5b10b9dd8dec8673fb02382f3ec", s)
         self.assertNotIn("saas.scripts.oci_promotion seal", s)
         self.assertIn("Source must integrate its own Source + PG16/18 jobs in the SAME", s)
+        preservation = s[s.index("      - name: Preserve completed OCI bytes from a failed") :]
+        preservation = preservation[: preservation.index("\n  scan-and-seal-same-oci:")]
+        self.assertIn(
+            "if: failure() && !cancelled() && inputs.phase == 'build-reviewed'", preservation
+        )
+        self.assertIn("name: compat018-unqualified-partial-", preservation)
+        self.assertIn("${{ runner.temp }}/server-2.tar", preservation)
+        self.assertIn("${{ runner.temp }}/host-2.tar", preservation)
+        self.assertIn("${{ runner.temp }}/compat018-raw/*.tar", preservation)
+        self.assertIn("compression-level: 0", preservation)
+        self.assertIn("if-no-files-found: warn", preservation)
+        self.assertIn("retention-days: 1", preservation)
+        self.assertNotIn("id:", preservation)
 
     def test_checkout_verification_imports_protected_controller_from_product_cwd(self):
         repo = SCRIPT.parents[2]
