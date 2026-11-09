@@ -21,6 +21,40 @@ SUPPORT = ROOT / "saas/supply_chain/compat018-startup-diagnostic"
 BINDINGS = json.loads((SUPPORT / "bindings.json").read_text())
 
 
+def install_registered_first_parent(native, prefix):
+    from tests.saas.test_compat018_oci_recovery import registered_failed_parent_records
+
+    builder = native[prefix + "jobs/301"]
+    forbidden = {
+        "Recover Server using its existing first-attempt build cache",
+        "Recover Host using its existing first-attempt build cache",
+        "Independently build C2 Host without cache",
+    }
+    for step in builder["steps"]:
+        step["number"] += 1
+        if step["name"] in forbidden:
+            step["conclusion"] = "skipped"
+    repair = {
+        "number": 1,
+        "name": "Authenticate exact failed registered pair for one Server repair",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    builder["steps"].insert(0, repair)
+    parent = recovery.REGISTERED_FAILED_PAIR
+    run, job, artifact = registered_failed_parent_records()
+    upload = {
+        "name": "Retain the audited first Server for the existing native startup operator",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    job["steps"].append(upload)
+    native[prefix + f"runs/{parent['run_id']}"] = run
+    native[prefix + f"jobs/{parent['builder_job_id']}"] = job
+    native[prefix + f"artifacts/{parent['artifact_id']}"] = artifact
+    return builder, run, job, repair, upload
+
+
 @pytest.mark.parametrize("fault", [None, "descriptor", "id", "layers"])
 def test_docker_identity_checks_descriptor_id_and_layers_independently(fault):
     selected = {"manifest_digest": "sha256:" + "a" * 64, "rootfs_diff_ids": ["sha256:" + "b" * 64]}
@@ -327,6 +361,9 @@ def test_original_arm_raw_report_keeps_actual_target_and_transport_identity(tmp_
         "scan-runner",
         "scan-code",
         "report-target",
+        "collect-first-report",
+        "registered-parent",
+        "registered-parent-transport-hash",
     ],
 )
 def test_native_input_derives_actual_original_transports_and_refuses_mixed_coordinates(
@@ -446,15 +483,50 @@ def test_native_input_derives_actual_original_transports_and_refuses_mixed_coord
         "scan_run_id": 202,
         "output": tmp_path / "native-input",
     }
-    if fault not in {None, "rejected-scan"}:
+    if fault in {"registered-parent", "registered-parent-transport-hash"}:
+        _, parent_run, _, _, upload = install_registered_first_parent(data, prefix)
+        first_meta["workflow_run"] = {"id": parent_run["id"], "head_sha": parent_run["head_sha"]}
+        first_meta["name"] = (
+            f"compat018-native-startup-{profile['product_revision']}-{parent_run['id']}"
+        )
+        upload.update(started_at=first_meta["created_at"], completed_at=first_meta["created_at"])
+        monkeypatch.setattr(
+            inputs,
+            "REGISTERED_FIRST_SERVER",
+            {
+                "artifact_id": 504,
+                "zip_size": first_meta["size_in_bytes"],
+                "zip_sha256": "0" * 64
+                if fault == "registered-parent-transport-hash"
+                else first_meta["digest"][7:],
+            },
+        )
+    if fault == "collect-first-report":
+        kwargs["scan_run_id"] = None
+
+        def collect_report(root, image, output, selected):
+            assert root == control and image.is_file()
+            assert selected == {"manifest_digest": "manifest", "config_digest": "config"}
+            return json.dumps(
+                {"source": {"target": {"manifestDigest": "manifest", "imageID": "config"}}}
+            ).encode(), {"High_disposition": False, "sealed_OCI_qualified": False}
+
+        monkeypatch.setattr(inputs, "collect_component_report", collect_report)
+    if fault not in {None, "rejected-scan", "collect-first-report", "registered-parent"}:
         with pytest.raises(ValueError):
             inputs.prepare_startup_input(control, **kwargs)
     else:
         bindings, run, artifact, sha, image, raw, actual_support = inputs.prepare_startup_input(
             control, **kwargs
         )
-        assert bindings == BINDINGS and run["id"] == 101 and artifact["id"] == 504
-        assert downloaded == [504, 505] and sha == first_meta["digest"][7:]
+        assert bindings == BINDINGS and artifact["id"] == 504
+        assert run["id"] == (
+            recovery.REGISTERED_FAILED_PAIR["run_id"] if fault == "registered-parent" else 101
+        )
+        assert downloaded == ([504] if fault == "collect-first-report" else [504, 505])
+        assert sha == first_meta["digest"][7:]
+        if fault == "collect-first-report":
+            assert not any(endpoint.startswith(prefix + "runs/202") for endpoint in _calls)
         assert actual_support == support and image.exists()
         assert hashlib.sha256(raw).hexdigest() == recovery.sha256(
             kwargs["output"] / "original-arm64-grype.PUBLIC.json"
@@ -462,3 +534,135 @@ def test_native_input_derives_actual_original_transports_and_refuses_mixed_coord
         receipt = json.loads((kwargs["output"] / "native-input-origin.PUBLIC.json").read_text())
         assert receipt["startup_only"] is True
         assert receipt["High_disposition"] is receipt["full_image_or_lifecycle_qualified"] is False
+
+
+@pytest.mark.parametrize("native_origin", [True], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "repair",
+        "repeat-Host",
+        "parent-source",
+        "parent-other-failure",
+        "upload",
+        "duplicate-upload",
+    ],
+)
+def test_native_first_transport_reuses_only_the_registered_failed_parent(
+    native_origin, monkeypatch, fault
+):
+    from saas.scripts import compat018_native_input as inputs
+
+    control, _, native, _, downloaded, prefix = native_origin
+    monkeypatch.setattr(inputs, "recovered", m)
+    builder, run, job, repair, upload = install_registered_first_parent(native, prefix)
+    forbidden = {
+        "Recover Server using its existing first-attempt build cache",
+        "Recover Host using its existing first-attempt build cache",
+        "Independently build C2 Host without cache",
+    }
+    parent = recovery.REGISTERED_FAILED_PAIR
+    if fault == "repair":
+        repair["conclusion"] = "failure"
+    elif fault == "repeat-Host":
+        next(step for step in builder["steps"] if step["name"] in forbidden)["conclusion"] = (
+            "success"
+        )
+    elif fault == "parent-source":
+        run["head_sha"] = "f" * 40
+    elif fault == "parent-other-failure":
+        job["steps"][0]["conclusion"] = "failure"
+    elif fault == "upload":
+        upload["conclusion"] = "skipped"
+    elif fault == "duplicate-upload":
+        job["steps"].append(copy.deepcopy(upload))
+    arguments = (
+        control,
+        recovery.registered_profile(),
+        101,
+        inputs.REGISTERED_FIRST_SERVER["artifact_id"],
+    )
+    if fault:
+        with pytest.raises(ValueError):
+            inputs.first_server_producer(*arguments)
+    else:
+        raw, first, actual, observed, name = inputs.first_server_producer(*arguments)
+        assert raw["run_id"] == 101 and first["run_id"] == parent["run_id"]
+        assert actual == run and observed == job and name == upload["name"]
+        assert actual["conclusion"] == "failure"
+        assert all(first[key] == value for key, value in inputs.REGISTERED_FIRST_SERVER.items())
+    assert downloaded == []
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "High", "exec", "scope", "platform", "archive", "report-hash", "manifest", "config"],
+)
+def test_first_component_report_keeps_raw_High_without_claiming_image_admission(
+    tmp_path, monkeypatch, fault
+):
+    from saas.scripts import compat018_native_input as inputs
+
+    image = tmp_path / "server.tar"
+    image.write_bytes(b"explicit scanner-boundary fixture")
+    target = {"manifest_digest": "manifest", "config_digest": "config"}
+    output = tmp_path / "observation"
+    output.mkdir()
+
+    def scan(command, *, cwd, check):
+        assert cwd == tmp_path and check is False
+        assert command[3:6] == ["saas.scripts.scan_oci_candidates", "--scope", "server-preflight"]
+        directory = output / "component-preflight"
+        directory.mkdir()
+        rows = []
+        for arch in ("amd64", "arm64"):
+            path = directory / f"server-{arch}-grype.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "source": {
+                            "target": {
+                                "manifestDigest": "other" if fault == "manifest" else "manifest",
+                                "imageID": "other" if fault == "config" else "config",
+                            }
+                        },
+                        "matches": [{"vulnerability": {"severity": "High"}}]
+                        if fault == "High"
+                        else [],
+                    }
+                )
+            )
+            rows.append(
+                {
+                    "image": "server",
+                    "platform": f"linux/{arch}",
+                    "archive_sha256": "0" * 64 if fault == "archive" else recovery.sha256(image),
+                    "report_sha256": "0" * 64 if fault == "report-hash" else recovery.sha256(path),
+                }
+            )
+        if fault == "platform":
+            rows[1]["platform"] = "linux/amd64"
+        (directory / "server-preflight-scan-summary.json").write_text(
+            json.dumps(
+                {
+                    "scope": "complete" if fault == "scope" else "server-preflight",
+                    "vulnerability_policy": "blocking",
+                    "images": rows,
+                }
+            )
+        )
+        return subprocess.CompletedProcess(
+            command, 3 if fault == "exec" else 2 if fault == "High" else 0
+        )
+
+    monkeypatch.setattr(inputs.subprocess, "run", scan)
+    if fault not in {None, "High"}:
+        with pytest.raises(ValueError):
+            inputs.collect_component_report(tmp_path, image, output, target)
+    else:
+        raw, receipt = inputs.collect_component_report(tmp_path, image, output, target)
+        assert receipt["High_disposition"] is receipt["sealed_OCI_qualified"] is False
+        assert receipt["scanner_exit_code"] == (2 if fault == "High" else 0)
+        assert bool(json.loads(raw)["matches"]) is (fault == "High")
+        assert set(receipt["reports"]) == {"amd64", "arm64"}

@@ -9,6 +9,7 @@ import os
 import platform
 import re
 import secrets
+import shutil
 import subprocess
 import tarfile
 from pathlib import Path
@@ -99,7 +100,7 @@ def main() -> int:
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--source-run", type=int, required=True)
     parser.add_argument("--artifact-id", type=int, required=True)
-    parser.add_argument("--scan-run", type=int, required=True)
+    parser.add_argument("--scan-run", type=lambda value: int(value) if value else None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() != "aarch64":
@@ -136,6 +137,17 @@ def main() -> int:
     validate_imported_image(actual, selected)
     evidence = args.output.resolve() / "evidence"
     evidence.mkdir()
+    initial_reports = args.output / "component-preflight"
+    if initial_reports.is_dir():
+        retained = evidence / "initial-server-reports"
+        retained.mkdir()
+        for name in (
+            "server-amd64-grype.json",
+            "server-arm64-grype.json",
+            "server-preflight-scan-summary.json",
+        ):
+            shutil.copyfile(initial_reports / name, retained / name)
+            (retained / name).chmod(0o400)
     subprocess.run(["sudo", "chown", "1000:1000", str(evidence)], check=True)
     owner = secrets.token_hex(12)
     name = f"omnigent-arm-startup-{owner}"

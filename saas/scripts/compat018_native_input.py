@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any, cast
@@ -14,6 +16,165 @@ from saas.scripts import compat018_recovered_input as recovered
 from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
 from saas.scripts.oci_promotion import require
+
+REGISTERED_FIRST_SERVER = {
+    "artifact_id": 13661451480,
+    "zip_size": 500146421,
+    "zip_sha256": "1e57fd77762d827c3f184dc4023de4bdc353b102456b3bb263d3f746ed8fd577",
+}
+
+
+def first_server_producer(control: Path, profile, raw_run_id: int, first_artifact_id: int):
+    row, run, _ = recovered._derive_row(control, raw_run_id, sealed=False, profile=profile)
+    upload = "Retain the audited first Server for the existing native startup operator"
+    if first_artifact_id != REGISTERED_FIRST_SERVER["artifact_id"]:
+        builder = recovered._job(
+            row,
+            "builder_job_id",
+            "build-compat018-product",
+            ("Audit actual fixed C2 source, UI, and historical Host", upload),
+        )
+        return row, row, run, builder, upload
+
+    repaired = recovered._job(
+        row,
+        "builder_job_id",
+        "build-compat018-product",
+        (
+            "Authenticate exact failed registered pair for one Server repair",
+            "Audit actual fixed C2 source, UI, and historical Host",
+            "Independently build only C2 Server without cache",
+            "Confirm exact C2 comparison profile",
+            "Preserve actual OCI before any fresh vulnerability scan",
+        ),
+    )
+    for name in (
+        "Recover Server using its existing first-attempt build cache",
+        "Recover Host using its existing first-attempt build cache",
+        "Independently build C2 Host without cache",
+    ):
+        matches = [step for step in repaired["steps"] if step["name"] == name]
+        require(
+            len(matches) == 1 and matches[0].get("conclusion") == "skipped",
+            "native first Server was not preserved by the one-Server repair",
+        )
+    parent = recovery.REGISTERED_FAILED_PAIR
+    require(
+        all(profile[key] == parent[key] for key in ("product_revision", "product_tree")),
+        "registered first Server parent belongs to another product",
+    )
+    prefix = f"repos/{recovery.REPOSITORY}/actions"
+    parent_run = recovered.api(f"{prefix}/runs/{parent['run_id']}")
+    parent_job = recovered.api(f"{prefix}/jobs/{parent['builder_job_id']}")
+    metadata = recovered.api(f"{prefix}/artifacts/{parent['artifact_id']}")
+    recovery.verify_registered_failed_pair(parent_run, parent_job, metadata)
+    matches = [step for step in parent_job["steps"] if step["name"] == upload]
+    require(
+        len(matches) == 1
+        and matches[0].get("status") == "completed"
+        and matches[0].get("conclusion") == "success",
+        "registered first Server upload did not succeed before the later comparison failure",
+    )
+    return row, {**parent, **REGISTERED_FIRST_SERVER}, parent_run, parent_job, upload
+
+
+def validate_report(raw: bytes, selected: dict[str, Any]) -> bytes:
+    report = json.loads(raw)
+    require(
+        report.get("source", {}).get("target", {}).get("manifestDigest")
+        == selected["manifest_digest"]
+        and report.get("source", {}).get("target", {}).get("imageID") == selected["config_digest"]
+        and isinstance(report.get("matches"), list),
+        "actual native ARM report names another OCI manifest or config",
+    )
+    return raw
+
+
+def collect_component_report(control: Path, image: Path, output: Path, selected):
+    destination = output / "component-preflight"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "saas.scripts.scan_oci_candidates",
+            "--scope",
+            "server-preflight",
+            "--image",
+            f"server={image}",
+            "--output",
+            str(destination),
+        ],
+        cwd=control,
+        check=False,
+    )
+    require(completed.returncode in (0, 2), "native component report collection failed")
+    summary_path = destination / "server-preflight-scan-summary.json"
+    summary = json.loads(summary_path.read_bytes())
+    reports = summary.get("images", [])
+    require(
+        summary.get("scope") == "server-preflight"
+        and summary.get("vulnerability_policy") == "blocking"
+        and len(reports) == 2
+        and {entry.get("platform") for entry in reports} == {"linux/amd64", "linux/arm64"}
+        and all(
+            entry.get("image") == "server"
+            and entry.get("archive_sha256") == recovery.sha256(image)
+            for entry in reports
+        ),
+        "native component report summary does not bind the original Server",
+    )
+    for entry in reports:
+        report = destination / f"server-{entry['platform'].split('/')[-1]}-grype.json"
+        require(
+            report.is_file()
+            and not report.is_symlink()
+            and 0 < report.stat().st_size <= 32 * 1024**2
+            and entry.get("report_sha256") == recovery.sha256(report),
+            "native component original report bytes differ",
+        )
+    raw = (destination / "server-arm64-grype.json").read_bytes()
+    validate_report(raw, selected)
+    require(
+        summary_path.stat().st_size
+        + len(raw)
+        + sum(
+            (destination / f"server-{arch}-grype.json").stat().st_size
+            for arch in ("amd64", "arm64")
+        )
+        <= 63 * 1024**2,
+        "retained native component reports exceed the original transport bound",
+    )
+    return raw, {
+        "kind": "same-native-startup-server-component-report-collection/v1",
+        "scope": "server-preflight",
+        "scanner_exit_code": completed.returncode,
+        "summary_sha256": recovery.sha256(summary_path),
+        "reports": {
+            platform: recovery.sha256(destination / f"server-{platform}-grype.json")
+            for platform in ("amd64", "arm64")
+        },
+        "High_disposition": False,
+        "sealed_OCI_qualified": False,
+    }
+
+
+def write_input_origin(output: Path, row, transport, report_transport) -> None:
+    (output / "native-input-origin.PUBLIC.json").write_text(
+        json.dumps(
+            {
+                "raw_run": row,
+                "first_Server_transport": transport,
+                "original_scan_transport": report_transport,
+                "startup_only": True,
+                "High_disposition": False,
+                "full_image_or_lifecycle_qualified": False,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def first_payload(archive: Path, output: Path, profile: dict[str, Any], bindings) -> Path:
@@ -103,15 +264,7 @@ def scan_report(archive: Path, selected: dict[str, Any]) -> bytes:
         reports = [entry for entry in files if entry.filename == "grype/server-arm64-grype.json"]
         require(len(reports) == 1, "native ARM raw report is absent or ambiguous")
         raw = bundle.read(reports[0])
-    report = json.loads(raw)
-    require(
-        report.get("source", {}).get("target", {}).get("manifestDigest")
-        == selected["manifest_digest"]
-        and report.get("source", {}).get("target", {}).get("imageID") == selected["config_digest"]
-        and isinstance(report.get("matches"), list),
-        "actual native ARM report names another OCI manifest or config",
-    )
-    return raw
+    return validate_report(raw, selected)
 
 
 def prepare_startup_input(
@@ -120,7 +273,7 @@ def prepare_startup_input(
     source_revision: str,
     raw_run_id: int,
     first_artifact_id: int,
-    scan_run_id: int,
+    scan_run_id: int | None,
     output: Path,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, Path, bytes, Path]:
     profile = recovery.registered_profile()
@@ -128,16 +281,8 @@ def prepare_startup_input(
     require(
         source_revision == profile["product_revision"], "native startup source is not current C2"
     )
-    row, run, _ = recovered._derive_row(control, raw_run_id, sealed=False, profile=profile)
-    upload = "Retain the audited first Server for the existing native startup operator"
-    builder = recovered._job(
-        row,
-        "builder_job_id",
-        "build-compat018-product",
-        (
-            "Audit actual fixed C2 source, UI, and historical Host",
-            upload,
-        ),
+    row, first_row, run, builder, upload = first_server_producer(
+        control, profile, raw_run_id, first_artifact_id
     )
     artifact = recovered.api(f"repos/{recovery.REPOSITORY}/actions/artifacts/{first_artifact_id}")
     digest = artifact.get("digest", "")
@@ -149,14 +294,23 @@ def prepare_startup_input(
         and digest.startswith("sha256:"),
         "native first Server has no bounded original artifact transport",
     )
+    if first_artifact_id == REGISTERED_FIRST_SERVER["artifact_id"]:
+        require(
+            artifact["size_in_bytes"] == REGISTERED_FIRST_SERVER["zip_size"]
+            and digest == "sha256:" + REGISTERED_FIRST_SERVER["zip_sha256"],
+            "registered original first Server transport differs",
+        )
     transport: dict[str, Any] = {
-        **row,
+        **first_row,
         "artifact_id": first_artifact_id,
         "zip_size": artifact["size_in_bytes"],
         "zip_sha256": digest[7:],
     }
     recovered._artifact(
-        transport, f"compat018-native-startup-{source_revision}-{raw_run_id}", builder, upload
+        transport,
+        f"compat018-native-startup-{source_revision}-{first_row['run_id']}",
+        builder,
+        upload,
     )
     output.mkdir(parents=True, exist_ok=False)
     archive = output / "original.PRIVATE.zip"
@@ -170,6 +324,11 @@ def prepare_startup_input(
     bindings = json.loads((support / "bindings.json").read_text())
     image = first_payload(archive, output, profile, bindings)
     selected = inspect_oci_archive(image, label_profile="executable")["platforms"]["linux/arm64"]
+    if scan_run_id is None:
+        raw, report_transport = collect_component_report(control, image, output, selected)
+        (output / "original-arm64-grype.PUBLIC.json").write_bytes(raw)
+        write_input_origin(output, row, transport, report_transport)
+        return bindings, run, artifact, transport["zip_sha256"], image, raw, support
     scan = recovered.api(f"repos/{recovery.REPOSITORY}/actions/runs/{scan_run_id}")
     scan_revision = scan.get("head_sha")
     scan_row: dict[str, Any] = {"run_id": scan_run_id, "controller_revision": scan_revision}
@@ -236,19 +395,5 @@ def prepare_startup_input(
     )
     raw = scan_report(scan_zip, selected)
     (output / "original-arm64-grype.PUBLIC.json").write_bytes(raw)
-    (output / "native-input-origin.PUBLIC.json").write_text(
-        json.dumps(
-            {
-                "raw_run": row,
-                "first_Server_transport": transport,
-                "original_scan_transport": scan_row,
-                "startup_only": True,
-                "High_disposition": False,
-                "full_image_or_lifecycle_qualified": False,
-            },
-            sort_keys=True,
-            indent=2,
-        )
-        + "\n"
-    )
+    write_input_origin(output, row, transport, scan_row)
     return bindings, run, artifact, transport["zip_sha256"], image, raw, support
