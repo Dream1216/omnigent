@@ -303,7 +303,7 @@ async def test_kiro_child_delivery_stays_pending_in_parent_until_receipt(
     hook = asyncio.create_task(client.post(hook_url, json=payload))
 
     async def parent_delivery(state: str) -> dict:
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(budget(5)):
             while True:
                 snapshot = (await client.get(f"/v1/sessions/{parent}")).json()
                 entries = snapshot["pending_elicitations"]

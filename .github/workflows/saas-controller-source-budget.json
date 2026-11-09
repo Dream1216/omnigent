@@ -1,0 +1,43 @@
+{
+  "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
+  "upstream_version": "0.21.0.dev20261031",
+  "adapter_contract_version": "0.2.0",
+  "patch_queue_directory": "saas/upstream-patches",
+  "downstream_owned_prefixes": [
+    ".github/actions/compat-smoke-",
+    ".github/scripts/e2e-ui-required/",
+    ".github/workflows/e2e-ui-required.yml",
+    ".github/workflows/saas-",
+    "saas/",
+    "sdks/saas-",
+    "tests/ci/test_e2e_ui_required_gate.py",
+    "tests/saas/"
+  ],
+  "forbidden_upstream_prefixes": [
+    "omnigent/claude_native",
+    "omnigent/codex_native",
+    "omnigent/cursor_native",
+    "omnigent/opencode_native",
+    "omnigent/pi_native",
+    "omnigent/runner/native/",
+    "omnigent/runtime/workflow.py"
+  ],
+  "source_intrusion_budget": {
+    "max_active_patches": 9,
+    "max_direct_upstream_files": 227,
+    "max_upstream_net_added_loc": 6841,
+    "min_isolated_custom_code_ratio": 0.85
+  },
+  "controller_budget_scope": {
+    "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
+    "frozen_product_baseline": "saas/upstream-baseline.json",
+    "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
+    "frozen_product_file_ceiling": 226,
+    "current_controller_file_ceiling": 227,
+    "reason": "Use the existing CI-scaled hang guard in the previously unmodified Kiro child permission test; keep every original state/owner/receipt assertion and the local five-second default.",
+    "new_counted_official_path": "tests/server/integration/test_kiro_permission_delivery.py",
+    "authority": "Existing standing human project/source-budget authorization, applied by the release coordinator technical scope decision; normal independent review and CI remain required.",
+    "image_rebuild_or_origin_exception": false,
+    "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5"
+  }
+}
