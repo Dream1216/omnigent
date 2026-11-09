@@ -183,6 +183,20 @@
           "after": "            if not steps:\n                continue\n            path = destination / f\"job-{job['id']}.log\"\n            try:\n                download_job_log(job[\"id\"], path)\n            except ValueError as error:\n                if (\n                    str(error) != \"native job log exceeds its bounded input\"\n                    or specification[\"path\"] != \".github/workflows/saas-image-candidate.yml\"\n                    or job.get(\"name\") != \"build-candidate\"\n                ):\n                    raise\n                _recover_verified_source_build_log(job, path)\n            log = path.read_text()\n            for required in steps:\n                actual = [\n"
         }
       ]
+    },
+    "registered_validation_base_correction": {
+      "corrected_sha256": "cbd69c9a758bb9be6a9a3c0f06ecf6e49eb69277317d8b4c3d812a85a6bf1c5c",
+      "restored_sha256": "d7c272e753d6dc72213f39718a73807f4e47bd811b4835dbfd7370553eaebd08",
+      "inverse_fragments": [
+        {
+          "before": "    load_profile,\n    verify_pr_tree,\n",
+          "after": "    load_profile,\n    validation_base_revision,\n    verify_pr_tree,\n"
+        },
+        {
+          "before": "        and pull.get(\"base\", {}).get(\"sha\") == profile[\"baseline_revision\"]\n",
+          "after": "        and pull.get(\"base\", {}).get(\"sha\") == validation_base_revision(profile)\n"
+        }
+      ]
     }
   },
   "saas/scripts/legacy_initial_publisher.py": {

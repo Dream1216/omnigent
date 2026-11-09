@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import re
 import subprocess
@@ -23,6 +24,22 @@ from saas.scripts.legacy_native_evidence import api, reserve_native_download
 from saas.scripts.legacy_pr_candidate import VALIDATION_REFS
 from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import COMPATIBILITY_COMPONENT, validate_profile
+
+
+def _validate_compatibility_audit_profile(profile):
+    """Retain the exact historical audit subject without selecting it for builds."""
+    if (
+        type(profile) is dict
+        and hashlib.sha256(
+            json.dumps(
+                profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+            ).encode()
+        ).hexdigest()
+        == "f89d78f3174990019c10416b5cd9f4971d10ad68cd73484c78dbe62798ad8c01"
+    ):
+        return
+    validate_profile(profile, COMPATIBILITY_COMPONENT)
+
 
 KIND = "legacy_original_main_domain_zero_execution/v1"
 INFRASTRUCTURE_KIND = "legacy_original_main_domain_infrastructure_cancellation/v1"
@@ -585,7 +602,7 @@ def validate_infrastructure_rules(rows, profile, identity):
     )
     compatibility = profile.get("component") == COMPATIBILITY_COMPONENT
     if compatibility:
-        validate_profile(profile, COMPATIBILITY_COMPONENT)
+        _validate_compatibility_audit_profile(profile)
     for row in rows:
         require(
             isinstance(row, dict)
@@ -872,7 +889,7 @@ def verify_unattributed_zero_execution(
         and profile.get("component") == COMPATIBILITY_COMPONENT
     )
     if fixed_runner_absence:
-        validate_profile(profile, COMPATIBILITY_COMPONENT)
+        _validate_compatibility_audit_profile(profile)
     require(
         attachment_workflow_sha256 == native.MAIN_WORKFLOW_SHA256 or fixed_runner_absence,
         "unattributed attachment workflow is not reviewed",
@@ -1433,7 +1450,7 @@ def verify_bootstrap_cancellation(
     )
     fixed_runner = attachment_workflow_sha256 == native.FIXED_RUNNER_WORKFLOW_SHA256
     if fixed_runner:
-        validate_profile(profile, COMPATIBILITY_COMPONENT)
+        _validate_compatibility_audit_profile(profile)
     coordinates = cancelled_job_coordinates(
         run,
         job,
@@ -1518,7 +1535,7 @@ def _verify_compatibility_unobserved_job(
     attachment_workflow_sha256=native.MAIN_WORKFLOW_SHA256,
 ):
     validate_bootstrap_policy(policy, profile, identity)
-    validate_profile(profile, COMPATIBILITY_COMPONENT)
+    _validate_compatibility_audit_profile(profile)
     require(
         attachment_workflow_sha256
         in {native.MAIN_WORKFLOW_SHA256, native.FIXED_RUNNER_WORKFLOW_SHA256},
@@ -1612,7 +1629,7 @@ def collect_unattributed_audit(
         "unattributed native audit workflow bytes differ",
     )
     if fixed_runner_absence:
-        validate_profile(profile, COMPATIBILITY_COMPONENT)
+        _validate_compatibility_audit_profile(profile)
     if not jobs:
         require(zero_policy is not None, "no-job native audit policy is disabled")
         prefix = f"{native._ROOT}/actions/runs/{run['id']}/attempts/{run['run_attempt']}"

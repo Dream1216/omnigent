@@ -68,6 +68,14 @@ def test_actual_fixed_bootstrap_retains_unknown_and_original_cancellation(fixed_
         )
     )
     assert receipt.get("source_ci_pass") is not True
+    from saas.scripts.protected_legacy_initial_build import load_profile, validate_profile
+
+    with pytest.raises(ValueError, match="exact reviewed source contract"):
+        validate_profile(case["profile"], "Compatibility018")
+    current = load_profile(Path(__file__).resolve().parents[2], "Compatibility018")
+    assert current["product_revision"] == "a933d1ad3243c3eba967b1d548d65b679cb2742e"
+    with pytest.raises(ValueError):
+        verify({**case, "profile": current})
     assert receipt["original_event_source_revision"] is None
     assert receipt["trusted_checkout_revision"] is None
 

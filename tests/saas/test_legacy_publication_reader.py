@@ -16,6 +16,7 @@ from saas.scripts import legacy_publication_reader as reader
 from saas.scripts.check_image_supply_chain import validate_release
 from saas.scripts.run_production_admission import build_production_admission_bundle
 from tests.saas import test_image_supply_chain as image
+from tests.saas._legacy_frozen_compatibility import frozen_entries
 from tests.saas.test_legacy_build_controller import product as product
 from tests.saas.test_legacy_initial_publisher import publication_data as publication_data
 
@@ -26,10 +27,10 @@ MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
 @pytest.mark.parametrize("fault", [None, *reader.TRUSTED_STORES])
 def test_frozen_c2_data_registration_requires_all_six_exact_original_rows(tmp_path, fault):
     before = {}
+    frozen = frozen_entries()
     for name in reader.TRUSTED_STORES:
-        store = json.loads((ROOT / "saas/supply_chain" / name).read_bytes())
         key = "inputs" if name == "legacy-security-original-inputs.json" else "profiles"
-        row = store[key]["Compatibility018"]
+        row = copy.deepcopy(frozen[name])
         row.pop("bootstrap_positive_origin", None)
         if name == fault:
             row["unreviewed_change"] = True
@@ -52,9 +53,7 @@ def test_frozen_c2_data_registration_requires_all_six_exact_original_rows(tmp_pa
                 entries=entries,
             )
     else:
-        assert reader.trusted_entries(tmp_path, "Compatibility018") == reader.trusted_entries(
-            ROOT, "Compatibility018"
-        )
+        assert reader.trusted_entries(tmp_path, "Compatibility018") == frozen
     assert all(path.read_bytes() == raw for path, raw in before.items())
 
 

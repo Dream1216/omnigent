@@ -143,6 +143,9 @@ def test_registered_first_binds_own_four_targets_and_refuses_changed_installed_b
     def blobs(_archive):
         yield Blobs()
 
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    monkeypatch.setitem(load_profile.__globals__, "load_profile", lambda *_: profile)
     monkeypatch.setattr(profiles, "load_profile", lambda *_: profile)
     verified = []
     monkeypatch.setattr(

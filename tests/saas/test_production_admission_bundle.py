@@ -129,8 +129,18 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
         "receipt_request_json",
         "review_exception_request_json",
         "runtime_evidence_revision",
+        "receipt_product",
     }
     assert inputs["runtime_evidence_revision"]["required"] == "false"
+    assert inputs["receipt_product"] == {
+        "description": (
+            "Original current product or the exact registered Compatibility018 receipt subject"
+        ),
+        "required": "false",
+        "type": "choice",
+        "default": "current",
+        "options": ["current", "Compatibility018"],
+    }
     job = workflow["jobs"]["production-admission"]
     assert job["environment"] == "production-evidence"
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
@@ -157,6 +167,10 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     assert context["with"] == {
         "product-revision": "${{ inputs.product_revision }}",
         "evidence-revision": "${{ inputs.runtime_evidence_revision }}",
+        "registered-product-repo": (
+            "${{ inputs.receipt_product == 'Compatibility018' && "
+            "format('{0}/receipt-product', github.workspace) || '' }}"
+        ),
     }
     checkout = next(step for step in job["steps"] if "actions/checkout@" in step.get("uses", ""))
     assert checkout["with"]["ref"] == "${{ github.sha }}"

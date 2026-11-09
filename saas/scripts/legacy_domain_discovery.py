@@ -488,9 +488,9 @@ def _discovery_trigger_identity(environment, event, profile):
         and re.fullmatch(r"[0-9a-f]{40}", source)
         and source != profile["product_revision"]
     ):
-        from saas.scripts.protected_legacy_initial_build import validate_profile
+        from saas.scripts.legacy_domain_non_execution import _validate_compatibility_audit_profile
 
-        validate_profile(profile, "Compatibility018")
+        _validate_compatibility_audit_profile(profile)
         pulls = environment["WORKFLOW_PRS"]
         numbers = _pr_numbers(pulls)
         require(

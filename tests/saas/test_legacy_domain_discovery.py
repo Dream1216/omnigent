@@ -387,6 +387,13 @@ def test_reviewed_fixed_runner_execution_only_classifies_other_source(
         "_COMPATIBILITY_PROFILE_SHA256",
         discovery.domain.native_digest(profile),
     )
+    monkeypatch.setitem(
+        discovery.nonexecution._validate_compatibility_audit_profile.__globals__[
+            "validate_profile"
+        ].__globals__,
+        "_COMPATIBILITY_PROFILE_SHA256",
+        discovery.domain.native_digest(profile),
+    )
     run, job = data["run"], data["job"]
     run.update(event="workflow_run", pull_requests=[])
     job["labels"] = ["self-hosted" if fault == "runner" else "ubuntu-24.04"]
@@ -659,6 +666,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "registered_validation_base_correction",
         "compat018_recovered_publication_correction",
         "source_advisory_record_correction",
         "runtime_condition_admission_correction",
@@ -698,6 +706,7 @@ def reviewed_source_bytes(root, relative, expected):
 @pytest.mark.parametrize(
     ("relative", "correction_name"),
     [
+        ("saas/scripts/legacy_source_ci.py", "registered_validation_base_correction"),
         ("saas/scripts/legacy_initial_publisher.py", "compat018_recovered_publication_correction"),
         (
             ".github/workflows/saas-legacy-security-build.yml",

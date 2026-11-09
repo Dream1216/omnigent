@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from saas.scripts import legacy_domain_non_execution as audit
+from tests.saas._legacy_frozen_compatibility import frozen_profile
 from tests.saas.test_legacy_domain_discovery import discovery
 from tests.saas.test_legacy_domain_discovery import discovery_case as discovery_case
 from tests.saas.test_legacy_domain_eligibility import domain
@@ -37,9 +38,7 @@ def refusal_cancel_native(request):
     data = json.loads((Path(__file__).parent / "resources" / resource).read_text())
     if case is not None:
         data = data[case]
-        from saas.scripts.protected_legacy_initial_build import load_profile
-
-        profile = load_profile(Path(__file__).parents[2], "Compatibility018")
+        profile = frozen_profile()
         assert all(profile[key] == value for key, value in data["profile"].items())
         data["profile"] = profile
     data["logs"] = base64.b64decode(data.pop("logs_base64"), validate=True)
@@ -163,7 +162,6 @@ def test_refusal_cancel_rejects_any_unreviewed_tuple(refusal_cancel_native, faul
 )
 def test_current_fixed_runner_refusal_requires_exact_registration(monkeypatch, tmp_path, fault):
     from saas.scripts import legacy_domain_discovery as discovery
-    from saas.scripts.protected_legacy_initial_build import load_profile
 
     data = json.loads(
         (
@@ -171,7 +169,7 @@ def test_current_fixed_runner_refusal_requires_exact_registration(monkeypatch, t
             / "resources/legacy_compatibility_fixed_runner_refusal_native.json"
         ).read_text()
     )
-    profile = load_profile(Path(__file__).parents[2], "Compatibility018")
+    profile = frozen_profile()
     assert all(profile[key] == value for key, value in data["profile"].items())
     if fault in {"source", "tree", "PR"}:
         key = {"source": "product_revision", "tree": "product_tree", "PR": "validation_pr"}[fault]

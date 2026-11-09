@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from tests.saas._legacy_frozen_compatibility import frozen_entries
 from tests.saas.test_legacy_source_qualification import ROOT, invoke, qualifier
 from tests.saas.test_legacy_source_qualification import scenario as scenario
 
@@ -578,10 +579,15 @@ def test_bootstrap_registration_binds_only_original_six_tables(component):
     from saas.scripts.protected_legacy_initial_build import load_profile
 
     profile = load_profile(ROOT, component)
+    historical = frozen_entries() if component == "Compatibility018" else None
+    if historical is not None:
+        profile = historical["legacy-security-build-profiles.json"]
     policy = json.loads(
         (ROOT / "saas/supply_chain/legacy-source-qualification-profiles.json").read_text()
     )["profiles"][component]
-    registration = domain.bootstrap_registration(ROOT, profile, policy)
+    if historical is not None:
+        policy = historical["legacy-source-qualification-profiles.json"]
+    registration = domain.bootstrap_registration(ROOT, profile, policy, entries=historical)
     assert registration["kind"] == domain.BOOTSTRAP_KIND
     assert registration["source_bundle_sha256"] == domain._BOOTSTRAP_ORIGINS[component][4]
 
@@ -603,10 +609,15 @@ def test_bootstrap_registration_rejects_unknown_or_changed_origin(component, fau
     from saas.scripts.protected_legacy_initial_build import load_profile
 
     profile = load_profile(ROOT, component)
+    historical = frozen_entries() if component == "Compatibility018" else None
+    if historical is not None:
+        profile = historical["legacy-security-build-profiles.json"]
     entries = {}
     for name in domain._BOOTSTRAP_STORES:
         store = json.loads((ROOT / "saas/supply_chain" / name).read_text())
         entries[name] = store["inputs" if "original-inputs" in name else "profiles"][component]
+    if historical is not None:
+        entries = historical
     policy = entries["legacy-source-qualification-profiles.json"]
     if fault == "unknown-component":
         profile["component"] = "Future"
@@ -766,12 +777,17 @@ def test_bootstrap_consumers_reject_incomplete_or_forged_typed_claims(component,
     from saas.scripts.protected_legacy_initial_build import load_profile
 
     profile = load_profile(ROOT, component)
+    historical = frozen_entries() if component == "Compatibility018" else None
+    if historical is not None:
+        profile = historical["legacy-security-build-profiles.json"]
     entries = {
         name: json.loads((ROOT / "saas/supply_chain" / name).read_text())[
             "inputs" if "original-inputs" in name else "profiles"
         ][component]
         for name in domain._BOOTSTRAP_STORES
     }
+    if historical is not None:
+        entries = historical
     policy = entries["legacy-source-qualification-profiles.json"]
     result = {
         "component": component,
