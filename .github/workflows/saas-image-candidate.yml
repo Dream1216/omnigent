@@ -165,6 +165,10 @@ jobs:
           tests/saas/test_resume_oci_promotion.py
           tests/saas/test_runtime_security_overlays.py
           tests/saas/test_host_fleet_cli_supply.py
+          tests/saas/test_run_release_qa.py
+          tests/saas/test_server_candidate_runtime_metadata.py
+          tests/saas/test_candidate_storage_reclamation.py
+          tests/scripts/test_release_pipeline.py
           -q
       - name: Verify image supply-chain policy
         run: uv run python -m saas.scripts.check_image_supply_chain
@@ -227,16 +231,14 @@ jobs:
           path: production-migration-replay.xml
           if-no-files-found: error
 
-  build-candidate:
+  build-server-preflight:
     needs:
       - verify-candidate-preflight
       - verify-production-migration-replay
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     outputs:
-      oci-artifact-id: ${{ steps.upload-oci.outputs.artifact-id }}
-      oci-artifact-sha256: ${{ steps.upload-oci.outputs.artifact-digest }}
-      manifest-sha256: ${{ steps.seal.outputs.manifest-sha256 }}
+      materials: ${{ steps.materials.outputs.json }}
     services:
       postgres:
         image: postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
@@ -359,6 +361,18 @@ jobs:
           echo "UPSTREAM_REVISION=${upstream_revision}" >> "$GITHUB_ENV"
           echo "ADAPTER_CONTRACT_VERSION=${adapter_contract}" >> "$GITHUB_ENV"
           echo "CONTROL_PLANE_SCHEMA_REVISION=${schema_revision}" >> "$GITHUB_ENV"
+      - name: Export the resolved shared build materials
+        id: materials
+        run: |
+          python - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          fields = ("PYTHON_IMAGE", "RUNTIME_IMAGE", "NODE_IMAGE", "GO_IMAGE", "SOURCE_DATE_EPOCH",
+                    "SOURCE_REVISION", "UPSTREAM_REVISION", "CONTROL_PLANE_SCHEMA_REVISION", "ADAPTER_CONTRACT_VERSION")
+          value = {name: os.environ[name] for name in fields}
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+              stream.write("json=" + json.dumps(value, sort_keys=True) + "\n")
+          PYCODE
       - name: Record first Server build inputs
         continue-on-error: true
         env:
@@ -566,33 +580,169 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
-      - name: Build server candidate attempt 2
-        uses: ./saas/actions/build-oci-candidate
+      - name: Preserve successful first Server OCI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          artifact: server
-          target: runtime
-          attempt: "2"
-      - name: Build host candidate attempt 1
-        uses: ./saas/actions/build-oci-candidate
+          name: oci-build-${{ github.run_id }}-${{ github.run_attempt }}-server-1
+          path: ${{ runner.temp }}/server-1.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+      - name: Preserve first Server proofs and regressions
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          artifact: host
-          target: host
-          attempt: "1"
-      - name: Build host candidate attempt 2
-        uses: ./saas/actions/build-oci-candidate
+          name: first-server-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/server-regressions.junit.xml
+            artifacts/server-candidate-runtime.json
+            artifacts/grype-preflight/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  build-remaining-images:
+    needs: build-server-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - {artifact: server, target: runtime, attempt: "2"}
+          - {artifact: host, target: host, attempt: "1"}
+          - {artifact: host, target: host, attempt: "2"}
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+      PYTHON_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).PYTHON_IMAGE }}
+      RUNTIME_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).RUNTIME_IMAGE }}
+      NODE_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).NODE_IMAGE }}
+      GO_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).GO_IMAGE }}
+      SOURCE_DATE_EPOCH: ${{ fromJSON(needs.build-server-preflight.outputs.materials).SOURCE_DATE_EPOCH }}
+      SOURCE_REVISION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).SOURCE_REVISION }}
+      UPSTREAM_REVISION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).UPSTREAM_REVISION }}
+      CONTROL_PLANE_SCHEMA_REVISION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).CONTROL_PLANE_SCHEMA_REVISION }}
+      ADAPTER_CONTRACT_VERSION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).ADAPTER_CONTRACT_VERSION }}
+    steps:
+      - name: Checkout immutable parallel candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          artifact: host
-          target: host
-          attempt: "2"
-      - name: Reclaim ephemeral builder cache before OCI inspection
-        env:
-          CANDIDATE_BUILDER_NAME: ${{ steps.candidate-builder.outputs.name }}
+          ref: ${{ env.CANDIDATE_REVISION }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact parallel candidate revision
         run: |
           set -euo pipefail
-          python -m saas.scripts.reclaim_candidate_build_cache \
-            --root "$RUNNER_TEMP" --builder "$CANDIDATE_BUILDER_NAME" \
-            > artifacts/candidate-storage-reclamation.json
-          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
+          [[ "$SOURCE_REVISION" == "$CANDIDATE_REVISION" ]]
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked candidate tooling
+        run: |
+          uv sync --frozen --extra saas
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Prepare the same immutable runtime evidence
+        if: inputs.runtime_evidence_revision != ''
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ env.CANDIDATE_REVISION }}
+          evidence-revision: ${{ inputs.runtime_evidence_revision }}
+      - name: Set up isolated parallel Docker runtime
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - name: Set up isolated parallel Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build independent ${{ matrix.artifact }} attempt ${{ matrix.attempt }}
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: ${{ matrix.artifact }}
+          target: ${{ matrix.target }}
+          attempt: ${{ matrix.attempt }}
+      - name: Preserve each completed parallel OCI
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-build-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.artifact }}-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/${{ matrix.artifact }}-${{ matrix.attempt }}.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+
+  build-candidate:
+    needs: [build-server-preflight, build-remaining-images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      oci-artifact-id: ${{ steps.upload-oci.outputs.artifact-id }}
+      oci-artifact-sha256: ${{ steps.upload-oci.outputs.artifact-digest }}
+      manifest-sha256: ${{ steps.seal.outputs.manifest-sha256 }}
+    env:
+      OMNIGENT_SKIP_WEB_UI: "true"
+      PYTHON_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).PYTHON_IMAGE }}
+      RUNTIME_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).RUNTIME_IMAGE }}
+      NODE_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).NODE_IMAGE }}
+      GO_IMAGE: ${{ fromJSON(needs.build-server-preflight.outputs.materials).GO_IMAGE }}
+      SOURCE_DATE_EPOCH: ${{ fromJSON(needs.build-server-preflight.outputs.materials).SOURCE_DATE_EPOCH }}
+      SOURCE_REVISION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).SOURCE_REVISION }}
+      UPSTREAM_REVISION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).UPSTREAM_REVISION }}
+      CONTROL_PLANE_SCHEMA_REVISION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).CONTROL_PLANE_SCHEMA_REVISION }}
+      ADAPTER_CONTRACT_VERSION: ${{ fromJSON(needs.build-server-preflight.outputs.materials).ADAPTER_CONTRACT_VERSION }}
+    steps:
+      - name: Checkout immutable candidate collector
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.CANDIDATE_REVISION }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact collector revision
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]
+          [[ "$SOURCE_REVISION" == "$CANDIDATE_REVISION" ]]
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - name: Install locked candidate tooling
+        run: |
+          uv sync --frozen --extra saas
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Prepare the same immutable runtime evidence
+        if: inputs.runtime_evidence_revision != ''
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ env.CANDIDATE_REVISION }}
+          evidence-revision: ${{ inputs.runtime_evidence_revision }}
+      - name: Download exact current-run independent OCI builds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: oci-build-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}
+          merge-multiple: true
+      - name: Download first Server proofs and regressions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: first-server-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+      - name: Require every independent build archive
+        run: |
+          set -euo pipefail
+          for name in server-1 server-2 host-1 host-2; do
+            test -s "$RUNNER_TEMP/${name}.tar"
+          done
       - name: Compare repeated executable image facts
         id: compare
         run: >-
@@ -609,6 +759,10 @@ jobs:
           --image omnigent-saas-server=${{ runner.temp }}/server-1.tar,${{ runner.temp }}/server-2.tar
           --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
           --output artifacts/oci-layer-drift.json
+      - name: Discard compared duplicate archives
+        run: |
+          set -euo pipefail
+          rm -- "${RUNNER_TEMP:?}/server-2.tar" "${RUNNER_TEMP:?}/host-2.tar"
       - name: Scan exact OCI candidates on both architectures
         run: >-
           python -m saas.scripts.scan_oci_candidates
@@ -678,7 +832,6 @@ jobs:
             artifacts/server-candidate-runtime.json
             artifacts/oci-promotion-manifest.json
             artifacts/oci-layer-drift.json
-            artifacts/candidate-storage-reclamation.json
             artifacts/grype-preflight/*.json
             artifacts/grype/*.json
           if-no-files-found: error

@@ -22,6 +22,19 @@ and the isolation floor remain enforced. Recovery and final production checks
 are available through `gate --stage recovery` and `gate --stage production`, with
 their existing revision arguments and `--require-ready`.
 
+Onsite QA uses `gate --stage qa --operator NAME --arguments-json FILE`.
+Set `OMNIGENT_RELEASE_QA_ROOT` to the existing onsite script directory; the
+reviewed script and dependency hashes are registered in `.github/release-qa.json`.
+The argument file contains a JSON string array of native operator arguments.
+The default validates source and arguments without importing or running the
+operator. Add `--execute --operation-id UNIQUE_ID` to perform the operation.
+All operators share one private writer lock and keep private logs and durable
+receipts in the root's `.release-pipeline` directory. A completed operation ID
+returns its receipt; failed or interrupted operations require reconciliation
+before any new action. `OMNIGENT_RELEASE_QA_DISABLED=1` disables execution.
+Native handoff, identity, phase and cleanup checks remain inside each operator;
+an adapter receipt grants no production admission.
+
 ## Build contract
 
 Build only from a clean, immutable product SHA whose pinned upstream ancestor,
@@ -80,8 +93,11 @@ uv run python -m saas.scripts.check_image_supply_chain \
   --require-ready
 ```
 
-The `build-candidate` job in `saas-image-candidate.yml` repeats local OCI builds
-and compares executable manifest/config facts. Its protected `publish-signed`
+The `build-server-preflight` job builds and scans Server attempt 1. After that
+scan succeeds, `build-remaining-images` runs Server attempt 2 and both Host
+attempts on three independent runners using the same resolved materials and
+epoch. `build-candidate` collects all four exact current-attempt OCI archives,
+compares executable manifest/config facts, scans and seals them. Its protected `publish-signed`
 job can publish the wheel plus Server and Host images and attach GitHub OIDC
 attestations to those artifacts. Actual OCI vulnerability scans run before
 promotion and after signed-image readback, with raw findings retained. Publication

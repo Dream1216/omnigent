@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import yaml
+
 from saas.production.review_exception import apply_review_exception, review_verification_scope
 
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -508,6 +510,110 @@ def _named_workflow_step(source: str, name: str) -> str | None:
     return source.split(marker, 1)[1].split("\n      - name:", 1)[0]
 
 
+def validate_parallel_build_graph(workflow: str) -> list[str]:
+    """Require independent runners, shared immutable materials and a fail-closed join."""
+    try:
+        jobs = yaml.load(workflow, Loader=yaml.BaseLoader)["jobs"]
+        first = jobs["build-server-preflight"]
+        parallel = jobs["build-remaining-images"]
+        final = jobs["build-candidate"]
+        coordinates = parallel["strategy"]["matrix"]["include"]
+        actual = [(row["artifact"], row["target"], row["attempt"]) for row in coordinates]
+        expected = [("server", "runtime", "2"), ("host", "host", "1"), ("host", "host", "2")]
+        first_builds = [
+            step for step in first["steps"] if step.get("uses") == _CANDIDATE_BUILD_USES
+        ]
+        parallel_builds = [
+            step for step in parallel["steps"] if step.get("uses") == _CANDIDATE_BUILD_USES
+        ]
+        if (
+            actual != expected
+            or len(first_builds) != 1
+            or first_builds[0]["with"]
+            != {"artifact": "server", "target": "runtime", "attempt": "1"}
+            or len(parallel_builds) != 1
+            or parallel_builds[0]["with"]
+            != {
+                "artifact": "${{ matrix.artifact }}",
+                "target": "${{ matrix.target }}",
+                "attempt": "${{ matrix.attempt }}",
+            }
+        ):
+            return [
+                "candidate workflow must invoke four repeated composite builds",
+                "candidate workflow build coordinates must cover server and host twice",
+            ]
+        if (
+            parallel["needs"] != "build-server-preflight"
+            or parallel["strategy"]["max-parallel"] != "3"
+            or parallel["strategy"]["fail-fast"] != "false"
+            or final["needs"] != ["build-server-preflight", "build-remaining-images"]
+            or any("continue-on-error" in job or "if" in job for job in (first, parallel, final))
+            or any(
+                "if" in step or "continue-on-error" in step
+                for step in first_builds + parallel_builds
+            )
+            or any(step.get("uses") == _CANDIDATE_BUILD_USES for step in final["steps"])
+        ):
+            return [
+                "parallel builds must join only after the actual preflight "
+                "and all independent builds succeed"
+            ]
+        for name in _REQUIRED_BUILD_ARGS:
+            expression = (
+                "${{ fromJSON(needs.build-server-preflight.outputs.materials)." + name + " }}"
+            )
+            if any(job["env"].get(name) != expression for job in (parallel, final)):
+                return ["parallel builds must use the exact shared immutable build materials"]
+        for job in (parallel, final):
+            checkouts = [
+                s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")
+            ]
+            if (
+                len(checkouts) != 1
+                or checkouts[0]["with"].get("ref") != "${{ env.CANDIDATE_REVISION }}"
+                or checkouts[0]["with"].get("persist-credentials") != "false"
+            ):
+                return [
+                    "candidate workflow must bind builds and evidence "
+                    "to the exact pull-request head"
+                ]
+        downloads = [
+            step["with"]
+            for step in final["steps"]
+            if step.get("uses", "").startswith("actions/download-artifact@")
+        ]
+        if (
+            len(downloads) != 2
+            or downloads[0]
+            != {
+                "pattern": "oci-build-${{ github.run_id }}-${{ github.run_attempt }}-*",
+                "path": "${{ runner.temp }}",
+                "merge-multiple": "true",
+            }
+            or downloads[1]
+            != {
+                "name": "first-server-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
+                "path": "artifacts/",
+            }
+        ):
+            return ["candidate join must consume only its own run and attempt artifacts"]
+        critical = {
+            "Require every independent build archive",
+            "Compare repeated executable image facts",
+            "Scan exact OCI candidates on both architectures",
+            "Seal exact admitted OCI archives and raw scan evidence",
+        }
+        steps = [step for step in final["steps"] if step.get("name") in critical]
+        if len(steps) != len(critical) or any(
+            "if" in step or "continue-on-error" in step for step in steps
+        ):
+            return ["candidate comparison, scan and seal must execute without bypass"]
+        return []
+    except (KeyError, TypeError, ValueError, yaml.YAMLError):
+        return ["parallel candidate build graph is missing or invalid"]
+
+
 def validate_candidate_build_contract(repo: Path) -> list[str]:
     """Validate the workflow and its fixed local composite build action together."""
 
@@ -598,29 +704,9 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if any(workflow.count(export) != 1 for export in material_exports):
         violations.append("candidate workflow must export each resolved build material once")
 
-    if workflow.count(f"uses: {_CANDIDATE_BUILD_USES}") != 4:
-        violations.append("candidate workflow must invoke four repeated composite builds")
+    violations.extend(validate_parallel_build_graph(workflow))
     if workflow.count("--label-profile executable") != 1:
         violations.append("candidate workflow must select the executable label profile")
-    coordinates = {
-        ("server", "runtime", "1"),
-        ("server", "runtime", "2"),
-        ("host", "host", "1"),
-        ("host", "host", "2"),
-    }
-    for artifact, target, attempt in coordinates:
-        invocation = (
-            f"uses: {_CANDIDATE_BUILD_USES}\n"
-            "        with:\n"
-            f"          artifact: {artifact}\n"
-            f"          target: {target}\n"
-            f'          attempt: "{attempt}"'
-        )
-        if workflow.count(invocation) != 1:
-            violations.append(
-                "candidate workflow build coordinates must cover server and host twice"
-            )
-            break
 
     protected_release_fragments = {
         "environment: production-image",

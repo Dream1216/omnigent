@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "root_environment": "OMNIGENT_RELEASE_QA_ROOT",
+  "operators": {
+    "prepare-gen2": {
+      "path": "prepare-final-Gen2-profile-from-qualified-M.QA-ONLY.py",
+      "sha256": "359640b13ec6614d0ea124af0af9b65f768a6fd8881487c4c2c3e7448de27594",
+      "bytes": 4650,
+      "flags": [
+        "--handoff",
+        "--handoff-sha256",
+        "--source-checkout"
+      ],
+      "switches": [],
+      "required": [
+        "--handoff",
+        "--handoff-sha256"
+      ],
+      "actions": [],
+      "timeout_seconds": 1200,
+      "dependencies": [
+        {
+          "path": "P5-existing-host-TCG-20261106/p5-existing-server-driver.QA-ONLY.py",
+          "sha256": "9842fa95fbd959197c0ccf8e1322e69c895fd3fc68d2ecd13ba6620f86ee203c",
+          "bytes": 335353
+        }
+      ]
+    },
+    "bind-at-zero": {
+      "path": "bind-final-Gen2-profile-at-zero.QA-ONLY.py",
+      "sha256": "7e4e8482e0c89188e560e27d9d5c2c0e87646a08d300eea038e2170fec4a20fd",
+      "bytes": 12315,
+      "flags": [
+        "--prepared-record",
+        "--prepared-record-sha256",
+        "--source-checkout"
+      ],
+      "switches": [],
+      "required": [
+        "--prepared-record",
+        "--prepared-record-sha256"
+      ],
+      "actions": [],
+      "timeout_seconds": 1200,
+      "dependencies": [
+        {
+          "path": "P5-existing-host-TCG-20261106/p5-existing-server-driver.QA-ONLY.py",
+          "sha256": "9842fa95fbd959197c0ccf8e1322e69c895fd3fc68d2ecd13ba6620f86ee203c",
+          "bytes": 335353
+        }
+      ]
+    },
+    "task": {
+      "path": "normal-business-client-20261108/run-normal-managed-task.QA-ONLY.py",
+      "sha256": "9988f86a635389f9e973844e76320c4eecef1f921ac24a9817c07bb54a19ec45",
+      "bytes": 18291,
+      "flags": [
+        "--agent-id",
+        "--handoff",
+        "--handoff-sha256",
+        "--marker",
+        "--ordinary-bearer-file",
+        "--ordinary-login-record",
+        "--source-checkout",
+        "--task-kind"
+      ],
+      "switches": [
+        "--execute",
+        "--stop-after-download"
+      ],
+      "required": [
+        "--task-kind",
+        "--marker"
+      ],
+      "actions": [],
+      "timeout_seconds": 1200,
+      "dependencies": [
+        {
+          "path": "P5-existing-host-TCG-20261106/p5-existing-server-driver.QA-ONLY.py",
+          "sha256": "9842fa95fbd959197c0ccf8e1322e69c895fd3fc68d2ecd13ba6620f86ee203c",
+          "bytes": 335353
+        }
+      ]
+    },
+    "observer": {
+      "path": "normal-business-client-20261108/observe-task-cloud.QA-ONLY.py",
+      "sha256": "c4bdb58d608bbb456afd1ec494547f9814a52b217cc444fa2bc1507292729ed9",
+      "bytes": 10322,
+      "flags": [
+        "--handoff",
+        "--handoff-sha256",
+        "--source-checkout",
+        "--task-directory"
+      ],
+      "switches": [
+        "--execute"
+      ],
+      "required": [
+        "--task-directory"
+      ],
+      "actions": [
+        "observe",
+        "verify-gone"
+      ],
+      "timeout_seconds": 1200,
+      "dependencies": [
+        {
+          "path": "P5-existing-host-TCG-20261106/p5-existing-server-driver.QA-ONLY.py",
+          "sha256": "9842fa95fbd959197c0ccf8e1322e69c895fd3fc68d2ecd13ba6620f86ee203c",
+          "bytes": 335353
+        },
+        {
+          "path": "normal-business-client-20261108/run-normal-managed-task.QA-ONLY.py",
+          "sha256": "9988f86a635389f9e973844e76320c4eecef1f921ac24a9817c07bb54a19ec45",
+          "bytes": 18291
+        }
+      ]
+    },
+    "recovery": {
+      "path": "P5-existing-host-TCG-20261106/p5-existing-server-driver.QA-ONLY.py",
+      "sha256": "9842fa95fbd959197c0ccf8e1322e69c895fd3fc68d2ecd13ba6620f86ee203c",
+      "bytes": 335353,
+      "flags": [
+        "--authority-record",
+        "--backup-record",
+        "--business-record",
+        "--certificate-record",
+        "--checkpoint-custody-record",
+        "--checkpoint-input-file",
+        "--custody-stage-record",
+        "--database-record",
+        "--dataset-operation",
+        "--drain-record",
+        "--fault-record",
+        "--final-render-record",
+        "--fleet-package-record",
+        "--handoff",
+        "--handoff-sha256",
+        "--issuer-materials",
+        "--migration-package-record",
+        "--native-admission-record",
+        "--native-api-credential-file",
+        "--operation",
+        "--parameters",
+        "--phase",
+        "--phase-source-inputs",
+        "--private-manifest",
+        "--quarantine-record",
+        "--recovery-record",
+        "--repository-record",
+        "--repository-seed-record",
+        "--runtime-binding-record",
+        "--runtime-record",
+        "--source-checkout",
+        "--stage-record",
+        "--state-directory",
+        "--zero-record"
+      ],
+      "switches": [],
+      "required": [],
+      "actions": [
+        "status",
+        "prepare-native-dataset",
+        "adopt-qualified-target",
+        "verify-handoff",
+        "prepare-phase-source-inputs",
+        "reattach-owned-volumes-at-zero",
+        "install-authorities",
+        "publish-migration-receipt",
+        "native-create-pool",
+        "native-stage-fleet",
+        "native-drain-runners",
+        "native-admit-fleet",
+        "publish-fleet-package",
+        "render-final-phase",
+        "bind-runtime-at-zero",
+        "provision-database-logins",
+        "prepare-repositories",
+        "seed-b-repository",
+        "start-phase-core",
+        "prepare-initial-zero",
+        "provision-recovery-purpose",
+        "issue-runner-certificates",
+        "observe-runtime",
+        "read-native-run",
+        "capture-native-checkpoint",
+        "capture-full-backup",
+        "restore-quarantine",
+        "prepare-user-tree-payload",
+        "prepare-native-user-restore",
+        "fault-owned-runtime",
+        "stop-owned-phase-runtime",
+        "stage-checkpoint-custody",
+        "publish-native-checkpoint"
+      ],
+      "timeout_seconds": 3600,
+      "dependencies": []
+    }
+  }
+}

@@ -21,7 +21,9 @@ def test_candidate_job_covers_two_uncached_multiarch_rebuilds() -> None:
     """The fail-closed timeout must cover Server and Host reproducibility."""
     workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-image-candidate.yml").read_text())
 
-    assert workflow["jobs"]["build-candidate"]["timeout-minutes"] == 240
+    assert workflow["jobs"]["build-server-preflight"]["timeout-minutes"] == 240
+    assert workflow["jobs"]["build-remaining-images"]["strategy"]["max-parallel"] == 3
+    assert workflow["jobs"]["build-candidate"]["timeout-minutes"] == 60
 
 
 def test_superseded_pr_candidates_cancel_without_interrupting_releases() -> None:
@@ -38,7 +40,7 @@ def test_candidate_preflight_blocks_expensive_builds() -> None:
     workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-image-candidate.yml").read_text())
     jobs = workflow["jobs"]
     preflight = jobs["verify-candidate-preflight"]
-    build = jobs["build-candidate"]
+    build = jobs["build-server-preflight"]
 
     assert preflight["timeout-minutes"] == 15
     assert build["needs"] == [
@@ -54,7 +56,7 @@ def test_candidate_preflight_blocks_expensive_builds() -> None:
 def test_candidate_runs_cheap_compatibility_checks_before_browser_setup() -> None:
     """Source and migration drift should fail before browser installation."""
     workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-image-candidate.yml").read_text())
-    names = [step.get("name") for step in workflow["jobs"]["build-candidate"]["steps"]]
+    names = [step.get("name") for step in workflow["jobs"]["build-server-preflight"]["steps"]]
 
     assert names.index("Verify migrations and downstream compatibility") < names.index(
         "Install Chromium"
@@ -63,7 +65,7 @@ def test_candidate_runs_cheap_compatibility_checks_before_browser_setup() -> Non
 
 def test_candidate_scan_can_import_admission_in_the_exported_locked_environment(tmp_path) -> None:
     workflow = yaml.safe_load((_ROOT / ".github/workflows/saas-image-candidate.yml").read_text())
-    steps = workflow["jobs"]["build-candidate"]["steps"]
+    steps = workflow["jobs"]["build-server-preflight"]["steps"]
     install = next(s for s in steps if s.get("name") == "Install locked test dependencies")
     sync, export = install["run"].strip().splitlines()
     assert sync == "uv sync --frozen --extra all --group dev --extra saas --extra e2b"

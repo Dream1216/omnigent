@@ -251,7 +251,7 @@ def test_existing_workflows_execute_the_shared_policy_and_native_resume():
         '--run-id "$ORIGINAL_CANDIDATE_RUN_ID"' in s.get("run", "") for s in signing["steps"]
     )
     assert "needs.publish-signed.result == 'success'" in jobs["verify-published-source"]["if"]
-    source = "\n".join(s.get("run", "") for s in jobs["build-candidate"]["steps"])
+    source = "\n".join(s.get("run", "") for s in jobs["build-server-preflight"]["steps"])
     assert "release_pipeline.py gate --stage source" in source
     production = (ROOT / ".github/workflows/saas-production-admission.yml").read_text()
     assert (

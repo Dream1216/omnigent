@@ -17,6 +17,7 @@ from saas.scripts.check_image_supply_chain import (
     load_release_evidence,
     validate_candidate_build_contract,
     validate_image_material_lock,
+    validate_parallel_build_graph,
     validate_release,
 )
 from saas.scripts.compare_oci_rebuilds import compare_archives
@@ -302,6 +303,65 @@ def _run_host_pnpm_normalizer(
 
 def test_candidate_composite_build_contract_is_valid() -> None:
     assert validate_candidate_build_contract(_repo()) == []
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing-build",
+        "duplicate-build",
+        "serial",
+        "skip-first",
+        "ignore-failure",
+        "early-join",
+        "foreign-material",
+        "foreign-source",
+        "foreign-artifact",
+        "skip-scan",
+    ],
+)
+def test_parallel_build_graph_preserves_preflight_independence_and_complete_join(fault):
+    import yaml
+
+    workflow = yaml.load(
+        (_repo() / ".github/workflows/saas-image-candidate.yml").read_text(),
+        Loader=yaml.BaseLoader,
+    )
+    jobs = workflow["jobs"]
+    _first, parallel, final = (
+        jobs[key]
+        for key in ("build-server-preflight", "build-remaining-images", "build-candidate")
+    )
+    matrix = parallel["strategy"]["matrix"]["include"]
+    if fault == "missing-build":
+        matrix.pop()
+    elif fault == "duplicate-build":
+        matrix.append(copy.deepcopy(matrix[0]))
+    elif fault == "serial":
+        parallel["strategy"]["max-parallel"] = "1"
+    elif fault == "skip-first":
+        parallel["needs"] = "verify-candidate-preflight"
+    elif fault == "ignore-failure":
+        parallel["continue-on-error"] = "true"
+    elif fault == "early-join":
+        final["needs"] = ["build-server-preflight"]
+    elif fault == "foreign-material":
+        parallel["env"]["SOURCE_REVISION"] = "unrelated"
+    elif fault == "foreign-source":
+        parallel["steps"][0]["with"]["ref"] = "main"
+    elif fault == "foreign-artifact":
+        next(
+            s for s in final["steps"] if s.get("uses", "").startswith("actions/download-artifact@")
+        )["with"]["run-id"] = "old"
+    elif fault == "skip-scan":
+        next(
+            s
+            for s in final["steps"]
+            if s.get("name") == "Scan exact OCI candidates on both architectures"
+        )["if"] = "false"
+    result = validate_parallel_build_graph(yaml.dump(workflow))
+    assert bool(result) is (fault is not None)
 
 
 def test_generic_docker_build_has_reproducible_epoch_fallback() -> None:

@@ -25,6 +25,7 @@ GATES = {
     "check_image_supply_chain",
     "check_recovery_readiness",
     "run_production_admission",
+    "run_release_qa",
 }
 
 
@@ -257,7 +258,7 @@ def main() -> int:
         commands = config(args.repo)["gates"]
         require(args.stage in commands, "unknown configured release gate")
         require(
-            not forwarded or args.stage in {"production", "recovery"},
+            not forwarded or args.stage in {"production", "recovery", "qa"},
             "source gate takes no extra arguments",
         )
         for module in commands[args.stage]:

@@ -393,16 +393,12 @@ def test_workflow_never_rebuilds_after_candidate_admission() -> None:
         (ROOT / ".github/workflows/saas-image-candidate.yml").read_text(), Loader=yaml.BaseLoader
     )
     build, publish = workflow["jobs"]["build-candidate"], workflow["jobs"]["publish-signed"]
-    assert (
-        len(
-            [
-                step
-                for step in build["steps"]
-                if step.get("uses") == "./saas/actions/build-oci-candidate"
-            ]
-        )
-        == 4
+    assert not any(
+        step.get("uses") == "./saas/actions/build-oci-candidate" for step in build["steps"]
     )
+    parallel = workflow["jobs"]["build-remaining-images"]
+    assert len(parallel["strategy"]["matrix"]["include"]) == 3
+    assert build["needs"] == ["build-server-preflight", "build-remaining-images"]
     assert all("build-push-action" not in step.get("uses", "") for step in publish["steps"])
     assert all("setup-buildx-action" not in step.get("uses", "") for step in publish["steps"])
     names = [step["name"] for step in publish["steps"]]

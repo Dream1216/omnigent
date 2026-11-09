@@ -1,5 +1,7 @@
 """Cache cleanup is scoped and cannot admit or delete candidate OCI inputs."""
 
+import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -99,29 +101,33 @@ def test_prune_failure_is_not_ignored(archives, monkeypatch):
         storage.reclaim_build_cache(archives, "builder-synthetic-fixture")
 
 
-def test_workflow_reclaims_after_builds_without_removing_any_gate():
+def test_collector_discards_only_compared_duplicate_archives(archives):
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load((root / ".github/workflows/saas-image-candidate.yml").read_text())
     candidate = workflow["jobs"]["build-candidate"]
     steps = candidate["steps"]
     names = [step.get("name") for step in steps]
-    cleanup = names.index("Reclaim ephemeral builder cache before OCI inspection")
+    cleanup = names.index("Discard compared duplicate archives")
+    assert candidate["needs"] == ["build-server-preflight", "build-remaining-images"]
     assert (
-        names.index("Build host candidate attempt 2")
+        names.index("Compare repeated executable image facts")
         < cleanup
-        < names.index("Compare repeated executable image facts")
-    )
-    assert (
-        cleanup
         < names.index("Scan exact OCI candidates on both architectures")
         < names.index("Seal exact admitted OCI archives and raw scan evidence")
     )
-    assert (
-        steps[cleanup]["env"]["CANDIDATE_BUILDER_NAME"]
-        == "${{ steps.candidate-builder.outputs.name }}"
+    assert not {"if", "continue-on-error"} & steps[cleanup].keys()
+    assert not any("setup-buildx-action" in step.get("uses", "") for step in steps)
+    original = {name: (archives / name).read_bytes() for name in ("server-1.tar", "host-1.tar")}
+    unrelated = archives / "unrelated.tar"
+    unrelated.write_bytes(b"unrelated")
+    subprocess.run(
+        ["bash", "-c", steps[cleanup]["run"]],
+        env={**os.environ, "RUNNER_TEMP": str(archives)},
+        check=True,
     )
-    assert "continue-on-error" not in steps[cleanup]
-    assert 'echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"' in steps[cleanup]["run"]
+    assert {name: (archives / name).read_bytes() for name in original} == original
+    assert not any((archives / name).exists() for name in ("server-2.tar", "host-2.tar"))
+    assert unrelated.read_bytes() == b"unrelated"
     retained = steps[names.index("Retain unqualified OCI after failed candidate build")]
     assert "failure() && !cancelled()" in retained["if"]
     assert "github.ref == 'refs/heads/main'" in retained["if"]
