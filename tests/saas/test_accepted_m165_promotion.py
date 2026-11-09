@@ -24,12 +24,218 @@ from saas.scripts.resume_oci_promotion import (
     build_certificate_claims,
     verify_predicate,
 )
+from tests.saas import test_temporary_official_database_age as db_age
 from tests.saas.test_oci_promotion import EPOCH, REVISION, candidate, write_json
 
 POLICY = "b" * 40
 PRODUCER_RUN = 71
 PRODUCER_CONTROLLER = "c" * 40
 PRODUCER_BUILD_JOB = 82
+
+
+@pytest.mark.parametrize(
+    "role,architecture,fault",
+    [
+        ("server", "amd64", None),
+        ("server", "arm64", None),
+        ("host", "amd64", None),
+        ("host", "arm64", None),
+        *[
+            ("server", "amd64", fault)
+            for fault in (
+                "new-fresh",
+                "no-findings",
+                "new-stale",
+                "at24",
+                "expired",
+                "disabled",
+                "other-product",
+                "wrong-image",
+                "corrupt-archive",
+                "latest-changed",
+                "report-other-db",
+                "report-other-subject",
+                "ignored",
+                "filtered",
+                "scanner-version",
+                "bad-exit",
+                "missing-report",
+                "unknown-finding",
+            )
+        ],
+    ],
+)
+def test_registry_sbom_scan_preserves_exact_database_and_component_authority(
+    tmp_path, monkeypatch, role, architecture, fault
+):
+    from saas.scripts import approved_disposition
+    from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+    from saas.scripts.oci_promotion import archive_index_digest
+    from tests.saas import test_oci_promotion as oci_case
+
+    product = "9" * 40 if fault == "other-product" else db_age.PRODUCT
+    images = tmp_path / "images"
+    images.mkdir()
+    monkeypatch.setattr(oci_case, "REVISION", product)
+    candidate(images)
+    archive = images / f"{role}-1.tar"
+    facts = inspect_oci_archive(archive, label_profile="executable")
+    index_digest = archive_index_digest(archive)
+    root = tmp_path / "admitted"
+    root.mkdir()
+    platform = f"linux/{architecture}"
+    manifest = {
+        "images": {
+            role: {
+                "index_digest": index_digest,
+                "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "facts": copy.deepcopy(facts),
+            }
+        }
+    }
+    if fault == "wrong-image":
+        manifest["images"][role]["facts"]["platforms"][platform]["config_digest"] = (
+            "sha256:" + "a" * 64
+        )
+    write_json(root / MANIFEST_NAME, manifest)
+    value = {
+        "candidate_manifest_sha256": hashlib.sha256(
+            (root / MANIFEST_NAME).read_bytes()
+        ).hexdigest(),
+        "images": {role: index_digest},
+        "product_tree": "9" * 40 if fault == "other-product" else promotion.recovery.M8C_TREE,
+    }
+    monkeypatch.setattr(promotion, "PRODUCT", product)
+    monkeypatch.setattr(promotion, "binding", lambda: value)
+    now = (
+        datetime.fromisoformat(
+            promotion.scan.TEMPORARY_DATABASE_AGE["expires_at"].replace("Z", "+00:00")
+        )
+        if fault == "expired"
+        else db_age.BUILT + db_age.timedelta(hours=24)
+        if fault == "at24"
+        else db_age.NOW
+    )
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(promotion, "datetime", Clock)
+    if fault == "disabled":
+        monkeypatch.setattr(promotion.scan, "temporary_database_age_enabled", lambda: False)
+    latest_calls, commands, classified = [], [], []
+
+    def latest():
+        latest_calls.append(True)
+        changed = fault in {"new-fresh", "new-stale"} or (
+            fault == "latest-changed" and len(latest_calls) > 1
+        )
+        return {**db_age.LATEST, **({"checksum": "sha256:" + "e" * 64} if changed else {})}
+
+    monkeypatch.setattr(promotion.scan, "official_database_latest", latest)
+    monkeypatch.setattr(
+        promotion.scan, "download_approved_database", lambda path: path.write_bytes(b"verified DB")
+    )
+    original_hash = promotion.file_sha256
+
+    def digest(path):
+        if path.name == "approved-database.tar.zst":
+            return (
+                "e" * 64
+                if fault == "corrupt-archive"
+                else promotion.scan.TEMPORARY_DATABASE_AGE["archive_SHA256"]
+            )
+        return original_hash(path)
+
+    monkeypatch.setattr(promotion, "file_sha256", digest)
+    status = (
+        {**db_age.status(), "built": now.isoformat()} if fault == "new-fresh" else db_age.status()
+    )
+    monkeypatch.setattr(promotion.subprocess, "check_output", lambda *_a, **_k: json.dumps(status))
+    report = root / "registry.raw.grype.json"
+    output = root / "component.json"
+
+    def scanner(command, **kwargs):
+        commands.append(command)
+        if "--platform" in command and fault != "missing-report":
+            raw = db_age.raw_report(archive, platform)
+            raw["descriptor"]["db"]["status"] = status
+            raw["matches"] = [
+                {"vulnerability": {"severity": "High"}, "artifact": {}} for _ in range(2)
+            ]
+            if fault == "report-other-db":
+                raw["descriptor"]["db"]["status"] = {**status, "built": "2026-11-07T06:19:57Z"}
+            if fault == "report-other-subject":
+                raw["source"]["target"]["imageID"] = "sha256:" + "e" * 64
+            if fault == "ignored":
+                raw["ignoredMatches"] = [{}]
+            if fault == "no-findings":
+                raw["matches"] = []
+            if fault == "filtered":
+                raw["descriptor"]["configuration"]["only-fixed"] = True
+            if fault == "scanner-version":
+                raw["descriptor"]["version"] = "0.119.0"
+            report.write_text(json.dumps(raw))
+        return subprocess.CompletedProcess(
+            command,
+            (7 if fault == "bad-exit" else 0 if fault == "no-findings" else 2)
+            if "--platform" in command
+            else 0,
+        )
+
+    def classify(image, path, **kwargs):
+        assert image == archive and path == report and kwargs["platform"] == platform
+        if fault == "unknown-finding":
+            raise ValueError("unknown original finding remains blocking")
+        classified.append(kwargs["database_age_disposition"])
+        return {"existing_protected_component_verifier": True}
+
+    monkeypatch.setattr(promotion.subprocess, "run", scanner)
+    monkeypatch.setattr(approved_disposition, "inspect_approved_disposition", classify)
+
+    def call():
+        promotion.scan_registry_sbom(
+            root,
+            archive,
+            role=role,
+            architecture=architecture,
+            scanner=Path("/locked/grype"),
+            report=report,
+            output=output,
+        )
+
+    if fault not in (None, "new-fresh", "at24", "no-findings"):
+        with pytest.raises(ValueError):
+            call()
+        assert not output.exists()
+        if fault in {"unknown-finding", "report-other-db", "report-other-subject", "filtered"}:
+            assert len(json.loads(report.read_bytes())["matches"]) == 2
+    else:
+        call()
+        result = json.loads(output.read_bytes())
+        assert result["raw_counts"] == {"Critical": 0, "High": 0 if fault == "no-findings" else 2}
+        assert result["component_disposition"] == (
+            None if fault == "no-findings" else {"existing_protected_component_verifier": True}
+        )
+        receipt = result["database_age_disposition"]
+        assert classified == ([] if fault == "no-findings" else [receipt])
+        assert (receipt is not None) is (fault in (None, "no-findings"))
+        if receipt is not None:
+            assert receipt["report_sha256"] == hashlib.sha256(report.read_bytes()).hexdigest()
+            assert (
+                receipt["subject"]["manifest_digest"]
+                == facts["platforms"][platform]["manifest_digest"]
+            )
+            assert (
+                receipt["subject"]["image"] == role and receipt["subject"]["platform"] == platform
+            )
+            assert len(latest_calls) == 2
+        config = json.loads((tmp_path / "sbom-grype-database/grype.json").read_text())
+        finite = fault in (None, "no-findings")
+        assert config["db"]["max-allowed-built-age"] == ("48h" if finite else "24h")
+        assert any("import" in command for command in commands) is finite
 
 
 @pytest.fixture(autouse=True)
@@ -898,8 +1104,12 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
         if s.get("name") == "Generate per-architecture SBOMs and check raw findings"
     )
     assert 'supply-chain-tools/syft" "registry:$image"' in scan["run"]
-    assert 'supply-chain-tools/grype" "registry:$image"' in scan["run"]
-    assert "|| grype_exit=$?" in scan["run"]
+    assert "accepted_m165_promotion scan-registry-sbom" in scan["run"]
+    assert '--scanner "${RUNNER_TEMP}/supply-chain-tools/grype"' in scan["run"]
+    assert '--role "$artifact" --architecture "$arch"' in scan["run"]
+    assert '--image "${RUNNER_TEMP}/admitted-layouts/${artifact}"' in scan["run"]
+    assert '--report "${prefix}.raw.grype.json"' in scan["run"]
+    assert '--output "${prefix}.component-disposition.json"' in scan["run"]
     retention = next(s for s in steps if s.get("name") == "Upload exact signed-image scan reports")
     assert retention["if"] == "always()"
     assert "artifacts/supply-chain/*.json" in retention["with"]["path"].splitlines()

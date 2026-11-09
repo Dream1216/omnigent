@@ -11,12 +11,13 @@ import os
 import re
 import subprocess
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from saas.scripts import accepted_m165_clean_context as clean
 from saas.scripts import accepted_oci_recovery as recovery
+from saas.scripts import scan_oci_candidates as scan
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
 from saas.scripts.oci_promotion import (
     MANIFEST_NAME,
@@ -777,6 +778,185 @@ def check_wheel(path: Path) -> None:
         )
 
 
+def scan_registry_sbom(
+    root: Path,
+    image: Path,
+    *,
+    role: str,
+    architecture: str,
+    scanner: Path,
+    report: Path,
+    output: Path,
+) -> None:
+    """Bind each registry report to its actual OCI and approved database."""
+    from saas.scripts.approved_disposition import inspect_approved_disposition
+    from saas.scripts.sqlite_component_disposition import image_blobs
+
+    value = binding()
+    manifest = read_json(root / MANIFEST_NAME)
+    require(
+        file_sha256(root / MANIFEST_NAME) == value["candidate_manifest_sha256"]
+        and manifest["images"][role]["index_digest"] == value["images"][role],
+        "registry scan seal differs",
+    )
+    platform = f"linux/{architecture}"
+    sealed = manifest["images"][role]
+    expected = sealed["facts"]["platforms"][platform]
+    with image_blobs(image) as blobs:
+        digest, document = blobs.platform(platform)
+        config_digest = document["config"]["digest"]
+        config = blobs.document(config_digest)
+        require(
+            digest == expected["manifest_digest"]
+            and config_digest == expected["config_digest"]
+            and config.get("config", {}).get("Labels") == expected["labels"],
+            "registry scan actual OCI subject differs",
+        )
+    subject = {
+        "image": role,
+        "platform": platform,
+        "archive_sha256": sealed["archive_sha256"],
+        "index_digest": sealed["index_digest"],
+        "manifest_digest": digest,
+        "config_digest": config_digest,
+        "source_revision": PRODUCT,
+        "product_tree": value["product_tree"],
+    }
+    now = datetime.now(UTC)
+    latest = scan.official_database_latest()
+    temporary = (
+        scan.temporary_database_age_enabled()
+        and scan.TEMPORARY_DATABASE_AGE["products"].get(PRODUCT) == value["product_tree"]
+        and scan.approved_database_is_latest(latest)
+        and datetime.fromisoformat(scan.TEMPORARY_DATABASE_AGE["built"].replace("Z", "+00:00"))
+        + timedelta(hours=24)
+        < now
+        < datetime.fromisoformat(scan.TEMPORARY_DATABASE_AGE["expires_at"].replace("Z", "+00:00"))
+    )
+    database_root = root.parent / "sbom-grype-database"
+    database_root.mkdir(mode=0o700, exist_ok=True)
+    require(not database_root.is_symlink(), "registry database cache must be private")
+    database_archive = database_root / "approved-database.tar.zst"
+    config_path = database_root / "grype.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "db": {
+                    "cache-dir": str(database_root / "cache"),
+                    "auto-update": False,
+                    "max-update-check-frequency": "0s",
+                    "validate-by-hash-on-start": True,
+                    "validate-age": True,
+                    "max-allowed-built-age": "48h" if temporary else "24h",
+                }
+            }
+        )
+        + "\n"
+    )
+    command = [str(scanner), "-c", str(config_path)]
+    if temporary:
+        require(not database_archive.is_symlink(), "registry database archive is not trusted")
+        if not database_archive.exists():
+            scan.download_approved_database(database_archive)
+        require(
+            file_sha256(database_archive) == scan.TEMPORARY_DATABASE_AGE["archive_SHA256"],
+            "registry database archive full SHA256 differs",
+        )
+        subprocess.run([*command, "db", "import", str(database_archive)], check=True)
+    else:
+        subprocess.run([*command, "db", "update"], check=True)
+    status = json.loads(subprocess.check_output([*command, "db", "status", "-o", "json"]))
+    if temporary:
+        scan.validate_approved_database_status(status, now=datetime.now(UTC))
+        latest = scan.official_database_latest()
+        require(
+            scan.approved_database_is_latest(latest)
+            and file_sha256(database_archive) == scan.TEMPORARY_DATABASE_AGE["archive_SHA256"],
+            "official latest or verified registry database changed before scan",
+        )
+    else:
+        scan.parse_database_status(status, now=datetime.now(UTC))
+    checked_at = datetime.now(UTC)
+    result = subprocess.run(
+        [
+            *command,
+            f"registry:ghcr.io/dream1216/omnigent-saas-{role}@{digest}",
+            "--platform",
+            platform,
+            "--fail-on",
+            "high",
+            "-o",
+            "json",
+            "--file",
+            str(report),
+        ],
+        check=False,
+    )
+    require(result.returncode in (0, 2) and report.is_file(), "registry Grype scan failed")
+    raw = report.read_bytes()
+    raw_report = json.loads(raw)
+    parsed = scan.scan_report(raw_report)
+    require(raw_report.get("ignoredMatches", []) == [], "registry scan omitted findings")
+    descriptor = raw_report.get("descriptor", {})
+    configuration = descriptor.get("configuration", {})
+    require(
+        descriptor.get("name") == "grype"
+        and descriptor.get("version") == scan.GRYPE_VERSION
+        and configuration.get("only-fixed") is False
+        and configuration.get("only-notfixed") is False
+        and configuration.get("exclude", []) == []
+        and configuration.get("vex-documents", []) == [],
+        "registry scanner or unfiltered report configuration differs",
+    )
+    disposition = (
+        scan.make_database_age_disposition(
+            raw_report["descriptor"]["db"]["status"],
+            latest,
+            subject,
+            now=datetime.now(UTC),
+            checked_at=checked_at,
+            report_sha256=hashlib.sha256(raw).hexdigest(),
+        )
+        if temporary
+        else None
+    )
+    scan.parse_database_status(
+        raw_report["descriptor"]["db"]["status"],
+        now=datetime.now(UTC),
+        database_age_disposition=disposition,
+        subject=raw_report.get("source", {}).get("target"),
+        report_sha256=hashlib.sha256(raw).hexdigest(),
+    )
+    require(
+        result.returncode != 2 or any(parsed["counts"].values()),
+        "registry scanner exit and raw findings disagree",
+    )
+    proof = (
+        inspect_approved_disposition(
+            image,
+            report,
+            platform=platform,
+            now=datetime.now(UTC),
+            database_age_disposition=disposition,
+        )
+        if any(parsed["counts"].values())
+        else None
+    )
+    output.write_text(
+        json.dumps(
+            {
+                "raw_counts": parsed["counts"],
+                "scanner_exit": result.returncode,
+                "component_disposition": proof,
+                "database_age_disposition": disposition,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    )
+
+
 def main() -> None:
     configure_product_profile(os.environ.get("OMNIGENT_ACCEPTED_PRODUCT_PROFILE", "M165"))
     parser = argparse.ArgumentParser(description=__doc__)
@@ -792,6 +972,7 @@ def main() -> None:
             "verify",
             "verify-wheel",
             "verify-sbom",
+            "scan-registry-sbom",
         ),
     )
     parser.add_argument("--root", type=Path)
@@ -804,6 +985,10 @@ def main() -> None:
     parser.add_argument("--subject")
     parser.add_argument("--sbom", type=Path)
     parser.add_argument("--wheel", type=Path)
+    parser.add_argument("--image", type=Path)
+    parser.add_argument("--scanner", type=Path)
+    parser.add_argument("--report", type=Path)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.command == "preflight":
         print(json.dumps(preflight(args.root, args.policy_revision)))
@@ -811,6 +996,16 @@ def main() -> None:
         download(args.root)
     elif args.command == "check-wheel":
         check_wheel(args.wheel)
+    elif args.command == "scan-registry-sbom":
+        scan_registry_sbom(
+            args.root,
+            args.image,
+            role=args.role,
+            architecture=args.architecture,
+            scanner=args.scanner,
+            report=args.report,
+            output=args.output,
+        )
     elif args.command == "child":
         value = binding()
         manifest = read_json(args.root / MANIFEST_NAME)

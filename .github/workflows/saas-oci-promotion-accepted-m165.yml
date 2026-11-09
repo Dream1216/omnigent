@@ -431,16 +431,12 @@ jobs:
                 --platform "linux/${arch}" \
                 -o "spdx-json=${prefix}.spdx.json" \
                 -o "cyclonedx-json=${prefix}.cyclonedx.json"
-              grype_exit=0
-              "${RUNNER_TEMP}/supply-chain-tools/grype" "registry:$image" \
-                --platform "linux/${arch}" -o json > "${prefix}.raw.grype.json" || grype_exit=$?
-              jq -e '
-                (.ignoredMatches // []) == []
-              ' "${prefix}.raw.grype.json" >/dev/null
-              python -m saas.scripts.sqlite_component_disposition \
+              python -m saas.scripts.accepted_m165_promotion scan-registry-sbom \
+                --root "${RUNNER_TEMP}/admitted-oci" --role "$artifact" --architecture "$arch" \
+                --scanner "${RUNNER_TEMP}/supply-chain-tools/grype" \
                 --image "${RUNNER_TEMP}/admitted-layouts/${artifact}" \
-                --report "${prefix}.raw.grype.json" --platform "linux/${arch}" \
-                --output "${prefix}.component-disposition.json" --scanner-exit "$grype_exit"
+                --report "${prefix}.raw.grype.json" \
+                --output "${prefix}.component-disposition.json"
             done
           done
           rm -r -- "${RUNNER_TEMP:?}/admitted-layouts/server" "${RUNNER_TEMP:?}/admitted-layouts/host"
