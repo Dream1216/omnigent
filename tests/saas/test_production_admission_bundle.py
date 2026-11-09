@@ -179,8 +179,10 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     command = next(
         step["run"]
         for step in job["steps"]
-        if "saas.scripts.run_production_admission" in step.get("run", "")
+        if ".github/scripts/ci/release_pipeline.py gate --stage production" in step.get("run", "")
     )
+    pipeline = json.loads((_repo() / ".github/release-pipeline.json").read_text())
+    assert pipeline["gates"]["production"] == ["run_production_admission"]
     assert "--require-ready" in command
     assert "--product-revision" in command
     assert "--evidence-revision" in command
@@ -207,7 +209,7 @@ def test_production_workflow_is_manual_protected_and_fail_closed() -> None:
     candidate_path = _repo() / ".github/workflows/saas-image-candidate.yml"
     candidate = yaml.load(candidate_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     assert candidate["on"]["push"]["branches"] == ["main"]
-    assert ".github/workflows/saas-production-admission.yml" in candidate["on"]["push"]["paths"]
+    assert "paths" not in candidate["on"]["push"]
 
 
 def test_image_candidate_composite_preserves_reproducible_build_contract() -> None:

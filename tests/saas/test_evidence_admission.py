@@ -594,8 +594,10 @@ def test_receipt_workflow_preserves_protected_external_signing_boundary() -> Non
     assert "saas.scripts.issue_evidence_receipt" in workflow
     assert "if: always()" in workflow
     assert "if-no-files-found: error" in workflow
-    assert ".github/workflows/saas-production-admission.yml" in image_workflow
-    assert '"saas/scripts/*evidence_receipt.py"' in image_workflow
+    assert "  pull_request:\n  push:" in image_workflow
+    settings = json.loads((_repo() / ".github/release-pipeline.json").read_text())
+    assert ".github/" in settings["non_image_inputs"]
+    assert "saas/" in settings["image_inputs"]
 
     issuer = (_repo() / "saas/scripts/issue_evidence_receipt.py").read_text(encoding="utf-8")
     assert "receipt-issuance-report.json" in issuer
