@@ -527,6 +527,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             _named_workflow_step(workflow, verification),
         )
         for checkout, verification in (
+            ("Checkout exact release planner", "Verify exact planner revision"),
             (
                 "Checkout immutable preflight candidate",
                 "Verify exact preflight revision",
@@ -656,7 +657,12 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "python -m saas.scripts.oci_promotion prepare",
         "python -m saas.scripts.oci_promotion readback",
         "--current-scans artifacts/promotion-current-scans",
-        '--run-id "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY"',
+        '--run-id "$ORIGINAL_CANDIDATE_RUN_ID" --repository "$GITHUB_REPOSITORY"',
+        "needs.resolve-candidate.outputs.candidate-run-id || github.run_id",
+        (
+            "needs.resolve-candidate.outputs.oci-artifact-id || "
+            "needs.build-candidate.outputs.oci-artifact-id"
+        ),
         "name: Read back promoted OCI bytes before signing",
         "name: Sign server image provenance with GitHub OIDC",
     }
@@ -822,7 +828,18 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     if n1_workflow is None:
         return violations
     trigger_path = '      - "saas/**"'
-    if workflow.count(trigger_path) != 2 or n1_workflow.count(trigger_path) != 2:
+    selected_candidate = workflow.count(
+        "needs.select-candidate-work.outputs.candidate-required == 'true'"
+    ) == 2 and all(
+        fragment in workflow
+        for fragment in (
+            "  pull_request:\n  push:",
+            "select-candidate-work:",
+            ".github/scripts/ci/release_pipeline.py plan",
+            "needs.select-candidate-work.outputs.candidate-required == 'true'",
+        )
+    )
+    if not selected_candidate or n1_workflow.count(trigger_path) != 2:
         violations.append("candidate and N-1 workflows must trigger on SaaS-owned image inputs")
     if n1_workflow.count("--label-profile n1") != 2:
         violations.append(

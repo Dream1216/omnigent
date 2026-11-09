@@ -21,6 +21,55 @@ from saas.scripts.scan_oci_candidates import (
 )
 
 
+@pytest.mark.parametrize("fault", [None, "corrupt", "symlink", "wrong-size"])
+def test_release_archive_cache_requires_complete_hash_verified_bytes(tmp_path, monkeypatch, fault):
+    root = tmp_path / "cache"
+    root.mkdir()
+    monkeypatch.setenv("OMNIGENT_RELEASE_TOOL_CACHE", str(root))
+    payload = b"one complete fixed official archive"
+    digest = hashlib.sha256(payload).hexdigest()
+    original = tmp_path / "original"
+    original.write_bytes(payload)
+    scan_oci_candidates.save_release_cache(original, digest)
+    cached = root / digest
+    if fault == "corrupt":
+        cached.write_bytes(b"x" * len(payload))
+    elif fault == "symlink":
+        cached.unlink()
+        cached.symlink_to(original)
+    destination = tmp_path / "restored"
+    restored = scan_oci_candidates.restore_release_cache(
+        destination, digest, size=len(payload) + (fault == "wrong-size")
+    )
+    assert restored is (fault is None)
+    assert destination.exists() is restored
+    if restored:
+        assert destination.read_bytes() == payload
+
+
+def test_cached_database_still_runs_original_age_and_subject_validation(tmp_path, monkeypatch):
+    root = tmp_path / "cache"
+    root.mkdir()
+    monkeypatch.setenv("OMNIGENT_RELEASE_TOOL_CACHE", str(root))
+    payload = b"official database bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setitem(scan_oci_candidates.TEMPORARY_DATABASE_AGE, "archive_SHA256", digest)
+    (root / digest).write_bytes(payload)
+    monkeypatch.setattr(
+        scan_oci_candidates.urllib.request,
+        "urlopen",
+        lambda *a, **kw: pytest.fail("verified archive must be reused"),
+    )
+    target = tmp_path / "db.tar.zst"
+    scan_oci_candidates.download_approved_database(target)
+    assert target.read_bytes() == payload
+    with pytest.raises(ValueError, match="24 hours"):
+        parse_database_status(
+            {"valid": True, "schemaVersion": "v6.1.10", "built": "2026-11-01T00:00:00Z"},
+            now=datetime(2026, 11, 10, tzinfo=UTC),
+        )
+
+
 @pytest.mark.parametrize("fault", [None, "short", "oversized", "hash", "version"])
 def test_fixed_grype_API_bytes_must_pass_before_extraction(monkeypatch, tmp_path, fault):
     monkeypatch.setenv("GH_TOKEN", "fixed-readonly-test-token")
@@ -192,7 +241,8 @@ def test_fixed_host_diagnostic_cannot_enter_release_or_hide_raw_failures() -> No
     flag = workflow["on"]["workflow_dispatch"]["inputs"]["diagnostic_host_only"]
     assert flag["default"] == "false" and flag["type"] == "boolean"
     for name in ("verify-candidate-preflight", "verify-production-migration-replay"):
-        assert workflow["jobs"][name]["if"] == "${{ !inputs.diagnostic_host_only }}"
+        assert "!inputs.diagnostic_host_only &&" in workflow["jobs"][name]["if"]
+        assert "candidate-required == 'true'" in workflow["jobs"][name]["if"]
     for name in ("publish-signed", "verify-published-source"):
         assert "!inputs.diagnostic_host_only &&" in workflow["jobs"][name]["if"]
     assert diagnostic["permissions"] == {"contents": "read", "actions": "read"}

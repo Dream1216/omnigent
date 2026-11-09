@@ -411,6 +411,7 @@ def test_workflow_never_rebuilds_after_candidate_admission() -> None:
     )
     assert workflow["jobs"]["verify-published-source"]["needs"] == [
         "build-candidate",
+        "resolve-candidate",
         "publish-signed",
     ]
 

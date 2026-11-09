@@ -1,5 +1,27 @@
 # Production image release runbook
 
+Execution order and input selection live in `.github/release-pipeline.json` and
+`saas-image-candidate.yml`; enforceable supply-chain requirements live in
+`saas/supply_chain/release-policy.json`. This guide describes those contracts.
+Conversation state and historical approval notes do not add execution gates.
+
+The workflow records a plan for every PR and main push. Test/document-only changes
+do not build OCI. Main pushes validate source through the existing CI rather than
+starting a duplicate image build. Dispatch the candidate workflow for the final
+protected product. A build-only dispatch retains the same sealed OCI needed by a
+later signed dispatch. Pass its `candidate_run_id` to resume signing without a
+rebuild; the resolver verifies the exact product, protected producer, successful
+build, native artifact hashes and candidate seal before the existing full OCI
+verification, current scans, signatures and independent registry readback.
+
+Use the shared source checks with
+`uv run python .github/scripts/ci/release_pipeline.py gate --stage source`.
+File and line budgets produce visible size warnings under the current upstream
+manifest. Lineage, version, forbidden paths, reverse dependencies, patch replay
+and the isolation floor remain enforced. Recovery and final production checks
+are available through `gate --stage recovery` and `gate --stage production`, with
+their existing revision arguments and `--require-ready`.
+
 ## Build contract
 
 Build only from a clean, immutable product SHA whose pinned upstream ancestor,
@@ -61,10 +83,11 @@ uv run python -m saas.scripts.check_image_supply_chain \
 The `build-candidate` job in `saas-image-candidate.yml` repeats local OCI builds
 and compares executable manifest/config facts. Its protected `publish-signed`
 job can publish the wheel plus Server and Host images and attach GitHub OIDC
-attestations to those artifacts. It still does not run vulnerability or license
-admission scans, a one-hour Canary, an N-1 rollback exercise, or write the final
-canonical production evidence object. Successful publication therefore proves
-a signed candidate exists; it does not authorize production deployment.
+attestations to those artifacts. Actual OCI vulnerability scans run before
+promotion and after signed-image readback, with raw findings retained. Publication
+does not perform the one-hour Canary, physical N-1 rollback or final production
+evidence admission. Successful publication proves a signed candidate exists;
+it does not authorize production deployment.
 
 ## Rollback
 

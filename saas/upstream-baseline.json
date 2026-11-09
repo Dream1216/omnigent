@@ -113,6 +113,7 @@
     ]
   },
   "source_intrusion_budget": {
+    "size_limits_enforcement": "report",
     "max_active_patches": 9,
     "max_direct_upstream_files": 226,
     "max_upstream_net_added_loc": 6841,

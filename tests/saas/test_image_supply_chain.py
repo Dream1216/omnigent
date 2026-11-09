@@ -1501,7 +1501,11 @@ def test_candidate_contract_requires_saas_owned_image_trigger_scope(
     repo = _candidate_contract_repo(tmp_path)
     workflow = repo / relative
     source = workflow.read_text(encoding="utf-8")
-    trigger = '      - "saas/**"\n'
+    trigger = (
+        "needs.select-candidate-work.outputs.candidate-required == 'true'"
+        if relative.endswith("saas-image-candidate.yml")
+        else '      - "saas/**"\n'
+    )
     assert source.count(trigger) == 2
     workflow.write_text(source.replace(trigger, "", 1), encoding="utf-8")
 

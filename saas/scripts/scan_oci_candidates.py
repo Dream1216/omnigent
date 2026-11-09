@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -100,6 +101,8 @@ def approved_database_is_latest(value: dict[str, Any]) -> bool:
 
 
 def download_approved_database(destination: Path) -> None:
+    if restore_release_cache(destination, str(TEMPORARY_DATABASE_AGE["archive_SHA256"])):
+        return
     request = urllib.request.Request(
         str(TEMPORARY_DATABASE_AGE["archive_URL"]),
         headers={"User-Agent": "omnigent-finite-db-age"},
@@ -117,6 +120,7 @@ def download_approved_database(destination: Path) -> None:
             output.write(chunk)
     if size == 0 or digest.hexdigest() != TEMPORARY_DATABASE_AGE["archive_SHA256"]:
         raise ValueError("official database archive full SHA256 differs")
+    save_release_cache(destination, str(TEMPORARY_DATABASE_AGE["archive_SHA256"]))
 
 
 def temporary_database_subjects(
@@ -470,6 +474,43 @@ def validate_image_scope(images: dict[str, Path], scope: str) -> None:
         raise ValueError(f"{scope} scan requires exactly: {', '.join(sorted(expected))}")
 
 
+def restore_release_cache(destination: Path, digest: str, *, size: int | None = None) -> bool:
+    """Cache only complete hash-verified archives; qualification never comes from a cache."""
+    root = os.environ.get("OMNIGENT_RELEASE_TOOL_CACHE")
+    if not root:
+        return False
+    cached = Path(root) / digest
+    if (
+        not cached.is_file()
+        or cached.is_symlink()
+        or (size is not None and cached.stat().st_size != size)
+        or file_sha256(cached) != digest
+    ):
+        return False
+    shutil.copyfile(cached, destination)
+    if file_sha256(destination) != digest:
+        destination.unlink()
+        raise ValueError("cached release archive changed during transfer")
+    return True
+
+
+def save_release_cache(source: Path, digest: str) -> None:
+    root = os.environ.get("OMNIGENT_RELEASE_TOOL_CACHE")
+    if not root:
+        return
+    directory = Path(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=directory, delete=False) as stream:
+        temporary = Path(stream.name)
+    try:
+        shutil.copyfile(source, temporary)
+        if file_sha256(temporary) != digest:
+            raise ValueError("release archive changed before caching")
+        temporary.replace(directory / digest)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def install_grype(destination: Path) -> Path:
     request = urllib.request.Request(
         f"https://api.github.com/repos/anchore/grype/releases/assets/{GRYPE_ASSET_ID}",
@@ -478,18 +519,23 @@ def install_grype(destination: Path) -> Path:
     if token := os.environ.get("GH_TOKEN"):
         request.add_unredirected_header("Authorization", f"Bearer {token}")
     archive = destination / "grype.tar.gz"
-    with urllib.request.urlopen(request, timeout=120) as response, archive.open("wb") as stream:
-        digest = hashlib.sha256()
-        downloaded = 0
-        while chunk := response.read(1024 * 1024):
-            downloaded += len(chunk)
-            if downloaded > GRYPE_ARCHIVE_BYTES:
-                raise ValueError("Grype release archive size mismatch")
-            digest.update(chunk)
-            stream.write(chunk)
-    if downloaded != GRYPE_ARCHIVE_BYTES or digest.hexdigest() != GRYPE_SHA256:
-        archive.unlink(missing_ok=True)
-        raise ValueError("Grype release archive size or hash mismatch")
+    if not restore_release_cache(archive, GRYPE_SHA256, size=GRYPE_ARCHIVE_BYTES):
+        with (
+            urllib.request.urlopen(request, timeout=120) as response,
+            archive.open("wb") as stream,
+        ):
+            digest = hashlib.sha256()
+            downloaded = 0
+            while chunk := response.read(1024 * 1024):
+                downloaded += len(chunk)
+                if downloaded > GRYPE_ARCHIVE_BYTES:
+                    raise ValueError("Grype release archive size mismatch")
+                digest.update(chunk)
+                stream.write(chunk)
+        if downloaded != GRYPE_ARCHIVE_BYTES or digest.hexdigest() != GRYPE_SHA256:
+            archive.unlink(missing_ok=True)
+            raise ValueError("Grype release archive size or hash mismatch")
+        save_release_cache(archive, GRYPE_SHA256)
     subprocess.run(["tar", "-xzf", str(archive), "-C", str(destination), "grype"], check=True)
     binary = destination / "grype"
     version = subprocess.check_output([str(binary), "version"], text=True)

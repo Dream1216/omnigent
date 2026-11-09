@@ -6,8 +6,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 DEPENDENCY_SCOPES = {
@@ -111,7 +113,7 @@ def manifest_only(path: str, before: str, after: str) -> bool:
     return values[0] == values[1]
 
 
-def file_scope(path: str, read=None) -> str:
+def file_scope(path: str, read: Callable[[str], tuple[str, str]] | None = None) -> str:
     if (
         path.startswith((".github/workflows/", ".github/actions/"))
         and path.endswith((".yml", ".yaml"))
@@ -158,6 +160,8 @@ def python_matrix(backend: bool, *, tooling: bool = True) -> str:
 
 def select_scope(files: list[dict], *, read=None, reason: str = "") -> dict[str, str]:
     """Bundles retain the union of consumers; unknown or non-modified files expand it."""
+    if files and not reason and (focused := test_only_scope(files)) is not None:
+        return focused
     scopes = {file_scope(file["filename"], read) for file in files}
     paths = {file["filename"] for file in files}
     full = bool(reason) or not files or "full" in scopes
@@ -197,6 +201,51 @@ def select_scope(files: list[dict], *, read=None, reason: str = "") -> dict[str,
         "ui": ui,
         "reason": reason
         or f"Dependency scopes: {', '.join(sorted(scopes)) if not full else 'full'}",
+    }
+
+
+def test_only_scope(files: list[dict]) -> dict[str, str] | None:
+    """Narrow only modified leaf tests; fixture, collection and runtime changes stay full."""
+    root = Path(__file__).resolve().parents[3]
+    policy = root / ".github/release-pipeline.json"
+    if not policy.is_file():
+        return None
+    owners = json.loads(policy.read_text())["test_groups"]
+    selected: dict[str, list[str]] = {}
+    for file in files:
+        path = file["filename"]
+        if (
+            file["status"] != "modified"
+            or re.fullmatch(r"tests/(?:[A-Za-z0-9_.-]+/)*test_[A-Za-z0-9_.-]+[.]py", path) is None
+        ):
+            return None
+        matches = [group for prefix, group in owners.items() if path.startswith(prefix)]
+        if len(matches) != 1:
+            return None
+        selected.setdefault(matches[0], []).append(path)
+    matrix = json.loads(python_matrix(True))
+    matrix["include"] = [
+        {**group, "paths": shlex.join(sorted(selected[group["group"]]))}
+        for group in matrix["include"]
+        if group["group"] in selected
+    ]
+    if {group["group"] for group in matrix["include"]} != set(selected):
+        return None
+    return {
+        "dependency": "true",
+        "backend": "true",
+        "database": "false",
+        "integration": "false",
+        "e2e": "false",
+        "windows": "false",
+        "ios": "false",
+        "web": "false",
+        "docker": "false",
+        "omnidev": "false",
+        "sidecar": "false",
+        "ui": "none",
+        "python_matrix": json.dumps(matrix, separators=(",", ":")),
+        "reason": "Modified leaf tests only; production and shared fixtures unchanged",
     }
 
 
