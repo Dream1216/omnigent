@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -15,6 +16,8 @@ from typing import TypedDict
 
 GRYPE_VERSION = "0.120.1"
 GRYPE_SHA256 = "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d"
+GRYPE_ASSET_ID = 616618032
+GRYPE_ARCHIVE_BYTES = 32270829
 PLATFORMS = ("linux/amd64", "linux/arm64")
 SEVERITIES = ("Critical", "High")
 SCAN_SCOPES = {
@@ -85,19 +88,25 @@ def validate_image_scope(images: dict[str, Path], scope: str) -> None:
 
 
 def install_grype(destination: Path) -> Path:
-    url = (
-        f"https://github.com/anchore/grype/releases/download/v{GRYPE_VERSION}/"
-        f"grype_{GRYPE_VERSION}_linux_amd64.tar.gz"
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/anchore/grype/releases/assets/{GRYPE_ASSET_ID}",
+        headers={"Accept": "application/octet-stream", "User-Agent": "omnigent-grype-supply"},
     )
+    if token := os.environ.get("GH_TOKEN"):
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
     archive = destination / "grype.tar.gz"
-    with urllib.request.urlopen(url, timeout=120) as response, archive.open("wb") as stream:
+    with urllib.request.urlopen(request, timeout=120) as response, archive.open("wb") as stream:
         digest = hashlib.sha256()
+        downloaded = 0
         while chunk := response.read(1024 * 1024):
+            downloaded += len(chunk)
+            if downloaded > GRYPE_ARCHIVE_BYTES:
+                raise ValueError("Grype release archive size mismatch")
             digest.update(chunk)
             stream.write(chunk)
-    if digest.hexdigest() != GRYPE_SHA256:
+    if downloaded != GRYPE_ARCHIVE_BYTES or digest.hexdigest() != GRYPE_SHA256:
         archive.unlink(missing_ok=True)
-        raise ValueError("Grype release archive hash mismatch")
+        raise ValueError("Grype release archive size or hash mismatch")
     subprocess.run(["tar", "-xzf", str(archive), "-C", str(destination), "grype"], check=True)
     binary = destination / "grype"
     version = subprocess.check_output([str(binary), "version"], text=True)

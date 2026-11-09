@@ -26,8 +26,14 @@ on:
         description: Exact approved main SHA for this signing workflow, not the product SHA
         required: true
         type: string
+      product_profile:
+        description: Exact recovered product; historical M165 remains the default
+        type: choice
+        required: true
+        default: M165
+        options: [M165, M8c-retained-first]
       candidate_run_id:
-        description: Actual completed clean-M165 recovery run; no future or historical failed run
+        description: Actual completed exact-profile recovery run; no future or historical failed run
         required: true
         type: string
 
@@ -40,6 +46,7 @@ concurrency:
 
 env:
   PRODUCT_REVISION: 165cebe8585a1a5fa8588e2a55f37505f89f3e55
+  OMNIGENT_ACCEPTED_PRODUCT_PROFILE: ${{ inputs.product_profile || 'M165' }}
   SOURCE_DATE_EPOCH: "1794108147"
   ORIGINAL_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
   OMNIGENT_M165_PRODUCER_RUN: ${{ inputs.candidate_run_id }}
@@ -51,6 +58,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: Select only the exact retained M8c product profile
+        if: inputs.product_profile == 'M8c-retained-first'
+        run: |
+          set -euo pipefail
+          echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=1794205060" >> "$GITHUB_ENV"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -63,6 +76,8 @@ jobs:
       - uses: ./saas/actions/setup-pinned-crane
         timeout-minutes: 3
       - name: Install locked scanner for native registry subject preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           uv run python - <<'PY'
           import os
@@ -104,6 +119,12 @@ jobs:
       oci-artifact-id: ${{ steps.accepted.outputs.oci-artifact-id }}
       oci-artifact-sha256: ${{ steps.accepted.outputs.oci-artifact-sha256 }}
     steps:
+      - name: Select only the exact retained M8c product profile
+        if: inputs.product_profile == 'M8c-retained-first'
+        run: |
+          set -euo pipefail
+          echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=1794205060" >> "$GITHUB_ENV"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.sha }}
@@ -116,7 +137,7 @@ jobs:
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ env.PRODUCT_REVISION }}
-          evidence-revision: d404ce0e80e5f5b10b9dd8dec8673fb02382f3ec
+          evidence-revision: ${{ inputs.product_profile == 'M8c-retained-first' && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
       - name: Authenticate actual recovered producer and signing controller Main CI
         id: accepted
         env:
@@ -155,6 +176,12 @@ jobs:
       SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-oci-promotion-accepted-m165.yml
       CANDIDATE_MANIFEST_SHA256: ${{ needs.admit-original.outputs.manifest-sha256 }}
     steps:
+      - name: Select only the exact retained M8c product profile
+        if: inputs.product_profile == 'M8c-retained-first'
+        run: |
+          set -euo pipefail
+          echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=1794205060" >> "$GITHUB_ENV"
       - name: Validate protected release coordinates
         env:
           TRUSTED_REF: ${{ github.ref }}
@@ -181,7 +208,7 @@ jobs:
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ env.PRODUCT_REVISION }}
-          evidence-revision: d404ce0e80e5f5b10b9dd8dec8673fb02382f3ec
+          evidence-revision: ${{ inputs.product_profile == 'M8c-retained-first' && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
       - name: Download and validate original admitted OCI artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -358,15 +385,17 @@ jobs:
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'from omnigent.onboarding.harness_install import harness_cli_installed; keys=("anthropic", "openai", "pi", "kiro", "kimi", "qwen", "opencode", "gemini", "devin", "jcode"); failed=[key for key in keys if not harness_cli_installed(key)]; assert not failed, f"published Host image has missing or unsupported harness CLIs: {failed}"'
       - name: Install hash-pinned Syft and Grype
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/supply-chain-tools"
-          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $GH_TOKEN" \
             --output "${RUNNER_TEMP}/syft.tar.gz" \
-            https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
-          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            https://api.github.com/repos/anchore/syft/releases/assets/615916330
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors -H "Accept: application/octet-stream" -H "Authorization: Bearer $GH_TOKEN" \
             --output "${RUNNER_TEMP}/grype.tar.gz" \
-            https://github.com/anchore/grype/releases/download/v0.120.1/grype_0.120.1_linux_amd64.tar.gz
+            https://api.github.com/repos/anchore/grype/releases/assets/616618032
           printf '%s  %s\n' \
             c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47 "${RUNNER_TEMP}/syft.tar.gz" \
             0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d "${RUNNER_TEMP}/grype.tar.gz" \
@@ -548,6 +577,8 @@ jobs:
             rm -r -- "${RUNNER_TEMP:?}/${artifact}-signed-layout"
           done
       - name: Scan signed image digests on both architectures
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           python -m saas.scripts.scan_oci_candidates
           --image server=${{ runner.temp }}/server-signed.tar
@@ -589,11 +620,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
+          promotion_rebuilt=$(jq -r 'if (.rebuilt | type) == "boolean" then .rebuilt else error("verified promotion rebuild flag missing") end' "$OMNIGENT_M165_BINDING")
           jq -n \
             --arg revision "$PRODUCT_REVISION" \
             --arg policy_revision "$SIGNING_POLICY_REVISION" \
             --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
             --argjson original_candidate_run_id "$ORIGINAL_CANDIDATE_RUN_ID" \
+            --argjson promotion_rebuilt "$promotion_rebuilt" \
             --arg workflow "$GITHUB_WORKFLOW_REF" \
             --arg wheel_attestation "$WHEEL_ATTESTATION" \
             --arg server_image "$SERVER_IMAGE" \
@@ -606,7 +639,7 @@ jobs:
             --arg host_product_attestation "$HOST_PRODUCT_ATTESTATION" \
             --arg manifest_sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --arg artifact_id "$OCI_ARTIFACT_ID" --arg artifact_sha256 "$OCI_ARTIFACT_SHA256" \
-            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, signing_policy_revision: $policy_revision, signing_run_id: $run_id, signing_run_attempt: $run_attempt, original_candidate_run_id: $original_candidate_run_id, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation, product_promotion_attestation: $server_product_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation, product_promotion_attestation: $host_product_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: true, signing_rebuilt_oci: false}, production_deployment_receipt: null}' \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, signing_policy_revision: $policy_revision, signing_run_id: $run_id, signing_run_attempt: $run_attempt, original_candidate_run_id: $original_candidate_run_id, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation, product_promotion_attestation: $server_product_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation, product_promotion_attestation: $host_product_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: $promotion_rebuilt, signing_rebuilt_oci: false}, production_deployment_receipt: null}' \
             > artifacts/signed-release-candidate.json
           cp "$OMNIGENT_M165_BINDING" artifacts/accepted-m165-binding.json
       - name: Upload signed release candidate facts
@@ -644,6 +677,12 @@ jobs:
     env:
       CANDIDATE_MANIFEST_SHA256: ${{ needs.admit-original.outputs.manifest-sha256 }}
     steps:
+      - name: Select only the exact retained M8c product profile
+        if: inputs.product_profile == 'M8c-retained-first'
+        run: |
+          set -euo pipefail
+          echo "PRODUCT_REVISION=8c851bdd12829340b2a327cf7542fe4de84d9132" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=1794205060" >> "$GITHUB_ENV"
       - name: Checkout immutable independent verifier
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -658,7 +697,7 @@ jobs:
         uses: ./saas/actions/runtime-evidence-context
         with:
           product-revision: ${{ env.PRODUCT_REVISION }}
-          evidence-revision: d404ce0e80e5f5b10b9dd8dec8673fb02382f3ec
+          evidence-revision: ${{ inputs.product_profile == 'M8c-retained-first' && '1da1acd35a63ab3c14a14dff030f0061e1f74314' || 'd404ce0e80e5f5b10b9dd8dec8673fb02382f3ec' }}
       - name: Independently authenticate the exact original recovered producer
         env:
           GH_TOKEN: ${{ github.token }}
@@ -708,7 +747,7 @@ jobs:
           facts=release-facts/signed-release-candidate.json
           jq -e --arg revision "$PRODUCT_REVISION" \
             --slurpfile binding "$OMNIGENT_M165_BINDING" \
-            '.schema_version == 1 and .product_revision == $revision and .signing_policy_revision == env.SIGNING_POLICY_REVISION and .signing_run_id == env.GITHUB_RUN_ID and .signing_run_attempt == env.GITHUB_RUN_ATTEMPT and .original_candidate_run_id == (env.ORIGINAL_CANDIDATE_RUN_ID | tonumber) and .workflow_identity == env.GITHUB_WORKFLOW_REF and .promotion.candidate_manifest_sha256 == env.CANDIDATE_MANIFEST_SHA256 and .promotion.original_artifact_id == ($binding[0].oci_artifact_id | tostring) and .promotion.original_artifact_sha256 == $binding[0].oci_artifact_sha256 and .promotion.rebuilt == true and .promotion.signing_rebuilt_oci == false and (.images | length) == 2' \
+            '.schema_version == 1 and .product_revision == $revision and .signing_policy_revision == env.SIGNING_POLICY_REVISION and .signing_run_id == env.GITHUB_RUN_ID and .signing_run_attempt == env.GITHUB_RUN_ATTEMPT and .original_candidate_run_id == (env.ORIGINAL_CANDIDATE_RUN_ID | tonumber) and .workflow_identity == env.GITHUB_WORKFLOW_REF and .promotion.candidate_manifest_sha256 == env.CANDIDATE_MANIFEST_SHA256 and .promotion.original_artifact_id == ($binding[0].oci_artifact_id | tostring) and .promotion.original_artifact_sha256 == $binding[0].oci_artifact_sha256 and .promotion.rebuilt == $binding[0].rebuilt and .promotion.signing_rebuilt_oci == false and (.images | length) == 2' \
             "$facts" >/dev/null
           server_seen=0
           host_seen=0

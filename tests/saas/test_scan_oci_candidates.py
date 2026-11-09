@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import io
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,51 @@ from saas.scripts.scan_oci_candidates import (
     scan_report,
     validate_image_scope,
 )
+
+
+@pytest.mark.parametrize("fault", [None, "short", "oversized", "hash", "version"])
+def test_fixed_grype_API_bytes_must_pass_before_extraction(monkeypatch, tmp_path, fault):
+    monkeypatch.setenv("GH_TOKEN", "fixed-readonly-test-token")
+    payload = b"one exact official archive"
+    monkeypatch.setattr(scan_oci_candidates, "GRYPE_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(scan_oci_candidates, "GRYPE_SHA256", hashlib.sha256(payload).hexdigest())
+    received = (
+        payload[:-1] if fault == "short" else payload + b"x" if fault == "oversized" else payload
+    )
+    if fault == "hash":
+        received = b"x" * len(payload)
+    calls = []
+
+    def download(request, *, timeout):
+        assert request.full_url == (
+            "https://api.github.com/repos/anchore/grype/releases/assets/616618032"
+        )
+        assert request.get_header("Accept") == "application/octet-stream"
+        assert request.get_header("Authorization") == "Bearer fixed-readonly-test-token"
+        redirected = scan_oci_candidates.urllib.request.HTTPRedirectHandler().redirect_request(
+            request, None, 302, "Found", {}, "https://release-assets.githubusercontent.com/fixed"
+        )
+        assert redirected.get_header("Authorization") is None
+        assert timeout == 120
+        return io.BytesIO(received)
+
+    monkeypatch.setattr(scan_oci_candidates.urllib.request, "urlopen", download)
+    monkeypatch.setattr(
+        scan_oci_candidates.subprocess, "run", lambda args, **kwargs: calls.append((args, kwargs))
+    )
+    monkeypatch.setattr(
+        scan_oci_candidates.subprocess,
+        "check_output",
+        lambda *_a, **_k: "Version: wrong\n" if fault == "version" else "Version: 0.120.1\n",
+    )
+    if fault is None:
+        assert scan_oci_candidates.install_grype(tmp_path) == tmp_path / "grype"
+    else:
+        with pytest.raises(
+            ValueError, match="version mismatch" if fault == "version" else "size.*mismatch"
+        ):
+            scan_oci_candidates.install_grype(tmp_path)
+    assert bool(calls) is (fault in {None, "version"})
 
 
 def test_database_must_be_fresh_and_timezone_bound() -> None:

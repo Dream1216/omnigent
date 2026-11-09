@@ -18,6 +18,116 @@ from tests.saas.test_oci_promotion import EPOCH, REVISION, candidate
     "fault",
     [
         None,
+        "source",
+        "attempt",
+        "event",
+        "original-failure",
+        "reused-job",
+        "SDK",
+        "artifact-sha",
+        "artifact-source",
+        "artifact-expired",
+        "artifact-window",
+    ],
+)
+def test_M8c_retained_origin_cannot_borrow_or_waive_original_inputs(fault):
+    run = {
+        "id": recovery.M8C_RUN,
+        "head_sha": recovery.M8C_PRODUCT,
+        "head_branch": "main",
+        "path": ".github/workflows/saas-image-candidate.yml",
+        "event": "workflow_dispatch",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+        "repository": {"full_name": recovery.REPOSITORY},
+    }
+    jobs = [
+        {
+            "id": identifier,
+            "run_id": recovery.M8C_RUN,
+            "run_attempt": 1,
+            "head_sha": recovery.M8C_PRODUCT,
+            "status": "completed",
+            "conclusion": "failure" if identifier == recovery.M8C_JOB else "success",
+            "runner_group_name": "GitHub Actions",
+            "labels": ["ubuntu-24.04"],
+        }
+        for identifier in [*sorted(recovery._M8C_COMPLETED_JOBS), recovery.M8C_JOB]
+    ]
+    builder = jobs[-1]
+    builder.update(
+        name="build-candidate",
+        steps=[
+            {
+                "name": name,
+                "conclusion": "success",
+                "started_at": "2026-11-09T08:13:20Z",
+                "completed_at": "2026-11-09T08:13:40Z",
+            }
+            for name in recovery._M8C_REUSED_STEPS
+        ]
+        + [
+            {
+                "name": "Preflight scan exact server candidate on both architectures",
+                "conclusion": "failure",
+            }
+        ],
+    )
+    metadata = []
+    for coordinate, name in [
+        (
+            recovery.M8C_FIRST,
+            f"failed-server-preflight-oci-{recovery.M8C_PRODUCT}-{recovery.M8C_RUN}-1",
+        ),
+        (recovery.M8C_REPORT, f"saas-image-candidate-{recovery.M8C_PRODUCT}"),
+    ]:
+        metadata.append(
+            {
+                "id": coordinate[0],
+                "size_in_bytes": coordinate[1],
+                "digest": "sha256:" + coordinate[2],
+                "name": name,
+                "expired": False,
+                "workflow_run": {"id": recovery.M8C_RUN, "head_sha": recovery.M8C_PRODUCT},
+                "created_at": "2026-11-09T08:13:30Z",
+            }
+        )
+    if fault == "source":
+        run["head_sha"] = recovery.PRODUCT
+    elif fault == "attempt":
+        run["run_attempt"] = 2
+    elif fault == "event":
+        run["event"] = "push"
+    elif fault == "original-failure":
+        builder["steps"][-1]["name"] = "Build server candidate attempt 1"
+    elif fault == "reused-job":
+        jobs[0]["conclusion"] = "failure"
+    elif fault == "SDK":
+        builder["steps"] = [
+            s
+            for s in builder["steps"]
+            if s["name"] != "Verify executable Server candidate SDK on both architectures"
+        ]
+    elif fault == "artifact-sha":
+        metadata[0]["digest"] = "sha256:" + "f" * 64
+    elif fault == "artifact-source":
+        metadata[0]["workflow_run"]["head_sha"] = recovery.PRODUCT
+    elif fault == "artifact-expired":
+        metadata[0]["expired"] = True
+    elif fault == "artifact-window":
+        metadata[0]["created_at"] = "2026-11-09T08:12:30Z"
+    if fault is None:
+        recovery.verify_m8c_parent(run, jobs, *metadata)
+    else:
+        with pytest.raises(ValueError):
+            recovery.verify_m8c_parent(run, jobs, *metadata)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
         "id",
         "head_sha",
         "head_branch",

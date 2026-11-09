@@ -46,6 +46,28 @@ CI_PATHS = (
 )
 
 
+def configure_product_profile(name: str) -> None:
+    global PRODUCT, EPOCH
+    require(name in {"M165", "M8c-retained-first"}, "unapproved accepted product profile")
+    PRODUCT, EPOCH = (
+        (recovery.M8C_PRODUCT, recovery.M8C_EPOCH)
+        if name == "M8c-retained-first"
+        else (recovery.PRODUCT, recovery.EPOCH)
+    )
+
+
+def _m8c() -> bool:
+    return PRODUCT == recovery.M8C_PRODUCT
+
+
+def _scan_job_name() -> str:
+    return "scan-and-admit-m8c-same-oci" if _m8c() else "scan-and-admit-same-oci"
+
+
+def _build_job_name() -> str:
+    return "complete-m8c-first-server" if _m8c() else "build-accepted-product"
+
+
 def api(endpoint: str) -> dict[str, Any]:
     return json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
 
@@ -98,6 +120,9 @@ def verify_policy_ci(run: dict[str, Any], path: str, policy: str) -> None:
 
 
 def verify_producer(run: dict[str, Any], job: dict[str, Any], builder: dict[str, Any]) -> None:
+    if _m8c():
+        recovery.verify_m8c_recovery_run(run, job, run.get("head_sha", ""), _scan_job_name())
+        recovery.verify_m8c_recovery_run(run, builder, run.get("head_sha", ""), _build_job_name())
     require(
         run.get("id") == producer_run_id()
         and re.fullmatch(r"[0-9a-f]{40}", run.get("head_sha", "")) is not None
@@ -113,7 +138,7 @@ def verify_producer(run: dict[str, Any], job: dict[str, Any], builder: dict[str,
         and job["id"] > 0
         and job.get("run_id") == producer_run_id()
         and job.get("run_attempt") == 1
-        and job.get("name") == "scan-and-admit-same-oci"
+        and job.get("name") == _scan_job_name()
         and job.get("status") == "completed"
         and job.get("conclusion") == "success"
         and job.get("runner_group_name") == "GitHub Actions"
@@ -122,7 +147,7 @@ def verify_producer(run: dict[str, Any], job: dict[str, Any], builder: dict[str,
         and builder["id"] > 0
         and builder.get("run_id") == producer_run_id()
         and builder.get("run_attempt") == 1
-        and builder.get("name") == "build-accepted-product"
+        and builder.get("name") == _build_job_name()
         and builder.get("status") == "completed"
         and builder.get("conclusion") == "success"
         and builder.get("runner_group_name") == "GitHub Actions"
@@ -133,11 +158,23 @@ def verify_producer(run: dict[str, Any], job: dict[str, Any], builder: dict[str,
                 for step in builder.get("steps", [])
             )
             for name in (
-                "Authenticate retained failed parent and prove current frozen source "
-                "on both architectures",
-                "Independently build only Server without cache for the clean retained first",
-                "Confirm actual independent Server pair and unchanged historical Host pair",
-                "Preserve actual OCI before any fresh vulnerability scan",
+                (
+                    "Authenticate and retain exact original M8c first Server",
+                    "Complete original Server preflight before missing builds",
+                    "Independently build only missing M8c Server attempt 2",
+                    "Build only missing M8c Host attempt 1",
+                    "Independently build only missing M8c Host attempt 2",
+                    "Compare exact original M8c independent Server and Host pairs",
+                    "Retain complete original M8c four OCI raw checkpoint",
+                )
+                if _m8c()
+                else (
+                    "Authenticate retained failed parent and prove current frozen source "
+                    "on both architectures",
+                    "Independently build only Server without cache for the clean retained first",
+                    "Confirm actual independent Server pair and unchanged historical Host pair",
+                    "Preserve actual OCI before any fresh vulnerability scan",
+                )
             )
         ),
         "actual recovered producer and successful hosted scan/build jobs differ",
@@ -172,40 +209,76 @@ def report_binding(root: Path, completed_at: str) -> dict[str, Any]:
     """Authenticate reports; full OCI/component admission still happens after download."""
     manifest = read_json(root / MANIFEST_NAME)
     comparison = read_json(root / "saas-image-candidate.json")
-    original = recovery.original_report(root / "original-report.zip")
-    proof = read_json(root / "clean-context-first.json")
-    detail = comparison.get("clean_context_reproducibility", {})
-    unchanged = copy.deepcopy(original)
-    unchanged["images"]["omnigent-saas-server"] = comparison["images"]["omnigent-saas-server"]
-    unchanged["clean_context_reproducibility"] = detail
-    repeated = comparison["images"]["omnigent-saas-server"]
-    expected_detail = {
-        **{key: value for key, value in proof.items() if key != "facts"},
-        "first_proof_sha256": file_sha256(root / "clean-context-first.json"),
-        "independent_Server_archive_sha256": detail.get("independent_Server_archive_sha256"),
-        "Host_rebuilt_in_this_confirmation": False,
-    }
-    require(
-        comparison == unchanged
-        and proof.get("kind") == clean.KIND
-        and proof.get("product_revision") == PRODUCT
-        and proof.get("product_tree") == clean.TREE
-        and proof.get("source_date_epoch") == EPOCH
-        and proof.get("parent_raw_checkpoint") == clean.PARENT
-        and proof.get("old_Server_byte_identity_claimed") is False
-        and detail == expected_detail
-        and re.fullmatch(r"[0-9a-f]{64}", detail.get("independent_Server_archive_sha256", ""))
-        is not None
-        and set(proof.get("source_proofs", {})) == {"linux/amd64", "linux/arm64"}
-        and repeated.get("matching_platform_manifest_and_config") is True
-        and repeated.get("history_created_by_equal") is True
-        and repeated.get("first") == proof.get("facts", {}).get("server")
-        and repeated.get("second", {}).get("platforms") == repeated["first"]["platforms"]
-        and repeated.get("second", {}).get("attestations") == repeated["first"]["attestations"]
-        and proof.get("facts", {}).get("host")
-        == original["images"]["omnigent-saas-host"]["first"],
-        "actual clean Server confirmation or historical Host identity differs",
-    )
+    if _m8c():
+        proof = read_json(root / "m8c-retained-origin.json")
+        raw = read_json(root / "unadmitted-build.json")
+        require(
+            proof.get("kind") == "accepted_M8c_original_Server/v1"
+            and proof.get("product_revision") == PRODUCT
+            and proof.get("product_tree") == recovery.M8C_TREE
+            and proof.get("source_date_epoch") == EPOCH
+            and proof.get("original_run_id") == recovery.M8C_RUN
+            and proof.get("original_job_id") == recovery.M8C_JOB
+            and proof.get("first_archive_sha256") == recovery.M8C_FIRST_SHA256
+            and raw.get("kind") == "accepted_M8c_complete_retained_first/v1"
+            and raw.get("original_first_archive_sha256") == recovery.M8C_FIRST_SHA256
+            and manifest.get("images", {}).get("server", {}).get("archive_sha256")
+            == recovery.M8C_FIRST_SHA256
+            and manifest["images"]["server"]["index_digest"] == recovery.M8C_INDEX
+            and manifest["images"]["server"]["facts"] == proof.get("first_facts")
+            and comparison.get("status") == "pass"
+            and comparison.get("violations") == [],
+            "M8c original parent, Server or complete comparison differs",
+        )
+        for role in ("server", "host"):
+            repeated = comparison["images"][f"omnigent-saas-{role}"]
+            require(
+                repeated.get("matching_platform_manifest_and_config") is True
+                and repeated.get("history_created_by_equal") is True,
+                "M8c actual independent pair differs",
+            )
+            for attempt, name in ((1, "first"), (2, "second")):
+                require(
+                    raw["images"][f"{role}-{attempt}.tar"]["facts"] == repeated[name],
+                    "M8c original four OCI raw proof differs",
+                )
+    else:
+        original = recovery.original_report(root / "original-report.zip")
+        proof = read_json(root / "clean-context-first.json")
+        detail = comparison.get("clean_context_reproducibility", {})
+        unchanged = copy.deepcopy(original)
+        unchanged["images"]["omnigent-saas-server"] = comparison["images"]["omnigent-saas-server"]
+        unchanged["clean_context_reproducibility"] = detail
+        repeated = comparison["images"]["omnigent-saas-server"]
+        expected_detail = {
+            **{key: value for key, value in proof.items() if key != "facts"},
+            "first_proof_sha256": file_sha256(
+                root / ("m8c-retained-origin.json" if _m8c() else "clean-context-first.json")
+            ),
+            "independent_Server_archive_sha256": detail.get("independent_Server_archive_sha256"),
+            "Host_rebuilt_in_this_confirmation": False,
+        }
+        require(
+            comparison == unchanged
+            and proof.get("kind") == clean.KIND
+            and proof.get("product_revision") == PRODUCT
+            and proof.get("product_tree") == clean.TREE
+            and proof.get("source_date_epoch") == EPOCH
+            and proof.get("parent_raw_checkpoint") == clean.PARENT
+            and proof.get("old_Server_byte_identity_claimed") is False
+            and detail == expected_detail
+            and re.fullmatch(r"[0-9a-f]{64}", detail.get("independent_Server_archive_sha256", ""))
+            is not None
+            and set(proof.get("source_proofs", {})) == {"linux/amd64", "linux/arm64"}
+            and repeated.get("matching_platform_manifest_and_config") is True
+            and repeated.get("history_created_by_equal") is True
+            and repeated.get("first") == proof.get("facts", {}).get("server")
+            and repeated.get("second", {}).get("platforms") == repeated["first"]["platforms"]
+            and repeated.get("second", {}).get("attestations") == repeated["first"]["attestations"]
+            and proof.get("facts", {}).get("host")
+            == original["images"]["omnigent-saas-host"]["first"],
+            "actual clean Server confirmation or historical Host identity differs",
+        )
     completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
     sealed = datetime.fromisoformat(manifest["sealed_at"])
     require(
@@ -259,9 +332,12 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
         verify_policy_ci(latest, path, policy)
         policy_evidence[path] = latest["id"]
     product_ci = {}
-    for identifier, path in recovery.CI.items():
+    for identifier, path in (recovery.M8C_CI if _m8c() else recovery.CI).items():
         original_ci = api(f"{prefix}/runs/{identifier}")
-        recovery.verify_product_ci(original_ci, identifier, path)
+        if _m8c():
+            recovery._verify_product_ci(original_ci, identifier, path, PRODUCT)
+        else:
+            recovery.verify_product_ci(original_ci, identifier, path)
         product_ci[path] = {
             key: original_ci.get(key)
             for key in (
@@ -278,10 +354,10 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
     producer = producer_run_id()
     run = api(f"{prefix}/runs/{producer}")
     jobs = api(f"{prefix}/runs/{producer}/attempts/1/jobs?per_page=100")["jobs"]
-    matching = [job for job in jobs if job.get("name") == "scan-and-admit-same-oci"]
+    matching = [job for job in jobs if job.get("name") == _scan_job_name()]
     require(len(matching) == 1, "actual successful scan producer missing or ambiguous")
     job = matching[0]
-    builders = [item for item in jobs if item.get("name") == "build-accepted-product"]
+    builders = [item for item in jobs if item.get("name") == _build_job_name()]
     require(len(builders) == 1, "actual raw builder missing or ambiguous")
     verify_producer(run, job, builders[0])
     controller = run["head_sha"]
@@ -291,7 +367,11 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
     for kind, name, maximum in (
         ("raw", f"accepted-raw-{PRODUCT}-{producer}", 16 * 1024**3),
         ("oci", f"saas-oci-promotion-{PRODUCT}", 16 * 1024**3),
-        ("report", f"accepted-same-oci-scan-{producer}", 32 * 1024**2),
+        (
+            "report",
+            f"saas-image-candidate-{PRODUCT}" if _m8c() else f"accepted-same-oci-scan-{producer}",
+            64 * 1024**2 if _m8c() else 32 * 1024**2,
+        ),
     ):
         rows = [item for item in artifacts if item.get("name") == name]
         require(len(rows) == 1, "actual recovered artifact missing or ambiguous")
@@ -299,7 +379,7 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
         selected[kind] = rows[0]
     download_metadata(selected["report"], root.with_suffix(".zip"), root)
     original = root / "original-report.zip"
-    if not original.exists():
+    if not _m8c() and not original.exists():
         download_artifact_bytes(
             recovery.REPORT_ID,
             original,
@@ -307,6 +387,11 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
             expected_sha256=recovery.REPORT_SHA,
         )
     manifest = report_binding(root, job["completed_at"])
+    if _m8c():
+        require(
+            read_json(root / "m8c-retained-origin.json").get("controller_revision") == controller,
+            "M8c original raw operator differs",
+        )
     result = {
         "schema_version": 1,
         "repository": REPOSITORY,
@@ -358,18 +443,46 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
             )
         },
         "accepted_product_main_ci": product_ci,
-        "parent_raw_checkpoint": clean.PARENT,
-        "comparison_profile": "clean-M165-server",
+        "parent_raw_checkpoint": (
+            {
+                "run_id": recovery.M8C_RUN,
+                "attempt": 1,
+                "job_id": recovery.M8C_JOB,
+                "conclusion": "failure",
+            }
+            if _m8c()
+            else clean.PARENT
+        ),
+        "comparison_profile": "retained-M8c-first-server" if _m8c() else "clean-M165-server",
         "producer_control_equivalence": controller_sources,
         "clean_context_first_sha256": file_sha256(root / "clean-context-first.json"),
         "artifacts": selected,
         "images": {role: image["index_digest"] for role, image in manifest["images"].items()},
         "oci_artifact_id": selected["oci"]["id"],
         "oci_artifact_sha256": selected["oci"]["digest"].removeprefix("sha256:"),
-        "rebuilt": True,
+        "rebuilt": not _m8c(),
         "signing_rebuilt_oci": False,
         "production_authority": False,
     }
+    if _m8c():
+        result["retained_origin_sha256"] = result.pop("clean_context_first_sha256")
+        result.update(
+            {
+                "product_tree": recovery.M8C_TREE,
+                "runtime_evidence_revision": recovery.M8C_DATA,
+                "retained_first_server": {
+                    "artifact": {
+                        "id": recovery.M8C_FIRST[0],
+                        "bytes": recovery.M8C_FIRST[1],
+                        "sha256": recovery.M8C_FIRST[2],
+                    },
+                    "archive_sha256": recovery.M8C_FIRST_SHA256,
+                    "index_digest": recovery.M8C_INDEX,
+                    "never_rebuilt": True,
+                },
+                "recovery": {"missing_builds_performed": 3, "first_Server_reused": True},
+            }
+        )
     binding_path().write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     if os.environ.get("GITHUB_OUTPUT"):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
@@ -403,13 +516,44 @@ def binding() -> dict[str, Any]:
         is not None
         and value.get("candidate_controller_revision") != PRODUCT
         and value.get("candidate_build_job_id") == value.get("native_builder_job", {}).get("id")
-        and value.get("parent_raw_checkpoint") == clean.PARENT
-        and value.get("comparison_profile") == "clean-M165-server"
-        and value.get("rebuilt") is True
+        and value.get("parent_raw_checkpoint")
+        == (
+            {
+                "run_id": recovery.M8C_RUN,
+                "attempt": 1,
+                "job_id": recovery.M8C_JOB,
+                "conclusion": "failure",
+            }
+            if _m8c()
+            else clean.PARENT
+        )
+        and value.get("comparison_profile")
+        == ("retained-M8c-first-server" if _m8c() else "clean-M165-server")
+        and value.get("rebuilt") is (not _m8c())
         and value.get("signing_rebuilt_oci") is False
         and value.get("production_authority") is False,
         "fixed recovered product binding differs",
     )
+    if _m8c():
+        require(
+            value.get("product_tree") == recovery.M8C_TREE
+            and value.get("runtime_evidence_revision") == recovery.M8C_DATA
+            and value.get("retained_first_server")
+            == {
+                "artifact": {
+                    "id": recovery.M8C_FIRST[0],
+                    "bytes": recovery.M8C_FIRST[1],
+                    "sha256": recovery.M8C_FIRST[2],
+                },
+                "archive_sha256": recovery.M8C_FIRST_SHA256,
+                "index_digest": recovery.M8C_INDEX,
+                "never_rebuilt": True,
+            }
+            and value.get("recovery")
+            == {"missing_builds_performed": 3, "first_Server_reused": True}
+            and re.fullmatch(r"[0-9a-f]{64}", value.get("retained_origin_sha256", "")) is not None,
+            "M8c fixed runtime data, original Server or completion scope differs",
+        )
     return value
 
 
@@ -432,11 +576,24 @@ def download(root: Path) -> None:
         labels=expected_labels(Path.cwd(), PRODUCT),
         source_date_epoch=EPOCH,
     )
-    require(
-        file_sha256(root / "clean-context-first.json") == value["clean_context_first_sha256"]
-        and clean.verify_first(root, Path.cwd()) == read_json(root / "clean-context-first.json"),
-        "actual sealed OCI source or retained parent lineage differs",
-    )
+    if _m8c():
+        origin = read_json(root / "m8c-retained-origin.json")
+        require(
+            file_sha256(root / "m8c-retained-origin.json") == value["retained_origin_sha256"]
+            and origin.get("product_revision") == PRODUCT
+            and origin.get("product_tree") == recovery.M8C_TREE
+            and origin.get("original_run_id") == recovery.M8C_RUN
+            and origin.get("first_archive_sha256") == recovery.M8C_FIRST_SHA256
+            and file_sha256(root / "server-1.tar") == recovery.M8C_FIRST_SHA256,
+            "M8c exact preserved Server or source lineage differs",
+        )
+    else:
+        require(
+            file_sha256(root / "clean-context-first.json") == value["clean_context_first_sha256"]
+            and clean.verify_first(root, Path.cwd())
+            == read_json(root / "clean-context-first.json"),
+            "actual sealed OCI source or retained parent lineage differs",
+        )
 
 
 def predicate(policy: str, run: str, attempt: str, *, wheel: bool = False) -> dict[str, Any]:
@@ -471,6 +628,7 @@ def check_wheel(path: Path) -> None:
 
 
 def main() -> None:
+    configure_product_profile(os.environ.get("OMNIGENT_ACCEPTED_PRODUCT_PROFILE", "M165"))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",

@@ -131,6 +131,137 @@ def producer_records():
     "fault",
     [
         None,
+        "old-product",
+        "old-scan",
+        "old-builder",
+        "missing-preflight",
+        "missing-Host2",
+        "foreign-job-head",
+        "failed-scan",
+        "attempt",
+    ],
+)
+def test_current_M8c_uses_its_actual_complete_producer_and_preserved_first(monkeypatch, fault):
+    monkeypatch.setattr(promotion, "PRODUCT", recovery.M8C_PRODUCT)
+    monkeypatch.setattr(promotion, "EPOCH", recovery.M8C_EPOCH)
+    run, scan, builder = producer_records()
+    scan.update(name="scan-and-admit-m8c-same-oci", head_sha=PRODUCER_CONTROLLER)
+    builder.update(
+        name="complete-m8c-first-server",
+        head_sha=PRODUCER_CONTROLLER,
+        steps=[
+            {"name": name, "conclusion": "success"}
+            for name in (
+                "Authenticate and retain exact original M8c first Server",
+                "Complete original Server preflight before missing builds",
+                "Independently build only missing M8c Server attempt 2",
+                "Build only missing M8c Host attempt 1",
+                "Independently build only missing M8c Host attempt 2",
+                "Compare exact original M8c independent Server and Host pairs",
+                "Retain complete original M8c four OCI raw checkpoint",
+            )
+        ],
+    )
+    if fault == "old-product":
+        run["head_sha"] = recovery.PRODUCT
+        scan["head_sha"] = builder["head_sha"] = recovery.PRODUCT
+        scan["name"] = "scan-and-admit-same-oci"
+    elif fault == "old-scan":
+        scan["name"] = "scan-and-admit-same-oci"
+    elif fault == "old-builder":
+        builder["name"] = "build-accepted-product"
+    elif fault in {"missing-preflight", "missing-Host2"}:
+        index = 1 if fault == "missing-preflight" else 4
+        builder["steps"][index]["conclusion"] = "skipped"
+    elif fault == "foreign-job-head":
+        scan["head_sha"] = POLICY
+    elif fault == "failed-scan":
+        scan["conclusion"] = "failure"
+    elif fault == "attempt":
+        run["run_attempt"] = 2
+    if fault is None:
+        promotion.verify_producer(run, scan, builder)
+    else:
+        with pytest.raises(ValueError):
+            promotion.verify_producer(run, scan, builder)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "tree",
+        "parent",
+        "first-bytes",
+        "first-facts",
+        "second-facts",
+        "comparison",
+        "report-bytes",
+    ],
+)
+def test_M8c_report_preserves_original_first_and_all_actual_independent_facts(
+    tmp_path, monkeypatch, fault
+):
+    labels, now = candidate(tmp_path)
+    manifest = seal_candidate(tmp_path, labels=labels, source_date_epoch=EPOCH, now=now)
+    write_json(tmp_path / MANIFEST_NAME, manifest)
+    first_sha = manifest["images"]["server"]["archive_sha256"]
+    monkeypatch.setattr(recovery, "M8C_PRODUCT", REVISION)
+    monkeypatch.setattr(recovery, "M8C_EPOCH", EPOCH)
+    monkeypatch.setattr(recovery, "M8C_FIRST_SHA256", first_sha)
+    monkeypatch.setattr(recovery, "M8C_INDEX", manifest["images"]["server"]["index_digest"])
+    monkeypatch.setattr(promotion, "PRODUCT", REVISION)
+    monkeypatch.setattr(promotion, "EPOCH", EPOCH)
+    monkeypatch.setattr(promotion, "expected_labels", lambda *_: labels)
+    comparison = json.loads((tmp_path / "saas-image-candidate.json").read_text())
+    proof = {
+        "kind": "accepted_M8c_original_Server/v1",
+        "product_revision": REVISION,
+        "product_tree": recovery.M8C_TREE,
+        "source_date_epoch": EPOCH,
+        "original_run_id": recovery.M8C_RUN,
+        "original_job_id": recovery.M8C_JOB,
+        "first_archive_sha256": first_sha,
+        "first_facts": manifest["images"]["server"]["facts"],
+    }
+    raw = {
+        "kind": "accepted_M8c_complete_retained_first/v1",
+        "original_first_archive_sha256": first_sha,
+        "images": {
+            f"{role}-{attempt}.tar": {"facts": comparison["images"][f"omnigent-saas-{role}"][name]}
+            for role in ("server", "host")
+            for attempt, name in ((1, "first"), (2, "second"))
+        },
+    }
+    if fault == "tree":
+        proof["product_tree"] = "f" * 40
+    elif fault == "parent":
+        proof["original_run_id"] += 1
+    elif fault == "first-bytes":
+        proof["first_archive_sha256"] = "f" * 64
+    elif fault == "first-facts":
+        proof["first_facts"] = {}
+    elif fault == "second-facts":
+        raw["images"]["host-2.tar"]["facts"] = {}
+    elif fault == "comparison":
+        comparison["status"] = "fail"
+        write_json(tmp_path / "saas-image-candidate.json", comparison)
+    elif fault == "report-bytes":
+        path = tmp_path / "grype/server-amd64-grype.json"
+        path.write_bytes(path.read_bytes() + b" ")
+    write_json(tmp_path / "m8c-retained-origin.json", proof)
+    write_json(tmp_path / "unadmitted-build.json", raw)
+    if fault:
+        with pytest.raises(ValueError):
+            promotion.report_binding(tmp_path, datetime.now(UTC).isoformat())
+    else:
+        assert promotion.report_binding(tmp_path, datetime.now(UTC).isoformat()) == manifest
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
         "head_sha",
         "head_branch",
         "event",
@@ -590,7 +721,10 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
     )
     assert not any("build-push-action" in step.get("uses", "") for step in publisher["steps"])
     assert "wheel-provenance.json" in text and "independent-wheel-signatures.json" in text
-    assert "rebuilt: true, signing_rebuilt_oci: false" in text
+    assert '(.rebuilt | type) == "boolean"' in text
+    assert '--argjson promotion_rebuilt "$promotion_rebuilt"' in text
+    assert "rebuilt: $promotion_rebuilt, signing_rebuilt_oci: false" in text
+    assert ".promotion.rebuilt == $binding[0].rebuilt" in text
     # The signer must use the same strict component versions as product admission.
     policy = ast.parse((root / "saas/scripts/check_image_supply_chain.py").read_text())
     runtime_guards = {
@@ -625,7 +759,8 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
     assert reports["with"]["path"] == "artifacts/registry-subject-preflight/"
 
 
-def test_signed_facts_shell_binds_actual_dynamic_producer_without_publishing(tmp_path):
+@pytest.mark.parametrize("rebuilt", [True, False, None])
+def test_signed_facts_shell_binds_actual_dynamic_producer_without_publishing(tmp_path, rebuilt):
     root = Path(__file__).resolve().parents[2]
     value = yaml.load((root / promotion.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
     step = next(
@@ -644,7 +779,8 @@ def test_signed_facts_shell_binds_actual_dynamic_producer_without_publishing(tmp
         CANDIDATE_MANIFEST_SHA256="d" * 64,
         OMNIGENT_M165_BINDING=str(tmp_path / "binding.json"),
     )
-    (tmp_path / "binding.json").write_text('{"unit_test_only":true}')
+    value = {"unit_test_only": True, **({"rebuilt": rebuilt} if rebuilt is not None else {})}
+    (tmp_path / "binding.json").write_text(json.dumps(value))
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", step["run"]],
         cwd=tmp_path,
@@ -652,8 +788,141 @@ def test_signed_facts_shell_binds_actual_dynamic_producer_without_publishing(tmp
         capture_output=True,
         text=True,
     )
+    if rebuilt is None:
+        assert result.returncode != 0
+        assert not (tmp_path / "artifacts/signed-release-candidate.json").exists()
+        return
     assert result.returncode == 0, result.stderr
     facts = json.loads((tmp_path / "artifacts/signed-release-candidate.json").read_text())
     assert facts["original_candidate_run_id"] == PRODUCER_RUN
     assert facts["signing_policy_revision"] == POLICY
     assert facts["promotion"]["signing_rebuilt_oci"] is False
+    assert facts["promotion"]["rebuilt"] is rebuilt
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "parent", "tree", "data", "archive", "missing-builds", "promotion-rebuilt"]
+)
+def test_M8c_binding_and_predicate_keep_exact_original_materials(tmp_path, monkeypatch, fault):
+    monkeypatch.setattr(promotion, "PRODUCT", recovery.M8C_PRODUCT)
+    monkeypatch.setattr(promotion, "EPOCH", recovery.M8C_EPOCH)
+    path = tmp_path / "binding.json"
+    monkeypatch.setenv("OMNIGENT_M165_BINDING", str(path))
+    value = {
+        "schema_version": 1,
+        "repository": promotion.REPOSITORY,
+        "product_revision": recovery.M8C_PRODUCT,
+        "source_date_epoch": recovery.M8C_EPOCH,
+        "candidate_run_id": PRODUCER_RUN,
+        "candidate_run_attempt": 1,
+        "candidate_controller_revision": PRODUCER_CONTROLLER,
+        "native_run": {"head_sha": PRODUCER_CONTROLLER},
+        "native_builder_job": {"id": PRODUCER_BUILD_JOB},
+        "candidate_build_job_id": PRODUCER_BUILD_JOB,
+        "parent_raw_checkpoint": {
+            "run_id": recovery.M8C_RUN,
+            "attempt": 1,
+            "job_id": recovery.M8C_JOB,
+            "conclusion": "failure",
+        },
+        "comparison_profile": "retained-M8c-first-server",
+        "rebuilt": False,
+        "signing_rebuilt_oci": False,
+        "production_authority": False,
+        "product_tree": recovery.M8C_TREE,
+        "runtime_evidence_revision": recovery.M8C_DATA,
+        "retained_first_server": {
+            "artifact": {
+                "id": recovery.M8C_FIRST[0],
+                "bytes": recovery.M8C_FIRST[1],
+                "sha256": recovery.M8C_FIRST[2],
+            },
+            "archive_sha256": recovery.M8C_FIRST_SHA256,
+            "index_digest": recovery.M8C_INDEX,
+            "never_rebuilt": True,
+        },
+        "recovery": {"missing_builds_performed": 3, "first_Server_reused": True},
+        "retained_origin_sha256": "d" * 64,
+        "oci_artifact_id": 12,
+        "oci_artifact_sha256": "e" * 64,
+    }
+    if fault == "parent":
+        value["parent_raw_checkpoint"]["conclusion"] = "success"
+    elif fault == "tree":
+        value["product_tree"] = "f" * 40
+    elif fault == "data":
+        value["runtime_evidence_revision"] = "f" * 40
+    elif fault == "archive":
+        value["retained_first_server"]["archive_sha256"] = "f" * 64
+    elif fault == "missing-builds":
+        value["recovery"]["missing_builds_performed"] = 2
+    elif fault == "promotion-rebuilt":
+        value["rebuilt"] = True
+    write_json(path, value)
+    if fault:
+        with pytest.raises(ValueError):
+            promotion.binding()
+    else:
+        assert promotion.binding() == value
+        for wheel in (False, True):
+            params = promotion.predicate(POLICY, "91", "1", wheel=wheel)["buildDefinition"][
+                "externalParameters"
+            ]
+            assert params["product_source_revision"] == recovery.M8C_PRODUCT
+            assert (
+                params["signing_policy_revision"] == POLICY
+                and params["original_candidate"] == value
+            )
+            assert params["oci_rebuild_performed"] is False
+            if wheel:
+                assert params["wheel_build_performed"] is True
+
+
+def test_M8c_workflows_only_complete_missing_builds_and_use_fixed_profile():
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.load((root / recovery.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    builder = workflow["jobs"]["complete-m8c-first-server"]
+    assert "inputs.phase == 'complete-m8c'" in builder["if"]
+    assert "inputs.policy_revision == github.sha" in builder["if"]
+    assert builder["timeout-minutes"] == "240"
+    builds = [
+        s["with"]
+        for s in builder["steps"]
+        if s.get("uses") == "./saas/actions/build-oci-candidate"
+    ]
+    assert builds == [
+        {"artifact": "server", "target": "runtime", "attempt": "2"},
+        {"artifact": "host", "target": "host", "attempt": "1"},
+        {"artifact": "host", "target": "host", "attempt": "2"},
+    ]
+    names = [s.get("name") for s in builder["steps"]]
+    assert names.index("Complete original Server preflight before missing builds") < names.index(
+        "Independently build only missing M8c Server attempt 2"
+    )
+    scan = workflow["jobs"]["scan-and-admit-m8c-same-oci"]
+    assert "complete-m8c-first-server" in scan["needs"]
+    assert scan["env"]["PRODUCT_REVISION"] == recovery.M8C_PRODUCT
+    assert not any(s.get("uses") == "./saas/actions/build-oci-candidate" for s in scan["steps"])
+    assert any(
+        s.get("with", {}).get("evidence-revision") == recovery.M8C_DATA for s in scan["steps"]
+    )
+    signer = yaml.load((root / promotion.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    profile = signer["on"]["workflow_dispatch"]["inputs"]["product_profile"]
+    assert profile["default"] == "M165" and set(profile["options"]) == {
+        "M165",
+        "M8c-retained-first",
+    }
+    for job in signer["jobs"].values():
+        selectors = [
+            s
+            for s in job["steps"]
+            if s.get("name") == "Select only the exact retained M8c product profile"
+        ]
+        assert (
+            len(selectors) == 1
+            and selectors[0]["if"] == "inputs.product_profile == 'M8c-retained-first'"
+        )
+        assert (
+            recovery.M8C_PRODUCT in selectors[0]["run"]
+            and str(recovery.M8C_EPOCH) in selectors[0]["run"]
+        )

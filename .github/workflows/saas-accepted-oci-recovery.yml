@@ -25,7 +25,7 @@ on:
       phase:
         description: Recover cached bytes, or rescan the retained raw checkpoint
         type: choice
-        options: [build, confirm-server, scan]
+        options: [build, confirm-server, scan, complete-m8c]
         default: build
       comparison_profile:
         description: Historical exact pair, or the independently confirmed clean M165 Server pair
@@ -59,6 +59,142 @@ env:
   GO_IMAGE: golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d
 
 jobs:
+  complete-m8c-first-server:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'complete-m8c'
+    needs: verify-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.raw.outputs.artifact-id }}
+      artifact-sha256: ${{ steps.raw.outputs.artifact-digest }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact protected M8c recovery controller
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --extra saas
+      - name: Authenticate and retain exact original M8c first Server
+        id: retained-m8c
+        run: |
+          set -euo pipefail
+          uv run python -m saas.scripts.accepted_oci_recovery m8c-prepare \
+            --root "$RUNNER_TEMP/accepted-m8c-raw" --github-env "$GITHUB_ENV"
+          mkdir "$RUNNER_TEMP/accepted-m8c-control"
+          cp saas/scripts/accepted_oci_recovery.py saas/scripts/scan_oci_candidates.py \
+            "$RUNNER_TEMP/accepted-m8c-control/"
+      - name: Checkout unchanged M8c product for missing builds
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: 8c851bdd12829340b2a327cf7542fe4de84d9132
+          persist-credentials: false
+      - name: Verify frozen M8c checkout and locked helpers
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$PRODUCT_REVISION" ]]
+          [[ "$(git rev-parse HEAD^{tree})" == 694a997f3e74999f968f4341851ebaf0765d50aa ]]
+          [[ -z "$(git status --porcelain)" ]]
+          uv sync --frozen --extra saas
+      - name: Prepare unchanged admitted M8c runtime evidence
+        uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: 8c851bdd12829340b2a327cf7542fe4de84d9132
+          evidence-revision: 1da1acd35a63ab3c14a14dff030f0061e1f74314
+      - name: Complete original Server preflight before missing builds
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/scan_oci_candidates.py" \
+            --scope server-preflight --image "server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar" \
+            --output "$RUNNER_TEMP/accepted-m8c-raw/grype-preflight"
+      - name: Set up original isolated M8c Docker runtime
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        id: m8c-builder
+      - name: Independently build only missing M8c Server attempt 2
+        id: m8c-server-2
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: server
+          target: runtime
+          attempt: "2"
+      - name: Build only missing M8c Host attempt 1
+        id: m8c-host-1
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: host
+          target: host
+          attempt: "1"
+      - name: Independently build only missing M8c Host attempt 2
+        id: m8c-host-2
+        uses: ./saas/actions/build-oci-candidate
+        with:
+          artifact: host
+          target: host
+          attempt: "2"
+      - name: Preserve missing M8c OCI before comparison
+        run: |
+          set -euo pipefail
+          mv "$RUNNER_TEMP/server-2.tar" "$RUNNER_TEMP/host-1.tar" \
+            "$RUNNER_TEMP/host-2.tar" "$RUNNER_TEMP/accepted-m8c-raw/"
+      - name: Reclaim only original ephemeral M8c builder cache
+        env:
+          RECOVERY_BUILDER: ${{ steps.m8c-builder.outputs.name }}
+        run: |
+          set -euo pipefail
+          [[ "$RECOVERY_BUILDER" =~ ^builder-[a-zA-Z0-9][a-zA-Z0-9_-]{1,90}$ ]]
+          docker buildx prune --builder "$RECOVERY_BUILDER" --all --force
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Compare exact original M8c independent Server and Host pairs
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m saas.scripts.compare_oci_rebuilds --label-profile executable \
+            --image "omnigent-saas-server=$RUNNER_TEMP/accepted-m8c-raw/server-1.tar,$RUNNER_TEMP/accepted-m8c-raw/server-2.tar" \
+            --image "omnigent-saas-host=$RUNNER_TEMP/accepted-m8c-raw/host-1.tar,$RUNNER_TEMP/accepted-m8c-raw/host-2.tar" \
+            --output "$RUNNER_TEMP/accepted-m8c-raw/saas-image-candidate.json"
+          .venv/bin/python "$RUNNER_TEMP/accepted-m8c-control/accepted_oci_recovery.py" \
+            m8c-verify --root "$RUNNER_TEMP/accepted-m8c-raw"
+      - name: Retain complete original M8c four OCI raw checkpoint
+        id: raw
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: accepted-raw-8c851bdd12829340b2a327cf7542fe4de84d9132-${{ github.run_id }}
+          path: ${{ runner.temp }}/accepted-m8c-raw/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve completed M8c bytes on any later failure as unqualified
+        if: failure() && !cancelled() && steps.retained-m8c.outcome == 'success'
+        timeout-minutes: 10
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: accepted-m8c-unqualified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/accepted-m8c-raw/
+            ${{ runner.temp }}/server-2.tar
+            ${{ runner.temp }}/host-1.tar
+            ${{ runner.temp }}/host-2.tar
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 1
+
   verify-contract:
     runs-on: ubuntu-24.04
     steps:
@@ -248,6 +384,83 @@ jobs:
             ${{ runner.temp }}/same-oci/oci-promotion-manifest.json
             ${{ runner.temp }}/same-oci/clean-context-first.json
             ${{ runner.temp }}/same-oci/original-report.zip
+          compression-level: 0
+          if-no-files-found: warn
+          retention-days: 30
+
+  scan-and-admit-m8c-same-oci:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'complete-m8c'
+    needs: [verify-contract, complete-m8c-first-server]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    env:
+      PRODUCT_REVISION: 8c851bdd12829340b2a327cf7542fe4de84d9132
+      SOURCE_REVISION: 8c851bdd12829340b2a327cf7542fe4de84d9132
+      SOURCE_DATE_EPOCH: "1794205060"
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      artifact-id: ${{ steps.admitted.outputs.artifact-id }}
+      artifact-sha256: ${{ steps.admitted.outputs.artifact-digest }}
+      manifest-sha256: ${{ steps.seal.outputs.manifest-sha256 }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --extra saas
+      - uses: ./saas/actions/runtime-evidence-context
+        with:
+          product-revision: ${{ env.PRODUCT_REVISION }}
+          evidence-revision: 1da1acd35a63ab3c14a14dff030f0061e1f74314
+      - name: Download and independently recheck the same real raw checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_RUN: ${{ github.run_id }}
+          RAW_ID: ${{ needs.complete-m8c-first-server.outputs.artifact-id }}
+          RAW_SHA: ${{ needs.complete-m8c-first-server.outputs.artifact-sha256 }}
+        run: |
+          uv run python -m saas.scripts.accepted_oci_recovery m8c-download --root "$RUNNER_TEMP/same-m8c-oci" --run-id "$RAW_RUN" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA" --policy "$GITHUB_SHA"
+      - name: Fresh scan and seal without rebuilding or relaxing any gate
+        id: seal
+        run: |
+          uv run python -m saas.scripts.scan_oci_candidates --image "server=$RUNNER_TEMP/same-m8c-oci/server-1.tar" --image "host=$RUNNER_TEMP/same-m8c-oci/host-1.tar" --output "$RUNNER_TEMP/same-m8c-oci/grype"
+          uv run python -m saas.scripts.oci_promotion seal --root "$RUNNER_TEMP/same-m8c-oci" --revision "$PRODUCT_REVISION" --source-date-epoch "$SOURCE_DATE_EPOCH" >> "$GITHUB_OUTPUT"
+      - name: Retain actually admitted M8c immutable OCI
+        id: admitted
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-oci-promotion-${{ env.PRODUCT_REVISION }}
+          path: |
+            ${{ runner.temp }}/same-m8c-oci/server-1.tar
+            ${{ runner.temp }}/same-m8c-oci/host-1.tar
+            ${{ runner.temp }}/same-m8c-oci/saas-image-candidate.json
+            ${{ runner.temp }}/same-m8c-oci/oci-promotion-manifest.json
+            ${{ runner.temp }}/same-m8c-oci/grype/
+            ${{ runner.temp }}/same-m8c-oci/m8c-retained-origin.json
+            ${{ runner.temp }}/same-m8c-oci/original-report.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve raw rejection and original checkpoint on every outcome
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-image-candidate-${{ env.PRODUCT_REVISION }}
+          path: |
+            ${{ runner.temp }}/same-m8c-oci/grype/
+            ${{ runner.temp }}/same-m8c-oci/unadmitted-build.json
+            ${{ runner.temp }}/same-m8c-oci/saas-image-candidate.json
+            ${{ runner.temp }}/same-m8c-oci/oci-promotion-manifest.json
+            ${{ runner.temp }}/same-m8c-oci/m8c-retained-origin.json
+            ${{ runner.temp }}/same-m8c-oci/original-report.zip
           compression-level: 0
           if-no-files-found: warn
           retention-days: 30
