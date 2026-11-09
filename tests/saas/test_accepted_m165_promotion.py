@@ -926,6 +926,7 @@ def test_signed_facts_shell_binds_actual_dynamic_producer_without_publishing(tmp
     environment = {**os.environ, **dict.fromkeys(step["env"], "unit-test-only")}
     environment.update(
         PRODUCT_REVISION=promotion.PRODUCT,
+        OMNIGENT_ACCEPTED_PRODUCT_PROFILE="M165",
         SIGNING_POLICY_REVISION=POLICY,
         GITHUB_RUN_ID="91",
         GITHUB_RUN_ATTEMPT="1",
