@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "scope": "glibc component diagnostic; full Host/production qualification remains separate",
+  "source_version": "2.43-7",
+  "base_image": "debian:sid-slim@sha256:10e9e0d7aa4ed47205c7053f117199e6b06a9b17ac3eeb7f7bb1a818b963a803",
+  "snapshot": "20261030T000000Z",
+  "InRelease_sha256": "23fab9795bb10ed4d7c39a32d04400600d1f68a151692ac1c23ec2629a243fc0",
+  "keyring_sha256": "01fa010a9c814aadecff4f7dc3700613ed56882b8906db0d1d4b3d4ff339854b",
+  "signing_fingerprint": "52BC8695BE34F90AD7D40CB81388C0F899E8336B",
+  "primary_fingerprint": "77462642A9EF94FD0F77196DBA9C78061DDD8C9B",
+  "dsc_sha256": "a99e5beb8f568765d191f3d0d074cf6b60d2c89dec84f2f4bb70573e52e0a835",
+  "source_archives": [
+    {
+      "name": "glibc_2.43.orig.tar.xz",
+      "size": 21553420,
+      "sha256": "b8f0d50a7d4255658efe1f608cacdc4be82bb3c009875626df5968cc64c58880"
+    },
+    {
+      "name": "glibc_2.43-7.debian.tar.xz",
+      "size": 498952,
+      "sha256": "9f62b90fb4c7423ed5023698c9014ad0086d26f9b6f46b2a163afcea7e581a02"
+    }
+  ],
+  "original_proposal_url": "https://inbox.sourceware.org/libc-alpha/20261012112453.47383-1-avinal.xlvii@gmail.com/",
+  "original_proposal_sha256": "96b4e55d4dd72d8a6f71e1d3e98f20fee1e3a6e2fb01007265ff88c574cf6625",
+  "candidate_sha256": "41e71ca6a6da9f49f75957e612486a9eb7dab55ba056451324c8665f244fb5e8",
+  "control_sha256": "e18f97c8d5186b8a2ff36042b0fdc8df76c9362b1cc63bcbc96fd56dbbe05f83",
+  "baseline_target_sha256": {
+    "NEWS": "ee164d204a32b98bbac89a1e5feb36cc9283543e444266d686b24ee1777b0d11",
+    "intl/Makefile": "03ab7b8f574070746a1e5096f5e4f33eb8665d956ded3577840e1a119e9a3332",
+    "intl/dcigettext.c": "60e20644b6acfd8f9f48dd40e6d15be38ecc546e43028c27cdb3ddcfc59f4859"
+  },
+  "vendor_series_patches": 84,
+  "upstream_accepted_fix_not_proven": true,
+  "production_admission": false
+}
