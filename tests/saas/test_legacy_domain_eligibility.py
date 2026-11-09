@@ -19,6 +19,43 @@ from tests.saas.test_legacy_source_qualification import scenario as scenario
 domain = sys.modules["saas.scripts.legacy_domain_eligibility"]
 
 
+@pytest.mark.parametrize(
+    "fault", [None, "source", "tree", "PR", "float-PR", "base", "identity-source", "component"]
+)
+def test_current_C2_route_never_retargets_frozen_historical_domain(fault):
+    profile = {
+        "component": "Compatibility018",
+        "product_revision": "27503d14973b751a2031c6febf12a581b42b06d1",
+        "product_tree": "a02ea9f17664bd0290eb5025f864672c0025075c",
+    }
+    identity = {
+        **profile,
+        "validation_pr": 258,
+        "validation_base_ref": "codex/legacy-compat018-expat210-20261103",
+    }
+    if fault in {"source", "tree"}:
+        profile["product_revision" if fault == "source" else "product_tree"] = "f" * 40
+    elif fault == "PR":
+        identity["validation_pr"] = 223
+    elif fault == "float-PR":
+        identity["validation_pr"] = 258.0
+    elif fault == "base":
+        identity["validation_base_ref"] = "main"
+    elif fault == "identity-source":
+        identity["product_revision"] = "f" * 40
+    elif fault == "component":
+        identity["component"] = "Core"
+    current = "codex/legacy-compat018-expat210-20261103"
+    selected = domain.native.registered_validation_ref(profile, identity)
+    assert (selected == current) is (fault is None)
+    old = frozen_entries()
+    old_profile = old["legacy-security-build-profiles.json"]
+    old_identity = old["legacy-security-ci-profiles.json"]
+    assert domain.native.registered_validation_ref(old_profile, old_identity) == (
+        "codex/p18-a7-validation-base-20261102"
+    )
+
+
 @pytest.fixture
 def native_domain(scenario, monkeypatch):
     profile, identity = scenario["profile"], scenario["identity"]

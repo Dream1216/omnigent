@@ -16,7 +16,6 @@ from saas.scripts import legacy_domain_non_execution as nonexecution
 from saas.scripts import legacy_native_evidence as native_evidence
 from saas.scripts.legacy_domain_discovery import discover_main_domain
 from saas.scripts.legacy_native_evidence import api
-from saas.scripts.legacy_pr_candidate import VALIDATION_REFS
 from saas.scripts.legacy_source_ci import (
     _job_pages,
     checkout_commit,
@@ -37,6 +36,15 @@ def registered_attachment_workflow(profile, identity, rule):
     from saas.scripts.legacy_domain_discovery import _exact_current_C2
 
     coordinate = tuple(rule.get(key) for key in ("run_id", "attempt", "job_id", "check_id"))
+    if (
+        native.registered_validation_ref(profile, identity)
+        == "codex/legacy-compat018-expat210-20261103"
+        and coordinate == (42574783072, 1, 129019935077, 129019935077)
+        and rule.get("attachment_revision")
+        == rule.get("trusted_checkout_revision")
+        == "13ed5b17d3872a3010c9173738d965834d8e482d"
+    ):
+        return native.FIXED_RUNNER_WORKFLOW_SHA256
     if (
         _exact_current_C2(profile, identity)
         and coordinate == (41850549942, 1, 126645369962, 126645369962)
@@ -116,7 +124,7 @@ def validate_domain_rules(policy: dict[str, Any], identity: dict[str, Any]) -> N
     if (
         isinstance(declared, dict)
         and declared["sha256"] == MAIN_WORKFLOW_SHA256
-        and identity["validation_base_ref"] == VALIDATION_REFS.get(identity["component"])
+        and identity["validation_base_ref"] == native.registered_validation_ref(policy, identity)
     ):
         require(enabled, "frozen legacy route requires explicit native main-domain eligibility")
     require(
@@ -125,7 +133,8 @@ def validate_domain_rules(policy: dict[str, Any], identity: dict[str, Any]) -> N
             not enabled
             or (
                 declared["sha256"] == MAIN_WORKFLOW_SHA256
-                and identity["validation_base_ref"] == VALIDATION_REFS.get(identity["component"])
+                and identity["validation_base_ref"]
+                == native.registered_validation_ref(policy, identity)
                 and identity["validation_base_ref"] != "main"
             )
         ),
@@ -217,7 +226,7 @@ def verify_main_domain_refusal(
 ) -> dict[str, Any]:
     """Keep an exact failed native check as an inapplicable main-merge guard."""
     require(
-        identity["validation_base_ref"] == VALIDATION_REFS.get(profile["component"])
+        identity["validation_base_ref"] == native.registered_validation_ref(profile, identity)
         and identity["validation_base_ref"] != "main",
         "main-targeting or unknown validation PR cannot use the domain rule",
     )
@@ -260,7 +269,14 @@ def verify_main_domain_refusal(
         and job.get("conclusion") == "failure"
         and job.get("runner_group_name") == "GitHub Actions"
         and native.matches_hosted_runner_label(
-            job.get("labels"), trusted_checkout_revision=rule["trusted_checkout_revision"]
+            job.get("labels"),
+            expected=(
+                "ubuntu-24.04"
+                if registered_attachment_workflow(profile, identity, rule)
+                == native.FIXED_RUNNER_WORKFLOW_SHA256
+                else "ubuntu-latest"
+            ),
+            trusted_checkout_revision=rule["trusted_checkout_revision"],
         )
         and job.get("check_run_url")
         == f"https://api.github.com/repos/{REPOSITORY}/check-runs/{rule['check_id']}"
@@ -895,6 +911,13 @@ _BOOTSTRAP_ORIGINS = {
         "codex/p18-a7-validation-base-20261102",
         "8f960409bd18a2c26b635f081f6cf371b678d9c2ed9496cab0ae34e22be2a719",
     ),
+    "Compatibility018@27503d14973b751a2031c6febf12a581b42b06d1": (
+        "27503d14973b751a2031c6febf12a581b42b06d1",
+        "a02ea9f17664bd0290eb5025f864672c0025075c",
+        258,
+        "codex/legacy-compat018-expat210-20261103",
+        "5749d6a7781561c23ed73a7351ab3d4253150974219dc2f79e89a50c82bc6792",
+    ),
 }
 
 
@@ -906,7 +929,10 @@ def bootstrap_registration(control, profile, policy, *, entries=None):
         "bootstrap origin registration fields differ",
     )
     component = profile["component"]
-    expected = _BOOTSTRAP_ORIGINS.get(component)
+    from saas.scripts.legacy_source_qualification import qualification_profile_slot
+
+    slot = qualification_profile_slot(component, profile)
+    expected = _BOOTSTRAP_ORIGINS.get(slot)
     require(
         expected is not None
         and registration == {"kind": BOOTSTRAP_KIND, "source_bundle_sha256": expected[4]},
@@ -927,7 +953,12 @@ def bootstrap_registration(control, profile, policy, *, entries=None):
                 and isinstance(store[key], dict),
                 "bootstrap store shape differs",
             )
-            entries[name] = store[key].get(component)
+            selected = component
+            if name == "legacy-source-qualification-profiles.json":
+                from saas.scripts.legacy_source_qualification import qualification_profile_slot
+
+                selected = qualification_profile_slot(component, profile)
+            entries[name] = store[key].get(selected)
     require(
         set(entries) == set(_BOOTSTRAP_STORES)
         and all(isinstance(row, dict) for row in entries.values()),
@@ -951,7 +982,8 @@ def bootstrap_registration(control, profile, policy, *, entries=None):
         "bootstrap six-table source origin changed",
     )
     require(
-        len(identity["workflows"]) == (15 if component == "Compatibility018" else 16)
+        len(identity["workflows"])
+        == (13 if slot != component else 15 if component == "Compatibility018" else 16)
         and sum(
             plan["kind"] == "pytest"
             for jobs in selected["job_evidence"].values()

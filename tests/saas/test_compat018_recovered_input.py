@@ -146,6 +146,7 @@ def native_origin(tmp_path, monkeypatch, request):
         ).encode()
         monkeypatch.setattr(m, "REGISTERED_RAW_CONTROLLER", "a" * 40)
         monkeypatch.setattr(m, "REGISTERED_RAW_TREE", "c" * 40)
+        monkeypatch.setitem(m._REGISTERED_RAW_SNAPSHOTS, "a" * 40, "c" * 40)
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
         for name, body in sorted(bodies.items()):
             bundle.writestr(name, body)
@@ -367,6 +368,45 @@ def test_native_origin_derives_unique_actual_coordinates_and_refuses_faults(
     assert result["controller_sources"]["raw"] == result["controller_sources"]["sealed"]
     assert result["kind"] != "legacy_pr_sealed_oci/v1"
     assert result["sealed_zip_full_CRC_verified"] is True
+
+
+@pytest.mark.parametrize("native_origin", [True], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [None, "historical", "failed-scan", "missing-fourth-build", "partial-artifact", "expired"],
+)
+def test_native_four_image_completion_keeps_existing_producer_guards_without_byte_credit(
+    native_origin, fault
+):
+    control, _, native, _, downloaded, prefix = native_origin
+    profile = recovery.registered_profile()
+    if fault == "historical":
+        profile = PROFILE
+    elif fault == "failed-scan":
+        native[prefix + "runs/202"]["conclusion"] = "failure"
+    elif fault == "missing-fourth-build":
+        native[prefix + "jobs/301"]["steps"] = [
+            step
+            for step in native[prefix + "jobs/301"]["steps"]
+            if step["name"] != "Independently build C2 Host without cache"
+        ]
+    elif fault == "partial-artifact":
+        native[prefix + "artifacts/501"]["name"] = "compat018-unqualified-partial"
+    elif fault == "expired":
+        native[prefix + "artifacts/502"]["expired"] = True
+    if fault:
+        with pytest.raises(ValueError):
+            m.collect_native_recovered_image_completion(control, profile, (101, 202))
+    else:
+        result = m.collect_native_recovered_image_completion(control, profile, (101, 202))
+        assert isinstance(result, m.NativeRecoveredImageCompletion)
+        assert result.receipt["product_revision"] == profile["product_revision"]
+        assert result.receipt["raw_checkpoint"]["run_id"] == 101
+        assert result.receipt["sealed_oci"]["run_id"] == 202
+        assert result.receipt["whole_archive_bytes_verified_here"] is False
+        assert result.receipt["publisher_full_archive_verification_required"] is True
+        assert result.receipt["regression_or_PG_qualification_claimed"] is False
+    assert downloaded == []
 
 
 @pytest.mark.parametrize("extra", ["future.json", "../escape", "grype/extra.json"])
@@ -927,6 +967,7 @@ def test_incomplete_or_changed_git_execution_metadata_is_rejected(
     if registered:
         monkeypatch.setattr(m, "REGISTERED_RAW_CONTROLLER", "a" * 40)
         monkeypatch.setattr(m, "REGISTERED_RAW_TREE", "c" * 40)
+        monkeypatch.setitem(m._REGISTERED_RAW_SNAPSHOTS, "a" * 40, "c" * 40)
         for entry in tree["tree"]:
             body = (control / entry["path"]).read_bytes()
             data[f"repos/{recovery.REPOSITORY}/git/blobs/{entry['sha']}"] = {
@@ -1060,3 +1101,97 @@ def test_finite_identity_inventory_covers_controller_owned_local_actions():
                         assert action == "./saas/actions/build-oci-candidate"
                     else:
                         assert action[2:] + "/action.yml" in m.SOURCES, (name, action)
+
+
+@pytest.mark.parametrize("native_origin", [True], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing-intake",
+        "failed-intake",
+        "duplicate-intake",
+        "rebuild-Host",
+        "parent-source",
+        "parent-other-failure",
+        "parent-hash",
+        "parent-expired",
+        "parent-change",
+    ],
+)
+def test_native_one_Server_repair_keeps_failed_parent_and_reuses_exact_original_scope(
+    native_origin, monkeypatch, fault
+):
+    from tests.saas.test_compat018_oci_recovery import registered_failed_parent_records
+
+    control, _, native, _, downloaded, prefix = native_origin
+    builder = native[prefix + "jobs/301"]
+    forbidden = {
+        "Recover Server using its existing first-attempt build cache",
+        "Recover Host using its existing first-attempt build cache",
+        "Independently build C2 Host without cache",
+    }
+    for step in builder["steps"]:
+        step["number"] += 1
+        if step["name"] in forbidden:
+            step["conclusion"] = "skipped"
+    intake = {
+        "number": 1,
+        "name": "Authenticate exact failed registered pair for one Server repair",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    builder["steps"].insert(0, intake)
+    parent = recovery.REGISTERED_FAILED_PAIR
+    run, job, artifact = registered_failed_parent_records()
+    native[prefix + f"runs/{parent['run_id']}"] = run
+    native[prefix + f"jobs/{parent['builder_job_id']}"] = job
+    native[prefix + f"artifacts/{parent['artifact_id']}"] = artifact
+    if fault == "missing-intake":
+        builder["steps"].remove(intake)
+    elif fault == "failed-intake":
+        intake["conclusion"] = "failure"
+    elif fault == "duplicate-intake":
+        builder["steps"].append(copy.deepcopy(intake))
+    elif fault == "rebuild-Host":
+        next(
+            s for s in builder["steps"] if s["name"] == "Independently build C2 Host without cache"
+        )["conclusion"] = "success"
+    elif fault == "parent-source":
+        run["head_sha"] = "f" * 40
+    elif fault == "parent-other-failure":
+        job["steps"][0]["conclusion"] = "failure"
+    elif fault == "parent-hash":
+        artifact["digest"] = "sha256:" + "f" * 64
+    elif fault == "parent-expired":
+        artifact["expired"] = True
+    elif fault == "parent-change":
+        original = m.api
+        observed = 0
+
+        def changed(endpoint):
+            nonlocal observed
+            value = original(endpoint)
+            if endpoint == prefix + f"artifacts/{parent['artifact_id']}":
+                observed += 1
+                if observed > 1:
+                    value["expired"] = True
+            return value
+
+        monkeypatch.setattr(m, "api", changed)
+    if fault:
+        with pytest.raises(ValueError):
+            m.collect_native_recovered_image_completion(
+                control, recovery.registered_profile(), (101, 202)
+            )
+    else:
+        result = m.collect_native_recovered_image_completion(
+            control, recovery.registered_profile(), (101, 202)
+        ).receipt
+        assert result["registered_one_Server_repair"]["fixed_parent"] == parent
+        assert result["registered_one_Server_repair"]["original_conclusion"] == "failure"
+        assert result["registered_one_Server_repair"]["new_Server_builds"] == 1
+        assert result["registered_one_Server_repair"]["first_Server_and_both_Host_reused"] is True
+        assert result["whole_archive_bytes_verified_here"] is False
+        assert result["publisher_full_archive_verification_required"] is True
+    assert downloaded == []

@@ -910,8 +910,12 @@ def test_registered_source_policy_validates_exact_source_or_rejects_pending(comp
         assert qualifier._digest(stored) == (
             "8ce9a78cc2798f9f5134f8894eecefa48afe6a3b816fec2269145f623d11f416"
         )
-        with pytest.raises(ValueError, match="no exact reviewed source qualification policy"):
-            qualifier.load_qualification_policy(ROOT, profile)
+        policy = qualifier.load_qualification_policy(ROOT, profile)
+        assert policy["product_revision"] == profile["product_revision"]
+        catalog = {path: row["sha256"] for path, row in policy["workflow_catalog"].items()}
+        with pytest.raises(ValueError, match="exact current registered native proof"):
+            qualifier.validate_qualification_policy(policy, identity, catalog, profile=profile)
+        qualifier.bootstrap_registration(ROOT, profile, policy)
         return
     policy = qualifier.load_qualification_policy(ROOT, profile)
     catalog = {path: row["sha256"] for path, row in policy["workflow_catalog"].items()}
@@ -938,3 +942,277 @@ def test_registered_source_policy_validates_exact_source_or_rejects_pending(comp
         ):
             assert set(policy[field]) == {GOV}
     qualifier.bootstrap_registration(ROOT, profile, policy)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "dictionary",
+        "old-product",
+        "other-PR",
+        "missing-policy",
+        "cancelled-original",
+        "unknown-run",
+        "retry",
+        "whole-bytes",
+        "PG-credit",
+        "authority-type",
+    ],
+)
+def test_current_C2_logical_image_gate_requires_separate_typed_native_completion(fault):
+    from saas.scripts.compat018_recovered_input import NativeRecoveredImageCompletion
+
+    product, tree, pr, base = qualifier._REGISTERED_COMPAT_SOURCE
+    profile = {"component": "Compatibility018", "product_revision": product, "product_tree": tree}
+    identity = {**profile, "validation_pr": pr, "validation_base_ref": base}
+    policy = {
+        **profile,
+        "recovered_native_image_completion": dict(qualifier._RECOVERED_IMAGE_DECLARATION),
+    }
+    receipt = {
+        "kind": "compat018_registered_native_image_completion/v1",
+        "product_revision": product,
+        "product_tree": tree,
+        "whole_archive_bytes_verified_here": False,
+        "publisher_full_archive_verification_required": True,
+        "regression_or_PG_qualification_claimed": False,
+        "raw_checkpoint": {"run_id": 101, "attempt": 1},
+        "sealed_oci": {"run_id": 202, "attempt": 1},
+    }
+    if fault == "old-product":
+        profile["product_revision"] = "4e11681dd3809febeb42cb5d752d423b5f751f82"
+    elif fault == "other-PR":
+        identity["validation_pr"] = 223
+    elif fault == "missing-policy":
+        policy.pop("recovered_native_image_completion")
+    elif fault == "cancelled-original":
+        receipt["raw_checkpoint"]["run_id"] = 42573722547
+    elif fault == "unknown-run":
+        receipt["sealed_oci"]["run_id"] = None
+    elif fault == "retry":
+        receipt["sealed_oci"]["attempt"] = 2
+    elif fault == "whole-bytes":
+        receipt["whole_archive_bytes_verified_here"] = True
+    elif fault == "PG-credit":
+        receipt["regression_or_PG_qualification_claimed"] = True
+    elif fault == "authority-type":
+        policy["recovered_native_image_completion"]["original_cancelled_run_claimed_success"] = 0
+    proof = receipt if fault == "dictionary" else NativeRecoveredImageCompletion(receipt)
+    if fault:
+        with pytest.raises(ValueError):
+            qualifier._verify_recovered_image_completion(policy, identity, profile, proof)
+    else:
+        assert (
+            qualifier._verify_recovered_image_completion(policy, identity, profile, proof) is True
+        )
+        assert qualifier._verify_recovered_image_completion({}, identity, profile, None) is False
+
+
+def test_current_C2_preserves_fourteenth_image_requirement_beyond_original_thirteen():
+    from saas.scripts.legacy_source_ci import _load_contract
+    from saas.scripts.protected_legacy_initial_build import load_profile
+
+    profile = load_profile(ROOT, "Compatibility018")
+    identity = _load_contract(ROOT, profile)
+    catalog = {path: value[0] for path, value in qualifier._COMPATIBILITY_PATH_FILTERS.items()}
+    policy = {
+        **profile,
+        "workflow_catalog": {
+            path: {
+                "sha256": digest,
+                "disposition": "original-not-triggered",
+                "reason": "Exact original path filters exclude the registered product delta",
+            }
+            for path, digest in catalog.items()
+        },
+    }
+    required = qualifier._required_technical_workflows(policy, identity, catalog, profile)
+    original = {row["path"] for row in identity["workflows"]}
+    assert len(original) == 13
+    assert len(required) == 14
+    assert required - original == {".github/workflows/saas-image-candidate.yml"}
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "dictionary",
+        "missing-run",
+        "run-path",
+        "app",
+        "source",
+        "outcome",
+        "missing-check",
+        "extra-check",
+        "retry",
+    ],
+)
+def test_current_C2_keeps_exact_cancelled_image_matrix_without_original_PG_credit(fault):
+    from saas.scripts.compat018_recovered_input import NativeRecoveredImageCompletion
+
+    product, tree, _, _ = qualifier._REGISTERED_COMPAT_SOURCE
+    workflow = qualifier._RECOVERED_IMAGE_WORKFLOW
+    suite = 12345
+    run = {
+        "id": 42573722547,
+        "head_sha": product,
+        "path": workflow,
+        "event": "pull_request",
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "cancelled",
+        "check_suite_id": suite,
+        "workflow_id": 12346,
+        "pull_requests": [{"number": 258}],
+    }
+    checks = [
+        {
+            "id": identifier,
+            "head_sha": product,
+            "name": f"Original cancelled image job {index}",
+            "app": {"id": 15368},
+            "check_suite": {"id": suite},
+            "status": "completed",
+            "conclusion": "cancelled",
+        }
+        for index, identifier in enumerate(sorted(qualifier._ORIGINAL_CANCELLED_IMAGE_CHECK_IDS))
+    ]
+    snapshots = {
+        "head": {"revision": product, "runs": [run], "checks": checks, "statuses": []},
+        "merge": {"revision": "b" * 40, "runs": [], "checks": [], "statuses": []},
+    }
+    policy = {
+        "component": "Compatibility018",
+        "product_revision": product,
+        "product_tree": tree,
+        "recovered_native_image_completion": dict(qualifier._RECOVERED_IMAGE_DECLARATION),
+        "workflow_catalog": {workflow: {"disposition": "required-technical"}},
+        "other_checks": [
+            {
+                "role": "head",
+                "app_id": 15368,
+                "suite_id": suite,
+                "name": check["name"],
+                "scope": "original-recovered-image-cancellation",
+                "expected_conclusion": None,
+                "reason": "Keep cancellation; require replacement and final PG",
+            }
+            for check in checks
+        ],
+        "statuses": [],
+    }
+    receipt = {
+        "kind": "compat018_registered_native_image_completion/v1",
+        "product_revision": product,
+        "product_tree": tree,
+        "whole_archive_bytes_verified_here": False,
+        "publisher_full_archive_verification_required": True,
+        "regression_or_PG_qualification_claimed": False,
+        "raw_checkpoint": {"run_id": 101, "attempt": 1},
+        "sealed_oci": {"run_id": 202, "attempt": 1},
+    }
+    completion = NativeRecoveredImageCompletion(receipt)
+    if fault == "dictionary":
+        completion = receipt
+    elif fault == "missing-run":
+        snapshots["head"]["runs"].clear()
+    elif fault == "run-path":
+        run["path"] = ".github/workflows/ci.yml"
+    elif fault == "app":
+        checks[0]["app"]["id"] = 99
+    elif fault == "source":
+        checks[0]["head_sha"] = "a" * 40
+    elif fault == "outcome":
+        checks[0]["conclusion"] = "success"
+    elif fault == "missing-check":
+        checks.pop()
+    elif fault == "extra-check":
+        checks.append({**checks[0], "id": 888888000000, "name": "Unreviewed extra image job"})
+    elif fault == "retry":
+        run["run_attempt"] = 2
+    if fault:
+        with pytest.raises(ValueError):
+            qualifier.assess_all_app_policy(snapshots, [], policy, recovered_image=completion)
+    else:
+        result = qualifier.assess_all_app_policy(snapshots, [], policy, recovered_image=completion)
+        records = result["original_recovered_image_cancellations"]
+        assert len(records) == 6
+        assert all(row["original_conclusion"] == "cancelled" for row in records)
+        assert all(row["original_technical_or_PG_credit"] is False for row in records)
+        assert all(
+            row["final_same_product_PG_and_full_archive_admission_still_required"] is True
+            for row in records
+        )
+
+
+def test_current_policy_slot_never_relabels_frozen_historical_C2_registration():
+    current = {
+        "product_revision": "27503d14973b751a2031c6febf12a581b42b06d1",
+        "product_tree": "a02ea9f17664bd0290eb5025f864672c0025075c",
+    }
+    old = {
+        "product_revision": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+        "product_tree": "cd9cbd2f918df17a44dc63423ac29a5ddd887820",
+    }
+    assert qualifier.qualification_profile_slot("Compatibility018", old) == "Compatibility018"
+    assert (
+        qualifier.qualification_profile_slot("Compatibility018", current)
+        == "Compatibility018@27503d14973b751a2031c6febf12a581b42b06d1"
+    )
+    assert qualifier.qualification_profile_slot("Core", current) == "Core"
+    assert (
+        qualifier.qualification_profile_slot(
+            "Compatibility018", {**current, "product_tree": "f" * 40}
+        )
+        == "Compatibility018"
+    )
+    store = json.loads(
+        (ROOT / "saas/supply_chain/legacy-source-qualification-profiles.json").read_text()
+    )
+    assert store["profiles"]["Compatibility018"]["product_revision"] == old["product_revision"]
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "table", "image-declaration", "workflow-count", "old-slot"]
+)
+def test_current_C2_static_origin_requires_exact_six_rows_and_retains_old_bundle(fault):
+    from saas.scripts import legacy_domain_eligibility as domain
+
+    profile = core.load_profile(ROOT, "Compatibility018")
+    policy = qualifier.load_qualification_policy(ROOT, profile)
+    entries = {}
+    for name in domain._BOOTSTRAP_STORES:
+        store = json.loads((ROOT / "saas/supply_chain" / name).read_text())
+        field = "inputs" if name == "legacy-security-original-inputs.json" else "profiles"
+        key = (
+            qualifier.qualification_profile_slot("Compatibility018", profile)
+            if name == "legacy-source-qualification-profiles.json"
+            else "Compatibility018"
+        )
+        entries[name] = store[field][key]
+    if fault == "table":
+        entries["legacy-security-transfer-profiles.json"]["actor"] = "Unknown"
+    elif fault == "image-declaration":
+        entries["legacy-source-qualification-profiles.json"].pop(
+            "recovered_native_image_completion"
+        )
+    elif fault == "workflow-count":
+        entries["legacy-security-ci-profiles.json"]["workflows"].pop()
+    elif fault == "old-slot":
+        old = json.loads(
+            (ROOT / "saas/supply_chain/legacy-source-qualification-profiles.json").read_text()
+        )["profiles"]["Compatibility018"]
+        entries["legacy-source-qualification-profiles.json"] = old
+    if fault:
+        with pytest.raises(ValueError):
+            domain.bootstrap_registration(ROOT, profile, policy, entries=entries)
+    else:
+        result = domain.bootstrap_registration(ROOT, profile, policy, entries=entries)
+        assert result["source_bundle_sha256"] == (
+            "5749d6a7781561c23ed73a7351ab3d4253150974219dc2f79e89a50c82bc6792"
+        )
+        assert domain._BOOTSTRAP_ORIGINS["Compatibility018"][-1] == (
+            "8f960409bd18a2c26b635f081f6cf371b678d9c2ed9496cab0ae34e22be2a719"
+        )

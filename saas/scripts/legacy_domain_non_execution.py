@@ -243,7 +243,8 @@ def validate_rules(rows, profile, identity):
             and row["workflow_sha256"] == native.MAIN_WORKFLOW_SHA256
             and row["event"] in native._EVENTS
             and all(identity[key] == profile[key] for key in ("product_revision", "product_tree"))
-            and identity["validation_base_ref"] == VALIDATION_REFS.get(profile["component"])
+            and identity["validation_base_ref"]
+            == native.registered_validation_ref(profile, identity)
             and identity["validation_base_ref"] != "main"
             and all(
                 row[key] == identity[key]
@@ -398,8 +399,15 @@ def verify_zero_execution(
     coordinates = tuple(rule[key] for key in ("run_id", "attempt", "job_id", "check_id"))
     label = (
         "ubuntu-24.04"
-        if _exact_current_C2(profile, identity)
-        and coordinates in _COMPATIBILITY_REGISTERED_EMPTY_JOBS
+        if (
+            _exact_current_C2(profile, identity)
+            and coordinates in _COMPATIBILITY_REGISTERED_EMPTY_JOBS
+        )
+        or (
+            native.registered_validation_ref(profile, identity)
+            == "codex/legacy-compat018-expat210-20261103"
+            and coordinates == (42573718363, 1, 129016649202, 129016649202)
+        )
         else "ubuntu-latest"
     )
     _verify_native_zero_execution(

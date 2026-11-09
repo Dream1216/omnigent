@@ -26,7 +26,7 @@ from saas.scripts.legacy_domain_eligibility import (
     require_publication_source_origin,
 )
 from saas.scripts.legacy_native_evidence import preserve_native_evidence
-from saas.scripts.legacy_source_qualification import _qualify_source_ci
+from saas.scripts.legacy_source_qualification import _qualify_source_ci, qualification_profile_slot
 from saas.scripts.oci_promotion import read_json, require
 
 TRUSTED_STORES = (
@@ -47,17 +47,22 @@ def trusted_entries(control: Path, component: str) -> dict[str, Any]:
     for name in TRUSTED_STORES:
         store = load_release_evidence(control, "saas/supply_chain/" + name)
         key = "inputs" if name == "legacy-security-original-inputs.json" else "profiles"
+        selected = component
+        if name == "legacy-source-qualification-profiles.json":
+            selected = qualification_profile_slot(
+                component, entries["legacy-security-build-profiles.json"]
+            )
         require(
             isinstance(store, dict)
             and set(store) == {"schema_version", key}
             and type(store["schema_version"]) is int
             and store["schema_version"] == 1
             and isinstance(store[key], dict)
-            and isinstance(store[key].get(component), dict),
+            and isinstance(store[key].get(selected), dict),
             "current exact legacy registration is missing: " + name,
         )
         store = cast(dict[str, Any], store)
-        entries[name] = store[key][component]
+        entries[name] = store[key][selected]
     # The frozen product's data checkout predates this exact controller opt-in.
     # Authenticate all six original rows; never alter the immutable data files.
     policy_name = "legacy-source-qualification-profiles.json"
