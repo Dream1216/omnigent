@@ -1106,6 +1106,37 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
     assert len(runtime_guards) == 2
     assert all(guard in text for guard in runtime_guards)
     steps = publisher["steps"]
+    attestations = [s for s in steps if s.get("uses", "").startswith("actions/attest@")]
+    assert len(attestations) == 9
+    assert {s["uses"] for s in attestations} == {
+        "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
+    }
+    sboms = [s["with"] for s in attestations if "sbom-path" in s["with"]]
+    assert len(sboms) == 4
+    for role in ("server", "host"):
+        for arch in ("amd64", "arm64"):
+            options = next(
+                s
+                for s in sboms
+                if s["sbom-path"] == f"artifacts/supply-chain/{role}-{arch}.spdx.json"
+            )
+            assert options["subject-name"].endswith(f"/omnigent-saas-{role}")
+            assert (
+                options["subject-digest"]
+                == "${{ steps.coordinates.outputs." + role + "-" + arch + " }}"
+            )
+            assert options["push-to-registry"] == "false"
+    registry_provenance = [
+        s
+        for s in attestations
+        if "sbom-path" not in s["with"] and s["with"].get("push-to-registry") == "true"
+    ]
+    assert len(registry_provenance) == 4
+    for job in (publisher, value["jobs"]["verify-published-source"]):
+        commands = "\n".join(s.get("run", "") for s in job["steps"])
+        assert "--bundle-from-oci" not in commands
+        assert "--predicate-type https://spdx.dev/Document --format json" in commands
+        assert "accepted_m165_promotion verify-sbom" in commands
     scan = next(
         s
         for s in steps

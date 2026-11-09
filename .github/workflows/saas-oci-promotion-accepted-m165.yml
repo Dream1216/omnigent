@@ -268,7 +268,7 @@ jobs:
             --attempt "$GITHUB_RUN_ATTEMPT" > artifacts/wheel-provenance.json
       - name: Sign the new wheel under the real controller with explicit product165 materials
         id: attest-wheel
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: artifacts/*.whl
           predicate-type: https://slsa.dev/provenance/v1
@@ -446,14 +446,14 @@ jobs:
             | sort -z | xargs -0 sha256sum > artifacts/supply-chain/SHA256SUMS
       - name: Sign server image provenance with GitHub OIDC
         id: attest-server
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
           subject-digest: ${{ steps.build-server.outputs.digest }}
           push-to-registry: true
       - name: Sign host image provenance with GitHub OIDC
         id: attest-host
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
           subject-digest: ${{ steps.build-host.outputs.digest }}
@@ -480,30 +480,31 @@ jobs:
           done
       - name: Sign server original-product promotion provenance
         id: attest-server-promotion
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
           subject-digest: ${{ steps.build-server.outputs.digest }}
           predicate-type: https://slsa.dev/provenance/v1
           predicate-path: artifacts/promotion-provenance.json
           push-to-registry: true
+      # Both verifiers load child SPDX signatures from the GitHub attestation API.
       - name: Sign server amd64 explicit SPDX subject
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
           subject-digest: ${{ steps.coordinates.outputs.server-amd64 }}
           sbom-path: artifacts/supply-chain/server-amd64.spdx.json
-          push-to-registry: true
+          push-to-registry: false
       - name: Sign server arm64 explicit SPDX subject
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
           subject-digest: ${{ steps.coordinates.outputs.server-arm64 }}
           sbom-path: artifacts/supply-chain/server-arm64.spdx.json
-          push-to-registry: true
+          push-to-registry: false
       - name: Sign host original-product promotion provenance
         id: attest-host-promotion
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
           subject-digest: ${{ steps.build-host.outputs.digest }}
@@ -511,19 +512,19 @@ jobs:
           predicate-path: artifacts/promotion-provenance.json
           push-to-registry: true
       - name: Sign host amd64 explicit SPDX subject
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
           subject-digest: ${{ steps.coordinates.outputs.host-amd64 }}
           sbom-path: artifacts/supply-chain/host-amd64.spdx.json
-          push-to-registry: true
+          push-to-registry: false
       - name: Sign host arm64 explicit SPDX subject
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
           subject-digest: ${{ steps.coordinates.outputs.host-arm64 }}
           sbom-path: artifacts/supply-chain/host-arm64.spdx.json
-          push-to-registry: true
+          push-to-registry: false
       - name: Verify image signatures and protected workflow identity
         env:
           GH_TOKEN: ${{ github.token }}
