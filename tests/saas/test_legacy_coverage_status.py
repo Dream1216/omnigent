@@ -10,6 +10,37 @@ import pytest
 from saas.scripts import legacy_coverage_status as coverage
 
 
+@pytest.mark.parametrize("fault", [None, "source", "reference", "path", "command", "setup"])
+def test_current_C2_allows_only_exact_setup_and_preserves_original_selection(monkeypatch, fault):
+    import hashlib
+
+    original = b"original test matrix and command\n"
+    current = coverage._CURRENT_C2_V8_SETUP + original
+    monkeypatch.setattr(
+        coverage,
+        "_CURRENT_C2_PRODUCERS",
+        tuple(hashlib.sha256(body).hexdigest() for body in (current, original)),
+    )
+    source, reference, path = (
+        coverage._CURRENT_C2[0],
+        coverage.REFERENCES["Compatibility018"][1],
+        ".github/workflows/ci.yml",
+    )
+    if fault == "source":
+        source = coverage.REFERENCES["Compatibility018"][0]
+    elif fault == "reference":
+        reference = "f" * 40
+    elif fault == "path":
+        path = ".github/workflows/web-tests.yml"
+    elif fault == "command":
+        current = current.replace(b"test matrix", b"other matrix")
+    elif fault == "setup":
+        current = current.replace(b"timeout-minutes: 3", b"timeout-minutes: 4")
+    assert coverage._same_coverage_producer(source, reference, path, current, original) is (
+        fault is None
+    )
+
+
 @pytest.mark.parametrize(
     "fault",
     [

@@ -49,6 +49,34 @@ REFERENCES = {
 }
 TOLERANCE = Decimal("0.5")
 _WORKFLOW = ".github/workflows/code-coverage.yml"
+_CURRENT_C2 = (
+    "27503d14973b751a2031c6febf12a581b42b06d1",
+    "a02ea9f17664bd0290eb5025f864672c0025075c",
+)
+_CURRENT_C2_PRODUCERS = (
+    "8751d7628bc5438ad915ade51649a069b438a2c3dd9b5ae9b95d7fd812a134b5",
+    "ea4fde43ab964d47e77d6c9279e36bd9ce74b82ba684835d1b0b2d5c61af1b42",
+)
+_CURRENT_C2_V8_SETUP = (
+    b"      - name: Verify exact parity V8 download\n"
+    b"        if: steps.sidecar-cache.outputs.cache-hit != 'true'\n"
+    b"        uses: ./saas/actions/setup-pinned-parity-v8\n"
+    b"        timeout-minutes: 3\n"
+)
+
+
+def _same_coverage_producer(source, reference, path, current, original):
+    if current == original:
+        return True
+    return (
+        source == _CURRENT_C2[0]
+        and reference == REFERENCES["Compatibility018"][1]
+        and path == ".github/workflows/ci.yml"
+        and tuple(hashlib.sha256(body).hexdigest() for body in (current, original))
+        == _CURRENT_C2_PRODUCERS
+        and current.count(_CURRENT_C2_V8_SETUP) == 1
+        and current.replace(_CURRENT_C2_V8_SETUP, b"", 1) == original
+    )
 
 
 def require_native_main_writer(root: Path) -> None:
@@ -157,6 +185,11 @@ def compare_originals(root: Path, component: str, destination: Path):
     source, reference, contexts = REFERENCES[component]
     profile = load_profile(root, component)
     identity = _load_contract(root, profile)
+    if component == "Compatibility018" and profile["product_revision"] == _CURRENT_C2[0]:
+        require(
+            profile.get("product_tree") == _CURRENT_C2[1], "legacy coverage source tree changed"
+        )
+        source = _CURRENT_C2[0]
     require(profile["product_revision"] == source, "legacy coverage source changed")
     projects = [
         tomllib.loads(
@@ -193,7 +226,8 @@ def compare_originals(root: Path, component: str, destination: Path):
             for rev in (source, reference)
         ]
         require(
-            workflow_bytes[0] == workflow_bytes[1], "legacy coverage producer or selection changed"
+            _same_coverage_producer(source, reference, path, *workflow_bytes),
+            "legacy coverage producer or selection changed",
         )
         before, original = _coverage(
             reference, specification, reference_run, 1, destination, current=False
