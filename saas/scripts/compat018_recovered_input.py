@@ -160,6 +160,7 @@ SOURCES = (
     "saas/scripts/compat018_clean_context.py",
     "saas/scripts/compat018_oci_recovery.py",
     "saas/scripts/compat018_recovered_input.py",
+    "saas/scripts/issue_evidence_receipt.py",
     "saas/scripts/legacy_artifact_download.py",
     "saas/scripts/legacy_build_controller.py",
     "saas/scripts/legacy_check_history.py",
