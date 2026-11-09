@@ -127,9 +127,8 @@ jobs:
       - name: Type-check SaaS compatibility code
         run: uv run pyrefly check saas
       - name: Set up crane for exact OCI transfer regression
-        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
-        with:
-          version: v0.21.6
+        uses: ./saas/actions/setup-pinned-crane
+        timeout-minutes: 3
       - name: Verify image supply-chain policy contracts
         env:
           OCI_PROMOTION_TEST_CRANE: crane
@@ -315,9 +314,8 @@ jobs:
         id: candidate-builder
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Set up crane
-        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
-        with:
-          version: v0.21.6
+        uses: ./saas/actions/setup-pinned-crane
+        timeout-minutes: 3
       - name: Resolve immutable build materials
         run: |
           set -euo pipefail
@@ -781,9 +779,8 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Set up crane
-        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
-        with:
-          version: v0.21.6
+        uses: ./saas/actions/setup-pinned-crane
+        timeout-minutes: 3
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
@@ -1084,9 +1081,8 @@ jobs:
           name: signed-release-candidate-${{ inputs.product_revision }}
           path: release-facts
       - name: Set up crane
-        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
-        with:
-          version: v0.21.6
+        uses: ./saas/actions/setup-pinned-crane
+        timeout-minutes: 3
       - name: Log in to image registry for independent readback
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:

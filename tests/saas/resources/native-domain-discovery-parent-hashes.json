@@ -202,7 +202,7 @@
   "saas/scripts/legacy_initial_publisher.py": {
     "parent_sha256": "9e0aa5fa559fdea392b419149334852d02db7a64c1f649df4068188c897d9b5f",
     "combined_sha256": "edea4fe8c38386c67bf3a99589a4e7df45bd3a686d7dc98016745f50a30baff5",
-    "approved_change": "C a2 exact prepare_current_manifest extraction and actual stage prepare call; all prior functions except stage byte identical",
+    "approved_change": "C a2 exact prepare_current_manifest extraction and actual stage prepare call; all prior functions except stage byte identical; exact reviewed current registered-profile unpack selection inverse retains the same original restored publisher, parent and function checks",
     "preserved_functions": {
       "canonical": "8b0d251cf6968e13b999f16face6fa0d824dbf53bc759a9bfebd79bd85a89862",
       "digest": "c8e88b567f0270e1f9347297e9d918d1d98e6b71d2ce097afd3cfa02b87c1a4a",
@@ -406,7 +406,7 @@
       ]
     },
     "compat018_recovered_publication_correction": {
-      "corrected_sha256": "b66d28a5b7280517a242102965444f17d5234c079fea98a859a8aa6cf3360aa5",
+      "corrected_sha256": "65ca7ea0e9e7d41f3f071980f18802990147214806ab9a0e96bb6645468dd5aa",
       "restored_sha256": "0c7062c10b4d61e522b89a48e75589018c64046904bd21be38fca5181c56df60",
       "inverse_fragments": [
         {
@@ -447,7 +447,7 @@
         },
         {
           "before": "    return result, destination / \"original/download/original-oci.zip\", wheel\n\n\ndef unpack_original(archive: Path, original: dict[str, Any], destination: Path) -> None:\n    require(\n        archive.stat().st_size == original[\"zip_size\"]\n        and file_sha256(archive) == original[\"zip_sha256\"],\n        \"original OCI ZIP bytes differ\",\n    )\n    expected = {\n        \"server-1.tar\",\n        \"host-1.tar\",\n",
-          "after": "    return result, destination / \"original/download/original-oci.zip\", wheel\n\n\ndef unpack_original(\n    archive: Path,\n    original: dict[str, Any],\n    destination: Path,\n    *,\n    product: Path | None = None,\n) -> None:\n    require(\n        archive.stat().st_size == original[\"zip_size\"]\n        and file_sha256(archive) == original[\"zip_sha256\"],\n        \"original OCI ZIP bytes differ\",\n    )\n    if original.get(\"kind\") == c2_recovered.ORIGIN:\n        if product is None:\n            raise ValueError(\"recovered C2 payload requires the actual frozen Git product\")\n        c2_recovered.verify_sealed_zip(archive, original[\"zip_size\"], crc=True)\n        safe_extract(archive, destination, max_bytes=original[\"zip_size\"])\n        c2_recovered.verify_payload(destination, original, product)\n        return\n    expected = {\n        \"server-1.tar\",\n        \"host-1.tar\",\n"
+          "after": "    return result, destination / \"original/download/original-oci.zip\", wheel\n\n\ndef unpack_original(\n    archive: Path,\n    original: dict[str, Any],\n    destination: Path,\n    *,\n    product: Path | None = None,\n) -> None:\n    require(\n        archive.stat().st_size == original[\"zip_size\"]\n        and file_sha256(archive) == original[\"zip_sha256\"],\n        \"original OCI ZIP bytes differ\",\n    )\n    if original.get(\"kind\") == c2_recovered.ORIGIN:\n        if product is None:\n            raise ValueError(\"recovered C2 payload requires the actual frozen Git product\")\n        profile = (\n            c2_recovered.recovery.registered_profile()\n            if original.get(\"product_revision\") != c2_recovered.recovery.PRODUCT\n            else None\n        )\n        c2_recovered.verify_sealed_zip(archive, original[\"zip_size\"], crc=True, profile=profile)\n        safe_extract(archive, destination, max_bytes=original[\"zip_size\"])\n        c2_recovered.verify_payload(destination, original, product)\n        return\n    expected = {\n        \"server-1.tar\",\n        \"host-1.tar\",\n"
         },
         {
           "before": "    )\n\n\ndef validate_input_identities(admission: dict[str, Any]) -> None:\n    profile = admission[\"profile\"]\n    fresh = admission[\"fresh_control_wheel\"]\n    context = admission[\"control\"]\n",

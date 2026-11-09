@@ -99,6 +99,7 @@ def test_release_identity_is_fixed_and_only_required_workflows_use_the_shared_in
     for workflow_path, expected_count in [
         (".github/workflows/saas-oci-promotion-accepted-m165.yml", 3),
         (".github/workflows/saas-n1-compat-image.yml", 2),
+        (".github/workflows/saas-image-candidate.yml", 4),
     ]:
         workflow = yaml.load((ROOT / workflow_path).read_text(), Loader=yaml.BaseLoader)
         callers = [
