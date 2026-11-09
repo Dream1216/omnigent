@@ -42,6 +42,7 @@ from .datamodel import OSEnvSandboxSpec, OSEnvSpec, TerminalEnvSpec
 from .egress import EgressProxyHandle, apply_egress_env, start_egress_proxy
 from .os_env import (
     OSEnvironment,
+    _constrain_linux_sandbox_locale,
     _copy_tree,
     create_os_environment,
 )
@@ -1657,6 +1658,7 @@ class TerminalInstance:
         try:
             if self._clipboard_bridge is not None:
                 self._clipboard_bridge.start()
+            _constrain_linux_sandbox_locale(env, sandbox_for_launcher)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,

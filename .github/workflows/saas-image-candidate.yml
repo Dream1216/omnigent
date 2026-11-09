@@ -193,7 +193,7 @@ jobs:
     needs:
       - verify-candidate-preflight
       - verify-production-migration-replay
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     outputs:
       oci-artifact-id: ${{ steps.upload-oci.outputs.artifact-id }}

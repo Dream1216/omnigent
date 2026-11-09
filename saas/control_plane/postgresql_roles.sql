@@ -2453,7 +2453,7 @@ BEGIN
                       AND grantee.rolname = 'saas_executor')
               )
               AND pg_get_function_identity_arguments(routine.oid) = 'bigint'
-              AND pg_get_userbyid(routine.proowner) = 'next_beta_bootstrap'
+              AND routine.proowner = 10
               AND acl.grantor = routine.proowner
               AND acl.privilege_type = 'EXECUTE'
               AND NOT acl.is_grantable

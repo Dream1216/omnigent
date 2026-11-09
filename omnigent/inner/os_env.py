@@ -249,6 +249,16 @@ def build_helper_env(
     return strip_runner_auth_secrets(env)
 
 
+def _constrain_linux_sandbox_locale(env: dict[str, str], sandbox: SandboxPolicy | None) -> None:
+    """Keep catalog overrides out of the Linux launcher while preserving UTF-8."""
+    if sandbox is None or not sandbox.active or sandbox.backend_type != "linux_bwrap":
+        return
+    env.pop("LANGUAGE", None)
+    env.pop("LOCPATH", None)
+    for name in ("LANG", "LC_ALL", "LC_MESSAGES"):
+        env[name] = "C.UTF-8"
+
+
 def _build_credential_proxy_parent_env(
     *,
     helper_env: Mapping[str, str],
@@ -616,6 +626,7 @@ class _HelperProcessClient:
         popen_kwargs: _PopenKwargs = {}
         if r_fd is not None:
             popen_kwargs["pass_fds"] = (r_fd,)
+        _constrain_linux_sandbox_locale(env, sandbox)
         try:
             self._proc = subprocess.Popen(
                 spawn_argv,

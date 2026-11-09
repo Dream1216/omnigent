@@ -114,11 +114,74 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 225,
-    "max_upstream_net_added_loc": 4921,
+    "max_direct_upstream_files": 229,
+    "max_upstream_net_added_loc": 5065,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "compat018_fixed_CI_asset_transport_20261109": {
+      "parent_source": "eca4c97c26c8bd37eec634c1685829120c5a942b",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "全面授权，预算不用重复批准。"
+      },
+      "recorded_at": "2026-11-09",
+      "previous_max_upstream_net_added_loc": 5055,
+      "max_upstream_net_added_loc": 5065,
+      "previous_max_direct_upstream_files": 229,
+      "max_direct_upstream_files": 229,
+      "measured_upstream_net_added_loc": 5065,
+      "measured_direct_upstream_files": 229,
+      "scope_paths": [
+        ".github/actions/e2e-run/action.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/e2e-ui.yml"
+      ],
+      "reason": "Repair three actual first-attempt CI download failures without changing fixed versions, application code, test commands, assertions, time limits or security gates. Reuse the reviewed same-version official-API crane installer. Route original E2E jcode0.84.0 through the existing fixed SaaS install/layout/dual-user verification helper in an explicit CI-only mode, with exact official API asset size/SHA and no vendor source fallback. Verify the exact unchanged rusty_v8 v149.2.0 archive before the original Cargo sidecar build on cache miss. Only ten net upstream CI lines are added, with no new divergent upstream path; preserve all budget history, nine patches and0.85 isolation. New C2 candidate needs its own native CI, all four actual OCI comparisons/fresh scans, protected signatures and independent readback; original failures remain and no old run is retried."
+    },
+    "compat018_runtime_locale_guard_20261109": {
+      "parent_source": "ed81f2460102fab2ab6e9d0f60a091d07da026e4",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "recorded_at": "2026-11-09",
+      "previous_max_upstream_net_added_loc": 4927,
+      "max_upstream_net_added_loc": 5055,
+      "previous_max_direct_upstream_files": 225,
+      "max_direct_upstream_files": 229,
+      "measured_upstream_net_added_loc": 5055,
+      "measured_direct_upstream_files": 229,
+      "scope_paths": [
+        "omnigent/inner/os_env.py",
+        "omnigent/inner/terminal.py",
+        "tests/inner/test_os_env.py",
+        "tests/inner/test_terminal.py"
+      ],
+      "reason": "Backport only the reviewed Linux sandbox locale helper and its two final environment-merge call sites to the original C2 runtime, with owning spawn-boundary regressions. Add explicit production locale initialization before all six existing SaaS entry configurations and reuse its owning ordering/rejection tests. This changes the C2 runtime subject; neither M native facts nor old C2 source/image qualification is relabeled. Preserve C2 implementation outside these guards, all prior dependency and budget history, nine patches and the 0.85 isolation floor. The four additional upstream paths and 128 net lines are exactly measured under the existing direct human project-wide budget authority. All original source CI, independent image comparisons, fresh raw High blocking with only separately approved applicable C2 conditions, protected native evidence receipt, signatures and readback remain required."
+    },
+    "compat018_dependency_security_rebuild_20261109": {
+      "parent_source": "4e11681dd3809febeb42cb5d752d423b5f751f82",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
+      },
+      "recorded_at": "2026-11-09",
+      "previous_max_upstream_net_added_loc": 4921,
+      "max_upstream_net_added_loc": 4927,
+      "previous_max_direct_upstream_files": 225,
+      "max_direct_upstream_files": 225,
+      "measured_upstream_net_added_loc": 4927,
+      "measured_direct_upstream_files": 225,
+      "scope_paths": [
+        "deploy/docker/Dockerfile",
+        "uv.lock"
+      ],
+      "reason": "Repair the two affected C2 dependencies identified by all four fresh native Grype reports in run 42513960135/job 128847114105. Reuse the reviewed M GH source-build change to pin and verify klauspost/compress 1.20.2 and copy only the fully hashed oauthlib 4.0.1 package block into the C2 lock. Preserve the resolver policy, every other package, GH source/toolchain/xnet pins, application code, SQL, UI, schema, retries and time limits. The measured six added upstream lines retain the 225-file, nine-patch and 0.85 isolation boundaries under existing direct human budget authority. Preserve all history. Require the new C2 source and runtime qualification, independent image comparisons, original High blocking with only specifically approved C2 runtime dispositions, protected signatures, native receipts and independent readback. M6c44 stays frozen; old C2 raw artifacts and M qualification do not qualify the new C2 images."
+    },
     "reviewed_complete_security_budget_followup": {
       "approved_at": "2026-10-25",
       "previous_max_direct_upstream_files": 158,

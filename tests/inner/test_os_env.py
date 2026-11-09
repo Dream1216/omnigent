@@ -7,8 +7,10 @@ import base64
 import io
 import os
 import shutil
+import subprocess
 import tracemalloc
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -515,3 +517,57 @@ def test_shell_command_does_not_see_omnigent_project_root(
     out = result.get("stdout", "")
     assert project_entry in out
     assert str(_project_root()) not in out
+
+
+@pytest.mark.parametrize("backend", ["linux_bwrap", "darwin_seatbelt", "none"])
+def test_helper_spawn_constrains_linux_sandbox_locale_after_backend_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    import omnigent.inner.os_env as module
+
+    poison = {
+        "LANGUAGE": "../../workspace/catalog:fr",
+        "LOCPATH": "/workspace/locale",
+        "LANG": "fr_FR.UTF-8",
+        "LC_ALL": "fr_FR.UTF-8",
+        "LC_MESSAGES": "fr_FR.UTF-8",
+        "BENIGN_MARKER": "preserved",
+    }
+    environment = dict(poison)
+    captured = []
+
+    def wrap(argv, *_args, **_kwargs):
+        environment.update(poison)
+        return argv
+
+    def spawn(*_args, **kwargs):
+        captured.append(dict(kwargs["env"]))
+        raise RuntimeError("captured before exec")
+
+    monkeypatch.setattr(module, "build_helper_env", lambda *_args: environment)
+    monkeypatch.setattr(
+        module, "get_backend", lambda *_args: SimpleNamespace(wrap_launcher_argv=wrap)
+    )
+    monkeypatch.setattr(module, "subprocess", SimpleNamespace(Popen=spawn, PIPE=subprocess.PIPE))
+    policy = SandboxPolicy(
+        backend_type=backend,
+        active=backend != "none",
+        read_roots=None,
+        write_roots=[],
+        write_files=[],
+        allow_network=True,
+    )
+    helper = module._HelperProcessClient(cwd=tmp_path, shell_path="/bin/sh", sandbox=policy)
+    try:
+        with pytest.raises(RuntimeError, match="captured before exec"):
+            helper._start_locked()
+    finally:
+        helper.close()
+    assert len(captured) == 1
+    actual = captured[0]
+    assert actual["BENIGN_MARKER"] == "preserved"
+    if backend == "linux_bwrap":
+        assert "LANGUAGE" not in actual and "LOCPATH" not in actual
+        assert {actual[key] for key in ("LANG", "LC_ALL", "LC_MESSAGES")} == {"C.UTF-8"}
+    else:
+        assert all(actual[key] == value for key, value in poison.items())

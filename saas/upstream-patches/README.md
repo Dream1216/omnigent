@@ -256,3 +256,5 @@ The frozen fallback ORM still represents revision `mm1a2b3c4d5e`. Patch 0003
 therefore stamps only that actual bootstrap schema and executes the original
 D0 migrations before verifying the current head and removing its bootstrap
 marker. It does not infer a revision for an unknown unversioned database.
+
+The C2 compatibility security backport extends patch 0010 with the Linux sandbox locale boundary in `omnigent/inner/os_env.py` and `omnigent/inner/terminal.py`. The two guards execute after the last caller/backend environment changes. Production startup has its own explicit locale initialization; C2 retains its original application and schema behavior and needs its own native caller qualification. The nine-patch limit and original patch history are preserved.

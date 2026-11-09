@@ -378,6 +378,11 @@ RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
  && cd /build/gh-source \
  && grep -Fx 'toolchain go1.27.2' go.mod \
  && grep -E '^[[:space:]]*golang[.]org/x/net[[:space:]]+v0[.]60[.]0[[:space:]]+// indirect$' go.mod \
+ && grep -E '^[[:space:]]*github[.]com/klauspost/compress[[:space:]]+v1[.]20[.]1$' go.mod \
+ && go mod edit -require=github.com/klauspost/compress@v1.20.2 \
+ && printf '%s\n' \
+      'github.com/klauspost/compress v1.20.2 h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=' \
+      'github.com/klauspost/compress v1.20.2/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=' >> go.sum \
  && [ "$(go env GOVERSION)" = "go1.27.2" ] \
  && [ "$(go env GOARCH)" = "${TARGETARCH}" ] \
  && modules_downloaded= \
@@ -402,6 +407,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
  && go version -m /opt/gh-export/gh | grep -E '^[[:space:]]*build[[:space:]]+CGO_ENABLED=0$' \
  && go version -m /opt/gh-export/gh | grep -E ': go1[.]27[.]2$' \
  && go version -m /opt/gh-export/gh | grep -E '^[[:space:]]*dep[[:space:]]+golang[.]org/x/net[[:space:]]+v0[.]60[.]0' \
+ && go version -m /opt/gh-export/gh | grep -F 'github.com/klauspost/compress' | grep -F 'v1.20.2' \
  && installed="$(/opt/gh-export/gh --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" \
  && [ "$installed" = "$GH_VERSION" ] \
  && echo "gh ${GH_VERSION} built from verified upstream ${GH_SOURCE_REVISION}"

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# SaaS-only Host image CLI rows. Standard names are delegated to the upstream
-# installer so fleet additions do not widen the maintained upstream delta.
+# Fixed SaaS Host CLI assets; other names use the unchanged upstream installer.
 
 set -euo pipefail
 
@@ -9,6 +8,13 @@ set -euo pipefail
 export GH_TELEMETRY=false
 
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
+JCODE_HOME="${JCODE_HOME:-/opt/jcode}"
+JCODE_VERSION="0.90.1"
+JCODE_SHA256_AMD64="9a46e0cd4b66416177e78384614787323be7a9d195832733664e8f0354a9927b"
+JCODE_SHA256_ARM64="85c095f6ec90bdf06cce2ee9666fa40fc74d05c6aca65e475bc12978af45f16e"
+E2E_JCODE_VERSION="0.84.0"
+E2E_JCODE_SHA256_AMD64="e00eaede1a4f26812e77382bda9d82e2d301affd983d18ada38fddd43dce9571"
+E2E_JCODE_ARCHIVE_SIZE="48783970"
 DEVIN_VERSION="3000.11.3"
 DEVIN_SHA256_AMD64="83b3b113c01bf2a3e9e100db08d77e6b086806a7754f091e20831bdfe215157e"
 DEVIN_SHA256_ARM64="21a2d7a8dea67987067cde7eb3fe7193a48daa8f8c3d50d414c603c4a2b67f15"
@@ -38,6 +44,58 @@ verify() {
     fi
 }
 
+install_jcode() (
+    local requested="${1#v}" target sha stage builds version_dir expected
+    local version="$JCODE_VERSION"
+    if [ "${e2e_jcode_only:-false}" = true ]; then
+        version="$E2E_JCODE_VERSION"
+    fi
+    if [ -n "$requested" ] && [ "$requested" != "$version" ]; then
+        die "jcode is pinned to $version; got $requested"
+    fi
+    case "$(uname -m)" in
+        x86_64) target="jcode-linux-x86_64"; sha="$JCODE_SHA256_AMD64" ;;
+        aarch64) target="jcode-linux-aarch64"; sha="$JCODE_SHA256_ARM64" ;;
+        *) die "unsupported architecture '$(uname -m)' for jcode" ;;
+    esac
+    if [ "${e2e_jcode_only:-false}" = true ]; then
+        [ "$target" = "jcode-linux-x86_64" ] || die "fixed E2E jcode requires Linux x86_64"
+        sha="$E2E_JCODE_SHA256_AMD64"
+    fi
+    stage="$(mktemp -d)"
+    trap 'rm -rf -- "$stage"' EXIT
+    if [ "${e2e_jcode_only:-false}" = true ]; then
+        gh api -H 'Accept: application/octet-stream' \
+            repos/1jehuang/jcode/releases/assets/548132662 > "$stage/jcode.tar.gz"
+        [ "$(wc -c < "$stage/jcode.tar.gz" | tr -d ' ')" = "$E2E_JCODE_ARCHIVE_SIZE" ] \
+            || die "unexpected E2E jcode release size"
+    else
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 30 --max-time 300 -o "$stage/jcode.tar.gz" \
+            "https://github.com/1jehuang/jcode/releases/download/v${version}/${target}.tar.gz"
+    fi
+    echo "$sha  $stage/jcode.tar.gz" | sha256sum -c -
+    expected="$target"
+    if [ "$target" = "jcode-linux-x86_64" ]; then
+        expected="$(printf '%s\n%s' "$target" "$target.bin")"
+    fi
+    [ "$(tar -tzf "$stage/jcode.tar.gz")" = "$expected" ] \
+        || die "unexpected jcode release archive layout"
+    tar -xzf "$stage/jcode.tar.gz" -C "$stage"
+    builds="$JCODE_HOME/.jcode/builds"
+    version_dir="$builds/versions/$version"
+    mkdir -p "$version_dir" "$builds/stable" "$builds/current" "$BIN_DIR"
+    install -m 0755 "$stage/$target" "$version_dir/jcode"
+    if [ -f "$stage/$target.bin" ]; then
+        install -m 0755 "$stage/$target.bin" "$version_dir/$target.bin"
+    fi
+    ln -sfn "$version_dir/jcode" "$builds/stable/jcode"
+    printf '%s\n' "$version" > "$builds/stable-version"
+    ln -sfn "$builds/stable/jcode" "$BIN_DIR/jcode"
+    chmod -R a+rX "$JCODE_HOME"
+    verify jcode
+)
+
 install_devin() {
     local requested="$1" target sha archive
     if [ -n "$requested" ] && [ "$requested" != "$DEVIN_VERSION" ]; then
@@ -63,8 +121,18 @@ install_devin() {
 }
 
 [ "$#" -gt 0 ] || die "usage: install-saas-harness-cli.sh NAME[@VERSION]..."
+e2e_jcode_only=false
+# The original E2E workflow pins 0.84.0 and does not normalize a production image.
+if [ "$1" = "--e2e-jcode-only" ]; then
+    [ "$#" -eq 2 ] && [ "$2" = "jcode@v0.84.0" ] || die "exact E2E jcode spec required"
+    e2e_jcode_only=true
+    install_jcode "v0.84.0"
+    exit
+fi
 for spec in "$@"; do
     case "$spec" in
+        jcode@*) install_jcode "${spec#*@}" ;;
+        jcode) install_jcode "" ;;
         devin@*) install_devin "${spec#*@}" ;;
         devin) install_devin "" ;;
         *) bash /tmp/install-harness-cli.sh "$spec" ;;

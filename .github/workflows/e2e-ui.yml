@@ -132,6 +132,10 @@ jobs:
         with:
           path: .tmp-codex-parity-target/debug/codex-parity-sidecar
           key: codex-parity-bin-${{ runner.os }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('tests/codex_parity/sidecar/**') }}
+      - name: Verify exact parity V8 download
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
+        uses: ./saas/actions/setup-pinned-parity-v8
+        timeout-minutes: 3
       - name: Build parity sidecar
         if: steps.sidecar-cache.outputs.cache-hit != 'true'
         run: |
@@ -152,7 +156,7 @@ jobs:
     # omits the server, runner, harness CLIs, bubblewrap, tmux, and sidecar.
     needs: setup
     if: needs.setup.outputs.matrix != '{"include":[]}'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -228,7 +232,7 @@ jobs:
     # them. Fork PRs DO run (mock LLM, no secrets) -- same as ci.yml.
     # `ready_for_review` re-fires when a draft is converted.
     needs: [setup, build-sidecar]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       # One red shard shouldn't cancel siblings -- we want every shard's signal.

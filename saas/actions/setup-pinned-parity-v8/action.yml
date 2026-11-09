@@ -1,0 +1,31 @@
+name: Fetch exact Codex parity V8 archive
+description: Verify the unchanged v149.2.0 Linux x86_64 archive before the original Cargo build.
+runs:
+  using: composite
+  steps:
+    - name: Verify exact official V8 archive
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        V8_ASSET_ID: "429513990"
+        V8_ARCHIVE_SIZE: "38519314"
+        V8_ARCHIVE_SHA256: 8aed98637db7e77dc8bfb8bb4759ec5bde472d0bf7943f58e0e62a350945c559
+      run: |
+        set -euo pipefail
+        if [[ "$RUNNER_OS/$RUNNER_ARCH" != "Linux/X64" ]]; then
+          echo "pinned parity V8 archive requires Linux/X64" >&2
+          exit 2
+        fi
+        archive_root=$(mktemp -d "$RUNNER_TEMP/parity-v8-v149.2.0.XXXXXX")
+        archive="$archive_root/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz"
+        gh api -H 'Accept: application/octet-stream' \
+          "repos/denoland/rusty_v8/releases/assets/$V8_ASSET_ID" > "$archive"
+        python - "$archive" "$V8_ARCHIVE_SIZE" "$V8_ARCHIVE_SHA256" <<'PY'
+        import hashlib
+        import sys
+        from pathlib import Path
+        path = Path(sys.argv[1])
+        if path.stat().st_size != int(sys.argv[2]) or hashlib.sha256(path.read_bytes()).hexdigest() != sys.argv[3]:
+            raise SystemExit("official V8 archive size or SHA256 differs")
+        PY
+        printf 'RUSTY_V8_ARCHIVE=%s\n' "$archive" >> "$GITHUB_ENV"
