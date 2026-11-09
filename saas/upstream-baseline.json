@@ -115,10 +115,31 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 229,
-    "max_upstream_net_added_loc": 5055,
+    "max_upstream_net_added_loc": 5065,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
+    "compat018_fixed_CI_asset_transport_20261109": {
+      "parent_source": "eca4c97c26c8bd37eec634c1685829120c5a942b",
+      "authorization_source": {
+        "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
+        "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
+        "verbatim": "全面授权，预算不用重复批准。"
+      },
+      "recorded_at": "2026-11-09",
+      "previous_max_upstream_net_added_loc": 5055,
+      "max_upstream_net_added_loc": 5065,
+      "previous_max_direct_upstream_files": 229,
+      "max_direct_upstream_files": 229,
+      "measured_upstream_net_added_loc": 5065,
+      "measured_direct_upstream_files": 229,
+      "scope_paths": [
+        ".github/actions/e2e-run/action.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/e2e-ui.yml"
+      ],
+      "reason": "Repair three actual first-attempt CI download failures without changing fixed versions, application code, test commands, assertions, time limits or security gates. Reuse the reviewed same-version official-API crane installer. Route original E2E jcode0.84.0 through the existing fixed SaaS install/layout/dual-user verification helper in an explicit CI-only mode, with exact official API asset size/SHA and no vendor source fallback. Verify the exact unchanged rusty_v8 v149.2.0 archive before the original Cargo sidecar build on cache miss. Only ten net upstream CI lines are added, with no new divergent upstream path; preserve all budget history, nine patches and0.85 isolation. New C2 candidate needs its own native CI, all four actual OCI comparisons/fresh scans, protected signatures and independent readback; original failures remain and no old run is retried."
+    },
     "compat018_runtime_locale_guard_20261109": {
       "parent_source": "ed81f2460102fab2ab6e9d0f60a091d07da026e4",
       "authorization_source": {

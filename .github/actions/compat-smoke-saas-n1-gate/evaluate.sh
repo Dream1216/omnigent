@@ -10,7 +10,7 @@ POSTGRESQL_N1_CHECK="verify-postgresql-n1"
 POSTGRESQL_N1_WORKFLOW_NAME="SaaS N-1 compatibility image"
 POSTGRESQL_N1_WORKFLOW_ID="342012814"
 POSTGRESQL_N1_WORKFLOW_PATH=".github/workflows/saas-n1-compat-image.yml"
-POSTGRESQL_N1_WORKFLOW_SHA256="2d3a46e4747d81d950390045d8c0d2f1d73dd6b4eb2f6e4d718e81f24cdb1710"
+POSTGRESQL_N1_WORKFLOW_SHA256="712453cd76b29857fae658da2adea212b3ce799489321552f40fb5bce979498f"
 POSTGRESQL_N1_ACTIONS_APP_ID="15368"
 
 # Candidate inputs that can change pytest collection, dependency resolution,
@@ -37,6 +37,11 @@ POSTGRESQL_N1_TRUSTED_INPUTS=(
   "tests/saas/test_n1_outbox_admission.py|d5db6f7cc3feb7a8a9de64da88bab036ba7b6e57be4043e36c29736d462811c1,2570537024bd3ba5d1501ad58d0e76d65a0b49c66ad471869f7c5cb757440b30"
   "tests/saas/test_control_plane_migration.py|deedcbfcf9cabb1ac4e71cfeb0f0803eb5b62a659bac00720ee99f9befd4d0ef,60d4a0c34ba2866f0937e28a90acb676f82a077aef232ee8ce3a3c2d63d8650c"
   "tests/saas/test_production_runner_postgresql.py|3212366d4d615971b1a386831abb47280d2d94332c1876b7552a371dbfc34ee2,b976585733b55d4202304414c8a767b40407a791b678942c669d5272ad6c6daf"
+)
+
+# Controller tooling is pinned separately from the original 21 product inputs.
+POSTGRESQL_N1_ACTION_INPUTS=(
+  "saas/actions/setup-pinned-crane/action.yml|383728141dbd88956fe9ddcb8fe29ec0e621ab5d2a51943b9e88d8f68d54bcfd"
 )
 
 POSTGRESQL_N1_PATHS=(
@@ -173,7 +178,7 @@ OBSERVED_WORKFLOW_SHA256=$(gh api \
 [[ "$OBSERVED_WORKFLOW_SHA256" == "$POSTGRESQL_N1_WORKFLOW_SHA256" ]] || \
   fail "PostgreSQL N-1 workflow bytes do not match trusted main policy"
 
-for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}"; do
+for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}" "${POSTGRESQL_N1_ACTION_INPUTS[@]}"; do
   trusted_path="${trusted_input%%|*}"
   trusted_sha256s="${trusted_input#*|}"
   [[ "$trusted_sha256s" =~ ^[0-9a-f]{64}(,[0-9a-f]{64})?$ ]] || \

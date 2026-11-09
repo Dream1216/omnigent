@@ -1,0 +1,39 @@
+name: Install exact crane release from official asset API
+description: Install the unchanged v0.21.6 Linux x86_64 release with exact size and SHA256.
+runs:
+  using: composite
+  steps:
+    - name: Verify and install the exact official crane archive
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CRANE_VERSION: v0.21.6
+        CRANE_ASSET_ID: "423559783"
+        CRANE_ARCHIVE_SIZE: "16463798"
+        CRANE_ARCHIVE_SHA256: 7ebbdcd05b652345c1f5105f8475e518534b90d66f3bdb50017be63f426ea435
+      run: |
+        set -euo pipefail
+        if [[ "$RUNNER_OS/$RUNNER_ARCH" != "Linux/X64" ]]; then
+          echo "pinned crane release requires Linux/X64" >&2
+          exit 2
+        fi
+        install_root=$(mktemp -d "$RUNNER_TEMP/crane-v0.21.6.XXXXXX")
+        archive="$install_root/crane-release.tar.gz"
+        gh api -H 'Accept: application/octet-stream' \
+          "repos/google/go-containerregistry/releases/assets/$CRANE_ASSET_ID" > "$archive"
+        python - "$archive" "$CRANE_ARCHIVE_SIZE" "$CRANE_ARCHIVE_SHA256" <<'PY'
+        import hashlib
+        import sys
+        from pathlib import Path
+        path = Path(sys.argv[1])
+        if path.stat().st_size != int(sys.argv[2]) or hashlib.sha256(path.read_bytes()).hexdigest() != sys.argv[3]:
+            raise SystemExit("official crane archive size or SHA256 differs")
+        PY
+        tar -xzf "$archive" -C "$install_root" crane
+        chmod 0755 "$install_root/crane"
+        actual_version=$("$install_root/crane" version)
+        if [[ "$actual_version" != "$CRANE_VERSION" && "v$actual_version" != "$CRANE_VERSION" ]]; then
+          echo "official crane executable version differs" >&2
+          exit 2
+        fi
+        printf '%s\n' "$install_root" >> "$GITHUB_PATH"

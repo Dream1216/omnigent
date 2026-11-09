@@ -53,16 +53,21 @@ def test_saas_harness_build_disables_gh_telemetry_before_delegation(
 
 
 @pytest.mark.parametrize(
-    ("architecture", "fault"),
+    ("release", "architecture", "fault"),
     [
-        (architecture, fault)
+        ("0.90.1", architecture, fault)
         for architecture in ("x86_64", "aarch64")
         for fault in (None, "hash", "download", "version", "smoke", "layout")
     ]
-    + [("s390x", None)],
+    + [("0.90.1", "s390x", None)]
+    + [
+        ("0.84.0", "x86_64", fault)
+        for fault in (None, "hash", "download", "version", "smoke", "layout", "size")
+    ]
+    + [("0.84.0", "aarch64", None)],
 )
 def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
-    tmp_path: Path, architecture: str, fault: str | None
+    tmp_path: Path, release: str, architecture: str, fault: str | None
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     installer = (repo / "saas/scripts/install-saas-harness-cli.sh").read_text()
@@ -70,7 +75,7 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
     target = "jcode-linux-" + architecture
     archive = tmp_path / "release.tar.gz"
     main = b'#!/bin/sh\nprintf "%s\\n" "${PROBE_USER:-root}" >> "$PROBE_LOG"\n'
-    main += b'[ "${FAIL_SMOKE:-0}" != 1 ] || exit 1\nprintf "jcode v0.90.1\\n"\n'
+    main += f'[ "${{FAIL_SMOKE:-0}}" != 1 ] || exit 1\nprintf "jcode v{release}\\n"\n'.encode()
     members = {target: main}
     if architecture == "x86_64":
         members[target + ".bin"] = b"actual native binary fixture"
@@ -82,10 +87,14 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
             info.size, info.mode = len(body), 0o755
             bundle.addfile(info, io.BytesIO(body))
     checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
-    for name in ("JCODE_SHA256_AMD64", "JCODE_SHA256_ARM64"):
+    for name in ("JCODE_SHA256_AMD64", "JCODE_SHA256_ARM64", "E2E_JCODE_SHA256_AMD64"):
         prefix = name + '="'
         old = phase.split(prefix, 1)[1].split('"', 1)[0]
         phase = phase.replace(prefix + old + '"', prefix + checksum + '"')
+    phase = phase.replace(
+        'E2E_JCODE_ARCHIVE_SIZE="48783970"',
+        f'E2E_JCODE_ARCHIVE_SIZE="{archive.stat().st_size + (fault == "size")}"',
+    )
     if fault == "hash":
         archive.write_bytes(archive.read_bytes() + b"changed transport")
     commands = tmp_path / "commands"
@@ -98,6 +107,8 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
         "curl": 'printf "%s\\n" "$@" >> "$CURL_LOG"\n'
         '[ "${FAIL_DOWNLOAD:-0}" != 1 ] || exit 22\n'
         'while [ "$1" != -o ]; do shift; done\ncp "$RELEASE_ARCHIVE" "$2"\n',
+        "gh": 'printf "%s\\n" "$@" >> "$CURL_LOG"\n'
+        '[ "${FAIL_DOWNLOAD:-0}" != 1 ] || exit 22\ncat "$RELEASE_ARCHIVE"\n',
     }
     if shutil.which("sha256sum") is None:
         scripts["sha256sum"] = 'exec shasum -a 256 "$@"\n'
@@ -108,11 +119,12 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
     home, binaries = tmp_path / "jcode home", tmp_path / "bin"
     binaries.mkdir()
     probe, curl = tmp_path / "probes", tmp_path / "curl arguments"
-    spec = "jcode@0.90.2" if fault == "version" else "jcode@v0.90.1"
-    if fault is None and architecture == "x86_64":
+    spec = "jcode@0.90.2" if fault == "version" else f"jcode@v{release}"
+    if fault is None and architecture == "x86_64" and release == "0.90.1":
         spec = "jcode"
+    arguments = ["--e2e-jcode-only", spec] if release == "0.84.0" else [spec]
     result = subprocess.run(
-        ["bash", "-euc", phase, "installer", spec],
+        ["bash", "-euc", phase, "installer", *arguments],
         env={
             **os.environ,
             "PATH": f"{commands}:{binaries}:{os.environ['PATH']}",
@@ -129,7 +141,7 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
         text=True,
         check=False,
     )
-    if fault or architecture == "s390x":
+    if fault or architecture == "s390x" or (release == "0.84.0" and architecture != "x86_64"):
         assert result.returncode != 0
         if fault != "smoke":
             assert not (binaries / "jcode").exists()
@@ -137,15 +149,19 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
         assert "cargo" not in result.stderr and "building from source" not in result.stdout
         return
     assert result.returncode == 0, result.stderr
-    version = home / ".jcode/builds/versions/0.90.1"
+    version = home / f".jcode/builds/versions/{release}"
     assert (binaries / "jcode").resolve() == version / "jcode"
     assert (version / "jcode").read_bytes() == main
-    assert (home / ".jcode/builds/stable-version").read_text() == "0.90.1\n"
+    assert (home / ".jcode/builds/stable-version").read_text() == f"{release}\n"
     if architecture == "x86_64":
         assert (version / (target + ".bin")).read_bytes() == members[target + ".bin"]
     assert probe.read_text().splitlines() == ["root", "sandbox"]
-    assert "--retry-all-errors" in curl.read_text()
-    assert f"/v0.90.1/{target}.tar.gz" in curl.read_text()
+    if release == "0.90.1":
+        assert "--retry-all-errors" in curl.read_text()
+        assert f"/v{release}/{target}.tar.gz" in curl.read_text()
+    else:
+        assert "Accept: application/octet-stream" in curl.read_text()
+        assert "repos/1jehuang/jcode/releases/assets/548132662" in curl.read_text()
 
 
 @pytest.mark.parametrize("prune_marker_present", [False, True])

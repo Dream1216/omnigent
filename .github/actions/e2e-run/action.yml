@@ -130,8 +130,10 @@ runs:
       # configured") and the runner never appears. Pin the version so CI is
       # deterministic; bump to match the image bake's default when it moves.
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        sudo bash "${GITHUB_WORKSPACE}/deploy/docker/install-harness-cli.sh" jcode@v0.84.0
+        sudo --preserve-env=GH_TOKEN bash "${GITHUB_WORKSPACE}/saas/scripts/install-saas-harness-cli.sh" --e2e-jcode-only jcode@v0.84.0
 
     - name: Build pinned old server (backwards-compat only)
       # Only runs when server_version is set. Builds the released tag into an
