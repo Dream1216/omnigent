@@ -1166,3 +1166,18 @@ def test_clean_profile_cannot_borrow_a_retained_producer_with_missing_new_proof(
     )
     with pytest.raises(ValueError):
         promotion.verify_producer(run, scan, builder)
+
+
+def test_clean_SDK_step_prepares_report_destination_in_empty_runner_workspace(tmp_path):
+    workflow = yaml.load(Path(recovery.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"]["complete-m8c-first-server"]["steps"]
+    sdk = next(
+        step
+        for step in steps
+        if step.get("name") == "Verify new clean M8c Server SDK on both architectures"
+    )
+    # Substitute only the expensive probe process; execute the real shell setup and heredoc.
+    shell = "python() { test -d artifacts; };\n" + sdk["run"]
+    result = subprocess.run(["bash", "-c", shell], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "artifacts").is_dir()

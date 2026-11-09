@@ -145,6 +145,7 @@ jobs:
           CANDIDATE_REVISION: ${{ env.PRODUCT_REVISION }}
         run: |
           set -euo pipefail
+          mkdir -p artifacts
           python - <<'PY'
           import hashlib, json, os, re, secrets, subprocess, tarfile
           from pathlib import Path
