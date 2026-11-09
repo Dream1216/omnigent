@@ -29,7 +29,9 @@ _OWNER = "a" * 32
 
 def _runtime_script() -> str:
     workflow = yaml.safe_load((_ROOT / _WORKFLOW).read_text())
-    step = next(s for s in workflow["jobs"]["build-candidate"]["steps"] if s.get("name") == _STEP)
+    step = next(
+        s for s in workflow["jobs"]["build-server-preflight"]["steps"] if s.get("name") == _STEP
+    )
     return step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
 
 

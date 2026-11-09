@@ -54,6 +54,40 @@ def scope_module():
     return module
 
 
+@pytest.mark.parametrize(
+    "path,group",
+    [
+        ("tests/saas/test_accepted_m165_promotion.py", "misc"),
+        ("tests/scripts/test_dependency_ci.py", "ci-tooling"),
+    ],
+)
+def test_leaf_test_changes_run_the_owning_tests_without_unrelated_builds(
+    scope_module, path, group
+):
+    selected = scope_module.select_scope([{"filename": path, "status": "modified"}])
+    matrix = json.loads(selected["python_matrix"])["include"]
+    assert len(matrix) == 1 and matrix[0]["group"] == group and matrix[0]["paths"] == path
+    assert selected["backend"] == "true"
+    assert all(
+        selected[key] == "false"
+        for key in ("docker", "database", "integration", "windows", "e2e", "web")
+    )
+
+
+@pytest.mark.parametrize(
+    "path,status",
+    [
+        ("tests/saas/conftest.py", "modified"),
+        ("tests/saas/test_new.py", "added"),
+        ("saas/runtime.py", "modified"),
+        ("tests/saas/test_x.py;echo", "modified"),
+    ],
+)
+def test_fixture_new_unknown_and_unsafe_test_changes_keep_full_ci(scope_module, path, status):
+    selected = scope_module.select_scope([{"filename": path, "status": status}])
+    assert selected["dependency"] == "false" and selected["docker"] == "true"
+
+
 ECOSYSTEM_CHANGES = {
     "uv": ("python", {"uv.lock": ("version = 1\n", "version = 2\n")}),
     "npm": (
@@ -232,7 +266,7 @@ def test_ci_tooling_tests_run_only_when_tooling_can_change(
     selection = scope_module.select_scope([{"filename": path, "status": status}])
     groups = [row["group"] for row in json.loads(selection["python_matrix"])["include"]]
     assert ("ci-tooling" in groups) == runs_tooling
-    assert "misc" in groups
+    assert ("misc" in groups) is (not path.startswith("tests/scripts/test_"))
 
 
 @pytest.mark.parametrize("reason", ["Push, scheduled and manual runs use full CI", ""])

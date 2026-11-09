@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "repository": "Dream1216/omnigent",
+  "candidate_workflow": ".github/workflows/saas-image-candidate.yml",
+  "release_policy": "saas/supply_chain/release-policy.json",
+  "automatic_build_events": [
+    "pull_request"
+  ],
+  "image_inputs": [
+    "deploy/docker/",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "pyproject.toml",
+    "setup.py",
+    "uv.lock",
+    "LICENSE",
+    "NOTICE",
+    ".dockerignore",
+    "patches/",
+    "web/",
+    "omnigent/",
+    "sdks/",
+    "saas/",
+    "examples/",
+    "integrations/slack/"
+  ],
+  "non_image_inputs": [
+    ".github/",
+    "tests/",
+    "docs/",
+    "designs/",
+    "dev/",
+    "scripts/",
+    "skills/",
+    ".agents/",
+    ".claude/",
+    ".vscode/",
+    ".idea/",
+    "AGENTS.md",
+    "README.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "justfile",
+    ".gitignore",
+    ".pre-commit-config.yaml"
+  ],
+  "gates": {
+    "tooling": [
+      "check_release_tooling"
+    ],
+    "source": [
+      "check_control_plane_migration_cli",
+      "check_patch_queue",
+      "check_upstream_delta",
+      "check_production_baseline",
+      "check_image_supply_chain"
+    ],
+    "recovery": [
+      "check_recovery_readiness"
+    ],
+    "production": [
+      "run_production_admission"
+    ],
+    "qa": [
+      "run_release_qa"
+    ]
+  },
+  "test_groups": {
+    "tests/saas/": "misc",
+    "tests/scripts/": "ci-tooling"
+  },
+  "artifact_limits": {
+    "report_bytes": 33554432
+  }
+}

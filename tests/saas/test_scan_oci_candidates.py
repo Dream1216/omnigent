@@ -21,8 +21,58 @@ from saas.scripts.scan_oci_candidates import (
 )
 
 
+@pytest.mark.parametrize("fault", [None, "corrupt", "symlink", "wrong-size"])
+def test_release_archive_cache_requires_complete_hash_verified_bytes(tmp_path, monkeypatch, fault):
+    root = tmp_path / "cache"
+    root.mkdir()
+    monkeypatch.setenv("OMNIGENT_RELEASE_TOOL_CACHE", str(root))
+    payload = b"one complete fixed official archive"
+    digest = hashlib.sha256(payload).hexdigest()
+    original = tmp_path / "original"
+    original.write_bytes(payload)
+    scan_oci_candidates.save_release_cache(original, digest)
+    cached = root / digest
+    if fault == "corrupt":
+        cached.write_bytes(b"x" * len(payload))
+    elif fault == "symlink":
+        cached.unlink()
+        cached.symlink_to(original)
+    destination = tmp_path / "restored"
+    restored = scan_oci_candidates.restore_release_cache(
+        destination, digest, size=len(payload) + (fault == "wrong-size")
+    )
+    assert restored is (fault is None)
+    assert destination.exists() is restored
+    if restored:
+        assert destination.read_bytes() == payload
+
+
+def test_cached_database_still_runs_original_age_and_subject_validation(tmp_path, monkeypatch):
+    root = tmp_path / "cache"
+    root.mkdir()
+    monkeypatch.setenv("OMNIGENT_RELEASE_TOOL_CACHE", str(root))
+    payload = b"official database bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setitem(scan_oci_candidates.TEMPORARY_DATABASE_AGE, "archive_SHA256", digest)
+    (root / digest).write_bytes(payload)
+    monkeypatch.setattr(
+        scan_oci_candidates.urllib.request,
+        "urlopen",
+        lambda *a, **kw: pytest.fail("verified archive must be reused"),
+    )
+    target = tmp_path / "db.tar.zst"
+    scan_oci_candidates.download_approved_database(target)
+    assert target.read_bytes() == payload
+    with pytest.raises(ValueError, match="24 hours"):
+        parse_database_status(
+            {"valid": True, "schemaVersion": "v6.1.10", "built": "2026-11-01T00:00:00Z"},
+            now=datetime(2026, 11, 10, tzinfo=UTC),
+        )
+
+
 @pytest.mark.parametrize("fault", [None, "short", "oversized", "hash", "version"])
 def test_fixed_grype_API_bytes_must_pass_before_extraction(monkeypatch, tmp_path, fault):
+    monkeypatch.setenv("OMNIGENT_RELEASE_TOOL_CACHE", str(tmp_path / "cache"))
     monkeypatch.setenv("GH_TOKEN", "fixed-readonly-test-token")
     payload = b"one exact official archive"
     monkeypatch.setattr(scan_oci_candidates, "GRYPE_ARCHIVE_BYTES", len(payload))
@@ -132,24 +182,29 @@ def test_preflight_blocks_rebuilds_but_keeps_final_scan() -> None:
         Path(__file__).resolve().parents[2] / ".github/workflows/saas-image-candidate.yml"
     )
     workflow = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
-    steps = workflow["jobs"]["build-candidate"]["steps"]
+    steps = workflow["jobs"]["build-server-preflight"]["steps"]
     names = [step["name"] for step in steps]
     preflight = names.index("Preflight scan exact server candidate on both architectures")
     assert names.index("Build server candidate attempt 1") < preflight
-    assert preflight < names.index("Build server candidate attempt 2")
-    assert preflight < names.index("Build host candidate attempt 1")
-    assert names.index("Compare repeated executable image facts") < names.index(
+    assert workflow["jobs"]["build-remaining-images"]["needs"] == "build-server-preflight"
+    collector = workflow["jobs"]["build-candidate"]
+    assert collector["needs"] == ["build-server-preflight", "build-remaining-images"]
+    final_steps = collector["steps"]
+    final_names = [step["name"] for step in final_steps]
+    assert final_names.index("Compare repeated executable image facts") < final_names.index(
         "Scan exact OCI candidates on both architectures"
     )
     assert "--scope server-preflight" in steps[preflight]["run"]
-    final_scan = steps[names.index("Scan exact OCI candidates on both architectures")]["run"]
+    final_scan = final_steps[final_names.index("Scan exact OCI candidates on both architectures")][
+        "run"
+    ]
     assert "--scope server-preflight" not in final_scan
     assert "--image server=" in final_scan and "--image host=" in final_scan
-    upload = steps[names.index("Upload candidate evidence")]["with"]["path"]
+    upload = final_steps[final_names.index("Upload candidate evidence")]["with"]["path"]
     assert "artifacts/grype-preflight/*.json" in upload
     diagnostic_index = names.index("Retain failed Server preflight OCI for diagnosis")
     diagnostic = steps[diagnostic_index]
-    assert preflight < diagnostic_index < names.index("Build server candidate attempt 2")
+    assert preflight < diagnostic_index
     assert steps[preflight]["id"] == "server_preflight"
     assert "continue-on-error" not in steps[preflight]
     assert "failure()" in diagnostic["if"]
@@ -172,14 +227,8 @@ def test_preflight_blocks_rebuilds_but_keeps_final_scan() -> None:
         "artifacts/server-candidate-runtime.json",
         "artifacts/grype-preflight/*.json",
     ]
-    for name in (
-        "Build server candidate attempt 2",
-        "Build host candidate attempt 1",
-        "Build host candidate attempt 2",
-        "Seal exact admitted OCI archives and raw scan evidence",
-    ):
-        assert "if" not in steps[names.index(name)]
-        assert "continue-on-error" not in steps[names.index(name)]
+    seal = final_steps[final_names.index("Seal exact admitted OCI archives and raw scan evidence")]
+    assert "if" not in seal and "continue-on-error" not in seal
     assert "artifacts/grype/*.json" in upload
 
 
@@ -192,7 +241,8 @@ def test_fixed_host_diagnostic_cannot_enter_release_or_hide_raw_failures() -> No
     flag = workflow["on"]["workflow_dispatch"]["inputs"]["diagnostic_host_only"]
     assert flag["default"] == "false" and flag["type"] == "boolean"
     for name in ("verify-candidate-preflight", "verify-production-migration-replay"):
-        assert workflow["jobs"][name]["if"] == "${{ !inputs.diagnostic_host_only }}"
+        assert "!inputs.diagnostic_host_only &&" in workflow["jobs"][name]["if"]
+        assert "candidate-required == 'true'" in workflow["jobs"][name]["if"]
     for name in ("publish-signed", "verify-published-source"):
         assert "!inputs.diagnostic_host_only &&" in workflow["jobs"][name]["if"]
     assert diagnostic["permissions"] == {"contents": "read", "actions": "read"}

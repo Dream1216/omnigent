@@ -1,5 +1,46 @@
 # Production image release runbook
 
+Execution order and input selection live in `.github/release-pipeline.json` and
+`saas-image-candidate.yml`; enforceable supply-chain requirements live in
+`saas/supply_chain/release-policy.json`. This guide describes those contracts.
+Conversation state and historical approval notes do not add execution gates.
+
+The workflow records a plan for every PR and main push. Test/document-only changes
+do not build OCI. Main pushes validate source through the existing CI rather than
+starting a duplicate image build. Dispatch the candidate workflow for the final
+protected product. A build-only dispatch retains the same sealed OCI needed by a
+later signed dispatch. Pass its `candidate_run_id` to resume signing without a
+rebuild; the resolver verifies the exact product, protected producer, successful
+build, native artifact hashes and candidate seal before the existing full OCI
+verification, current scans, signatures and independent registry readback.
+
+Use the shared source checks with
+`uv run python .github/scripts/ci/release_pipeline.py gate --stage source`.
+File and line budgets produce visible size warnings under the current upstream
+manifest. Lineage, version, forbidden paths, reverse dependencies, patch replay
+and the isolation floor remain enforced. Recovery and final production checks
+are available through `gate --stage recovery` and `gate --stage production`, with
+their existing revision arguments and `--require-ready`.
+
+`gate --stage tooling` checks the official database metadata before OCI work.
+The candidate preflight fails and retains `release-tooling.json` when the latest
+database is unusable for the exact product. Existing finite approvals remain
+bound to their registered product SHA/tree and approval bytes; this metadata
+check never replaces the subsequent actual OCI scan or admits a new subject.
+
+Onsite QA uses `gate --stage qa --operator NAME --arguments-json FILE`.
+Set `OMNIGENT_RELEASE_QA_ROOT` to the existing onsite script directory; the
+reviewed script and dependency hashes are registered in `.github/release-qa.json`.
+The argument file contains a JSON string array of native operator arguments.
+The default validates source and arguments without importing or running the
+operator. Add `--execute --operation-id UNIQUE_ID` to perform the operation.
+All operators share one private writer lock and keep private logs and durable
+receipts in the root's `.release-pipeline` directory. A completed operation ID
+returns its receipt; failed or interrupted operations require reconciliation
+before any new action. `OMNIGENT_RELEASE_QA_DISABLED=1` disables execution.
+Native handoff, identity, phase and cleanup checks remain inside each operator;
+an adapter receipt grants no production admission.
+
 ## Build contract
 
 Build only from a clean, immutable product SHA whose pinned upstream ancestor,
@@ -58,13 +99,17 @@ uv run python -m saas.scripts.check_image_supply_chain \
   --require-ready
 ```
 
-The `build-candidate` job in `saas-image-candidate.yml` repeats local OCI builds
-and compares executable manifest/config facts. Its protected `publish-signed`
+The `build-server-preflight` job builds and scans Server attempt 1. After that
+scan succeeds, `build-remaining-images` runs Server attempt 2 and both Host
+attempts on three independent runners using the same resolved materials and
+epoch. `build-candidate` collects all four exact current-attempt OCI archives,
+compares executable manifest/config facts, scans and seals them. Its protected `publish-signed`
 job can publish the wheel plus Server and Host images and attach GitHub OIDC
-attestations to those artifacts. It still does not run vulnerability or license
-admission scans, a one-hour Canary, an N-1 rollback exercise, or write the final
-canonical production evidence object. Successful publication therefore proves
-a signed candidate exists; it does not authorize production deployment.
+attestations to those artifacts. Actual OCI vulnerability scans run before
+promotion and after signed-image readback, with raw findings retained. Publication
+does not perform the one-hour Canary, physical N-1 rollback or final production
+evidence admission. Successful publication proves a signed candidate exists;
+it does not authorize production deployment.
 
 ## Rollback
 

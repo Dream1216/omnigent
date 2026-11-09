@@ -118,7 +118,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - if: inputs.receipt_request_json == '' && inputs.review_exception_request_json == ''
         run: >-
-          uv run python -m saas.scripts.run_production_admission
+          uv run python .github/scripts/ci/release_pipeline.py gate --stage production
           --product-revision "$PRODUCT_REVISION"
           --controller-revision "$TRUSTED_REF_REVISION"
           --evidence-revision "${RUNTIME_EVIDENCE_REVISION:-$EVIDENCE_REVISION}"

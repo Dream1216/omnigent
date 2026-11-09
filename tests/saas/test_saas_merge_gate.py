@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -21,24 +22,27 @@ def _workflow(name: str) -> dict[str, object]:
 def test_image_candidate_runs_on_prs_for_every_repository_build_input() -> None:
     workflow = _workflow("saas-image-candidate.yml")
     events = workflow["on"]  # type: ignore[index]
-    pull_paths = set(events["pull_request"]["paths"])  # type: ignore[index]
-    push_paths = set(events["push"]["paths"])  # type: ignore[index]
+    assert events["pull_request"] == ""
+    assert events["push"] == {"branches": ["main"]}
+    settings = json.loads((_repo() / ".github/release-pipeline.json").read_text())
     required = {
         ".dockerignore",
-        "deploy/docker/Dockerfile",
-        "deploy/docker/entrypoint.py",
+        "deploy/docker/",
         "LICENSE",
         "NOTICE",
-        "omnigent/**",
-        "sdks/**",
-        "examples/**",
-        "web/**",
-        "saas/**",
-        "saas/**/*.py",
+        "omnigent/",
+        "sdks/",
+        "examples/",
+        "web/",
+        "saas/",
     }
-
-    assert required <= pull_paths
-    assert pull_paths == push_paths
+    assert required <= set(settings["image_inputs"])
+    selector = workflow["jobs"]["select-candidate-work"]
+    assert "if" not in selector
+    assert any(
+        ".github/scripts/ci/release_pipeline.py plan" in s.get("run", "")
+        for s in selector["steps"]
+    )
 
 
 def test_saas_release_workflows_are_pr_eligible() -> None:
@@ -110,7 +114,7 @@ def test_postgresql_18_workflows_bind_the_exact_service_container() -> None:
     )
     for name, job_name in (
         ("saas-upstream-compat.yml", "compatibility-tests"),
-        ("saas-image-candidate.yml", "build-candidate"),
+        ("saas-image-candidate.yml", "build-server-preflight"),
     ):
         workflow = _workflow(name)
         job = workflow["jobs"][job_name]  # type: ignore[index]

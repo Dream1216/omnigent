@@ -48,12 +48,13 @@ POSTGRESQL_N1_ACTION_INPUTS=(
 POSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS=(
   "pyproject.toml|f2dc2794af15424de2e97422d2bf4dd59eccc6f413fbbb3e6b4453ca302b3f27"
   "uv.lock|a362e493d57d743d8d7d8674ca6e05371d51af29fc73e54a2f1a426de9ba97f4"
-  "tests/saas/test_image_supply_chain.py|3fcebd0ee00134ba2889c094c961351dd8482850b901827ba45d5b9ad16ec4c2"
+  "tests/saas/test_image_supply_chain.py|507837a9b6cafe037e2d199c3ba87e225dec11ce3762c66dadcce6f572c99bbc"
   "saas/scripts/compare_oci_rebuilds.py|fdabfecb538d04c52ee4a036da4ffb2db2ee00cb0a49d0e5e1b11ca66de9c732"
 )
 
 # Preserve exact previously reviewed Main and Aliyun variants.
 POSTGRESQL_N1_ALIYUN_PREVIOUS_INPUTS=(
+  "tests/saas/test_image_supply_chain.py|3fcebd0ee00134ba2889c094c961351dd8482850b901827ba45d5b9ad16ec4c2"
   "tests/saas/test_image_supply_chain.py|07c305d43955deffe843de9e7f45a6ff38e59b95b07491231f64d19f8b2a1dd0"
   "uv.lock|d5f1d133221f33dca75e9e0a4e7c49b2bded0da5cfcabc2ae212f7e615681ce2"
   "pyproject.toml|77ffd5d339656adfec3e7b15660599226ff29a527e05f75cdbbb386ad280550f"

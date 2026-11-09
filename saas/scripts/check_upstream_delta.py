@@ -61,14 +61,19 @@ def evaluate_delta(
         "upstream_net_added_loc": upstream_net_added,
     }
     violations: list[str] = []
+    size_warnings: list[str] = []
+    size_mode = budgets.get("size_limits_enforcement", "enforce")
+    if size_mode not in {"enforce", "report"}:
+        violations.append("unknown source size budget enforcement")
+    size_findings = size_warnings if size_mode == "report" else violations
     if not lineage_ok:
         violations.append("upstream baseline is not an ancestor of the product revision")
     if not version_ok:
         violations.append("manifest upstream_version does not match pyproject.toml")
     if metrics["direct_upstream_file_count"] > budgets["max_direct_upstream_files"]:
-        violations.append("direct upstream file budget exceeded")
+        size_findings.append("direct upstream file budget exceeded")
     if upstream_net_added > budgets["max_upstream_net_added_loc"]:
-        violations.append("upstream net-added LOC budget exceeded")
+        size_findings.append("upstream net-added LOC budget exceeded")
     if active_patch_count > budgets["max_active_patches"]:
         violations.append("active patch queue budget exceeded")
     if isolated_ratio < budgets["min_isolated_custom_code_ratio"]:
@@ -83,6 +88,7 @@ def evaluate_delta(
         "metrics": metrics,
         "budgets": budgets,
         "violations": violations,
+        "size_budget_warnings": size_warnings,
         "files": [asdict(delta) for delta in sorted(deltas, key=lambda item: item.path)],
     }
 

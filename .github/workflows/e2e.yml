@@ -106,6 +106,7 @@ jobs:
           sparse-checkout: |
             .github/scripts/ci
             .github/actions/dependency-ci-scope
+            .github/release-pipeline.json
           persist-credentials: false
       - id: scope
         uses: ./.github/actions/dependency-ci-scope
