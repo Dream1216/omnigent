@@ -252,9 +252,7 @@ def report_binding(root: Path, completed_at: str) -> dict[str, Any]:
         repeated = comparison["images"]["omnigent-saas-server"]
         expected_detail = {
             **{key: value for key, value in proof.items() if key != "facts"},
-            "first_proof_sha256": file_sha256(
-                root / ("m8c-retained-origin.json" if _m8c() else "clean-context-first.json")
-            ),
+            "first_proof_sha256": file_sha256(root / "clean-context-first.json"),
             "independent_Server_archive_sha256": detail.get("independent_Server_archive_sha256"),
             "Host_rebuilt_in_this_confirmation": False,
         }
@@ -455,7 +453,9 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
         ),
         "comparison_profile": "retained-M8c-first-server" if _m8c() else "clean-M165-server",
         "producer_control_equivalence": controller_sources,
-        "clean_context_first_sha256": file_sha256(root / "clean-context-first.json"),
+        ("retained_origin_sha256" if _m8c() else "clean_context_first_sha256"): file_sha256(
+            root / ("m8c-retained-origin.json" if _m8c() else "clean-context-first.json")
+        ),
         "artifacts": selected,
         "images": {role: image["index_digest"] for role, image in manifest["images"].items()},
         "oci_artifact_id": selected["oci"]["id"],
@@ -465,7 +465,6 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
         "production_authority": False,
     }
     if _m8c():
-        result["retained_origin_sha256"] = result.pop("clean_context_first_sha256")
         result.update(
             {
                 "product_tree": recovery.M8C_TREE,

@@ -481,6 +481,7 @@ def recovered(tmp_path, monkeypatch):
         "run": run,
         "scan": scan,
         "builder": builder,
+        "archives": archives,
     }
 
 
@@ -520,6 +521,93 @@ def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(recover
     assert (root / "downloaded/server-1.tar").is_file()
     assert bound["candidate_build_job_id"] == PRODUCER_BUILD_JOB
     assert bound["native_scan_job"]["id"] != bound["candidate_build_job_id"]
+
+
+def test_M8c_complete_preflight_and_download_need_only_its_original_proof(recovered, monkeypatch):
+    source = recovered["source"]
+    manifest = json.loads((source / MANIFEST_NAME).read_text())
+    comparison = json.loads((source / "saas-image-candidate.json").read_text())
+    comparison.pop("clean_context_reproducibility")
+    write_json(source / "saas-image-candidate.json", comparison)
+    manifest["comparison_sha256"] = hashlib.sha256(
+        (source / "saas-image-candidate.json").read_bytes()
+    ).hexdigest()
+    write_json(source / MANIFEST_NAME, manifest)
+    monkeypatch.setattr(recovery, "M8C_PRODUCT", REVISION)
+    monkeypatch.setattr(recovery, "M8C_EPOCH", EPOCH)
+    monkeypatch.setattr(recovery, "M8C_CI", recovery.CI)
+    monkeypatch.setattr(
+        recovery, "M8C_FIRST_SHA256", manifest["images"]["server"]["archive_sha256"]
+    )
+    monkeypatch.setattr(recovery, "M8C_INDEX", manifest["images"]["server"]["index_digest"])
+    proof = {
+        "kind": "accepted_M8c_original_Server/v1",
+        "controller_revision": PRODUCER_CONTROLLER,
+        "product_revision": REVISION,
+        "product_tree": recovery.M8C_TREE,
+        "source_date_epoch": EPOCH,
+        "original_run_id": recovery.M8C_RUN,
+        "original_job_id": recovery.M8C_JOB,
+        "first_archive_sha256": recovery.M8C_FIRST_SHA256,
+        "first_facts": manifest["images"]["server"]["facts"],
+    }
+    write_json(source / "m8c-retained-origin.json", proof)
+    write_json(
+        source / "unadmitted-build.json",
+        {
+            "kind": "accepted_M8c_complete_retained_first/v1",
+            "original_first_archive_sha256": recovery.M8C_FIRST_SHA256,
+            "images": {
+                f"{role}-{attempt}.tar": {
+                    "facts": comparison["images"][f"omnigent-saas-{role}"][name]
+                }
+                for role in ("server", "host")
+                for attempt, name in ((1, "first"), (2, "second"))
+            },
+        },
+    )
+    (source / "clean-context-first.json").unlink()
+    workflow = yaml.safe_load(Path(recovery.WORKFLOW).read_text())
+    recovered["scan"].update(name="scan-and-admit-m8c-same-oci", head_sha=PRODUCER_CONTROLLER)
+    recovered["builder"].update(
+        name="complete-m8c-first-server",
+        head_sha=PRODUCER_CONTROLLER,
+        steps=[
+            {"name": step["name"], "conclusion": "success"}
+            for step in workflow["jobs"]["complete-m8c-first-server"]["steps"]
+            if "name" in step
+        ],
+    )
+    for kind, archive in recovered["archives"].items():
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for file in sorted(source.rglob("*")):
+                if file.is_file() and (kind == "oci" or file.suffix != ".tar"):
+                    bundle.write(file, file.relative_to(source))
+        row = next(
+            item
+            for item in recovered["metadata"]
+            if item["id"] == (13 if kind == "report" else 12)
+        )
+        row.update(
+            size_in_bytes=archive.stat().st_size,
+            digest="sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+        if kind == "report":
+            row["name"] = f"saas-image-candidate-{REVISION}"
+    root = recovered["root"]
+    promotion.preflight(root / "report", POLICY)
+    bound = promotion.binding()
+    assert (
+        bound["retained_origin_sha256"]
+        == hashlib.sha256((source / "m8c-retained-origin.json").read_bytes()).hexdigest()
+    )
+    assert "clean_context_first_sha256" not in bound
+    assert bound["rebuilt"] is False and bound["recovery"]["missing_builds_performed"] == 3
+    promotion.download(root / "downloaded")
+    assert (root / "downloaded/server-1.tar").read_bytes() == (
+        source / "server-1.tar"
+    ).read_bytes()
+    assert not (root / "downloaded/clean-context-first.json").exists()
 
 
 @pytest.mark.parametrize(
