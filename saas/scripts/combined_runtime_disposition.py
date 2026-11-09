@@ -80,7 +80,13 @@ def _unexpired(value: datetime, expiry: str) -> bool:
     )
 
 
-def _exact_two_findings(report: dict[str, Any], *, now: datetime) -> None:
+def _exact_two_findings(
+    report: dict[str, Any],
+    *,
+    now: datetime,
+    database_age_disposition: object = None,
+    report_sha256: str | None = None,
+) -> None:
     parsed = scan_report(report)
     if parsed["counts"] != {"Critical": 0, "High": 2}:
         raise ValueError("finite combination requires exactly the two original High findings")
@@ -120,7 +126,13 @@ def _exact_two_findings(report: dict[str, Any], *, now: datetime) -> None:
     descriptor = report.get("descriptor", {})
     if descriptor.get("name") != "grype" or descriptor.get("version") != GRYPE_VERSION:
         raise ValueError("finite combination scanner differs")
-    parse_database_status(descriptor["db"]["status"], now=now)
+    parse_database_status(
+        descriptor["db"]["status"],
+        now=now,
+        database_age_disposition=database_age_disposition,
+        subject=report.get("source", {}).get("target"),
+        report_sha256=report_sha256,
+    )
 
 
 def inspect_combined_disposition(
@@ -131,6 +143,7 @@ def inspect_combined_disposition(
     now: datetime,
     scanner_exit: int,
     verify_runtime: NativeRuntimeVerifier | None = None,
+    database_age_disposition: object = None,
 ) -> dict[str, Any]:
     """Compose independent component facts and authenticated runtime conditions.
 
@@ -150,7 +163,12 @@ def inspect_combined_disposition(
         raise ValueError("finite runtime rule or protected native verifier is unavailable")
     raw = report_path.read_bytes()
     report = json.loads(raw)
-    _exact_two_findings(report, now=now)
+    _exact_two_findings(
+        report,
+        now=now,
+        database_age_disposition=database_age_disposition,
+        report_sha256=hashlib.sha256(raw).hexdigest(),
+    )
     target = report.get("source", {}).get("target", {})
     with sqlite.image_blobs(image) as blobs:
         digest, manifest = blobs.platform(platform)
@@ -192,6 +210,7 @@ def inspect_combined_disposition(
         now=now,
         scanner_exit=scanner_exit,
         verify_runtime=verify_runtime,
+        database_age_disposition=database_age_disposition,
     )
 
 
@@ -203,6 +222,7 @@ def disposition_receipt(
     now: datetime,
     scanner_exit: int,
     verify_runtime: NativeRuntimeVerifier | None = None,
+    database_age_disposition: object = None,
 ) -> dict[str, Any]:
     """Recheck original report and authenticated inventory without rewriting either."""
     if (
@@ -217,7 +237,12 @@ def disposition_receipt(
     ):
         raise ValueError("finite runtime rule or protected native verifier is unavailable")
     report = json.loads(raw)
-    _exact_two_findings(report, now=now)
+    _exact_two_findings(
+        report,
+        now=now,
+        database_age_disposition=database_age_disposition,
+        report_sha256=hashlib.sha256(raw).hexdigest(),
+    )
     target = report.get("source", {}).get("target", {})
     revision = target.get("labels", {}).get("org.opencontainers.image.revision")
     digest, config_digest = target.get("manifestDigest"), target.get("imageID")
@@ -297,6 +322,7 @@ def validate_combined_disposition(
     now: datetime,
     scanner_exit: int,
     verify_runtime: NativeRuntimeVerifier | None = None,
+    database_age_disposition: object = None,
 ) -> dict[str, Any]:
     """Every downstream intake recomputes the same subject and condition."""
     if not isinstance(proof, dict) or any(
@@ -311,6 +337,7 @@ def validate_combined_disposition(
         now=now,
         scanner_exit=scanner_exit,
         verify_runtime=verify_runtime,
+        database_age_disposition=database_age_disposition,
     )
     try:
         actual_json = json.dumps(proof, sort_keys=True, separators=(",", ":"), allow_nan=False)

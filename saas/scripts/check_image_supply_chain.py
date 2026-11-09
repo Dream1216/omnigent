@@ -1825,12 +1825,26 @@ def _validate_policy(repo: Path, policy: dict[str, Any]) -> list[str]:
     if not isinstance(vulnerabilities, dict):
         violations.append("vulnerability_policy must be an object")
     else:
-        if set(vulnerabilities) not in (
+        if set(vulnerabilities) - {"temporary_database_age"} not in (
             _VULNERABILITY_POLICY_FIELDS,
             _VULNERABILITY_POLICY_FIELDS | {"component_not_applicable"},
             _VULNERABILITY_POLICY_FIELDS | {"component_not_applicable", "runtime_mitigation"},
         ):
             violations.append("vulnerability policy fields do not match schema version 2")
+        if "temporary_database_age" in vulnerabilities:
+            from saas.scripts.scan_oci_candidates import TEMPORARY_DATABASE_AGE_SHA256
+
+            if (
+                hashlib.sha256(
+                    json.dumps(
+                        vulnerabilities["temporary_database_age"],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                != TEMPORARY_DATABASE_AGE_SHA256
+            ):
+                violations.append("finite database age differs from the exact human-approved rule")
         if "component_not_applicable" in vulnerabilities:
             from saas.scripts.sqlite_component_disposition import RULE
 
@@ -2031,7 +2045,7 @@ def _validate_image(
 
     scan_at: datetime | None = None
     scan = image.get("vulnerabilities")
-    if not isinstance(scan, dict) or set(scan) not in (
+    if not isinstance(scan, dict) or set(scan) - {"database_age_dispositions"} not in (
         _VULNERABILITY_FIELDS,
         _VULNERABILITY_FIELDS | {"component_dispositions"},
     ):
@@ -2056,6 +2070,15 @@ def _validate_image(
             violations.append(f"{name} exceeds the vulnerability threshold")
         if scan.get("exceptions") != []:
             violations.append(f"{name} release evidence cannot carry vulnerability exceptions")
+        finite_database_age = False
+        if "database_age_dispositions" in scan:
+            from saas.scripts.scan_oci_candidates import validate_release_database_age
+
+            try:
+                validate_release_database_age(repo, image, scan, now=now)
+                finite_database_age = True
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                violations.append(f"{name} finite database age receipt is invalid: {error}")
         database_at = _parse_time(scan.get("scanner_database_updated_at"))
         scan_at = _parse_time(scan.get("scan_completed_at"))
         if (
@@ -2063,7 +2086,11 @@ def _validate_image(
             or scan_at is None
             or database_at > scan_at
             or scan_at - database_at
-            > timedelta(hours=policy["vulnerability_policy"]["maximum_scanner_database_age_hours"])
+            > timedelta(
+                hours=48
+                if finite_database_age
+                else policy["vulnerability_policy"]["maximum_scanner_database_age_hours"]
+            )
         ):
             violations.append(f"{name} vulnerability scanner database is stale")
         if completed_at is not None and (scan_at is None or scan_at > completed_at):

@@ -135,6 +135,23 @@
         "linux/amd64": "ff446e3fa632b252be608349a210f1b4142f30e97d9735d2c3a95d35a9b37ea8",
         "linux/arm64": "98c931a2f98dfceb54e1bf580e7e552f3a33fdc2ee50df4e81051532082dc90f"
       }
+    },
+    "temporary_database_age": {
+      "kind": "temporary_official_grype_database_age/v1",
+      "id": "OmniAgent021-20261109-official-DB48",
+      "default_maximum_age_hours": 24,
+      "maximum_age_hours": 48,
+      "schemaVersion": "v6.1.10",
+      "built": "2026-11-08T06:19:57Z",
+      "archive_URL": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.10_2026-11-08T00:22:04Z_1794118797.tar.zst",
+      "archive_SHA256": "dcca24722e16c2bcf4a542a3f7fdd2147baf9215c17b973f5a7d4243fbddacea",
+      "expires_at": "2026-11-10T06:19:57Z",
+      "approval_sha256": "b4f07121624844ad7b83eab092a48d17440eafc2a223b3eb861e6b3420677875",
+      "approval_path": "saas/supply_chain/temporary-official-db-age-approval.json",
+      "products": {
+        "8c851bdd12829340b2a327cf7542fe4de84d9132": "694a997f3e74999f968f4341851ebaf0765d50aa",
+        "27503d14973b751a2031c6febf12a581b42b06d1": "a02ea9f17664bd0290eb5025f864672c0025075c"
+      }
     }
   },
   "license_policy": {

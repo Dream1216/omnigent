@@ -33,7 +33,12 @@ from saas.scripts.resume_oci_promotion import (
     verify_predicate,
     verify_sbom,
 )
-from saas.scripts.scan_oci_candidates import file_sha256
+from saas.scripts.scan_oci_candidates import (
+    TEMPORARY_DATABASE_AGE,
+    TEMPORARY_DATABASE_AGE_SHA256,
+    file_sha256,
+    parse_database_status,
+)
 
 PRODUCT = recovery.PRODUCT
 EPOCH = recovery.EPOCH
@@ -392,6 +397,46 @@ def report_binding(root: Path, completed_at: str) -> dict[str, Any]:
             and re.fullmatch(r"sha256:[0-9a-f]{64}", image["index_digest"]) is not None,
             "recovered executable facts or actual index differs",
         )
+    summary = read_json(root / "grype/candidate-scan-summary.json")
+    finite_reports = {}
+    for row in summary.get("images", []):
+        disposition = row.get("database_age_disposition")
+        if disposition is None:
+            continue
+        role, platform = row["image"], row["platform"]
+        relative = f"grype/{role}-{platform.split('/')[-1]}-grype.json"
+        raw = read_json(root / relative)
+        parse_database_status(
+            raw["descriptor"]["db"]["status"],
+            now=datetime.now(UTC),
+            subject=raw["source"]["target"],
+            database_age_disposition=disposition,
+            report_sha256=file_sha256(root / relative),
+        )
+        subject, image = disposition["subject"], manifest["images"][role]
+        require(
+            subject["image"] == role
+            and subject["platform"] == platform
+            and subject["archive_sha256"] == image["archive_sha256"]
+            and subject["index_digest"] == image["index_digest"],
+            "small report database context differs from the actual sealed OCI coordinate",
+        )
+        require(relative not in finite_reports, "finite database scan coordinate is duplicated")
+        finite_reports[relative] = disposition
+    expected_age = None
+    if finite_reports:
+        require(
+            set(finite_reports) == set(scans["reports"]), "finite database reports omit a platform"
+        )
+        expected_age = {
+            "rule": TEMPORARY_DATABASE_AGE,
+            "rule_sha256": TEMPORARY_DATABASE_AGE_SHA256,
+            "reports": finite_reports,
+        }
+    require(
+        scans.get("temporary_database_age") == expected_age,
+        "finite database signed scan binding differs",
+    )
     return manifest
 
 
@@ -559,6 +604,8 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
         )
         if _m8c_clean():
             result["clean_context_first_sha256"] = file_sha256(root / "clean-context-first.json")
+    if "temporary_database_age" in manifest["scans"]:
+        result["temporary_database_age"] = manifest["scans"]["temporary_database_age"]
     binding_path().write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     if os.environ.get("GITHUB_OUTPUT"):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
@@ -626,6 +673,24 @@ def binding() -> dict[str, Any]:
                 is not None,
                 "clean M8c binding cannot claim to promote the cached original Server",
             )
+    if "temporary_database_age" in value:
+        age = value["temporary_database_age"]
+        require(
+            isinstance(age, dict)
+            and set(age) == {"rule", "rule_sha256", "reports"}
+            and hashlib.sha256(
+                json.dumps(age["rule"], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            == TEMPORARY_DATABASE_AGE_SHA256
+            and age["rule_sha256"] == TEMPORARY_DATABASE_AGE_SHA256
+            and set(age["reports"])
+            == {
+                f"grype/{role}-{arch}-grype.json"
+                for role in ("server", "host")
+                for arch in ("amd64", "arm64")
+            },
+            "signed finite database age rule or report matrix differs",
+        )
     return value
 
 
@@ -647,6 +712,11 @@ def download(root: Path) -> None:
         manifest_sha256=value["candidate_manifest_sha256"],
         labels=expected_labels(Path.cwd(), PRODUCT),
         source_date_epoch=EPOCH,
+    )
+    require(
+        read_json(root / MANIFEST_NAME)["scans"].get("temporary_database_age")
+        == value.get("temporary_database_age"),
+        "downloaded finite database context differs from the signed producer binding",
     )
     if _m8c():
         origin = read_json(root / "m8c-retained-origin.json")

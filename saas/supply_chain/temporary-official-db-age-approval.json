@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "kind": "EXPLICIT_HUMAN_DB_AGE_EXCEPTION_SCOPE_NOT_IMAGE_QUALIFICATION",
+  "recorded_at_UTC": "2026-11-09T13:22:50.032954+00:00",
+  "state": "APPROVED_FOR_IMPLEMENTATION_AND_FINITE_USE_FINAL_SUBJECT_BINDINGS_PENDING",
+  "human_selection": {
+    "question_reference": "request_user_input_async/call_8cea5d2581ad489d9cb5714a6d904722/0",
+    "answer": "本次允许≤48小时（推荐）",
+    "is_budget_reapproval": false
+  },
+  "release": "OmniAgent0.21",
+  "default_maximum_DB_age_hours": 24,
+  "temporary_maximum_DB_age_hours": 48,
+  "official_DB": {
+    "schemaVersion": "v6.1.10",
+    "built_UTC": "2026-11-08T06:19:57Z",
+    "archive_URL": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.10_2026-11-08T00:22:04Z_1794118797.tar.zst",
+    "archive_SHA256": "dcca24722e16c2bcf4a542a3f7fdd2147baf9215c17b973f5a7d4243fbddacea"
+  },
+  "hard_expiry_UTC": "2026-11-10T06:19:57Z",
+  "hard_expiry_BJT": "2026-11-10 14:19:57",
+  "finite_components": [
+    {
+      "component": "M",
+      "product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
+      "tree": "694a997f3e74999f968f4341851ebaf0765d50aa"
+    },
+    {
+      "component": "C2_rollback",
+      "product": "27503d14973b751a2031c6febf12a581b42b06d1",
+      "tree": "a02ea9f17664bd0290eb5025f864672c0025075c"
+    }
+  ],
+  "required_unchanged": [
+    "verify current official latest and exact full archive checksum before each scan",
+    "actual built/scanned timestamps preserved; no timestamp rewriting",
+    "default24forotherinputs;newcompatibleofficialDBusesnormal24",
+    "complete actual candidate/pre-sign/post-sign reports and raw High/Critical rejection",
+    "signed facts, independent readbacks and final validator bind approved DB policy and each actual OCI digest",
+    "scan-completion-to-release24h unchanged; noCVEexceptionoroldcomponentdispositionextension",
+    "required own CI, Source/fullPG, backup independent restore, isolation, real business/files/recovery/3rollback and approved gray/8h rules remain"
+  ],
+  "actual_final_OCI_bindings": null,
+  "unknown_subject_or_expiry_behavior": "REJECT;thisscopeisnotfutureimagePASSorproductionGO",
+  "runtime_graph_data_unchanged": "1da1acd35a63ab3c14a14dff030f0061e1f74314",
+  "authority_or_image_signature_issued_by_this_record": false
+}

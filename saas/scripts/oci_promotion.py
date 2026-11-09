@@ -17,6 +17,8 @@ from typing import Any
 from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
 from saas.scripts.scan_oci_candidates import (
     GRYPE_VERSION,
+    TEMPORARY_DATABASE_AGE,
+    TEMPORARY_DATABASE_AGE_SHA256,
     file_sha256,
     parse_database_status,
     scan_report,
@@ -95,6 +97,7 @@ def validate_scans(
     require(isinstance(rows, list) and len(rows) == 4, "four raw scans are required")
     seen: set[tuple[str, str]] = set()
     reports: dict[str, str] = {}
+    database_age_reports: dict[str, Any] = {}
     verified_archives: dict[str, Path] = {}
     for row in rows:
         name, platform = row.get("image"), row.get("platform")
@@ -109,7 +112,14 @@ def validate_scans(
             descriptor.get("name") == "grype" and descriptor.get("version") == GRYPE_VERSION,
             "raw scanner identity differs",
         )
-        database_built = parse_database_status(descriptor["db"]["status"], now=now)
+        database_age = row.get("database_age_disposition")
+        database_built = parse_database_status(
+            descriptor["db"]["status"],
+            now=now,
+            database_age_disposition=database_age,
+            subject=report.get("source", {}).get("target"),
+            report_sha256=file_sha256(report_path),
+        )
         require(database_built == summary.get("database_built_at"), "scan database differs")
         config = descriptor.get("configuration", {})
         require(
@@ -135,6 +145,7 @@ def validate_scans(
                 row.get("component_disposition"),
                 image=verified_archives[name],
                 now=now,
+                database_age_disposition=database_age,
             )
             require(row.get("scanner_exit") == 2, "original High scanner exit is required")
         else:
@@ -159,7 +170,27 @@ def validate_scans(
             "scan summary does not bind original archive and report",
         )
         reports[relative] = sha
-    return {"summary_sha256": file_sha256(summary_path), "reports": reports}
+        if database_age is not None:
+            bound = database_age["subject"]
+            require(
+                bound["image"] == name
+                and bound["platform"] == platform
+                and bound["archive_sha256"] == images[name]["archive_sha256"]
+                and bound["index_digest"] == images[name]["index_digest"],
+                "finite database age does not bind the actual OCI archive and index",
+            )
+            database_age_reports[relative] = database_age
+    result: dict[str, Any] = {"summary_sha256": file_sha256(summary_path), "reports": reports}
+    if database_age_reports:
+        require(
+            len(database_age_reports) == 4, "finite database age requires all four bound reports"
+        )
+        result["temporary_database_age"] = {
+            "rule": TEMPORARY_DATABASE_AGE,
+            "rule_sha256": TEMPORARY_DATABASE_AGE_SHA256,
+            "reports": database_age_reports,
+        }
+    return result
 
 
 def seal_candidate(

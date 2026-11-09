@@ -216,7 +216,12 @@ def component_inventory(
 
 
 def inspect_disposition(
-    image: Path, report_path: Path, *, platform: str, now: datetime
+    image: Path,
+    report_path: Path,
+    *,
+    platform: str,
+    now: datetime,
+    database_age_disposition: object = None,
 ) -> dict[str, Any]:
     raw = report_path if isinstance(report_path, bytes) else report_path.read_bytes()
     report = json.loads(raw)
@@ -236,11 +241,22 @@ def inspect_disposition(
         ):
             raise ValueError("SQLite disposition does not bind the actual OCI subject")
         inventory = component_inventory(blobs, manifest)
-    return disposition_receipt(report_path, inventory, platform=platform, now=now)
+    return disposition_receipt(
+        report_path,
+        inventory,
+        platform=platform,
+        now=now,
+        database_age_disposition=database_age_disposition,
+    )
 
 
 def disposition_receipt(
-    report_path: Path | bytes, inventory: list[dict[str, Any]], *, platform: str, now: datetime
+    report_path: Path | bytes,
+    inventory: list[dict[str, Any]],
+    *,
+    platform: str,
+    now: datetime,
+    database_age_disposition: object = None,
 ) -> dict[str, Any]:
     from saas.scripts.scan_oci_candidates import parse_database_status
 
@@ -251,7 +267,13 @@ def disposition_receipt(
     descriptor = report.get("descriptor", {})
     if descriptor.get("name") != "grype" or descriptor.get("version") != "0.120.1":
         raise ValueError("component disposition scanner differs")
-    parse_database_status(descriptor["db"]["status"], now=now)
+    parse_database_status(
+        descriptor["db"]["status"],
+        now=now,
+        database_age_disposition=database_age_disposition,
+        subject=report.get("source", {}).get("target"),
+        report_sha256=hashlib.sha256(raw).hexdigest(),
+    )
     target = report.get("source", {}).get("target", {})
     if (
         not isinstance(target, dict)
@@ -324,7 +346,11 @@ def sqlite_component_facts(inventory: list[dict[str, Any]], *, platform: str) ->
 
 
 def _validate_disposition_receipt(
-    report_path: Path | bytes, proof: object, *, now: datetime
+    report_path: Path | bytes,
+    proof: object,
+    *,
+    now: datetime,
+    database_age_disposition: object = None,
 ) -> dict[str, Any]:
     if (
         not isinstance(proof, dict)
@@ -356,6 +382,7 @@ def _validate_disposition_receipt(
             platform=platform,
             now=now,
             scanner_exit=scanner_exit,
+            database_age_disposition=database_age_disposition,
             verify_runtime=verifier_from_registered_inputs(
                 authenticated_runtime_graph(
                     Path(__file__).resolve().parents[2],
@@ -374,22 +401,39 @@ def _validate_disposition_receipt(
                 "finite combination differs from unchanged raw and registered native proof"
             )
         return expected
-    expected = disposition_receipt(report_path, inventory, platform=platform, now=now)
+    expected = disposition_receipt(
+        report_path,
+        inventory,
+        platform=platform,
+        now=now,
+        database_age_disposition=database_age_disposition,
+    )
     if proof != expected:
         raise ValueError("finite component disposition differs from original raw report or rule")
     return expected
 
 
 def validate_disposition(
-    report_path: Path, proof: object, *, image: Path | None = None, now: datetime
+    report_path: Path,
+    proof: object,
+    *,
+    image: Path | None = None,
+    now: datetime,
+    database_age_disposition: object = None,
 ) -> dict[str, Any]:
-    receipt = _validate_disposition_receipt(report_path, proof, now=now)
+    receipt = _validate_disposition_receipt(
+        report_path, proof, now=now, database_age_disposition=database_age_disposition
+    )
     if image is None:
         raise ValueError("finite component disposition requires actual verified OCI input")
     from saas.scripts.approved_disposition import inspect_approved_disposition
 
     actual = inspect_approved_disposition(
-        image, report_path, platform=receipt["platform"], now=now
+        image,
+        report_path,
+        platform=receipt["platform"],
+        now=now,
+        database_age_disposition=database_age_disposition,
     )
     if receipt != actual:
         raise ValueError("finite component inventory differs from actual OCI contents")
@@ -464,7 +508,14 @@ def validate_release_dispositions(
     seen = set()
     for item in bundle:
         raw = item["raw_report"].encode()
-        proof = _validate_disposition_receipt(raw, item["proof"], now=now)
+        from saas.scripts.scan_oci_candidates import database_age_disposition_for_report
+
+        proof = _validate_disposition_receipt(
+            raw,
+            item["proof"],
+            now=now,
+            database_age_disposition=database_age_disposition_for_report(scan, raw),
+        )
         platform = proof["platform"]
         if (
             platform in seen

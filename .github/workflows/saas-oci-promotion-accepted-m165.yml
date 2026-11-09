@@ -622,6 +622,7 @@ jobs:
           mkdir -p artifacts
           promotion_rebuilt=$(jq -r 'if (.rebuilt | type) == "boolean" then .rebuilt else error("verified promotion rebuild flag missing") end' "$OMNIGENT_M165_BINDING")
           jq -n \
+            --slurpfile binding "$OMNIGENT_M165_BINDING" \
             --arg revision "$PRODUCT_REVISION" \
             --arg policy_revision "$SIGNING_POLICY_REVISION" \
             --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
@@ -639,7 +640,7 @@ jobs:
             --arg host_product_attestation "$HOST_PRODUCT_ATTESTATION" \
             --arg manifest_sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --arg artifact_id "$OCI_ARTIFACT_ID" --arg artifact_sha256 "$OCI_ARTIFACT_SHA256" \
-            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, signing_policy_revision: $policy_revision, signing_run_id: $run_id, signing_run_attempt: $run_attempt, original_candidate_run_id: $original_candidate_run_id, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation, product_promotion_attestation: $server_product_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation, product_promotion_attestation: $host_product_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: $promotion_rebuilt, signing_rebuilt_oci: false}, production_deployment_receipt: null}' \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, signing_policy_revision: $policy_revision, signing_run_id: $run_id, signing_run_attempt: $run_attempt, original_candidate_run_id: $original_candidate_run_id, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation, product_promotion_attestation: $server_product_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation, product_promotion_attestation: $host_product_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: $promotion_rebuilt, signing_rebuilt_oci: false}, production_deployment_receipt: null} + (if $binding[0].temporary_database_age != null then {temporary_database_age: $binding[0].temporary_database_age} else {} end)' \
             > artifacts/signed-release-candidate.json
           cp "$OMNIGENT_M165_BINDING" artifacts/accepted-m165-binding.json
           if [[ "${OMNIGENT_ACCEPTED_PRODUCT_PROFILE:-M165}" == "M8c-clean-context" ]]; then
@@ -755,7 +756,7 @@ jobs:
           facts=release-facts/signed-release-candidate.json
           jq -e --arg revision "$PRODUCT_REVISION" \
             --slurpfile binding "$OMNIGENT_M165_BINDING" \
-            '.schema_version == 1 and .product_revision == $revision and .signing_policy_revision == env.SIGNING_POLICY_REVISION and .signing_run_id == env.GITHUB_RUN_ID and .signing_run_attempt == env.GITHUB_RUN_ATTEMPT and .original_candidate_run_id == (env.ORIGINAL_CANDIDATE_RUN_ID | tonumber) and .workflow_identity == env.GITHUB_WORKFLOW_REF and .promotion.candidate_manifest_sha256 == env.CANDIDATE_MANIFEST_SHA256 and .promotion.original_artifact_id == ($binding[0].oci_artifact_id | tostring) and .promotion.original_artifact_sha256 == $binding[0].oci_artifact_sha256 and .promotion.rebuilt == $binding[0].rebuilt and .promotion.signing_rebuilt_oci == false and (.images | length) == 2' \
+            '.schema_version == 1 and .product_revision == $revision and .signing_policy_revision == env.SIGNING_POLICY_REVISION and .signing_run_id == env.GITHUB_RUN_ID and .signing_run_attempt == env.GITHUB_RUN_ATTEMPT and .original_candidate_run_id == (env.ORIGINAL_CANDIDATE_RUN_ID | tonumber) and .workflow_identity == env.GITHUB_WORKFLOW_REF and .promotion.candidate_manifest_sha256 == env.CANDIDATE_MANIFEST_SHA256 and .promotion.original_artifact_id == ($binding[0].oci_artifact_id | tostring) and .promotion.original_artifact_sha256 == $binding[0].oci_artifact_sha256 and .promotion.rebuilt == $binding[0].rebuilt and .promotion.signing_rebuilt_oci == false and .temporary_database_age == $binding[0].temporary_database_age and (.images | length) == 2' \
             "$facts" >/dev/null
           server_seen=0
           host_seen=0
