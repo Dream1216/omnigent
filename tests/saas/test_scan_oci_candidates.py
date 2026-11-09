@@ -72,6 +72,7 @@ def test_cached_database_still_runs_original_age_and_subject_validation(tmp_path
 
 @pytest.mark.parametrize("fault", [None, "short", "oversized", "hash", "version"])
 def test_fixed_grype_API_bytes_must_pass_before_extraction(monkeypatch, tmp_path, fault):
+    monkeypatch.setenv("OMNIGENT_RELEASE_TOOL_CACHE", str(tmp_path / "cache"))
     monkeypatch.setenv("GH_TOKEN", "fixed-readonly-test-token")
     payload = b"one exact official archive"
     monkeypatch.setattr(scan_oci_candidates, "GRYPE_ARCHIVE_BYTES", len(payload))
