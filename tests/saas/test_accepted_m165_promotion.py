@@ -1198,9 +1198,10 @@ def test_post_checkout_launcher_uses_reviewed_controller_instead_of_frozen_produ
     for name in selected:
         destination = product / name
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(
-            subprocess.check_output(["git", "show", recovery.M8C_PRODUCT + ":" + name], cwd=repo)
-        )
+        # This directory models the product's regular package boundary. Keep the
+        # CI regression self-contained: shallow checkouts do not carry old Git
+        # blobs. The exact frozen-8c proof is preserved separately by Source.
+        destination.write_text("" if name.endswith("__init__.py") else "PROFILE = 'product'\n")
     environment = {**os.environ, "PYTHONPATH": str(repo), "PYTHONDONTWRITEBYTECODE": "1"}
     environment.pop("PYTHONSAFEPATH", None)
     probe = """
