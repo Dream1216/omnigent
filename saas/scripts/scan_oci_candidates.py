@@ -90,7 +90,11 @@ def approved_database_is_latest(value: dict[str, Any]) -> bool:
         and value.get("status") == "active"
         and value.get("schemaVersion") == TEMPORARY_DATABASE_AGE["schemaVersion"]
         and value.get("built") == TEMPORARY_DATABASE_AGE["built"]
-        and value.get("path") == TEMPORARY_DATABASE_AGE["archive_URL"]
+        and value.get("path")
+        in (
+            TEMPORARY_DATABASE_AGE["archive_URL"],
+            str(TEMPORARY_DATABASE_AGE["archive_URL"]).rsplit("/", 1)[-1],
+        )
         and value.get("checksum") == "sha256:" + str(TEMPORARY_DATABASE_AGE["archive_SHA256"])
     )
 

@@ -23,13 +23,49 @@ LATEST = {
     "status": "active",
     "schemaVersion": "v6.1.10",
     "built": "2026-11-08T06:19:57Z",
-    "path": scan.TEMPORARY_DATABASE_AGE["archive_URL"],
+    "path": str(scan.TEMPORARY_DATABASE_AGE["archive_URL"]).rsplit("/", 1)[-1],
     "checksum": "sha256:" + scan.TEMPORARY_DATABASE_AGE["archive_SHA256"],
 }
+OFFICIAL_LATEST_ORIGINAL = b"""{
+ "status": "active",
+ "schemaVersion": "v6.1.10",
+ "built": "2026-11-08T06:19:57Z",
+ "path": "vulnerability-db_v6.1.10_2026-11-08T00:22:04Z_1794118797.tar.zst",
+ "checksum": "sha256:dcca24722e16c2bcf4a542a3f7fdd2147baf9215c17b973f5a7d4243fbddacea"
+}"""
+
+
+def test_actual_official_251_byte_latest_response_is_accepted_unchanged():
+    assert len(OFFICIAL_LATEST_ORIGINAL) == 251
+    assert hashlib.sha256(OFFICIAL_LATEST_ORIGINAL).hexdigest() == (
+        "69fd0add9813d7e0eecc349752376aba30678cbed27184d24051316a62496460"
+    )
+    original = json.loads(OFFICIAL_LATEST_ORIGINAL)
+    assert original == LATEST and scan.approved_database_is_latest(original)
 
 
 def status():
     return {"valid": True, "schemaVersion": "v6.1.10", "built": "2026-11-08T06:19:57Z"}
+
+
+@pytest.mark.parametrize(
+    "path,accepted",
+    [
+        (LATEST["path"], True),
+        (scan.TEMPORARY_DATABASE_AGE["archive_URL"], True),
+        ("../" + LATEST["path"], False),
+        ("/databases/v6/" + LATEST["path"], False),
+        ("https://other.invalid/" + LATEST["path"], False),
+        (LATEST["path"] + "?query=1", False),
+        (LATEST["path"].replace(":", "%3A"), False),
+        ("//grype.anchore.io/databases/v6/" + LATEST["path"], False),
+    ],
+)
+def test_official_original_relative_path_and_exact_full_URL_only(path, accepted):
+    original = {**LATEST, "path": path}
+    before = copy.deepcopy(original)
+    assert scan.approved_database_is_latest(original) is accepted
+    assert original == before
 
 
 def image(tmp_path, revision=PRODUCT):
