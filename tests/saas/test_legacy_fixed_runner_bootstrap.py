@@ -73,7 +73,7 @@ def test_actual_fixed_bootstrap_retains_unknown_and_original_cancellation(fixed_
     with pytest.raises(ValueError, match="exact reviewed source contract"):
         validate_profile(case["profile"], "Compatibility018")
     current = load_profile(Path(__file__).resolve().parents[2], "Compatibility018")
-    assert current["product_revision"] == "a933d1ad3243c3eba967b1d548d65b679cb2742e"
+    assert current["product_revision"] == "27503d14973b751a2031c6febf12a581b42b06d1"
     with pytest.raises(ValueError):
         verify({**case, "profile": current})
     assert receipt["original_event_source_revision"] is None
