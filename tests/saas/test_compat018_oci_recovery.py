@@ -3,6 +3,9 @@
 import hashlib
 import importlib.util
 import json
+import os
+import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -419,6 +422,44 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotIn("d404ce0e80e5f5b10b9dd8dec8673fb02382f3ec", s)
         self.assertNotIn("saas.scripts.oci_promotion seal", s)
         self.assertIn("Source must integrate its own Source + PG16/18 jobs in the SAME", s)
+
+    def test_checkout_verification_imports_protected_controller_from_product_cwd(self):
+        repo = SCRIPT.parents[2]
+        workflow = repo / ".github/workflows/saas-compat018-oci-recovery.yml"
+        command = next(
+            line.strip()
+            for line in workflow.read_text().splitlines()
+            if 'PYTHONPATH="$RUNNER_TEMP/compat018-control" python ' in line
+        )
+        arguments = shlex.split(command.split(" python ", 1)[1].split(" <<", 1)[0])
+        control = Path(self.tmp.name) / "control"
+        control.mkdir()
+        (control / "saas").symlink_to(repo / "saas", target_is_directory=True)
+        product = Path(self.tmp.name) / "product"
+        scripts = product / "saas/scripts"
+        scripts.mkdir(parents=True)
+        (product / "saas/__init__.py").touch()
+        (scripts / "__init__.py").touch()
+        (scripts / "protected_legacy_initial_build.py").write_text(
+            'raise RuntimeError("product controller must not execute")\n'
+        )
+        body = (
+            "from pathlib import Path\n"
+            "from saas.scripts import protected_legacy_initial_build as controller\n"
+            f"expected = Path({str(repo / 'saas/scripts/protected_legacy_initial_build.py')!r})\n"
+            "assert Path(controller.__file__).resolve() == expected.resolve()\n"
+            f"controller.load_profile(Path({str(control)!r}), 'Compatibility018')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, *arguments],
+            input=body,
+            cwd=product,
+            env={**os.environ, "PYTHONPATH": str(control)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_registered_raw_binds_own_profile_pair_and_rejects_drift(self):
         from saas.scripts import compare_oci_rebuilds

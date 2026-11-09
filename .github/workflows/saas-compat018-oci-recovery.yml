@@ -134,7 +134,7 @@ jobs:
           [[ "$(git rev-parse HEAD^{tree})" == "$PRODUCT_TREE" ]]
           [[ -z "$(git status --porcelain)" ]]
           if [[ "${{ inputs.phase }}" == "build-reviewed" ]]; then
-            PYTHONPATH="$RUNNER_TEMP/compat018-control" python - <<'PYTHON'
+            PYTHONPATH="$RUNNER_TEMP/compat018-control" python -P - <<'PYTHON'
           from pathlib import Path
           from saas.scripts.protected_legacy_initial_build import load_profile, verify_source_delta
           import os
