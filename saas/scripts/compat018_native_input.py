@@ -7,7 +7,7 @@ import json
 import stat
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from saas.scripts import compat018_oci_recovery as recovery
 from saas.scripts import compat018_recovered_input as recovered
@@ -149,7 +149,7 @@ def prepare_startup_input(
         and digest.startswith("sha256:"),
         "native first Server has no bounded original artifact transport",
     )
-    transport = {
+    transport: dict[str, Any] = {
         **row,
         "artifact_id": first_artifact_id,
         "zip_size": artifact["size_in_bytes"],
@@ -172,9 +172,9 @@ def prepare_startup_input(
     selected = inspect_oci_archive(image, label_profile="executable")["platforms"]["linux/arm64"]
     scan = recovered.api(f"repos/{recovery.REPOSITORY}/actions/runs/{scan_run_id}")
     scan_revision = scan.get("head_sha")
-    scan_row = {"run_id": scan_run_id, "controller_revision": scan_revision}
+    scan_row: dict[str, Any] = {"run_id": scan_run_id, "controller_revision": scan_revision}
     recovered._run(scan_row, sealed=False)
-    recovered._code(control, scan_revision)
+    recovered._code(control, cast(str, scan_revision))
     job = recovered._unique(
         f"repos/{recovery.REPOSITORY}/actions/runs/{scan_run_id}/attempts/1/jobs",
         "jobs",
