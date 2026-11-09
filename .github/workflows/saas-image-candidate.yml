@@ -166,12 +166,23 @@ jobs:
           tests/saas/test_runtime_security_overlays.py
           tests/saas/test_host_fleet_cli_supply.py
           tests/saas/test_run_release_qa.py
+          tests/saas/test_release_tooling.py
           tests/saas/test_server_candidate_runtime_metadata.py
           tests/saas/test_candidate_storage_reclamation.py
           tests/scripts/test_release_pipeline.py
           -q
       - name: Verify image supply-chain policy
         run: uv run python -m saas.scripts.check_image_supply_chain
+      - name: Verify official scanner database readiness before OCI builds
+        run: uv run python .github/scripts/ci/release_pipeline.py gate --stage tooling
+      - name: Retain external tooling readiness
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-tooling-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/release-tooling.json
+          if-no-files-found: warn
+          retention-days: 30
 
   verify-production-migration-replay:
     needs: select-candidate-work

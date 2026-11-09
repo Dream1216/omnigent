@@ -26,6 +26,7 @@ GATES = {
     "check_recovery_readiness",
     "run_production_admission",
     "run_release_qa",
+    "check_release_tooling",
 }
 
 

@@ -22,6 +22,12 @@ and the isolation floor remain enforced. Recovery and final production checks
 are available through `gate --stage recovery` and `gate --stage production`, with
 their existing revision arguments and `--require-ready`.
 
+`gate --stage tooling` checks the official database metadata before OCI work.
+The candidate preflight fails and retains `release-tooling.json` when the latest
+database is unusable for the exact product. Existing finite approvals remain
+bound to their registered product SHA/tree and approval bytes; this metadata
+check never replaces the subsequent actual OCI scan or admits a new subject.
+
 Onsite QA uses `gate --stage qa --operator NAME --arguments-json FILE`.
 Set `OMNIGENT_RELEASE_QA_ROOT` to the existing onsite script directory; the
 reviewed script and dependency hashes are registered in `.github/release-qa.json`.
