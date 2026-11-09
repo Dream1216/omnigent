@@ -422,6 +422,22 @@ def test_complete_source_join_uses_real_Git_and_keeps_PG_image_production_separa
     )
 
 
+def test_explicit_recovered_runs_cannot_extend_an_undeclared_source_policy(scenario, tmp_path):
+    destination = tmp_path / "explicit-selection"
+    with qualifier.preserve_native_evidence(destination / "native-api") as evidence:
+        with pytest.raises(ValueError, match="undeclared explicit recovered source selection"):
+            qualifier._qualify_source_ci(
+                scenario["control"],
+                scenario["product"],
+                "Core",
+                scenario["control_sha"],
+                destination,
+                evidence,
+                context_verifier=qualifier.control_context,
+                recovered_selection=(101, 202),
+            )
+
+
 @pytest.mark.parametrize(
     "fault",
     [

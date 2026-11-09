@@ -406,9 +406,21 @@
       ]
     },
     "compat018_recovered_publication_correction": {
-      "corrected_sha256": "65ca7ea0e9e7d41f3f071980f18802990147214806ab9a0e96bb6645468dd5aa",
+      "corrected_sha256": "8741f04a78f32c7a680fbe312893e549172811011439ce7e187048c2f3237046",
       "restored_sha256": "0c7062c10b4d61e522b89a48e75589018c64046904bd21be38fca5181c56df60",
       "inverse_fragments": [
+        {
+          "before": "import tarfile\nimport urllib.request\nimport zipfile\nfrom datetime import UTC, datetime\nfrom pathlib import Path, PurePosixPath\nfrom typing import Any, BinaryIO, cast\n",
+          "after": "import tarfile\nimport urllib.request\nimport zipfile\nfrom collections.abc import Callable\nfrom datetime import UTC, datetime\nfrom pathlib import Path, PurePosixPath\nfrom typing import Any, BinaryIO, cast\n"
+        },
+        {
+          "before": "    profile: dict[str, Any],\n    context: dict[str, Any],\n    destination: Path,\n) -> tuple[dict[str, Any], dict[str, Any]]:\n    \"\"\"Revalidate the exact same-attempt producer instead of repeating its work.\"\"\"\n    if profile[\"component\"] != COMPATIBILITY_COMPONENT:\n        result = qualify_source_ci(\n            control,\n            product,\n            profile[\"component\"],\n",
+          "after": "    profile: dict[str, Any],\n    context: dict[str, Any],\n    destination: Path,\n    *,\n    source_qualifier: Callable[[Path, Path, str, str, Path], dict[str, Any]] | None = None,\n) -> tuple[dict[str, Any], dict[str, Any]]:\n    \"\"\"Revalidate the exact same-attempt producer instead of repeating its work.\"\"\"\n    qualifier = qualify_source_ci if source_qualifier is None else source_qualifier\n    if profile[\"component\"] != COMPATIBILITY_COMPONENT:\n        result = qualifier(\n            control,\n            product,\n            profile[\"component\"],\n"
+        },
+        {
+          "before": "            if api(endpoint) != prior[\"response\"]:\n                changed = True\n    if changed:\n        result = qualify_source_ci(\n            control,\n            product,\n            profile[\"component\"],\n",
+          "after": "            if api(endpoint) != prior[\"response\"]:\n                changed = True\n    if changed:\n        result = qualifier(\n            control,\n            product,\n            profile[\"component\"],\n"
+        },
         {
           "before": "from pathlib import Path, PurePosixPath\nfrom typing import Any, BinaryIO, cast\n\nfrom saas.scripts.legacy_artifact_download import download_artifact_bytes\nfrom saas.scripts.legacy_build_controller import (\n    control_context,\n",
           "after": "from pathlib import Path, PurePosixPath\nfrom typing import Any, BinaryIO, cast\n\nfrom saas.scripts import compat018_recovered_input as c2_recovered\nfrom saas.scripts.legacy_artifact_download import download_artifact_bytes\nfrom saas.scripts.legacy_build_controller import (\n    control_context,\n"
@@ -529,7 +541,12 @@
           "before": "    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\n        \"command\",\n        choices=(\"prepare\", \"publish\", \"runtime\", \"attest-inputs\", \"verify-signatures\", \"consume\"),\n    )\n    parser.add_argument(\"--control\", type=Path, required=True)\n    parser.add_argument(\"--product\", type=Path, required=True)\n",
           "after": "    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\n        \"command\",\n        choices=(\n            \"prepare\",\n            \"publish\",\n            \"runtime\",\n            \"attest-inputs\",\n            \"verify-signatures\",\n            \"consume\",\n        ),\n    )\n    parser.add_argument(\"--control\", type=Path, required=True)\n    parser.add_argument(\"--product\", type=Path, required=True)\n"
         }
-      ]
+      ],
+      "historical_reader_callback_correction": {
+        "parent_sha256": "65ca7ea0e9e7d41f3f071980f18802990147214806ab9a0e96bb6645468dd5aa",
+        "changed_function": "collect_qualified_source",
+        "reason": "Explicit read-only historical source qualifier retains the original authenticated same-run producer and current-origin revalidation; exact inverse restores prior publisher before every unchanged original guard."
+      }
     }
   },
   ".github/workflows/saas-legacy-security-build.yml": {

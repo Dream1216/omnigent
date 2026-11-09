@@ -187,6 +187,7 @@ def test_source_interface_requires_strict_exact_qualification(publication_data, 
         "advisory_unknown",
         "rate_response",
         "missing_native_response",
+        "historical_callback",
     ],
 )
 def test_same_attempt_source_reuse_requires_current_native_origin(
@@ -297,7 +298,13 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
             return subprocess.CompletedProcess(
                 command, 1, b"HTTP/1.1 403 Forbidden\r\nX-Ratelimit-Remaining: 0\r\n\r\n{}", b""
             )
-        if fault in {"changed", "changed_listing", "changed_blocked", "no_etag"}:
+        if fault in {
+            "changed",
+            "changed_listing",
+            "changed_blocked",
+            "no_etag",
+            "historical_callback",
+        }:
             value = old if fault == "no_etag" else {**old, "conclusion": "failure"}
             if fault == "changed_listing":
                 value = {"total_count": 2, "workflow_runs": [{"id": 92}, {"id": 91}]}
@@ -318,6 +325,12 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
 
     monkeypatch.setattr(native.subprocess, "run", fresh)
     monkeypatch.setattr(publisher, "qualify_source_ci", recalculate)
+    if fault == "historical_callback":
+        monkeypatch.setattr(
+            publisher,
+            "qualify_source_ci",
+            lambda *_: pytest.fail("historical revalidation must retain its read-only context"),
+        )
 
     def collect():
         return publisher.collect_qualified_source(
@@ -326,6 +339,7 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
             data["profile"],
             data["context"],
             tmp_path / "source-revalidation",
+            **({"source_qualifier": recalculate} if fault == "historical_callback" else {}),
         )
 
     if fault not in {
@@ -337,6 +351,7 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
         "advisory_observed",
         "advisory_unknown",
         "rate_response",
+        "historical_callback",
     }:
         with pytest.raises(ValueError if fault != "rate_limit" else native.NativeEvidenceFailure):
             collect()
@@ -348,7 +363,7 @@ def test_same_attempt_source_reuse_requires_current_native_origin(
         assert calls[0][:4] == ["gh", "api", "--include", endpoint]
         assert ("-H" in calls[0]) is (fault != "no_etag")
         assert provenance["artifact_id"] == 902
-        changed = fault in {"changed", "changed_listing"}
+        changed = fault in {"changed", "changed_listing", "historical_callback"}
         assert provenance["current_inputs_required_full_requalification"] is changed
         assert bool(recalculations) is changed
         assert qualified == ({**result, "fresh_full_qualification": True} if changed else result)

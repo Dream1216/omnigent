@@ -357,9 +357,11 @@ def persist(data, *, bad_signature=False):
             {
                 "schema_version": 1,
                 key: {
-                    component: value["profile"]
-                    if "build-profiles" in name
-                    else {"fixture_only": True}
+                    (
+                        reader.qualification_profile_slot(component, value["profile"])
+                        if name == "legacy-source-qualification-profiles.json"
+                        else component
+                    ): value["profile"] if "build-profiles" in name else {"fixture_only": True}
                     for component, value in data["rows"].items()
                 },
             },

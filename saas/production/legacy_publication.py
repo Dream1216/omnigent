@@ -53,7 +53,7 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
             "predicate_sha256",
             "deployment_roles",
         }
-        and row["input_variant"] == publisher.VARIANT,
+        and row["input_variant"] in (publisher.VARIANT, publisher.c2_recovered.VARIANT),
         "unknown registered legacy publication variant",
     )
     profile = row["profile"]
@@ -97,6 +97,15 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
         )
     admission = row["admission"]
     context = HistoricalProducer(**producer).context
+    input_fields = (
+        {
+            "recovered_compat018_oci",
+            "historical_pr_transfer_profile",
+            "historical_pr_oci_registration",
+        }
+        if row["input_variant"] == publisher.c2_recovered.VARIANT
+        else {"transfer_profile", "original_pr_oci"}
+    )
     require(
         isinstance(admission, dict)
         and set(admission)
@@ -104,14 +113,13 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
             "kind",
             "profile",
             "control",
-            "transfer_profile",
-            "original_pr_oci",
             "fresh_control_wheel",
             "source_qualification",
             "native_product_pg",
             "rebuild_in_publisher",
         }
-        and admission["kind"] == publisher.VARIANT
+        | input_fields
+        and admission["kind"] == row["input_variant"]
         and admission["profile"] == profile
         and admission["control"]
         == {
@@ -152,9 +160,10 @@ def registered_publication(repo: Path, identifier: Any) -> dict[str, Any]:
             "registered legacy stage coordinate differs",
         )
         artifact_ids.append(coordinate["artifact_id"])
-    artifact_ids.extend(
-        admission[key]["artifact_id"] for key in ("original_pr_oci", "fresh_control_wheel")
-    )
+    selected = publisher.oci_input(admission)
+    artifact_ids.extend((selected["artifact_id"], admission["fresh_control_wheel"]["artifact_id"]))
+    if admission["kind"] == publisher.c2_recovered.VARIANT:
+        artifact_ids.append(selected["producer"]["raw_checkpoint"]["artifact_id"])
     require(
         len(set(artifact_ids)) == len(artifact_ids),
         "registered legacy artifact roles are conflated",

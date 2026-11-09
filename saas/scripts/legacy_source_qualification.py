@@ -1038,6 +1038,7 @@ def _qualify_source_ci(
     evidence: NativeEvidence,
     *,
     context_verifier,
+    recovered_selection: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     context_verifier(control, control_revision)
     profile = load_profile(control, component)
@@ -1052,10 +1053,14 @@ def _qualify_source_ci(
             dispatch_selection,
         )
 
-        selected = dispatch_selection(profile)
+        selected = (
+            dispatch_selection(profile) if recovered_selection is None else recovered_selection
+        )
         if selected is None:
             raise ValueError("current C2 source qualification requires actual raw and scan runs")
         recovered_image = collect_native_recovered_image_completion(control, profile, selected)
+    else:
+        require(recovered_selection is None, "undeclared explicit recovered source selection")
     validate_qualification_policy(
         policy, identity, catalog, profile=profile, recovered_image=recovered_image
     )

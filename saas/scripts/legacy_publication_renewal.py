@@ -18,7 +18,7 @@ def candidate_identity(registration: dict[str, Any]) -> dict[str, Any]:
     admission = registration["admission"]
     return {
         "profile": registration["profile"],
-        "original_pr_oci": admission["original_pr_oci"],
+        "original_pr_oci": publisher.oci_input(admission),
         "wheel_sha256": admission["fresh_control_wheel"]["wheel_sha256"],
     }
 
@@ -103,7 +103,7 @@ def read_original_publication_anchor(
         )
         # Current admission has independently re-downloaded this same original
         # PR OCI. Retained control ZIPs cannot replace its native expiry check.
-        coordinate = original["admission"]["original_pr_oci"]
+        coordinate = publisher.oci_input(original["admission"])
         metadata = publisher.api(
             f"{publisher.PREFIX}/actions/artifacts/{coordinate['artifact_id']}"
         )
