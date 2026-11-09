@@ -8,6 +8,7 @@ No live API, dispatch, OCI build, credential, signing, or admission is performed
 from __future__ import annotations
 
 import ast
+import base64
 import copy
 import hashlib
 import importlib
@@ -67,8 +68,11 @@ PROFILE = {
         (str(m.HISTORICAL["run_id"]), "", m.COMPONENT, False),
     ],
 )
-def test_only_two_finite_actual_dispatch_ids(raw, sealed, component, expected):
+@pytest.mark.parametrize("registered", [False, True])
+def test_only_two_finite_actual_dispatch_ids(raw, sealed, component, expected, registered):
     profile = {**PROFILE, "component": component}
+    if registered:
+        profile = {**recovery.registered_profile(), "component": component}
     env = {"COMPAT018_RAW_RUN_ID": raw, "COMPAT018_SEALED_RUN_ID": sealed}
     if expected is False:
         with pytest.raises(ValueError):
@@ -78,7 +82,7 @@ def test_only_two_finite_actual_dispatch_ids(raw, sealed, component, expected):
 
 
 @pytest.fixture
-def native_origin(tmp_path, monkeypatch):
+def native_origin(tmp_path, monkeypatch, request):
     """Two bounded native job/artifact fixtures; bytes are explicit tiny test inputs."""
     control = tmp_path / "control"
     for name in m.SOURCES:
@@ -86,10 +90,62 @@ def native_origin(tmp_path, monkeypatch):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((ROOT / name).read_bytes())
     archive = tmp_path / "fixture.zip"
-    bodies = dict.fromkeys(m.SEALED_FILES, b"unit-test-only\n")
+    registered = getattr(request, "param", False)
+    profile = recovery.registered_profile() if registered else PROFILE
+    bodies = dict.fromkeys(
+        m.REGISTERED_SEALED_FILES if registered else m.SEALED_FILES, b"unit-test-only\n"
+    )
     bodies["saas-image-candidate.json"] = json.dumps(
         {"clean_context_reproducibility": {"comparison_profile": "clean-C2-server"}}
     ).encode()
+    if registered:
+        bodies["registered-source-profile.json"] = json.dumps(profile).encode()
+        first = {
+            **{
+                key: profile[key]
+                for key in ("product_revision", "product_tree", "source_date_epoch")
+            },
+            "historical_4e_byte_identity_claimed": False,
+            "images": {
+                role: {
+                    "facts": {
+                        "platforms": {"linux/amd64": {}},
+                        "attestations": {},
+                        "attestation_descriptor_count": 2,
+                    }
+                }
+                for role in ("server", "host")
+            },
+        }
+        bodies["reviewed-subject-image-facts.json"] = json.dumps(first).encode()
+        bodies["saas-image-candidate.json"] = json.dumps(
+            {
+                "product_revision": profile["product_revision"],
+                "source_date_epoch": profile["source_date_epoch"],
+                "upstream_revision": recovery.UPSTREAM,
+                "registered_source_profile_sha256": hashlib.sha256(
+                    bodies["registered-source-profile.json"]
+                ).hexdigest(),
+                "registered_first_facts_sha256": hashlib.sha256(
+                    bodies["reviewed-subject-image-facts.json"]
+                ).hexdigest(),
+                "historical_4e_byte_identity_claimed": False,
+                "production_ready": False,
+                "status": "pass",
+                "violations": [],
+                "images": {
+                    "omnigent-saas-" + role: {
+                        "first": entry["facts"],
+                        "second": entry["facts"],
+                        "matching_platform_manifest_and_config": True,
+                        "history_created_by_equal": True,
+                    }
+                    for role, entry in first["images"].items()
+                },
+            }
+        ).encode()
+        monkeypatch.setattr(m, "REGISTERED_RAW_CONTROLLER", "a" * 40)
+        monkeypatch.setattr(m, "REGISTERED_RAW_TREE", "c" * 40)
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
         for name, body in sorted(bodies.items()):
             bundle.writestr(name, body)
@@ -104,6 +160,8 @@ def native_origin(tmp_path, monkeypatch):
         "Confirm exact C2 comparison profile",
         "Preserve actual OCI before any fresh vulnerability scan",
     ]
+    if registered:
+        first_steps.insert(4, "Independently build C2 Host without cache")
     scan_steps = [
         "Download and independently recheck the same real raw checkpoint",
         "Fresh scan and seal without rebuilding or relaxing any gate",
@@ -150,9 +208,9 @@ def native_origin(tmp_path, monkeypatch):
         }
         metadata = {
             "id": artifact_id,
-            "name": f"compat018-raw-{recovery.PRODUCT}-{run_id}"
+            "name": f"compat018-raw-{profile['product_revision']}-{run_id}"
             if run_id == 101
-            else f"saas-oci-promotion-{recovery.PRODUCT}",
+            else f"saas-oci-promotion-{profile['product_revision']}",
             "size_in_bytes": archive.stat().st_size,
             "digest": "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest(),
             "expired": False,
@@ -188,6 +246,12 @@ def native_origin(tmp_path, monkeypatch):
                     ).hexdigest(),
                 }
             )
+            native[f"{git_prefix}blobs/{entries[-1]['sha']}"] = {
+                "sha": entries[-1]["sha"],
+                "encoding": "base64",
+                "size": len(body),
+                "content": base64.b64encode(body).decode(),
+            }
         native[f"{git_prefix}trees/{tree_sha}?recursive=1"] = {
             "sha": tree_sha,
             "truncated": False,
@@ -234,6 +298,7 @@ def native_origin(tmp_path, monkeypatch):
         "changed-after-download",
     ],
 )
+@pytest.mark.parametrize("native_origin", [False, True], indirect=True)
 def test_native_origin_derives_unique_actual_coordinates_and_refuses_faults(
     native_origin, tmp_path, monkeypatch, fault
 ):
@@ -241,6 +306,8 @@ def test_native_origin_derives_unique_actual_coordinates_and_refuses_faults(
     run = data[prefix + "runs/202"]
     job = data[prefix + "jobs/302"]
     meta = data[prefix + "artifacts/502"]
+    registered = meta["name"] != f"saas-oci-promotion-{recovery.PRODUCT}"
+    profile = recovery.registered_profile() if registered else PROFILE
     if fault == "run-failed":
         run["conclusion"] = "failure"
     if fault == "branch":
@@ -283,25 +350,41 @@ def test_native_origin_derives_unique_actual_coordinates_and_refuses_faults(
         monkeypatch.setattr(m, "api", changed)
     if fault:
         with pytest.raises(ValueError):
-            m.collect(control, PROFILE, (101, 202), m.HISTORICAL, tmp_path / "download")
+            m.collect(control, profile, (101, 202), m.HISTORICAL, tmp_path / "download")
         return
-    result = m.collect(control, PROFILE, (101, 202), m.HISTORICAL, tmp_path / "download")
+    result = m.collect(control, profile, (101, 202), m.HISTORICAL, tmp_path / "download")
     assert downloaded == [502] and result["run_id"] == 202 and result["job_id"] == 302
     assert result["producer"]["raw_checkpoint"]["artifact_id"] == 501
     assert result["seal_sha256"] == hashlib.sha256(b"unit-test-only\n").hexdigest()
-    assert result["producer"]["comparison_profile"] == "clean-C2-server"
+    assert result["producer"]["comparison_profile"] == (
+        m.REGISTERED_COMPARISON if registered else "clean-C2-server"
+    )
+    assert (
+        result["historical_comparison"] is None
+        if registered
+        else result["historical_comparison"] is not None
+    )
     assert result["controller_sources"]["raw"] == result["controller_sources"]["sealed"]
     assert result["kind"] != "legacy_pr_sealed_oci/v1"
     assert result["sealed_zip_full_CRC_verified"] is True
 
 
 @pytest.mark.parametrize("extra", ["future.json", "../escape", "grype/extra.json"])
-def test_exact_nine_plus_two_zip_refuses_additional_files(native_origin, extra):
+@pytest.mark.parametrize("registered", [False, True])
+def test_exact_nine_plus_two_zip_refuses_additional_files(native_origin, extra, registered):
     _, archive, *_ = native_origin
+    profile = recovery.registered_profile() if registered else None
+    if registered:
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+            for name in sorted(m.REGISTERED_SEALED_FILES):
+                bundle.writestr(name, b"registered-unit-test-only\n")
+        m.verify_sealed_zip(archive, archive.stat().st_size, crc=True, profile=profile)
+        with pytest.raises(ValueError):
+            m.verify_sealed_zip(archive, archive.stat().st_size, crc=True)
     with zipfile.ZipFile(archive, "a") as bundle:
         bundle.writestr(extra, b"no")
     with pytest.raises(ValueError):
-        m.verify_sealed_zip(archive, archive.stat().st_size, crc=True)
+        m.verify_sealed_zip(archive, archive.stat().st_size, crc=True, profile=profile)
 
 
 @pytest.mark.parametrize("fault", [None, "retained-load", "host-second", "first-rebuilt"])
@@ -505,11 +588,15 @@ def test_new_typed_origin_keeps_historical_registration_and_actual_producer_dist
     assert str(m.HISTORICAL["artifact_id"]) not in ids
 
 
+@pytest.mark.parametrize("native_origin", [False, True], indirect=True)
 def test_only_recovered_zip_accepts_exact_two_proofs_and_requires_product(
-    recovered_admission, tmp_path, monkeypatch
+    native_origin, tmp_path, monkeypatch
 ):
-    admission, archive = recovered_admission
-    origin = admission["recovered_compat018_oci"]
+    control, archive, *_ = native_origin
+    with zipfile.ZipFile(archive) as bundle:
+        registered = "registered-source-profile.json" in bundle.namelist()
+    profile = recovery.registered_profile() if registered else PROFILE
+    origin = m.collect(control, profile, (101, 202), m.HISTORICAL, tmp_path / "origin")
     calls = []
     monkeypatch.setattr(
         m,
@@ -521,15 +608,11 @@ def test_only_recovered_zip_accepts_exact_two_proofs_and_requires_product(
     publisher.unpack_original(
         archive, origin, tmp_path / "new", product=tmp_path / "fixed-product"
     )
-    assert (
-        len(calls) == 1
-        and {
-            p.relative_to(tmp_path / "new").as_posix()
-            for p in (tmp_path / "new").rglob("*")
-            if p.is_file()
-        }
-        == m.SEALED_FILES
-    )
+    assert len(calls) == 1 and {
+        p.relative_to(tmp_path / "new").as_posix()
+        for p in (tmp_path / "new").rglob("*")
+        if p.is_file()
+    } == (m.REGISTERED_SEALED_FILES if registered else m.SEALED_FILES)
     with pytest.raises(ValueError, match="exact sealed"):
         publisher.unpack_original(
             archive,
@@ -699,6 +782,79 @@ def test_sealed_proofs_bind_actual_raw_builder_host_server_and_seal(
         m.verify_payload(root, descriptor, tmp_path)
 
 
+@pytest.mark.parametrize("native_origin", [True], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "seal",
+        "first-proof",
+        "profile",
+        "source",
+        "proof-hash",
+        "history",
+        "production",
+        "server",
+        "host",
+        "attestations",
+        "pair",
+        "claim",
+    ],
+)
+def test_registered_payload_reaudits_own_bytes_without_overwriting_proof(
+    native_origin, tmp_path, monkeypatch, fault
+):
+    control, archive, *_ = native_origin
+    profile = recovery.registered_profile()
+    descriptor = m.collect(control, profile, (101, 202), m.HISTORICAL, tmp_path / "origin")
+    root = tmp_path / "payload"
+    root.mkdir()
+    with zipfile.ZipFile(archive) as bundle:
+        bundle.extractall(root)
+    original = (root / "reviewed-subject-image-facts.json").read_bytes()
+    audited = json.loads(original)
+    candidate = json.loads((root / "saas-image-candidate.json").read_text())
+    clean = importlib.import_module("saas.scripts.compat018_clean_context")
+    calls = []
+
+    def audit(actual_root, product, _control, *, write=True):
+        calls.append((actual_root, product, write))
+        assert write is False
+        return copy.deepcopy(audited)
+
+    monkeypatch.setattr(clean, "registered_first", audit)
+    if fault == "seal":
+        (root / "oci-promotion-manifest.json").write_bytes(b"changed")
+    if fault == "first-proof":
+        (root / "reviewed-subject-image-facts.json").write_text("{}")
+    if fault == "profile":
+        (root / "registered-source-profile.json").write_text("{}")
+    if fault == "source":
+        candidate["product_revision"] = recovery.PRODUCT
+    if fault == "proof-hash":
+        candidate["registered_first_facts_sha256"] = "0" * 64
+    if fault == "history":
+        candidate["images"]["omnigent-saas-server"]["history_created_by_equal"] = False
+    if fault == "production":
+        candidate["production_ready"] = True
+    if fault in {"server", "host"}:
+        candidate["images"]["omnigent-saas-" + fault]["second"]["platforms"] = {}
+    if fault == "attestations":
+        candidate["images"]["omnigent-saas-host"]["second"]["attestation_descriptor_count"] = 1
+    if fault == "pair":
+        candidate["images"]["omnigent-saas-host"]["matching_platform_manifest_and_config"] = False
+    if fault == "claim":
+        candidate["historical_4e_byte_identity_claimed"] = True
+    (root / "saas-image-candidate.json").write_text(json.dumps(candidate))
+    if fault:
+        with pytest.raises(ValueError):
+            m.verify_payload(root, descriptor, tmp_path / "product")
+    else:
+        m.verify_payload(root, descriptor, tmp_path / "product")
+        assert (root / "reviewed-subject-image-facts.json").read_bytes() == original
+    assert calls == [(root, tmp_path / "product", False)]
+
+
 def test_sealed_run_defaults_to_actual_same_producer_without_conflating_artifacts(
     native_origin, tmp_path
 ):
@@ -758,10 +914,29 @@ def test_shared_execution_dependency_drift_rejected_with_identical_wrappers(
     assert downloaded == []
 
 
-@pytest.mark.parametrize("fault", ["truncated", "missing", "duplicate", "mode", "size"])
-def test_incomplete_or_changed_git_execution_metadata_is_rejected(native_origin, fault):
+@pytest.mark.parametrize("fault", [None, "truncated", "missing", "duplicate", "mode", "size"])
+@pytest.mark.parametrize("registered", [False, True])
+def test_incomplete_or_changed_git_execution_metadata_is_rejected(
+    native_origin, monkeypatch, fault, registered
+):
     control, _, data, _, _, _ = native_origin
     tree = data[f"repos/{recovery.REPOSITORY}/git/trees/{'c' * 40}?recursive=1"]
+    expected = {
+        name: hashlib.sha256((control / name).read_bytes()).hexdigest() for name in m.SOURCES
+    }
+    if registered:
+        monkeypatch.setattr(m, "REGISTERED_RAW_CONTROLLER", "a" * 40)
+        monkeypatch.setattr(m, "REGISTERED_RAW_TREE", "c" * 40)
+        for entry in tree["tree"]:
+            body = (control / entry["path"]).read_bytes()
+            data[f"repos/{recovery.REPOSITORY}/git/blobs/{entry['sha']}"] = {
+                "sha": entry["sha"],
+                "encoding": "base64",
+                "size": len(body),
+                "content": base64.b64encode(body).decode(),
+            }
+        # A later consumer must retain the exact approved producer's original bytes.
+        (control / m.SOURCES[0]).write_bytes(b"later-consumer-only\n")
     if fault == "truncated":
         tree["truncated"] = True
     elif fault == "missing":
@@ -770,10 +945,16 @@ def test_incomplete_or_changed_git_execution_metadata_is_rejected(native_origin,
         tree["tree"].append(copy.deepcopy(tree["tree"][0]))
     elif fault == "mode":
         tree["tree"][0]["mode"] = "120000"
-    else:
+    elif fault == "size":
         tree["tree"][0]["size"] += 1
+    if fault is None:
+        assert m._code(control, "a" * 40, registered_raw=registered) == expected
+        if registered:
+            with pytest.raises(ValueError):
+                m._code(control, "a" * 40)
+        return
     with pytest.raises(ValueError):
-        m._code(control, "a" * 40)
+        m._code(control, "a" * 40, registered_raw=registered)
 
 
 def test_finite_identity_inventory_covers_existing_static_import_dependencies():

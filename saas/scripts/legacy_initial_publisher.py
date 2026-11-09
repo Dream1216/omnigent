@@ -791,7 +791,12 @@ def unpack_original(
     if original.get("kind") == c2_recovered.ORIGIN:
         if product is None:
             raise ValueError("recovered C2 payload requires the actual frozen Git product")
-        c2_recovered.verify_sealed_zip(archive, original["zip_size"], crc=True)
+        profile = (
+            c2_recovered.recovery.registered_profile()
+            if original.get("product_revision") != c2_recovered.recovery.PRODUCT
+            else None
+        )
+        c2_recovered.verify_sealed_zip(archive, original["zip_size"], crc=True, profile=profile)
         safe_extract(archive, destination, max_bytes=original["zip_size"])
         c2_recovered.verify_payload(destination, original, product)
         return

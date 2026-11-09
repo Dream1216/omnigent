@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
@@ -21,6 +22,8 @@ from saas.scripts.legacy_pytest_results import verify_job_artifact_identity
 COMPONENT = "Compatibility018"
 ORIGIN = "compat018_clean_recovered_oci/v1"
 VARIANT = "protected_legacy_initial_publication/compat018-recovered/v1"
+REGISTERED_RAW_CONTROLLER = "13ed5b17d3872a3010c9173738d965834d8e482d"
+REGISTERED_RAW_TREE = "01e6b7d4fcfdc07d692024e892582c6b0dcaab07"
 # Finite conservative import closure and the existing scan gate policies.
 SOURCES = (
     "saas/actions/runtime-evidence-context/action.yml",
@@ -214,17 +217,31 @@ SEALED_FILES = {
         for arch in ("amd64", "arm64")
     ),
 }
+REGISTERED_COMPARISON = "registered-C2-pair"
+REGISTERED_SEALED_FILES = (SEALED_FILES - {"clean-context-first.json", "original-report.zip"}) | {
+    "registered-source-profile.json",
+    "reviewed-subject-image-facts.json",
+}
 
 
-def verify_sealed_zip(archive: Path, size: int, *, crc: bool) -> None:
+def verify_sealed_zip(
+    archive: Path, size: int, *, crc: bool, profile: dict[str, Any] | None = None
+) -> None:
+    if profile is not None:
+        exact_product(profile)
+    expected = (
+        REGISTERED_SEALED_FILES
+        if profile is not None and profile["product_revision"] != recovery.PRODUCT
+        else SEALED_FILES
+    )
     with zipfile.ZipFile(archive) as bundle:
         all_entries = bundle.infolist()
         files = [item for item in all_entries if not item.is_dir()]
         require(
             len(all_entries) <= 16
             and len({item.filename for item in all_entries}) == len(all_entries)
-            and len(files) == len(SEALED_FILES)
-            and {item.filename for item in files} == SEALED_FILES
+            and len(files) == len(expected)
+            and {item.filename for item in files} == expected
             and all(item.filename == "grype/" for item in all_entries if item.is_dir())
             and sum(item.file_size for item in files) <= size
             and all(
@@ -239,6 +256,12 @@ def verify_sealed_zip(archive: Path, size: int, *, crc: bool) -> None:
 
 
 def exact_product(profile: dict[str, Any]) -> None:
+    if profile.get("product_revision") != recovery.PRODUCT:
+        require(
+            profile == recovery.registered_profile(),
+            "recovered origin is not the exact registered C2 source profile",
+        )
+        return
     require(
         profile.get("component") == COMPONENT
         and profile.get("product_revision") == recovery.PRODUCT
@@ -248,7 +271,12 @@ def exact_product(profile: dict[str, Any]) -> None:
     )
 
 
-def validate_coordinates(value: Any) -> dict[str, Any]:
+def validate_coordinates(value: Any, *, profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    if profile is not None:
+        exact_product(profile)
+    registered = profile is not None and profile["product_revision"] != recovery.PRODUCT
+    product_revision = profile["product_revision"] if profile is not None else recovery.PRODUCT
+    product_tree = profile["product_tree"] if profile is not None else recovery.TREE
     require(
         isinstance(value, dict)
         and set(value)
@@ -262,9 +290,14 @@ def validate_coordinates(value: Any) -> dict[str, Any]:
         }
         and type(value["schema_version"]) is int
         and value["schema_version"] == 1
-        and value["product_revision"] == recovery.PRODUCT
-        and value["product_tree"] == recovery.TREE
-        and value["comparison_profile"] in {"historical", "clean-C2-server", "clean-C2-pair"},
+        and value["product_revision"] == product_revision
+        and value["product_tree"] == product_tree
+        and value["comparison_profile"]
+        in (
+            {REGISTERED_COMPARISON}
+            if registered
+            else {"historical", "clean-C2-server", "clean-C2-pair"}
+        ),
         "unknown or unfrozen C2 recovery registration",
     )
     for role, job_key in (
@@ -354,8 +387,12 @@ def _unique(endpoint: str, collection: str, name: str) -> dict[str, Any]:
 
 
 def _derive_row(
-    control: Path, run_id: int, *, sealed: bool
+    control: Path, run_id: int, *, sealed: bool, profile: dict[str, Any] | None = None
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    if profile is not None:
+        exact_product(profile)
+    registered = profile is not None and profile["product_revision"] != recovery.PRODUCT
+    product_revision = profile["product_revision"] if profile is not None else recovery.PRODUCT
     run = api(f"repos/{recovery.REPOSITORY}/actions/runs/{run_id}")
     revision = run.get("head_sha")
     if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
@@ -365,7 +402,7 @@ def _derive_row(
         _run(row, sealed=sealed) == run,
         "C2 native run changed while deriving its identity",
     )
-    code = _code(control, revision)
+    code = _code(control, revision, registered_raw=registered and not sealed)
     key = "scan_job_id" if sealed else "builder_job_id"
     name = "scan-and-seal-same-oci" if sealed else "build-compat018-product"
     listed = _unique(
@@ -379,9 +416,9 @@ def _derive_row(
     )
     row[key] = listed["id"]
     artifact_name = (
-        f"saas-oci-promotion-{recovery.PRODUCT}"
+        f"saas-oci-promotion-{product_revision}"
         if sealed
-        else f"compat018-raw-{recovery.PRODUCT}-{run_id}"
+        else f"compat018-raw-{product_revision}-{run_id}"
     )
     artifact = _unique(
         f"repos/{recovery.REPOSITORY}/actions/runs/{run_id}/artifacts",
@@ -406,7 +443,7 @@ def _derive_row(
     return row, run, code
 
 
-def _code(control: Path, revision: str) -> dict[str, str]:
+def _code(control: Path, revision: str, *, registered_raw: bool = False) -> dict[str, str]:
     prefix = f"repos/{recovery.REPOSITORY}/git/"
     commit = api(f"{prefix}commits/{revision}")
     tree_sha = commit.get("tree", {}).get("sha")
@@ -416,6 +453,11 @@ def _code(control: Path, revision: str) -> dict[str, str]:
         and re.fullmatch(r"[0-9a-f]{40}", tree_sha) is not None,
         "native C2 commit has no immutable source tree",
     )
+    if registered_raw:
+        require(
+            revision == REGISTERED_RAW_CONTROLLER and tree_sha == REGISTERED_RAW_TREE,
+            "registered C2 raw source is not the exact reviewed producer snapshot",
+        )
     tree = api(f"{prefix}trees/{tree_sha}?recursive=1")
     entries = tree.get("tree", [])
     require(
@@ -430,12 +472,27 @@ def _code(control: Path, revision: str) -> dict[str, str]:
         matches = [entry for entry in entries if entry.get("path") == name]
         require(len(matches) == 1, "native C2 execution source is missing or duplicated")
         entry = matches[0]
-        path = control / name
-        require(
-            path.is_file() and not path.is_symlink(), "reviewed C2 execution source is missing"
-        )
-        raw = path.read_bytes()
-        mode = "100755" if path.stat().st_mode & 0o111 else "100644"
+        if registered_raw:
+            blob = api(f"{prefix}blobs/{entry.get('sha')}")
+            require(
+                blob.get("sha") == entry.get("sha")
+                and blob.get("encoding") == "base64"
+                and type(blob.get("size")) is int
+                and 0 <= blob["size"] <= 262144
+                and isinstance(blob.get("content"), str)
+                and len(blob["content"]) <= 360000,
+                "registered C2 producer source blob differs",
+            )
+            raw = base64.b64decode(blob["content"], validate=False)
+            mode = entry.get("mode")
+            require(mode in {"100644", "100755"}, "registered producer source mode differs")
+        else:
+            path = control / name
+            require(
+                path.is_file() and not path.is_symlink(), "reviewed C2 execution source is missing"
+            )
+            raw = path.read_bytes()
+            mode = "100755" if path.stat().st_mode & 0o111 else "100644"
         blob_sha = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
         require(
             len(raw) <= 262144
@@ -530,6 +587,8 @@ def collect(
     destination: Path,
 ) -> dict[str, Any]:
     exact_product(profile)
+    registered = profile["product_revision"] != recovery.PRODUCT
+    product_revision, product_tree = profile["product_revision"], profile["product_tree"]
     require(historical == HISTORICAL, "frozen six-key historical C2 registration changed")
     require(
         isinstance(run_ids, tuple)
@@ -537,8 +596,10 @@ def collect(
         and all(type(v) is int and v > 0 and v != HISTORICAL["run_id"] for v in run_ids),
         "C2 requires only two actual native attempt-one run IDs",
     )
-    raw, raw_run, raw_code = _derive_row(control, run_ids[0], sealed=False)
-    sealed, sealed_run, sealed_code = _derive_row(control, run_ids[1], sealed=True)
+    raw, raw_run, raw_code = _derive_row(control, run_ids[0], sealed=False, profile=profile)
+    sealed, sealed_run, sealed_code = _derive_row(
+        control, run_ids[1], sealed=True, profile=profile
+    )
     code = {"raw": raw_code, "sealed": sealed_code}
     steps = [
         "Audit actual fixed C2 source, UI, and historical Host",
@@ -552,9 +613,9 @@ def collect(
         "Retain actually admitted immutable OCI",
     )
     scanner = _job(sealed, "scan_job_id", "scan-and-seal-same-oci", scan_steps)
-    raw_name = f"compat018-raw-{recovery.PRODUCT}-{raw['run_id']}"
+    raw_name = f"compat018-raw-{product_revision}-{raw['run_id']}"
     raw_metadata = _artifact(raw, raw_name, builder, steps[-1])
-    artifact_name = f"saas-oci-promotion-{recovery.PRODUCT}"
+    artifact_name = f"saas-oci-promotion-{product_revision}"
     metadata = _artifact(sealed, artifact_name, scanner, scan_steps[-1])
     # Download the unique actual sealed ZIP before deriving comparison or seal facts.
     # No pre-registered or placeholder artifact ID/hash is accepted.
@@ -566,9 +627,12 @@ def collect(
         expected_size=sealed["zip_size"],
         expected_sha256=sealed["zip_sha256"],
     )
-    verify_sealed_zip(archive, sealed["zip_size"], crc=True)
+    verify_sealed_zip(archive, sealed["zip_size"], crc=True, profile=profile)
     with zipfile.ZipFile(archive) as bundle:
-        for name in ("saas-image-candidate.json", "oci-promotion-manifest.json"):
+        json_proofs = ["saas-image-candidate.json", "oci-promotion-manifest.json"]
+        if registered:
+            json_proofs += ["registered-source-profile.json", "reviewed-subject-image-facts.json"]
+        for name in json_proofs:
             require(
                 0 < bundle.getinfo(name).file_size <= 4 * 1024**2,
                 "C2 JSON proof exceeds its finite bound",
@@ -577,21 +641,52 @@ def collect(
         sealed["seal_sha256"] = hashlib.sha256(
             bundle.read("oci-promotion-manifest.json")
         ).hexdigest()
-    comparison = candidate.get("clean_context_reproducibility", {}).get("comparison_profile")
+        if registered:
+            profile_bytes = bundle.read("registered-source-profile.json")
+            first_bytes = bundle.read("reviewed-subject-image-facts.json")
+            first = json.loads(first_bytes)
+            require(
+                json.loads(profile_bytes) == profile
+                and all(
+                    first.get(key) == profile[key]
+                    for key in ("product_revision", "product_tree", "source_date_epoch")
+                )
+                and first.get("historical_4e_byte_identity_claimed") is False
+                and candidate.get("product_revision") == profile["product_revision"]
+                and candidate.get("source_date_epoch") == profile["source_date_epoch"]
+                and candidate.get("upstream_revision") == recovery.UPSTREAM
+                and candidate.get("registered_source_profile_sha256")
+                == hashlib.sha256(profile_bytes).hexdigest()
+                and candidate.get("registered_first_facts_sha256")
+                == hashlib.sha256(first_bytes).hexdigest()
+                and candidate.get("historical_4e_byte_identity_claimed") is False
+                and candidate.get("production_ready") is False
+                and candidate.get("status") == "pass"
+                and candidate.get("violations") == []
+                and set(candidate.get("images", {}))
+                == {"omnigent-saas-server", "omnigent-saas-host"},
+                "registered C2 source, first proof or comparison belongs to another subject",
+            )
+    comparison = (
+        REGISTERED_COMPARISON
+        if registered
+        else candidate.get("clean_context_reproducibility", {}).get("comparison_profile")
+    )
     value = validate_coordinates(
         {
             "schema_version": 1,
-            "product_revision": recovery.PRODUCT,
-            "product_tree": recovery.TREE,
+            "product_revision": product_revision,
+            "product_tree": product_tree,
             "comparison_profile": comparison,
             "raw_checkpoint": raw,
             "sealed_oci": sealed,
-        }
+        },
+        profile=profile,
     )
-    paired = value["comparison_profile"] == "clean-C2-pair"
+    paired = registered or value["comparison_profile"] == "clean-C2-pair"
     first_steps = (
         ("Authenticate and load the exact retained first pair without rebuilding it",)
-        if paired
+        if paired and not registered
         else (
             "Recover Server using its existing first-attempt build cache",
             "Recover Host using its existing first-attempt build cache",
@@ -610,7 +705,7 @@ def collect(
         _job(raw, "builder_job_id", "build-compat018-product", complete_steps) == builder,
         "C2 raw builder changed during clean comparison validation",
     )
-    if paired:
+    if paired and not registered:
         for name in (
             "Recover Server using its existing first-attempt build cache",
             "Recover Host using its existing first-attempt build cache",
@@ -645,8 +740,8 @@ def collect(
     result = {
         "kind": ORIGIN,
         "component": COMPONENT,
-        "product_revision": recovery.PRODUCT,
-        "product_tree": recovery.TREE,
+        "product_revision": product_revision,
+        "product_tree": product_tree,
         "run_id": sealed["run_id"],
         "attempt": 1,
         "job_id": scanner["id"],
@@ -661,7 +756,9 @@ def collect(
             "raw": raw_run.get("actor", {}).get("login"),
             "sealed": sealed_run.get("actor", {}).get("login"),
         },
-        "historical_comparison": {
+        "historical_comparison": None
+        if registered
+        else {
             "artifact_id": recovery.REPORT_ID,
             "zip_size": recovery.REPORT_SIZE,
             "zip_sha256": recovery.REPORT_SHA,
@@ -675,6 +772,7 @@ def collect(
 
 def validate_descriptor(value: dict[str, Any], profile: dict[str, Any]) -> None:
     exact_product(profile)
+    registered = profile["product_revision"] != recovery.PRODUCT
     require(
         set(value)
         == {
@@ -699,12 +797,12 @@ def validate_descriptor(value: dict[str, Any], profile: dict[str, Any]) -> None:
         }
         and value.get("kind") == ORIGIN
         and value.get("component") == COMPONENT
-        and value.get("product_revision") == recovery.PRODUCT
-        and value.get("product_tree") == recovery.TREE
+        and value.get("product_revision") == profile["product_revision"]
+        and value.get("product_tree") == profile["product_tree"]
         and value.get("sealed_zip_full_CRC_verified") is True,
         "unverified or foreign recovered C2 descriptor",
     )
-    registration = validate_coordinates(value["producer"])
+    registration = validate_coordinates(value["producer"], profile=profile)
     sealed = registration["sealed_oci"]
     require(
         all(
@@ -719,16 +817,20 @@ def validate_descriptor(value: dict[str, Any], profile: dict[str, Any]) -> None:
             )
         )
         and value.get("job_id") == sealed["scan_job_id"]
-        and value.get("artifact_name") == f"saas-oci-promotion-{recovery.PRODUCT}",
+        and value.get("artifact_name") == f"saas-oci-promotion-{profile['product_revision']}",
         "C2 admission uses another actual producer coordinate",
     )
     require(
         value["historical_comparison"]
-        == {
-            "artifact_id": recovery.REPORT_ID,
-            "zip_size": recovery.REPORT_SIZE,
-            "zip_sha256": recovery.REPORT_SHA,
-        }
+        == (
+            None
+            if registered
+            else {
+                "artifact_id": recovery.REPORT_ID,
+                "zip_size": recovery.REPORT_SIZE,
+                "zip_sha256": recovery.REPORT_SHA,
+            }
+        )
         and value["raw_bytes_verification_basis"]
         == "exact successful code-bound scan download and comparison",
         "C2 historical evidence and actual raw verification roles differ",
@@ -754,6 +856,51 @@ def validate_descriptor(value: dict[str, Any], profile: dict[str, Any]) -> None:
 def verify_payload(root: Path, descriptor: dict[str, Any], product: Path) -> None:
     """Recheck the actual first bytes; Server2 belongs to the bound hosted builder."""
     from saas.scripts import compat018_clean_context as clean
+
+    if descriptor.get("product_revision") != recovery.PRODUCT:
+        profile = recovery.registered_profile()
+        validate_descriptor(descriptor, profile)
+        stored_path = root / "reviewed-subject-image-facts.json"
+        stored_bytes = stored_path.read_bytes()
+        audited = clean.registered_first(
+            root, product, Path(__file__).resolve().parents[2], write=False
+        )
+        profile_path = root / "registered-source-profile.json"
+        candidate = json.loads((root / "saas-image-candidate.json").read_text())
+        require(
+            json.loads(stored_bytes) == audited
+            and stored_path.read_bytes() == stored_bytes
+            and recovery.sha256(root / "oci-promotion-manifest.json") == descriptor["seal_sha256"]
+            and json.loads(profile_path.read_text()) == profile
+            and candidate.get("registered_source_profile_sha256") == recovery.sha256(profile_path)
+            and candidate.get("registered_first_facts_sha256")
+            == hashlib.sha256(stored_bytes).hexdigest()
+            and candidate.get("product_revision") == profile["product_revision"]
+            and candidate.get("source_date_epoch") == profile["source_date_epoch"]
+            and candidate.get("upstream_revision") == recovery.UPSTREAM
+            and candidate.get("historical_4e_byte_identity_claimed") is False
+            and candidate.get("production_ready") is False
+            and candidate.get("status") == "pass"
+            and candidate.get("violations") == []
+            and set(candidate.get("images", {})) == {"omnigent-saas-server", "omnigent-saas-host"},
+            "registered C2 sealed bytes or original proofs changed",
+        )
+        for role in ("server", "host"):
+            pair = candidate["images"]["omnigent-saas-" + role]
+            first = audited["images"][role]["facts"]
+            require(
+                pair.get("first") == first
+                and pair.get("matching_platform_manifest_and_config") is True
+                and pair.get("history_created_by_equal") is True
+                and pair.get("second", {}).get("platforms") == first["platforms"]
+                and pair.get("second", {}).get("attestations") == first["attestations"]
+                and all(
+                    pair.get(side, {}).get("attestation_descriptor_count", 0) >= 2
+                    for side in ("first", "second")
+                ),
+                "registered C2 has no matching actual independent pair",
+            )
+        return
 
     profile = {
         "component": COMPONENT,

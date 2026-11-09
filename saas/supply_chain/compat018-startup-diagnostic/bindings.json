@@ -1,0 +1,30 @@
+{
+  "source_revision": "a933d1ad3243c3eba967b1d548d65b679cb2742e",
+  "installed_files": {
+    "opt/venv/lib/python3.12/site-packages/omnigent/inner/bwrap_sandbox.py": "5b08853c0c92c5e975d2ebdcd9033a14c096a9034452a54a56b2163b218634ff",
+    "opt/venv/lib/python3.12/site-packages/omnigent/inner/os_env.py": "5165e540f5584dab6acff5b2e0327db24e7c342f3c5efd94f0edab10a119c7db",
+    "opt/venv/lib/python3.12/site-packages/omnigent/inner/sandbox.py": "19adb44f258746df77cb6a66701aaf36e46bd74c3a479041188d68611ce4550f",
+    "opt/venv/lib/python3.12/site-packages/omnigent/inner/terminal.py": "53b35d5b8e061780c04d8cf5a9804bfcb8f43d27eb262c1d55bcf1b8af85ea83",
+    "opt/venv/lib/python3.12/site-packages/saas/control_plane/isolation.py": "e9b7b0172517313bd725a8ba6a98b77ba7b888fbff27f2673b2f8179f09db29e",
+    "opt/venv/lib/python3.12/site-packages/saas/production/preview_edge.py": "349bbceebd2a00ce23291345fde24f282296fad6af5fa1dfcdb9dc3871263ee2",
+    "opt/venv/lib/python3.12/site-packages/saas/production/preview_owner.py": "c6a8467aeea8fb0d905526b5db4a65babeeeeef6711c55a0b55b10d4a3cb2966",
+    "opt/venv/lib/python3.12/site-packages/saas/production/preview_readiness.py": "de90d1800544da7ba43b8bde671c87de0a246d51a9d3902b88358e589461bc47",
+    "opt/venv/lib/python3.12/site-packages/saas/production/preview_relay.py": "530a6fa30e633badf2f70bb40f7f285696f5c712d7884d4a2252de9bbce35ee0",
+    "opt/venv/lib/python3.12/site-packages/saas/production/repository_mirror.py": "4f6b3d78badabaf96ddc82686e3818fcd327ac5ededede8684815e8f2868bb26",
+    "opt/venv/lib/python3.12/site-packages/saas/production/runner_agent.py": "ec2a1e3b8a4dc6527d584595ba8d40db1d272f0e6ae24174e718bde5bc4713c9",
+    "opt/venv/lib/python3.12/site-packages/saas/production/runner_control.py": "72ab215114f28c0812f4dd584ad7ec804c1d3c07d75b125767fc3a601e6175dc",
+    "opt/venv/lib/python3.12/site-packages/saas/production/runner_executor.py": "0e750012b2fc0a2509705a9526b9519f43309cd8fddc031de5a56bb57e5c5668",
+    "opt/venv/lib/python3.12/site-packages/saas/production/runner_readiness.py": "bd3d174f440b85906d4b700564edf7589cf1631c702068ece70126d7f2838d40",
+    "opt/venv/lib/python3.12/site-packages/saas/production/runtime_locale.py": "89e54a498a2e2d11fe0b8ef64308ef144bc262b0754ff47fe0488faea80d60ec",
+    "opt/venv/lib/python3.12/site-packages/saas/production/server.py": "687e8f3acace9dc8b7e6aa30d3f79a5764e2422956c68c0335392813491e672b",
+    "opt/venv/lib/python3.12/site-packages/saas/production/worker.py": "6b350f48c46cc25d3f10cd19816cca377a7d2b782755bdedb858bfbb332dae25",
+    "opt/venv/lib/python3.12/site-packages/saas/runner_adapter/isolation.py": "832b8e04afb1f7020e38947acc4a4209cd3b16068fcd8c613008d9ab3c502aaa",
+    "opt/venv/lib/python3.12/site-packages/saas/production/tenant_sandbox.py": "3df0a9817c0d20d242657dc886839ec3745baf3d2c4261f79482a727e76b2b6d",
+    "opt/venv/lib/python3.12/site-packages/omnigent/onboarding/sandboxes/kubernetes.py": "543ab204c27090c6048fcdabc1ace92f063fda7670fefd7415a49a9e89d3c0de",
+    "opt/venv/lib/python3.12/site-packages/saas/production/platform_model_sandbox_host.py": "7093e40af8a2c5c8e703fd60ccdf11e1c8ed4e6d096238675f77310880d933d9",
+    "opt/venv/lib/python3.12/site-packages/saas/production/platform_model_host.py": "bf39c24818c1bcd145deecb7241d54607ff4666c66ee55416b31fd223ead788f",
+    "opt/venv/lib/python3.12/site-packages/saas/runner_adapter/process_policy.py": "00a623c27cee6121943cd4de1f3ee0da66a3725bf07e312e895535d36c17bfdc",
+    "opt/venv/lib/python3.12/site-packages/saas/production/tenant_model_keys.py": "8a38f8ad7495d329ae4e2a1ff15192b096010d197b5bb004499b7c61f61a14b4"
+  },
+  "libc_sha256": "98c931a2f98dfceb54e1bf580e7e552f3a33fdc2ee50df4e81051532082dc90f"
+}

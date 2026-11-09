@@ -228,7 +228,9 @@ _NATIVE_BOUNDARIES = (
 )
 
 
-def registered_first(root: Path, repo: Path, control: Path) -> dict[str, Any]:
+def registered_first(
+    root: Path, repo: Path, control: Path, *, write: bool = True
+) -> dict[str, Any]:
     """Audit the registered replacement's own bytes, without borrowing 4e facts."""
     from saas.scripts.issue_evidence_receipt import registered_compatibility_receipt_repo
     from saas.scripts.oci_promotion import expected_labels
@@ -313,9 +315,10 @@ def registered_first(root: Path, repo: Path, control: Path) -> dict[str, Any]:
         "historical_4e_byte_identity_claimed": False,
         "independent_rebuild_or_runtime_or_High_or_signature_qualified": False,
     }
-    (root / "reviewed-subject-image-facts.json").write_text(
-        json.dumps(result, sort_keys=True, indent=2) + "\n"
-    )
+    if write:
+        (root / "reviewed-subject-image-facts.json").write_text(
+            json.dumps(result, sort_keys=True, indent=2) + "\n"
+        )
     return result
 
 

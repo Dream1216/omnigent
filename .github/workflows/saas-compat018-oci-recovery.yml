@@ -27,7 +27,7 @@ on:
       phase:
         description: Recover cached bytes, or rescan the retained raw checkpoint
         type: choice
-        options: [build, complete-retained, build-reviewed, scan, scan-reviewed]
+        options: [build, complete-retained, build-reviewed, scan, scan-reviewed, observe-reviewed-arm64]
         default: build
       comparison_profile:
         description: Fixed C2 comparison; clean pair completes retained first OCI with two real no-cache builds
@@ -45,6 +45,9 @@ on:
         type: string
       c2_evidence_revision:
         description: Optional admitted C2 runtime-only evidence for additional applicable findings; never M D4
+        type: string
+      startup_scan_run_id:
+        description: Actual original scan run carrying the same first Server ARM report
         type: string
 
 permissions:
@@ -68,6 +71,58 @@ env:
   GO_IMAGE: golang:1.27.2-trixie@sha256:e58d6f83b3416618d8bcac2b3dde1b7f7e3c4a77d25e88637f8bbae81536c48d
 
 jobs:
+  observe-registered-c2-arm64:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha && inputs.phase == 'observe-reviewed-arm64'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout exact protected native operator
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --extra saas
+      - name: Set up original isolated native Docker runtime
+        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+        with:
+          version: v29.5.2
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - name: Observe only the actual installed C2 native startup component
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_RUN: ${{ inputs.raw_run_id }}
+          FIRST_SERVER_ARTIFACT: ${{ inputs.raw_artifact_id }}
+          SCAN_RUN: ${{ inputs.startup_scan_run_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(uname -m)" = aarch64
+          product=$(uv run python -c 'from saas.scripts.compat018_oci_recovery import registered_profile; print(registered_profile()["product_revision"])')
+          uv run python -B -m saas.scripts.observe_arm64_startup \
+            --source-revision "$product" --source-run "$RAW_RUN" \
+            --artifact-id "$FIRST_SERVER_ARTIFACT" --scan-run "$SCAN_RUN" \
+            --output "$RUNNER_TEMP/compat018-native-startup"
+      - name: Retain original startup record and raw native report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compat018-native-startup-observation-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/compat018-native-startup/arm-startup-operator.PUBLIC.json
+            ${{ runner.temp }}/compat018-native-startup/original-arm64-grype.PUBLIC.json
+            ${{ runner.temp }}/compat018-native-startup/native-input-origin.PUBLIC.json
+            ${{ runner.temp }}/compat018-native-startup/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
   verify-contract:
     runs-on: ubuntu-24.04
     steps:

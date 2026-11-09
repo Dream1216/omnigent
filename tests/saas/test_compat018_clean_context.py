@@ -177,6 +177,10 @@ def test_registered_first_binds_own_four_targets_and_refuses_changed_installed_b
             "revision": "8" * 40,
             "epoch": 123,
         }
+        proof = tmp_path / "reviewed-subject-image-facts.json"
+        proof.write_bytes(b"retained original producer proof")
+        assert m.registered_first(tmp_path, REPO, ROOT, write=False) == result
+        assert proof.read_bytes() == b"retained original producer proof"
 
 
 @pytest.mark.parametrize(
