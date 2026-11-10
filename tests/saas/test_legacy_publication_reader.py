@@ -13,15 +13,251 @@ import yaml
 
 from saas.production import legacy_publication as admission
 from saas.scripts import legacy_publication_reader as reader
+from saas.scripts import legacy_publication_renewal as renewal
 from saas.scripts.check_image_supply_chain import validate_release
 from saas.scripts.run_production_admission import build_production_admission_bundle
 from tests.saas import test_image_supply_chain as image
 from tests.saas._legacy_frozen_compatibility import frozen_entries
+from tests.saas.test_compat018_recovered_input import native_origin as native_origin
+from tests.saas.test_compat018_recovered_input import recovered_admission as recovered_admission
 from tests.saas.test_legacy_build_controller import product as product
 from tests.saas.test_legacy_initial_publisher import publication_data as publication_data
 
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = "2c5a9a45f1a576439fc9c5aa0a91022d461389ab"
+
+
+@pytest.mark.parametrize("fault", [None, "variant", "historical", "tree", "raw", "sealed"])
+def test_recovered_reader_selection_comes_from_exact_admission_not_ambient_env(
+    recovered_admission, monkeypatch, fault
+):
+    body, _ = recovered_admission
+    body = copy.deepcopy(body)
+    selected = body["recovered_compat018_oci"]
+    if fault == "variant":
+        body["kind"] = reader.publisher.VARIANT
+    elif fault == "historical":
+        body["historical_pr_oci_registration"]["run_id"] += 1
+    elif fault == "tree":
+        body["profile"]["product_tree"] = "0" * 40
+    elif fault in {"raw", "sealed"}:
+        selected["producer"]["raw_checkpoint" if fault == "raw" else "sealed_oci"]["run_id"] = 0
+    monkeypatch.setenv("COMPAT018_RAW_RUN_ID", "999")
+    monkeypatch.setenv("COMPAT018_SEALED_RUN_ID", "888")
+    row = {"profile": body["profile"], "admission": body}
+    if fault:
+        with pytest.raises(ValueError):
+            reader.recovered_publication_selection(row)
+    else:
+        assert reader.recovered_publication_selection(row) == (101, 202)
+        assert __import__("os").environ["COMPAT018_RAW_RUN_ID"] == "999"
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "variant", "nonstring-variant", "mixed-input", "same-raw-artifact"]
+)
+def test_registry_accepts_typed_recovered_C2_and_keeps_distinct_native_roles(
+    recovered_admission, tmp_path, monkeypatch, fault
+):
+    """Registry shape only; profile/source positives are explicit fixture seams."""
+    body, _ = recovered_admission
+    body = copy.deepcopy(body)
+    row = {
+        "input_variant": reader.publisher.c2_recovered.VARIANT,
+        "profile": body["profile"],
+        "producer": {
+            **{k: body["control"][k] for k in ("control_revision", "run_id", "attempt", "actor")},
+            "control_tree": "b" * 40,
+            "workflow_sha256": body["control"]["workflow_sha256"],
+        },
+        "admission": body,
+        "predicate_sha256": "a" * 64,
+        "stage_artifacts": {
+            role: {
+                "job_id": 600 + index,
+                "artifact_id": 700 + index,
+                "zip_size": 100,
+                "zip_sha256": str(index) * 64,
+                "artifact_name": reader.publisher.artifact_name(
+                    role, body["profile"], body["control"]
+                ),
+            }
+            for index, role in enumerate(
+                ("preparation", "publication", "runtime", "signatures"), 1
+            )
+        },
+        "deployment_roles": {"compat-server": "server", "compat-host": "host"},
+    }
+    monkeypatch.setattr(admission, "validate_profile", lambda *_: None)
+    monkeypatch.setattr(
+        admission,
+        "trusted_entries",
+        lambda *_: {
+            "legacy-security-build-profiles.json": body["profile"],
+        },
+    )
+    monkeypatch.setattr(admission, "require_publication_source_origin", lambda *_a, **_k: None)
+    if fault == "variant":
+        row["input_variant"] = reader.publisher.VARIANT
+    elif fault == "nonstring-variant":
+        row["input_variant"] = []
+    elif fault == "mixed-input":
+        body["original_pr_oci"] = body["recovered_compat018_oci"]
+    elif fault == "same-raw-artifact":
+        row["stage_artifacts"]["runtime"]["artifact_id"] = body["recovered_compat018_oci"][
+            "producer"
+        ]["raw_checkpoint"]["artifact_id"]
+    write(tmp_path / admission.REGISTRY, {"schema_version": 1, "publications": {"current": row}})
+    if fault:
+        with pytest.raises(ValueError):
+            admission.registered_publication(tmp_path, "current")
+    else:
+        assert admission.registered_publication(tmp_path, "current") == row
+
+
+@pytest.mark.parametrize("source_reuse", [False, True])
+@pytest.mark.parametrize("fault", [None, "context", "changed-source"])
+def test_historical_recovered_reader_rejoins_actual_native_inputs(
+    recovered_admission, native_origin, tmp_path, monkeypatch, source_reuse, fault
+):
+    """Mock source/PG/wheel I/O; recovered OCI uses the original native fixture collector."""
+    body, _ = recovered_admission
+    body = copy.deepcopy(body)
+    control, _, _, _, downloads, _ = native_origin
+    source = body["source_qualification"]["result"]
+    if source_reuse:
+        body["source_qualification"]["native_producer"] = {"artifact_id": 504}
+    row = {"profile": body["profile"], "admission": body}
+    producer = reader.HistoricalProducer(
+        **{
+            key: body["control"][key] for key in ("control_revision", "run_id", "attempt", "actor")
+        },
+        control_tree="b" * 40,
+        workflow_sha256=body["control"]["workflow_sha256"],
+    )
+    verified, qualifications = [], []
+    monkeypatch.setattr(
+        reader.HistoricalProducer, "verify", lambda self, *args: verified.append(args)
+    )
+    monkeypatch.setattr(reader.publisher, "load_profile", lambda *_: row["profile"])
+    monkeypatch.setattr(reader.publisher, "verify_source_delta", lambda *_: None)
+    monkeypatch.setattr(reader, "require_publication_source_origin", lambda *_: None)
+
+    def qualify(root, product, component, historical, destination, *, recovered_selection):
+        assert root == control and historical is producer
+        assert recovered_selection == (101, 202)
+        qualifications.append(destination)
+        return {**source, **({"changed": True} if fault == "changed-source" else {})}
+
+    monkeypatch.setattr(reader, "qualify_historical_source", qualify)
+
+    def qualified(root, product, profile, context, destination, *, source_qualifier):
+        assert context == producer.context
+        result = source_qualifier(
+            root,
+            product,
+            profile["component"],
+            "0" * 40 if fault == "context" else producer.control_revision,
+            destination,
+        )
+        return result, body["source_qualification"]["native_producer"]
+
+    monkeypatch.setattr(reader.publisher, "collect_qualified_source", qualified)
+    monkeypatch.setattr(
+        reader, "_collect_pg_receipts", lambda *_a, **_k: body["native_product_pg"]["result"]
+    )
+    monkeypatch.setattr(
+        reader.publisher,
+        "load_original_inputs",
+        lambda *_: body["historical_pr_oci_registration"],
+    )
+    monkeypatch.setattr(
+        reader.publisher,
+        "load_transfer_profile",
+        lambda *_: body["historical_pr_transfer_profile"],
+    )
+    wheel = tmp_path / "fresh.whl"
+    wheel.write_bytes(b"explicit mocked wheel input")
+    monkeypatch.setattr(
+        reader.publisher,
+        "collect_fresh_wheel",
+        lambda *_: (body["fresh_control_wheel"], wheel),
+    )
+    monkeypatch.setattr(
+        reader.publisher,
+        "collect_original_input",
+        lambda *_: pytest.fail("typed recovered input must not use historical PR OCI collection"),
+    )
+    destination = tmp_path / "historical-read"
+    if fault == "changed-source" or (fault == "context" and source_reuse):
+        with pytest.raises(ValueError):
+            reader.collect_historical_inputs(control, control, row, producer, destination)
+    else:
+        actual, archive, actual_wheel = reader.collect_historical_inputs(
+            control, control, row, producer, destination
+        )
+        assert actual == body and actual_wheel == wheel and archive.is_file()
+        assert archive == destination / "original/download/original-oci.zip"
+        assert len(qualifications) == 1 and verified
+        assert downloads[-1] == 502
+
+
+@pytest.mark.parametrize("selection", [None, (101, 202)])
+def test_historical_qualification_preserves_producer_context_and_exact_selection(
+    tmp_path, monkeypatch, selection
+):
+    producer = reader.HistoricalProducer("c" * 40, "b" * 40, "d" * 64, 303, 1, "fixture")
+    verified = []
+    monkeypatch.setattr(
+        reader.HistoricalProducer, "verify", lambda self, *args: verified.append(args)
+    )
+
+    def qualify(control, product, component, revision, destination, evidence, **kwargs):
+        assert revision == producer.control_revision
+        assert kwargs.get("recovered_selection") == selection
+        kwargs["context_verifier"](control, revision)
+        with pytest.raises(ValueError, match="historical source context differs"):
+            kwargs["context_verifier"](control, "0" * 40)
+        return {"explicit_fixture": True}
+
+    monkeypatch.setattr(reader, "_qualify_source_ci", qualify)
+    assert reader.qualify_historical_source(
+        tmp_path,
+        tmp_path,
+        "Compatibility018",
+        producer,
+        tmp_path / "historical-source",
+        recovered_selection=selection,
+    ) == {"explicit_fixture": True}
+    assert verified == [(tmp_path, producer.control_revision)] * 2
+
+
+@pytest.mark.parametrize("fault", [None, "OCI", "wheel"])
+def test_recovered_publication_renewal_keeps_actual_OCI_and_wheel_identity(
+    recovered_admission, fault
+):
+    body, _ = recovered_admission
+    original = {
+        "profile": body["profile"],
+        "admission": copy.deepcopy(body),
+        "producer": {"run_id": 303},
+        "predicate_sha256": "a" * 64,
+        "stage_artifacts": {"runtime": {"artifact_id": 700}},
+    }
+    current = copy.deepcopy(original)
+    current["producer"]["run_id"] = 404
+    current["predicate_sha256"] = "b" * 64
+    current["stage_artifacts"]["runtime"]["artifact_id"] = 800
+    current["admission"]["fresh_control_wheel"]["artifact_id"] += 1
+    if fault == "OCI":
+        current["admission"]["recovered_compat018_oci"]["zip_sha256"] = "0" * 64
+    elif fault == "wheel":
+        current["admission"]["fresh_control_wheel"]["wheel_sha256"] = "0" * 64
+    if fault:
+        with pytest.raises(ValueError):
+            renewal.verify_renewal_identity(original, current)
+    else:
+        renewal.verify_renewal_identity(original, current)
 
 
 @pytest.mark.parametrize("fault", [None, *reader.TRUSTED_STORES])

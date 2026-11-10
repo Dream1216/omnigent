@@ -1440,6 +1440,15 @@ def test_actual_registered_source_slots_and_reviewed_hashes(filename):
         }
         else set()
     )
+    if filename == "legacy-source-qualification-profiles.json":
+        current = "Compatibility018@27503d14973b751a2031c6febf12a581b42b06d1"
+        compatibility.add(current)
+        assert (
+            hashlib.sha256(
+                json.dumps(records[current], sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            == "76a4e18198b48bfe63789471119f3ea0b19b8164c6dae5fd50b191583ca52ec2"
+        )
     assert set(records) == set(expected["sources"]) | compatibility
     if compatibility:
         if filename == "legacy-security-build-profiles.json":

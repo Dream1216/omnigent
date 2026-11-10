@@ -21,6 +21,7 @@ import sys
 import tarfile
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, cast
@@ -563,10 +564,13 @@ def collect_qualified_source(
     profile: dict[str, Any],
     context: dict[str, Any],
     destination: Path,
+    *,
+    source_qualifier: Callable[[Path, Path, str, str, Path], dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Revalidate the exact same-attempt producer instead of repeating its work."""
+    qualifier = qualify_source_ci if source_qualifier is None else source_qualifier
     if profile["component"] != COMPATIBILITY_COMPONENT:
-        result = qualify_source_ci(
+        result = qualifier(
             control,
             product,
             profile["component"],
@@ -648,7 +652,7 @@ def collect_qualified_source(
             if api(endpoint) != prior["response"]:
                 changed = True
     if changed:
-        result = qualify_source_ci(
+        result = qualifier(
             control,
             product,
             profile["component"],

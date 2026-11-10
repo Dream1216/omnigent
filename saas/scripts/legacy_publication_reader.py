@@ -26,7 +26,7 @@ from saas.scripts.legacy_domain_eligibility import (
     require_publication_source_origin,
 )
 from saas.scripts.legacy_native_evidence import preserve_native_evidence
-from saas.scripts.legacy_source_qualification import _qualify_source_ci
+from saas.scripts.legacy_source_qualification import _qualify_source_ci, qualification_profile_slot
 from saas.scripts.oci_promotion import read_json, require
 
 TRUSTED_STORES = (
@@ -47,17 +47,22 @@ def trusted_entries(control: Path, component: str) -> dict[str, Any]:
     for name in TRUSTED_STORES:
         store = load_release_evidence(control, "saas/supply_chain/" + name)
         key = "inputs" if name == "legacy-security-original-inputs.json" else "profiles"
+        selected = component
+        if name == "legacy-source-qualification-profiles.json":
+            selected = qualification_profile_slot(
+                component, entries["legacy-security-build-profiles.json"]
+            )
         require(
             isinstance(store, dict)
             and set(store) == {"schema_version", key}
             and type(store["schema_version"]) is int
             and store["schema_version"] == 1
             and isinstance(store[key], dict)
-            and isinstance(store[key].get(component), dict),
+            and isinstance(store[key].get(selected), dict),
             "current exact legacy registration is missing: " + name,
         )
         store = cast(dict[str, Any], store)
-        entries[name] = store[key][component]
+        entries[name] = store[key][selected]
     # The frozen product's data checkout predates this exact controller opt-in.
     # Authenticate all six original rows; never alter the immutable data files.
     policy_name = "legacy-source-qualification-profiles.json"
@@ -190,7 +195,13 @@ class HistoricalProducer:
 
 
 def qualify_historical_source(
-    control: Path, product: Path, component: str, producer: HistoricalProducer, destination: Path
+    control: Path,
+    product: Path,
+    component: str,
+    producer: HistoricalProducer,
+    destination: Path,
+    *,
+    recovered_selection: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     # Bracket the shared parser with native producer validation; its recorder
@@ -210,9 +221,25 @@ def qualify_historical_source(
                 root == control and revision == producer.control_revision,
                 "historical source context differs",
             ),
+            **({"recovered_selection": recovered_selection} if recovered_selection else {}),
         )
     producer.verify(control, producer.control_revision)
     return result
+
+
+def recovered_publication_selection(registration: dict[str, Any]) -> tuple[int, int] | None:
+    admission = registration["admission"]
+    selected = publisher.oci_input(admission)
+    if admission["kind"] != publisher.c2_recovered.VARIANT:
+        return None
+    source = selected["producer"]
+    return publisher.c2_recovered.dispatch_selection(
+        registration["profile"],
+        {
+            "COMPAT018_RAW_RUN_ID": str(source["raw_checkpoint"]["run_id"]),
+            "COMPAT018_SEALED_RUN_ID": str(source["sealed_oci"]["run_id"]),
+        },
+    )
 
 
 def collect_historical_inputs(
@@ -229,9 +256,41 @@ def collect_historical_inputs(
         profile == registration["profile"], "historical profile differs from current registration"
     )
     publisher.verify_source_delta(product, profile)
-    source = qualify_historical_source(
-        control, product, component, producer, destination / "source"
-    )
+    selection = recovered_publication_selection(registration)
+    source_producer = None
+    if "native_producer" in registration["admission"]["source_qualification"]:
+
+        def requalify(root, current_product, current_component, revision, path):
+            require(
+                root == control and revision == producer.control_revision,
+                "historical source revalidation context differs",
+            )
+            return qualify_historical_source(
+                root,
+                current_product,
+                current_component,
+                producer,
+                path,
+                recovered_selection=selection,
+            )
+
+        source, source_producer = publisher.collect_qualified_source(
+            control,
+            product,
+            profile,
+            producer.context,
+            destination / "source",
+            source_qualifier=requalify,
+        )
+    else:
+        source = qualify_historical_source(
+            control,
+            product,
+            component,
+            producer,
+            destination / "source",
+            **({"recovered_selection": selection} if selection else {}),
+        )
     publisher.strict_qualification(source, profile, producer.control_revision)
     require_publication_source_origin(control, profile, source)
     producer.verify(control, producer.control_revision)
@@ -250,7 +309,19 @@ def collect_historical_inputs(
         ),
     )
     require(pg.get("native_PG_receipts_pass") is True, "historical native PG did not pass")
-    original = publisher.collect_original_input(control, profile, destination / "original")
+    if selection is None:
+        original = publisher.collect_original_input(control, profile, destination / "original")
+    else:
+        with preserve_native_evidence(
+            destination / "original/native-api", evidence_root=destination / "original"
+        ):
+            original = publisher.c2_recovered.collect(
+                control,
+                profile,
+                selection,
+                publisher.load_original_inputs(control, profile),
+                destination / "original/download",
+            )
     fresh, wheel = publisher.collect_fresh_wheel(
         control, product, profile, producer.context, destination / "fresh"
     )
@@ -269,6 +340,15 @@ def collect_historical_inputs(
         "native_product_pg": {"sha256": publisher.digest(pg), "result": pg},
         "rebuild_in_publisher": False,
     }
+    if source_producer is not None:
+        admission["source_qualification"]["native_producer"] = source_producer
+    if selection is not None:
+        admission.update(
+            kind=publisher.c2_recovered.VARIANT,
+            recovered_compat018_oci=admission.pop("original_pr_oci"),
+            historical_pr_transfer_profile=admission.pop("transfer_profile"),
+            historical_pr_oci_registration=publisher.load_original_inputs(control, profile),
+        )
     publisher.validate_input_identities(admission)
     require(
         admission == registration["admission"], "historical admission differs from registration"
@@ -323,7 +403,8 @@ def read_registered_publication(
             if role != "signatures":
                 publisher.compare_admission(root, admission)
         oci = destination / "oci"
-        publisher.unpack_original(archive, admission["original_pr_oci"], oci)
+        selected = publisher.oci_input(admission)
+        publisher.unpack_original(archive, selected, oci)
         manifest = publisher.admitted_manifest(
             oci, admission, product, exports["preparation"] / "scans"
         )
@@ -332,7 +413,7 @@ def read_registered_publication(
             "kind": "legacy_exact_oci_publication/v1",
             "admission_sha256": publisher.digest(admission),
             "images": publisher.image_references(admission, manifest),
-            "candidate_seal_sha256": admission["original_pr_oci"]["seal_sha256"],
+            "candidate_seal_sha256": selected["seal_sha256"],
             "registry_readback_pass": True,
             "rebuilt": False,
         }

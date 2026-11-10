@@ -70,6 +70,29 @@ _MANDATORY_TECHNICAL = {
     ".github/workflows/saas-image-candidate.yml",
     ".github/workflows/saas-n1-compat-image.yml",
 }
+_REGISTERED_COMPAT_SOURCE = (
+    "27503d14973b751a2031c6febf12a581b42b06d1",
+    "a02ea9f17664bd0290eb5025f864672c0025075c",
+    258,
+    "codex/legacy-compat018-expat210-20261103",
+)
+_RECOVERED_IMAGE_WORKFLOW = ".github/workflows/saas-image-candidate.yml"
+_RECOVERED_IMAGE_DECLARATION = {
+    "kind": "compat018_registered_native_image_completion/v1",
+    "original_workflow": _RECOVERED_IMAGE_WORKFLOW,
+    "original_cancelled_run_id": 42573722547,
+    "original_cancelled_run_claimed_success": False,
+    "publisher_full_archive_verification_required": True,
+}
+_REGISTERED_COMPAT_POLICY_SLOT = "Compatibility018@27503d14973b751a2031c6febf12a581b42b06d1"
+_ORIGINAL_CANCELLED_IMAGE_CHECK_IDS = {
+    129016661137,
+    129016661249,
+    129016661268,
+    129017293227,
+    129017293515,
+    129017293730,
+}
 _COMPATIBILITY_PATH_FILTERS = {
     ".github/workflows/setup-harness-cli-test.yml": (
         "d0a58addba9cf515415f73253497ee1dc3818fee6bddb9ea77f9b8d2be4d8379",
@@ -124,6 +147,17 @@ def workflow_catalog(product: Path, revision: str) -> dict[str, str]:
     return result
 
 
+def qualification_profile_slot(component: str, profile: dict[str, Any]) -> str:
+    """Keep the frozen historical registration intact when selecting current C2."""
+    if (
+        component == COMPATIBILITY_COMPONENT
+        and (profile.get("product_revision"), profile.get("product_tree"))
+        == _REGISTERED_COMPAT_SOURCE[:2]
+    ):
+        return _REGISTERED_COMPAT_POLICY_SLOT
+    return component
+
+
 def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[str, Any]:
     path = control / "saas/supply_chain/legacy-source-qualification-profiles.json"
     require(
@@ -138,7 +172,7 @@ def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[st
         and isinstance(store["profiles"], dict),
         "source qualification store differs",
     )
-    policy = store["profiles"].get(profile["component"])
+    policy = store["profiles"].get(qualification_profile_slot(profile["component"], profile))
     require(
         isinstance(policy, dict)
         and set(policy)
@@ -149,6 +183,7 @@ def load_qualification_policy(control: Path, profile: dict[str, Any]) -> dict[st
             "domain_refusal_cancellation",
             "domain_unattributed_zero_execution",
             "domain_unattributed_bootstrap_cancellation",
+            "recovered_native_image_completion",
         }
         == {
             "component",
@@ -182,8 +217,19 @@ def _required_technical_workflows(policy, identity, actual_catalog, profile):
             policy[key] == identity[key] == profile[key]
             for key in ("component", "product_revision", "product_tree")
         )
-        and identity["validation_pr"] == 223
-        and identity["validation_base_ref"] == "codex/p18-a7-validation-base-20261102",
+        and (
+            (
+                identity["validation_pr"] == 223
+                and identity["validation_base_ref"] == "codex/p18-a7-validation-base-20261102"
+            )
+            or (
+                identity["product_revision"],
+                identity["product_tree"],
+                identity["validation_pr"],
+                identity["validation_base_ref"],
+            )
+            == _REGISTERED_COMPAT_SOURCE
+        ),
         "compatibility path scope differs from the exact source and PR",
     )
     for path, (source_hash, patterns) in _COMPATIBILITY_PATH_FILTERS.items():
@@ -204,12 +250,65 @@ def _required_technical_workflows(policy, identity, actual_catalog, profile):
     return _MANDATORY_TECHNICAL - _COMPATIBILITY_PATH_FILTERS.keys()
 
 
+def _verify_recovered_image_completion(policy, identity, profile, completion) -> bool:
+    """The cancelled original image run stays failed; require a separate native proof."""
+    declaration = policy.get("recovered_native_image_completion")
+    if declaration is None:
+        require(completion is None, "undeclared recovered image evidence")
+        return False
+    from saas.scripts.compat018_recovered_input import NativeRecoveredImageCompletion
+
+    require(
+        policy.get("component") == COMPATIBILITY_COMPONENT
+        and isinstance(profile, dict)
+        and profile.get("component") == identity.get("component") == COMPATIBILITY_COMPONENT
+        and declaration == _RECOVERED_IMAGE_DECLARATION
+        and declaration["original_cancelled_run_claimed_success"] is False
+        and declaration["publisher_full_archive_verification_required"] is True
+        and (
+            identity.get("product_revision"),
+            identity.get("product_tree"),
+            identity.get("validation_pr"),
+            identity.get("validation_base_ref"),
+        )
+        == _REGISTERED_COMPAT_SOURCE
+        and all(
+            profile.get(key) == identity.get(key)
+            for key in ("component", "product_revision", "product_tree")
+        )
+        and isinstance(completion, NativeRecoveredImageCompletion),
+        "recovered image completion is not the exact current registered native proof",
+    )
+    receipt = completion.receipt
+    require(
+        receipt.get("kind") == declaration["kind"]
+        and receipt.get("product_revision") == profile["product_revision"]
+        and receipt.get("product_tree") == profile["product_tree"]
+        and receipt.get("whole_archive_bytes_verified_here") is False
+        and receipt.get("publisher_full_archive_verification_required") is True
+        and receipt.get("regression_or_PG_qualification_claimed") is False,
+        "recovered image metadata cannot claim archive, regression or PG admission",
+    )
+    for role in ("raw_checkpoint", "sealed_oci"):
+        row = receipt.get(role, {})
+        require(
+            type(row.get("run_id")) is int
+            and row["run_id"] > 0
+            and row["run_id"] != declaration["original_cancelled_run_id"]
+            and type(row.get("attempt")) is int
+            and row["attempt"] == 1,
+            "recovered image cannot borrow the cancelled original or an unknown attempt",
+        )
+    return True
+
+
 def validate_qualification_policy(
     policy: dict[str, Any],
     identity: dict[str, Any],
     actual_catalog: dict[str, str],
     *,
     profile: dict[str, Any] | None = None,
+    recovered_image: object = None,
 ) -> None:
     require(
         policy["identity_contract_sha256"] == _digest(identity),
@@ -245,14 +344,21 @@ def validate_qualification_policy(
             "another workflow cannot use the main-domain eligibility rule",
         )
     validate_domain_rules(policy, identity)
+    recovered = _verify_recovered_image_completion(policy, identity, profile, recovered_image)
+    identity_required = {row["path"] for row in identity["workflows"]}
+    if recovered:
+        require(
+            _RECOVERED_IMAGE_WORKFLOW not in identity_required,
+            "recovered image cannot replace or duplicate an original successful source workflow",
+        )
     require(
         required >= _required_technical_workflows(policy, identity, actual_catalog, profile)
-        and required == {row["path"] for row in identity["workflows"]},
+        and required == identity_required | ({_RECOVERED_IMAGE_WORKFLOW} if recovered else set()),
         "complete mandatory technical workflow set differs",
     )
     evidence = policy["job_evidence"]
     require(
-        isinstance(evidence, dict) and set(evidence) == required,
+        isinstance(evidence, dict) and set(evidence) == identity_required,
         "technical job evidence plan is incomplete",
     )
     for workflow in identity["workflows"]:
@@ -456,6 +562,53 @@ def _check_key(role: str, row: dict[str, Any]) -> tuple[Any, ...]:
     return role, row["app"]["id"], row["check_suite"]["id"], row["name"]
 
 
+def _recovered_cancelled_image_checks(snapshots, policy, completion):
+    """Retain the exact cancelled antecedent; its replacement never supplies PG credit."""
+    if completion is None:
+        return {}
+    identity = {
+        **{key: policy[key] for key in ("component", "product_revision", "product_tree")},
+        "validation_pr": _REGISTERED_COMPAT_SOURCE[2],
+        "validation_base_ref": _REGISTERED_COMPAT_SOURCE[3],
+    }
+    _verify_recovered_image_completion(policy, identity, policy, completion)
+    head = snapshots["head"]
+    originals = [
+        run
+        for run in head["runs"]
+        if run.get("id") == _RECOVERED_IMAGE_DECLARATION["original_cancelled_run_id"]
+    ]
+    require(len(originals) == 1, "original cancelled image native run is missing or duplicated")
+    original = originals[0]
+    require(
+        original.get("head_sha") == policy["product_revision"]
+        and original.get("path") == _RECOVERED_IMAGE_WORKFLOW
+        and original.get("event") == "pull_request"
+        and original.get("run_attempt") == 1
+        and original.get("status") == "completed"
+        and original.get("conclusion") == "cancelled",
+        "recovered image cannot rewrite the exact original cancelled image outcome",
+    )
+    checks = [
+        row
+        for row in latest_check_runs(head)
+        if row.get("check_suite", {}).get("id") == original.get("check_suite_id")
+    ]
+    require(
+        len(checks) == len(_ORIGINAL_CANCELLED_IMAGE_CHECK_IDS)
+        and {row.get("id") for row in checks} == _ORIGINAL_CANCELLED_IMAGE_CHECK_IDS
+        and all(
+            row.get("app", {}).get("id") == 15368
+            and row.get("head_sha") == policy["product_revision"]
+            and row.get("status") == "completed"
+            and row.get("conclusion") == "cancelled"
+            for row in checks
+        ),
+        "original cancelled image check matrix or native outcomes differ",
+    )
+    return {row["id"]: row for row in checks}
+
+
 def assess_all_app_policy(
     snapshots: dict[str, dict[str, Any]],
     observations: list[dict[str, Any]],
@@ -467,7 +620,10 @@ def assess_all_app_policy(
         | nonexecution.RefusalCancellationObservation,
         ...,
     ] = (),
+    *,
+    recovered_image: object = None,
 ) -> dict[str, Any]:
+    cancelled_image = _recovered_cancelled_image_checks(snapshots, policy, recovered_image)
     if policy.get("component") == COMPATIBILITY_COMPONENT:
         require(
             not any(
@@ -535,6 +691,7 @@ def assess_all_app_policy(
                 "original-domain-zero-execution",
                 "original-domain-infrastructure-cancellation",
                 "original-domain-refusal-cancellation",
+                "original-recovered-image-cancellation",
             }
             and isinstance(row["reason"], str)
             and bool(row["reason"].strip()),
@@ -556,6 +713,18 @@ def assess_all_app_policy(
                 and declared_workflow["disposition"] != "original-not-triggered",
                 "native workflow eligibility contradicts the reviewed catalog",
             )
+            if row["scope"] == "original-recovered-image-cancellation":
+                check = actual_checks.get(key, {})
+                require(
+                    row["role"] == "head"
+                    and origin.get("id")
+                    == _RECOVERED_IMAGE_DECLARATION["original_cancelled_run_id"]
+                    and origin["path"] == _RECOVERED_IMAGE_WORKFLOW
+                    and declared_workflow["disposition"] == "required-technical"
+                    and cancelled_image.get(check.get("id")) == check
+                    and row["expected_conclusion"] is None,
+                    "cancelled original image requires exact current native replacement proof",
+                )
             if origin["path"] == MAIN_WORKFLOW:
                 require(
                     row["scope"] == declared_workflow["disposition"]
@@ -664,6 +833,10 @@ def assess_all_app_policy(
                 require(
                     row["scope"] == "required-technical"
                     or (
+                        row["scope"] == "original-recovered-image-cancellation"
+                        and actual_checks.get(key, {}).get("id") in cancelled_image
+                    )
+                    or (
                         row["scope"] == "original-conditional"
                         and policy["job_evidence"][origin["path"]].get(row["name"], {}).get("kind")
                         == "original-conditional"
@@ -680,6 +853,7 @@ def assess_all_app_policy(
                     "original-domain-zero-execution",
                     "original-domain-infrastructure-cancellation",
                     "original-domain-refusal-cancellation",
+                    "original-recovered-image-cancellation",
                 },
                 "external provider cannot supply an original governance exception",
             )
@@ -692,6 +866,7 @@ def assess_all_app_policy(
     informational = []
     infrastructure_cancellations = []
     refusal_cancellations = []
+    recovered_image_cancellations = []
     for key, rule in expected.items():
         check = actual_checks[key]
         require(check["status"] == "completed", "all-App check is not terminal")
@@ -710,6 +885,20 @@ def assess_all_app_policy(
                         "reason": rule["reason"],
                     }
                 )
+        elif rule["scope"] == "original-recovered-image-cancellation":
+            require(
+                rule["expected_conclusion"] is None and check["conclusion"] == "cancelled",
+                "the original image cancellation remains cancelled",
+            )
+            recovered_image_cancellations.append(
+                {
+                    "check_id": check["id"],
+                    "original_conclusion": "cancelled",
+                    "original_technical_or_PG_credit": False,
+                    "replacement_native_image_completion_required": True,
+                    "final_same_product_PG_and_full_archive_admission_still_required": True,
+                }
+            )
         elif rule["scope"] == "original-domain-refusal-cancellation":
             require(
                 rule["expected_conclusion"] is None and check["conclusion"] == "cancelled",
@@ -810,6 +999,11 @@ def assess_all_app_policy(
         "original_infrastructure_cancellations": infrastructure_cancellations,
         "all_original_governance_clear": not governance,
         **(
+            {"original_recovered_image_cancellations": recovered_image_cancellations}
+            if recovered_image_cancellations
+            else {}
+        ),
+        **(
             {
                 "verified_main_domain_refusal_cancellations": [
                     row.receipt
@@ -844,6 +1038,7 @@ def _qualify_source_ci(
     evidence: NativeEvidence,
     *,
     context_verifier,
+    recovered_selection: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     context_verifier(control, control_revision)
     profile = load_profile(control, component)
@@ -851,7 +1046,24 @@ def _qualify_source_ci(
     identity = _load_contract(control, profile)
     policy = load_qualification_policy(control, profile)
     catalog = workflow_catalog(product, profile["product_revision"])
-    validate_qualification_policy(policy, identity, catalog, profile=profile)
+    recovered_image = None
+    if "recovered_native_image_completion" in policy:
+        from saas.scripts.compat018_recovered_input import (
+            collect_native_recovered_image_completion,
+            dispatch_selection,
+        )
+
+        selected = (
+            dispatch_selection(profile) if recovered_selection is None else recovered_selection
+        )
+        if selected is None:
+            raise ValueError("current C2 source qualification requires actual raw and scan runs")
+        recovered_image = collect_native_recovered_image_completion(control, profile, selected)
+    else:
+        require(recovered_selection is None, "undeclared explicit recovered source selection")
+    validate_qualification_policy(
+        policy, identity, catalog, profile=profile, recovered_image=recovered_image
+    )
     bootstrap = "bootstrap_positive_origin" in policy
     registration = bootstrap_registration(control, profile, policy) if bootstrap else None
     if bootstrap:
@@ -1030,7 +1242,12 @@ def _qualify_source_ci(
     )
     evidence.stage = "all-app-policy"
     all_apps = assess_all_app_policy(
-        after, observation["workflows"], policy, domain_receipts, domain_eligibility.observations
+        after,
+        observation["workflows"],
+        policy,
+        domain_receipts,
+        domain_eligibility.observations,
+        **({"recovered_image": recovered_image} if recovered_image is not None else {}),
     )
     all_apps["verified_original_security_policy_decisions"] = policy_decisions
     evidence.stage = "final-PR-and-source"
@@ -1082,13 +1299,15 @@ def _qualify_source_ci(
         "identity_contract_sha256": _digest(identity),
         "qualification_policy_sha256": _digest(policy),
         "workflow_catalog_sha256": _digest(catalog),
-        "technical_workflows": len(observation["workflows"]),
+        "technical_workflows": len(observation["workflows"]) + (recovered_image is not None),
         "test_artifacts": test_evidence,
         "native_snapshots_sha256": _digest(after),
         "exact_product_PG_pass": False,
         "image_admission": False,
         "production_admission": False,
     }
+    if recovered_image is not None:
+        result["recovered_native_image_completion"] = recovered_image.receipt
     if bootstrap:
         result.update(
             positive_origin_complete=True,

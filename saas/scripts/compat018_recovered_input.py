@@ -10,12 +10,14 @@ import os
 import re
 import stat
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from saas.scripts import compat018_oci_recovery as recovery
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
+from saas.scripts.legacy_domain_native import native_digest
 from saas.scripts.legacy_native_evidence import api
 from saas.scripts.legacy_pytest_results import verify_job_artifact_identity
 
@@ -24,6 +26,11 @@ ORIGIN = "compat018_clean_recovered_oci/v1"
 VARIANT = "protected_legacy_initial_publication/compat018-recovered/v1"
 REGISTERED_RAW_CONTROLLER = "13ed5b17d3872a3010c9173738d965834d8e482d"
 REGISTERED_RAW_TREE = "01e6b7d4fcfdc07d692024e892582c6b0dcaab07"
+_REGISTERED_RAW_SNAPSHOTS = {
+    REGISTERED_RAW_CONTROLLER: REGISTERED_RAW_TREE,
+    # Actual independently reviewed clean-context/one-Server repair controller.
+    "e4992c52968ab71f55470e9128f27b75382260ab": "a2897963937c4a8e2edfb1b85bbb269bdad39ee6",
+}
 # Finite conservative import closure and the existing scan gate policies.
 SOURCES = (
     "saas/actions/runtime-evidence-context/action.yml",
@@ -402,7 +409,11 @@ def _derive_row(
         _run(row, sealed=sealed) == run,
         "C2 native run changed while deriving its identity",
     )
-    code = _code(control, revision, registered_raw=registered and not sealed)
+    code = _code(
+        control,
+        revision,
+        registered_raw=registered and not sealed and revision in _REGISTERED_RAW_SNAPSHOTS,
+    )
     key = "scan_job_id" if sealed else "builder_job_id"
     name = "scan-and-seal-same-oci" if sealed else "build-compat018-product"
     listed = _unique(
@@ -455,7 +466,7 @@ def _code(control: Path, revision: str, *, registered_raw: bool = False) -> dict
     )
     if registered_raw:
         require(
-            revision == REGISTERED_RAW_CONTROLLER and tree_sha == REGISTERED_RAW_TREE,
+            _REGISTERED_RAW_SNAPSHOTS.get(revision) == tree_sha,
             "registered C2 raw source is not the exact reviewed producer snapshot",
         )
     tree = api(f"{prefix}trees/{tree_sha}?recursive=1")
@@ -577,6 +588,144 @@ def _artifact(row: dict[str, Any], name: str, job: dict[str, Any], upload: str) 
     end = datetime.fromisoformat(step["completed_at"])
     require(start <= created <= end, "C2 artifact is outside its real upload interval")
     return metadata
+
+
+@dataclass(frozen=True)
+class NativeRecoveredImageCompletion:
+    """Native four-build/scan completion; the publisher still verifies all ZIP bytes."""
+
+    receipt: dict[str, Any]
+
+
+def collect_native_recovered_image_completion(
+    control: Path, profile: dict[str, Any], run_ids: tuple[int, int]
+) -> NativeRecoveredImageCompletion:
+    """Reuse the original native producer guards without downloading OCI twice.
+
+    This is one input to source qualification, not original regression or PG
+    evidence. The existing publisher's collect/verify_payload path remains
+    mandatory before any signature and reads the complete same sealed archive.
+    """
+    exact_product(profile)
+    require(
+        profile["product_revision"] != recovery.PRODUCT
+        and isinstance(run_ids, tuple)
+        and len(run_ids) == 2
+        and all(type(value) is int and value > 0 for value in run_ids),
+        "native recovered completion requires the exact current registered C2",
+    )
+    raw, raw_run, raw_code = _derive_row(control, run_ids[0], sealed=False, profile=profile)
+    sealed, sealed_run, sealed_code = _derive_row(
+        control, run_ids[1], sealed=True, profile=profile
+    )
+    common_build_steps = (
+        "Audit actual fixed C2 source, UI, and historical Host",
+        "Independently build only C2 Server without cache",
+        "Confirm exact C2 comparison profile",
+        "Preserve actual OCI before any fresh vulnerability scan",
+    )
+    scan_steps = (
+        "Download and independently recheck the same real raw checkpoint",
+        "Fresh scan and seal without rebuilding or relaxing any gate",
+        "Retain actually admitted immutable OCI",
+    )
+    builder = _job(raw, "builder_job_id", "build-compat018-product", common_build_steps)
+    repair_step = "Authenticate exact failed registered pair for one Server repair"
+    repaired = [
+        step
+        for step in builder["steps"]
+        if step["name"] == repair_step and step.get("conclusion") == "success"
+    ]
+    original_build_steps = (
+        "Recover Server using its existing first-attempt build cache",
+        "Recover Host using its existing first-attempt build cache",
+        "Independently build C2 Host without cache",
+    )
+    parent_proof = None
+    parent_observations = ()
+    if repaired:
+        require(len(repaired) == 1, "registered repair intake is duplicated")
+        _job(raw, "builder_job_id", "build-compat018-product", (repair_step, *common_build_steps))
+        require(
+            all(
+                len(rows := [step for step in builder["steps"] if step["name"] == name]) == 1
+                and rows[0].get("conclusion") == "skipped"
+                for name in original_build_steps
+            ),
+            "one-Server repair cannot claim or repeat original Server/Host builds",
+        )
+        parent = recovery.REGISTERED_FAILED_PAIR
+        parent_run = api(f"repos/{recovery.REPOSITORY}/actions/runs/{parent['run_id']}")
+        parent_job = api(f"repos/{recovery.REPOSITORY}/actions/jobs/{parent['builder_job_id']}")
+        parent_artifact = api(
+            f"repos/{recovery.REPOSITORY}/actions/artifacts/{parent['artifact_id']}"
+        )
+        recovery.verify_registered_failed_pair(parent_run, parent_job, parent_artifact)
+        parent_observations = (
+            (f"runs/{parent['run_id']}", parent_run),
+            (f"jobs/{parent['builder_job_id']}", parent_job),
+            (f"artifacts/{parent['artifact_id']}", parent_artifact),
+        )
+        parent_proof = {
+            "fixed_parent": parent,
+            "run_sha256": native_digest(parent_run),
+            "job_sha256": native_digest(parent_job),
+            "artifact_sha256": native_digest(parent_artifact),
+            "original_conclusion": "failure",
+            "new_Server_builds": 1,
+            "first_Server_and_both_Host_reused": True,
+        }
+    else:
+        _job(raw, "builder_job_id", "build-compat018-product", original_build_steps)
+    scanner = _job(sealed, "scan_job_id", "scan-and-seal-same-oci", scan_steps)
+    raw_metadata = _artifact(
+        raw,
+        f"compat018-raw-{profile['product_revision']}-{raw['run_id']}",
+        builder,
+        common_build_steps[-1],
+    )
+    sealed_metadata = _artifact(
+        sealed, f"saas-oci-promotion-{profile['product_revision']}", scanner, scan_steps[-1]
+    )
+    for path, original in (
+        (f"runs/{raw['run_id']}", raw_run),
+        (f"runs/{sealed['run_id']}", sealed_run),
+        (f"jobs/{builder['id']}", builder),
+        (f"jobs/{scanner['id']}", scanner),
+        (f"artifacts/{raw['artifact_id']}", raw_metadata),
+        (f"artifacts/{sealed['artifact_id']}", sealed_metadata),
+        *parent_observations,
+    ):
+        require(
+            api(f"repos/{recovery.REPOSITORY}/actions/{path}") == original,
+            "native recovered image completion changed during observation",
+        )
+    return NativeRecoveredImageCompletion(
+        {
+            "kind": "compat018_registered_native_image_completion/v1",
+            "product_revision": profile["product_revision"],
+            "product_tree": profile["product_tree"],
+            "raw_checkpoint": raw,
+            "sealed_oci": sealed,
+            "controller_sources": {"raw": raw_code, "sealed": sealed_code},
+            "native_runs_sha256": {
+                "raw": native_digest(raw_run),
+                "sealed": native_digest(sealed_run),
+            },
+            "native_jobs_sha256": {
+                "builder": native_digest(builder),
+                "scanner": native_digest(scanner),
+            },
+            "native_artifacts_sha256": {
+                "raw": native_digest(raw_metadata),
+                "sealed": native_digest(sealed_metadata),
+            },
+            "registered_one_Server_repair": parent_proof,
+            "whole_archive_bytes_verified_here": False,
+            "publisher_full_archive_verification_required": True,
+            "regression_or_PG_qualification_claimed": False,
+        }
+    )
 
 
 def collect(

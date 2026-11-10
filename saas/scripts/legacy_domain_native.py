@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from saas.scripts.legacy_native_evidence import api
+from saas.scripts.legacy_pr_candidate import VALIDATION_REFS
 from saas.scripts.legacy_source_ci import _instant
 from saas.scripts.oci_promotion import require
 from saas.scripts.protected_legacy_initial_build import REPOSITORY
@@ -36,6 +37,32 @@ _ENV_KEYS = {
     "WORKFLOW_HEAD_SHA",
     "WORKFLOW_PRS",
 }
+
+
+def registered_validation_ref(profile: dict[str, Any], identity: dict[str, Any]) -> str | None:
+    """Keep historical routes and the one independently registered current C2 route."""
+    if (
+        profile.get("component") == "Compatibility018"
+        and identity.get("component") == "Compatibility018"
+        and type(identity.get("validation_pr")) is int
+        and (
+            profile.get("product_revision"),
+            profile.get("product_tree"),
+            identity.get("validation_pr"),
+            identity.get("validation_base_ref"),
+        )
+        == (
+            "27503d14973b751a2031c6febf12a581b42b06d1",
+            "a02ea9f17664bd0290eb5025f864672c0025075c",
+            258,
+            "codex/legacy-compat018-expat210-20261103",
+        )
+        and all(
+            identity.get(key) == profile.get(key) for key in ("product_revision", "product_tree")
+        )
+    ):
+        return "codex/legacy-compat018-expat210-20261103"
+    return VALIDATION_REFS.get(profile.get("component", ""))
 
 
 def matches_hosted_runner_label(
