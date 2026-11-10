@@ -16,7 +16,8 @@ acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchange
 
 Patches 0005 and 0010 replay the reviewed Host readiness changes.
 Sharing in-flight probes and limiting managed Host workers reduces concurrent
-CLI work. The measured footprint is recorded as a pending budget proposal.
+CLI work. The repository administrator approved the measured footprint of
+230 files and 7,090 net lines.
 
 Patch 0010 also bounds repeated list-display harness resolution with a 1,024-entry
 cache keyed by workspace, current Agent identity/revision/bundle/provenance,

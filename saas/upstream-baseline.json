@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 226,
-    "max_upstream_net_added_loc": 6841,
+    "max_direct_upstream_files": 230,
+    "max_upstream_net_added_loc": 7090,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1419,17 +1419,19 @@
       "observed_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
       "parent_source": "33391cffdfc2395a737565ba096d2c808c79c64b",
       "authorization_source": {
-        "state": "pending_repository_admin_decision"
+        "state": "approved_repository_admin_decision",
+        "administrator": "Dream1216",
+        "approved_head": "3f19c0376366fdeea0a89da23c55d3f5741f3f5d"
       },
       "recorded_at": "2026-11-11",
       "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
       "previous_controller_max_direct_upstream_files": 229,
       "previous_controller_max_upstream_net_added_loc": 6841,
-      "proposed_max_direct_upstream_files": 230,
-      "proposed_max_upstream_net_added_loc": 7090,
+      "max_direct_upstream_files": 230,
+      "max_upstream_net_added_loc": 7090,
       "measured_direct_upstream_files": 230,
       "measured_upstream_net_added_loc": 7090,
-      "reason": "Retain the reviewed four-file Host readiness change and its required patch replay. The measured footprint is a pending proposal, with the existing controller budget still enforced.",
+      "reason": "The repository administrator approved the measured Host readiness change and its required patch replay at 230 files and 7090 net lines, an increment of one file and 249 net lines over the previous controller budget.",
       "scope_paths": [
         ".github/workflows/saas-controller-source-budget.json",
         "omnigent/host/connect.py",
