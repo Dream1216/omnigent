@@ -25,6 +25,7 @@ from saas.scripts.oci_promotion import (
     extract_artifact,
     read_json,
     require,
+    seal_candidate,
     verify_candidate,
 )
 from saas.scripts.resume_oci_promotion import (
@@ -409,7 +410,7 @@ def report_binding(root: Path, completed_at: str) -> dict[str, Any]:
         raw = read_json(root / relative)
         parse_database_status(
             raw["descriptor"]["db"]["status"],
-            now=datetime.now(UTC),
+            now=completed if _m8c() else datetime.now(UTC),
             subject=raw["source"]["target"],
             database_age_disposition=disposition,
             report_sha256=file_sha256(root / relative),
@@ -566,6 +567,8 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
                 "conclusion",
                 "labels",
                 "runner_group_name",
+                "started_at",
+                "completed_at",
             )
         },
         "accepted_product_main_ci": product_ci,
@@ -708,12 +711,34 @@ def download(root: Path) -> None:
         controller=value["candidate_controller_revision"],
     )
     download_metadata(metadata, root.with_suffix(".zip"), root)
-    verify_candidate(
-        root,
-        manifest_sha256=value["candidate_manifest_sha256"],
-        labels=expected_labels(Path.cwd(), PRODUCT),
-        source_date_epoch=EPOCH,
-    )
+    if _m8c():
+        manifest = read_json(root / MANIFEST_NAME)
+        sealed = datetime.fromisoformat(manifest["sealed_at"])
+        scan_job = value["native_scan_job"]
+        started = datetime.fromisoformat(scan_job["started_at"].replace("Z", "+00:00"))
+        completed = datetime.fromisoformat(scan_job["completed_at"].replace("Z", "+00:00"))
+        require(
+            started.tzinfo is not None
+            and sealed.tzinfo is not None
+            and completed.tzinfo is not None
+            and started <= sealed <= completed <= datetime.now(UTC)
+            and file_sha256(root / MANIFEST_NAME) == value["candidate_manifest_sha256"]
+            and seal_candidate(
+                root,
+                labels=expected_labels(Path.cwd(), PRODUCT),
+                source_date_epoch=EPOCH,
+                now=sealed,
+            )
+            == manifest,
+            "historical native scan interval or exact transferred OCI seal differs",
+        )
+    else:
+        verify_candidate(
+            root,
+            manifest_sha256=value["candidate_manifest_sha256"],
+            labels=expected_labels(Path.cwd(), PRODUCT),
+            source_date_epoch=EPOCH,
+        )
     require(
         read_json(root / MANIFEST_NAME)["scans"].get("temporary_database_age")
         == value.get("temporary_database_age"),
@@ -747,11 +772,41 @@ def download(root: Path) -> None:
         )
 
 
-def predicate(policy: str, run: str, attempt: str, *, wheel: bool = False) -> dict[str, Any]:
+def predicate(
+    policy: str,
+    run: str,
+    attempt: str,
+    *,
+    wheel: bool = False,
+    current_scans: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     value = build_promotion_predicate(binding(), WORKFLOW, policy, run, attempt)
     value["buildDefinition"]["externalParameters"]["oci_rebuild_performed"] = False
     if wheel:
         value["buildDefinition"]["externalParameters"]["wheel_build_performed"] = True
+    elif _m8c():
+        require(
+            isinstance(current_scans, dict)
+            and current_scans.get("product_revision") == PRODUCT
+            and current_scans.get("signing_policy_revision") == policy
+            and current_scans.get("signing_run_id") == run
+            and current_scans.get("signing_run_attempt") == attempt
+            and current_scans.get("candidate_manifest_sha256")
+            == binding()["candidate_manifest_sha256"]
+            and isinstance(current_scans.get("reports"), dict)
+            and set(current_scans["reports"])
+            == {f"{role}-{arch}" for role in ("server", "host") for arch in ("amd64", "arm64")}
+            and all(
+                isinstance(row, dict)
+                and re.fullmatch(r"[0-9a-f]{64}", row.get("report_sha256", "")) is not None
+                and row.get("signing_policy_revision") == policy
+                and row.get("signing_run_id") == run
+                and row.get("signing_run_attempt") == attempt
+                for row in current_scans["reports"].values()
+            ),
+            "current same-OCI scans must bind the actual signing invocation",
+        )
+        value["buildDefinition"]["externalParameters"]["current_scans"] = current_scans
     return value
 
 
@@ -825,6 +880,7 @@ def scan_registry_sbom(
     }
     now = datetime.now(UTC)
     latest = scan.official_database_latest()
+    latest_checked_at = datetime.now(UTC)
     temporary = (
         scan.temporary_database_age_enabled()
         and scan.TEMPORARY_DATABASE_AGE["products"].get(PRODUCT) == product_tree
@@ -870,6 +926,7 @@ def scan_registry_sbom(
     if temporary:
         scan.validate_approved_database_status(status, now=datetime.now(UTC))
         latest = scan.official_database_latest()
+        latest_checked_at = datetime.now(UTC)
         require(
             scan.approved_database_is_latest(latest)
             and file_sha256(database_archive) == scan.TEMPORARY_DATABASE_AGE["archive_SHA256"],
@@ -893,6 +950,7 @@ def scan_registry_sbom(
         ],
         check=False,
     )
+    completed_at = datetime.now(UTC)
     require(result.returncode in (0, 2) and report.is_file(), "registry Grype scan failed")
     raw = report.read_bytes()
     raw_report = json.loads(raw)
@@ -950,12 +1008,159 @@ def scan_registry_sbom(
                 "scanner_exit": result.returncode,
                 "component_disposition": proof,
                 "database_age_disposition": disposition,
+                "scan_context": {
+                    "subject": subject,
+                    "report_sha256": hashlib.sha256(raw).hexdigest(),
+                    "official_latest": latest,
+                    "official_latest_checked_at": latest_checked_at.isoformat(),
+                    "scan_started_at": checked_at.isoformat(),
+                    "scan_completed_at": completed_at.isoformat(),
+                    "signing_policy_revision": os.environ.get("SIGNING_POLICY_REVISION"),
+                    "signing_run_id": os.environ.get("GITHUB_RUN_ID"),
+                    "signing_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+                },
             },
             sort_keys=True,
             indent=2,
         )
         + "\n"
     )
+
+
+def current_scan_evidence(
+    root: Path,
+    reports: Path,
+    images: dict[str, Path],
+    *,
+    policy: str,
+    run: str,
+    attempt: str,
+) -> dict[str, Any]:
+    """Recompute current qualification on the exact independently read OCI contents."""
+    from saas.scripts.sqlite_component_disposition import image_blobs, validate_disposition
+
+    value = binding()
+    manifest = read_json(root / MANIFEST_NAME)
+    require(
+        _m8c()
+        and set(images) == {"server", "host"}
+        and re.fullmatch(r"[0-9a-f]{40}", policy) is not None
+        and re.fullmatch(r"[1-9][0-9]*", run) is not None
+        and re.fullmatch(r"[1-9][0-9]*", attempt) is not None
+        and file_sha256(root / MANIFEST_NAME) == value["candidate_manifest_sha256"],
+        "current scan product, invocation or original seal differs",
+    )
+    now = datetime.now(UTC)
+    rows = {}
+    for role in ("server", "host"):
+        for arch in ("amd64", "arm64"):
+            platform = f"linux/{arch}"
+            prefix = f"{role}-{arch}"
+            report = reports / f"{prefix}.raw.grype.json"
+            receipt_path = reports / f"{prefix}.component-disposition.json"
+            raw = read_json(report)
+            receipt = read_json(receipt_path)
+            context = receipt.get("scan_context", {})
+            require(
+                isinstance(context, dict)
+                and all(
+                    isinstance(context.get(field), str)
+                    for field in (
+                        "scan_started_at",
+                        "scan_completed_at",
+                        "official_latest_checked_at",
+                    )
+                )
+                and isinstance(context.get("official_latest"), dict)
+                and isinstance(context["official_latest"].get("built"), str)
+                and isinstance(context["official_latest"].get("checksum"), str),
+                "complete original current scan context is required",
+            )
+            facts = manifest["images"][role]["facts"]["platforms"][platform]
+            expected_subject = {
+                "image": role,
+                "platform": platform,
+                "archive_sha256": manifest["images"][role]["archive_sha256"],
+                "index_digest": manifest["images"][role]["index_digest"],
+                "manifest_digest": facts["manifest_digest"],
+                "config_digest": facts["config_digest"],
+                "source_revision": PRODUCT,
+                "product_tree": value["product_tree"],
+            }
+            descriptor = raw.get("descriptor", {})
+            configuration = descriptor.get("configuration", {})
+            status = descriptor.get("db", {}).get("status", {})
+            built = parse_database_status(status, now=now)
+            latest = context.get("official_latest", {})
+            started = datetime.fromisoformat(context["scan_started_at"])
+            completed = datetime.fromisoformat(context["scan_completed_at"])
+            checked = datetime.fromisoformat(context["official_latest_checked_at"])
+            target = raw.get("source", {}).get("target", {})
+            parsed = scan.scan_report(raw)
+            require(
+                descriptor.get("name") == "grype"
+                and descriptor.get("version") == scan.GRYPE_VERSION
+                and configuration.get("only-fixed") is False
+                and configuration.get("only-notfixed") is False
+                and configuration.get("exclude", []) == []
+                and configuration.get("vex-documents", []) == []
+                and receipt.get("database_age_disposition") is None
+                and context.get("subject") == expected_subject
+                and context.get("report_sha256") == file_sha256(report)
+                and context.get("signing_policy_revision") == policy
+                and context.get("signing_run_id") == run
+                and context.get("signing_run_attempt") == attempt
+                and all(t.tzinfo is not None for t in (checked, started, completed))
+                and checked <= started <= completed <= now
+                and latest.get("status") == "active"
+                and latest.get("schemaVersion") == status.get("schemaVersion")
+                and datetime.fromisoformat(latest["built"].replace("Z", "+00:00"))
+                == datetime.fromisoformat(built.replace("Z", "+00:00"))
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", latest.get("checksum", "")) is not None
+                and target.get("manifestDigest") == facts["manifest_digest"]
+                and target.get("imageID") == facts["config_digest"]
+                and target.get("os") == "linux"
+                and target.get("architecture") == arch
+                and target.get("labels") == facts["labels"]
+                and receipt.get("raw_counts") == parsed["counts"]
+                and receipt.get("scanner_exit") == (2 if any(parsed["counts"].values()) else 0),
+                "current raw scan, official database, exact subject or native invocation differs",
+            )
+            with image_blobs(images[role]) as blobs:
+                digest, document = blobs.platform(platform)
+                require(
+                    digest == facts["manifest_digest"]
+                    and document["config"]["digest"] == facts["config_digest"],
+                    "current scan inventory is not the independently read OCI subject",
+                )
+            if any(parsed["counts"].values()):
+                verified = validate_disposition(
+                    report,
+                    receipt.get("component_disposition"),
+                    image=images[role],
+                    now=now,
+                )
+                component_expiry = (
+                    verified.get("expires_at") or verified["runtime_condition"]["expires_at"]
+                )
+            else:
+                require(receipt.get("component_disposition") is None, "unexpected component proof")
+                component_expiry = None
+            rows[prefix] = {
+                **context,
+                "component_receipt_sha256": file_sha256(receipt_path),
+                "database_status": status,
+                "raw_counts": parsed["counts"],
+                "component_expires_at": component_expiry,
+            }
+    return {
+        "product_revision": PRODUCT,
+        "signing_policy_revision": policy,
+        "signing_run_id": run,
+        "signing_run_attempt": attempt,
+        "candidate_manifest_sha256": value["candidate_manifest_sha256"],
+        "reports": rows,
+    }
 
 
 def main() -> None:
@@ -974,6 +1179,7 @@ def main() -> None:
             "verify-wheel",
             "verify-sbom",
             "scan-registry-sbom",
+            "verify-current-scans",
         ),
     )
     parser.add_argument("--root", type=Path)
@@ -990,6 +1196,9 @@ def main() -> None:
     parser.add_argument("--scanner", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--current-scans", type=Path)
+    parser.add_argument("--server", type=Path)
+    parser.add_argument("--host", type=Path)
     args = parser.parse_args()
     if args.command == "preflight":
         print(json.dumps(preflight(args.root, args.policy_revision)))
@@ -1007,6 +1216,16 @@ def main() -> None:
             report=args.report,
             output=args.output,
         )
+    elif args.command == "verify-current-scans":
+        evidence = current_scan_evidence(
+            args.root,
+            args.current_scans,
+            {"server": args.server, "host": args.host},
+            policy=args.policy_revision,
+            run=args.run_id,
+            attempt=args.attempt,
+        )
+        args.output.write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
     elif args.command == "child":
         value = binding()
         manifest = read_json(args.root / MANIFEST_NAME)
@@ -1028,6 +1247,11 @@ def main() -> None:
                     args.run_id,
                     args.attempt,
                     wheel=args.command == "wheel-predicate",
+                    current_scans=(
+                        read_json(args.current_scans)
+                        if _m8c() and args.command != "wheel-predicate"
+                        else None
+                    ),
                 )
             )
         )
@@ -1054,6 +1278,11 @@ def main() -> None:
                     args.run_id,
                     args.attempt,
                     wheel=args.command == "verify-wheel",
+                    current_scans=(
+                        read_json(args.current_scans)
+                        if _m8c() and args.command != "verify-wheel"
+                        else None
+                    ),
                 ),
                 predicate_type=PREDICATE_TYPE,
                 claims=claims,

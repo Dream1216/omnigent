@@ -95,13 +95,13 @@ def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
     assert scope["frozen_producer_control_revision"] == "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5"
     budget = dict(baseline["source_intrusion_budget"])
     assert budget["max_direct_upstream_files"] == 226
-    budget["max_direct_upstream_files"] = 227
+    budget["max_direct_upstream_files"] = 229
     assert controller["source_intrusion_budget"] == budget
     workflow = (root / ".github/workflows/saas-upstream-compat.yml").read_text()
     assert f"--manifest {controller_path}" in workflow
-    deltas = [FileDelta(f"tests/controller_case_{index}.py", 0, 0) for index in range(227)]
-    for count, expected in ((227, "pass"), (228, "fail")):
-        selected = deltas + ([FileDelta("tests/one_extra.py", 0, 0)] if count == 228 else [])
+    deltas = [FileDelta(f"tests/controller_case_{index}.py", 0, 0) for index in range(229)]
+    for count, expected in ((229, "pass"), (230, "fail")):
+        selected = deltas + ([FileDelta("tests/one_extra.py", 0, 0)] if count == 230 else [])
         result = evaluate_delta(
             selected,
             controller,
@@ -111,7 +111,7 @@ def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
             version_ok=True,
         )
         assert result["status"] == expected
-        if count == 228:
+        if count == 230:
             assert "direct upstream file budget exceeded" in result["violations"]
 
 

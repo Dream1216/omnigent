@@ -24,7 +24,7 @@
   ],
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 227,
+    "max_direct_upstream_files": 229,
     "max_upstream_net_added_loc": 6841,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -33,11 +33,15 @@
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
     "frozen_product_file_ceiling": 226,
-    "current_controller_file_ceiling": 227,
-    "reason": "Use the existing CI-scaled hang guard in the previously unmodified Kiro child permission test; keep every original state/owner/receipt assertion and the local five-second default.",
-    "new_counted_official_path": "tests/server/integration/test_kiro_permission_delivery.py",
+    "current_controller_file_ceiling": 229,
+    "reason": "Three proved asynchronous test observation boundaries: existing Kiro CI budget helper; await host callback completion before checking database/connection; drain the real archive PATCH stop before installing the direct-outage mock. All original business assertions and genuine SLOs remain; combined net LOC stays6841, other ceilings unchanged.",
     "authority": "Existing standing human project/source-budget authorization, applied by the release coordinator technical scope decision; normal independent review and CI remain required.",
     "image_rebuild_or_origin_exception": false,
-    "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5"
+    "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
+    "new_counted_official_paths": [
+      "tests/server/integration/test_kiro_permission_delivery.py",
+      "tests/server/integration/test_host_tunnel_route.py",
+      "tests/server/integration/test_sessions_archive.py"
+    ]
   }
 }
