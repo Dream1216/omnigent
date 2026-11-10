@@ -1,5 +1,6 @@
 """Reuse the original native operator's identity and isolation refusal cases."""
 
+import ast
 import copy
 import hashlib
 import json
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -191,13 +193,44 @@ def test_local_interpreter_cannot_manufacture_native_image_proof():
     )
 
 
+def test_native_probe_resolves_error_without_preview_owner_reexport():
+    from saas.production import preview_relay
+
+    owner = SimpleNamespace()
+    modules = {"saas.production.preview_relay": preview_relay}
+    imports = []
+
+    def import_module(name):
+        imports.append(name)
+        return modules[name]
+
+    source = ast.parse((SUPPORT / "probe.py").read_text())
+    selection = next(
+        node
+        for node in ast.walk(source)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "errors" for target in node.targets)
+    )
+    scope = {
+        "importlib": SimpleNamespace(import_module=import_module),
+        "role": "preview_owner",
+        "module": owner,
+    }
+    exec(
+        compile(ast.Module(body=[selection], type_ignores=[]), "<probe-error-binding>", "exec"),
+        scope,
+    )
+    assert scope["errors"].ProductionPreviewRelayError is preview_relay.ProductionPreviewRelayError
+    assert imports == ["saas.production.preview_relay"]
+
+
 def test_current_c2_native_operator_keeps_original_scope_and_probe_bytes():
     from saas.scripts.compat018_oci_recovery import registered_profile
 
     assert BINDINGS["source_revision"] == registered_profile()["product_revision"]
     assert len(BINDINGS["installed_files"]) == 24
     assert hashlib.sha256((SUPPORT / "probe.py").read_bytes()).hexdigest() == (
-        "26b946d4c38c84a440dd919d73d595f6825da9bc30b8a222e547d96999192304"
+        "3b97ceacaee522a4199f5bba0d580119a60cd0af665695a3e3a20aff18b3eeb8"
     )
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/saas-compat018-oci-recovery.yml").read_text()

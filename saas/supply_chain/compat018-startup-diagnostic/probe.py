@@ -93,6 +93,8 @@ def observe_startup(bindings: dict) -> dict:
         errors = (
             importlib.import_module("saas.production.server_config")
             if role == "server"
+            else importlib.import_module("saas.production.preview_relay")
+            if role == "preview_owner"
             else module
         )
         expected_error = getattr(errors, error_name)
