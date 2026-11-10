@@ -8,24 +8,15 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (226 files, 6,772 net lines, nine patches, .85).
+`saas/upstream-baseline.json` and the controller manifest used by CI.
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
 ## Ordinary-M host-compat extension (2026-11-11)
 
-Patch 0005 (`omnigent/host/connect.py`) and patch 0010
-(`omnigent/onboarding/harness_readiness.py`) are extended with the reviewed
-single-flight harness readiness discovery (CLI fanout limits, process-local
-lock), so concurrent ensure calls can no longer fan out concurrent codex CLI
-processes that collectively OOM the host. Both sections are regenerated from
-the upstream baseline to the resolved product, keeping byte-exact replay.
-Patch count stays at nine; runner/native and codex_native app-server changes
-are deliberately NOT included (forbidden prefixes unchanged; preserved out of
-tree in BuildArtifacts Buddy-fix13-unreviewed-20261111). The measured budget
-increment (230 files / 7,090 net lines) is recorded in
-`saas/upstream-baseline.json` under `source_intrusion_budget_revision`
-key `ordinary_m_host_compat_20261111`.
+Patches 0005 and 0010 replay the reviewed Host readiness changes.
+Sharing in-flight probes and limiting managed Host workers reduces concurrent
+CLI work. The measured footprint is recorded as a pending budget proposal.
 
 Patch 0010 also bounds repeated list-display harness resolution with a 1,024-entry
 cache keyed by workspace, current Agent identity/revision/bundle/provenance,

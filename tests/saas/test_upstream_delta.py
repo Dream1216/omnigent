@@ -88,31 +88,46 @@ def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
     ):
         assert controller[field] == baseline[field]
     scope = controller["controller_budget_scope"]
+    assert scope["frozen_product"] == "8c851bdd12829340b2a327cf7542fe4de84d9132"
+    assert scope["frozen_product_baseline_sha256"] == (
+        "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a"
+    )
     assert (
-        scope["frozen_product_baseline_sha256"]
+        scope["current_controller_baseline_sha256"]
         == hashlib.sha256(baseline_path.read_bytes()).hexdigest()
     )
     assert scope["frozen_producer_control_revision"] == "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5"
     budget = dict(baseline["source_intrusion_budget"])
-    assert budget["max_direct_upstream_files"] == 230
-    assert budget["max_upstream_net_added_loc"] == 7090
+    assert budget["max_direct_upstream_files"] == scope["frozen_product_file_ceiling"] == 226
+    assert budget["max_upstream_net_added_loc"] == 6841
+    budget["max_direct_upstream_files"] = 229
+    assert scope["current_controller_file_ceiling"] == 229
     assert controller["source_intrusion_budget"] == budget
     workflow = (root / ".github/workflows/saas-upstream-compat.yml").read_text()
     assert f"--manifest {controller_path}" in workflow
-    deltas = [FileDelta(f"tests/controller_case_{index}.py", 0, 0) for index in range(230)]
-    for count, expected in ((230, "pass"), (231, "fail")):
-        selected = deltas + ([FileDelta("tests/one_extra.py", 0, 0)] if count == 231 else [])
+    file_limit = "direct upstream file budget exceeded"
+    loc_limit = "upstream net-added LOC budget exceeded"
+    for count, loc, violations in (
+        (229, 6841, []),
+        (230, 6841, [file_limit]),
+        (229, 6842, [loc_limit]),
+        (230, 7090, [file_limit, loc_limit]),
+    ):
+        deltas = [
+            FileDelta(f"tests/controller_case_{index}.py", loc if index == 0 else 0, 0)
+            for index in range(count)
+        ]
+        deltas.append(FileDelta("saas/controller_budget_fixture.py", 50_000, 0))
         result = evaluate_delta(
-            selected,
+            deltas,
             controller,
             active_patch_count=9,
             reverse_dependencies=[],
             lineage_ok=True,
             version_ok=True,
         )
-        assert result["status"] == expected
-        if count == 231:
-            assert "direct upstream file budget exceeded" in result["violations"]
+        assert result["violations"] == violations
+        assert result["status"] == ("fail" if violations else "pass")
 
 
 def test_forbidden_native_bridge_change_fails_budget() -> None:
@@ -175,8 +190,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 7090
-    assert budget["max_direct_upstream_files"] == 230
+    assert budget["max_upstream_net_added_loc"] == 6841
+    assert budget["max_direct_upstream_files"] == 226
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -249,11 +264,13 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     assert caller_bound["previous_max_upstream_net_added_loc"] == 6812
     assert caller_bound["max_upstream_net_added_loc"] == 6841
     host_compat = revision["ordinary_m_host_compat_20261111"]
-    assert host_compat["previous_max_direct_upstream_files"] == 226
-    assert host_compat["previous_max_upstream_net_added_loc"] == 6841
-    assert host_compat["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
-    assert host_compat["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
-    assert host_compat["accepted_main"] == "b53109e57c45363ea2cfe213f9ab1e95e7c4e29c"
+    assert host_compat["previous_controller_max_direct_upstream_files"] == 229
+    assert host_compat["previous_controller_max_upstream_net_added_loc"] == 6841
+    assert host_compat["proposed_max_direct_upstream_files"] == 230
+    assert host_compat["proposed_max_upstream_net_added_loc"] == 7090
+    assert host_compat["candidate_source"] == "b53109e57c45363ea2cfe213f9ab1e95e7c4e29c"
+    assert host_compat["authorization_source"]["state"] == "pending_repository_admin_decision"
+    assert "accepted_main" not in host_compat
     assert search_fixture["scope_paths"] == ["tests/runner/test_environment_filesystem.py"]
     assert search_fixture["accepted_main"] == "e86f4e92210468103e0b5c4e37406958498deebe"
     composer_followup = revision["upstream_composer_recovery_budget_followup"]

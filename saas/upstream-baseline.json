@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 230,
-    "max_upstream_net_added_loc": 7090,
+    "max_direct_upstream_files": 226,
+    "max_upstream_net_added_loc": 6841,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1415,32 +1415,32 @@
       ]
     },
     "ordinary_m_host_compat_20261111": {
-      "accepted_main": "b53109e57c45363ea2cfe213f9ab1e95e7c4e29c",
+      "candidate_source": "b53109e57c45363ea2cfe213f9ab1e95e7c4e29c",
+      "observed_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
       "parent_source": "33391cffdfc2395a737565ba096d2c808c79c64b",
       "authorization_source": {
-        "human_message": "当前3项阻塞，你直接帮我操作处理解决。",
-        "channel": "WorkBuddy session (dream), 2026-11-11 00:46 BJT",
-        "note": "Standing release-owner blanket authority 01a1987c (2026-11-09) covers budget increments without repeated approval; this record cites the direct instruction for the ordinary-M host-compat delivery."
+        "state": "pending_repository_admin_decision"
       },
       "recorded_at": "2026-11-11",
       "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
-      "previous_max_direct_upstream_files": 226,
-      "previous_max_upstream_net_added_loc": 6841,
-      "max_direct_upstream_files": 230,
-      "max_upstream_net_added_loc": 7090,
+      "previous_controller_max_direct_upstream_files": 229,
+      "previous_controller_max_upstream_net_added_loc": 6841,
+      "proposed_max_direct_upstream_files": 230,
+      "proposed_max_upstream_net_added_loc": 7090,
       "measured_direct_upstream_files": 230,
       "measured_upstream_net_added_loc": 7090,
-      "reason": "Deliver the reviewed ordinary-M host-compat repair (single-flight harness readiness discovery with CLI fanout limits, Host-reviewed-10441.patch) and its affected tests. Regenerate patch 0005 connect.py and patch 0010 harness_readiness.py sections so patch replay matches product byte-for-byte; keep nine patches, forbidden prefixes untouched (runner/native and codex_native app-server changes withdrawn to working-tree preservation), adapter contract 0.2.0, Session protocol 2, .85 isolation floor and all historical budgets preserved. Only the exact measured increment (4 files, 249 net upstream lines) is added.",
+      "reason": "Retain the reviewed four-file Host readiness change and its required patch replay. The measured footprint is a pending proposal, with the existing controller budget still enforced.",
       "scope_paths": [
+        ".github/workflows/saas-controller-source-budget.json",
         "omnigent/host/connect.py",
         "omnigent/onboarding/harness_readiness.py",
-        "tests/host/test_connect.py",
-        "tests/onboarding/test_harness_readiness.py",
-        "tests/test_harness_readiness.py",
+        "saas/upstream-baseline.json",
         "saas/upstream-patches/0005-external-host-runtime-bridge.patch",
         "saas/upstream-patches/0010-next-agent-session-reliability.patch",
         "saas/upstream-patches/README.md",
-        "saas/upstream-baseline.json"
+        "tests/host/test_connect.py",
+        "tests/onboarding/test_harness_readiness.py",
+        "tests/saas/test_upstream_delta.py"
       ]
     }
   },
