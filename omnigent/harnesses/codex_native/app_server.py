@@ -102,10 +102,12 @@ from omnigent.inner.codex_executor import (
     read_codex_model_catalog,
     write_codex_hooks_file,
 )
+from omnigent.inner.codex_worker import CodexWorkerLaunch, prepare_codex_worker
 from omnigent.inner.databricks_executor import (
     _databricks_gateway_host,
     _read_databrickscfg_host,
 )
+from omnigent.inner.datamodel import OSEnvSpec
 from omnigent.models.codex_model_vocabulary import codex_reachable_model_slug, codex_spawn_model
 from omnigent.native import policy_allow_cache
 from omnigent.process_logging import (
@@ -2291,46 +2293,135 @@ class CodexNativeAppServer:
     session_id: str | None = None
     writable_roots: tuple[str, ...] = ()
     app_server_command: tuple[str, ...] = ()
+    # Declared os_env for this session: when its sandbox is active the
+    # app-server is spawned inside that sandbox (hard-bwrap) and codex's own
+    # tool sandbox is delegated via the supported ``external-sandbox`` policy;
+    # when it is ``None`` or ``type: none`` the launch is unchanged.
+    containment_os_env: OSEnvSpec | None = None
     stderr_capture_error_type: str | None = field(default=None, init=False)
+    # Owned sandbox launcher resources for a contained spawn (launcher file,
+    # egress relay); released by :meth:`close`.
+    _worker_launch: CodexWorkerLaunch | None = field(default=None, init=False)
     # First TLS certificate failure the launcher printed; mirrored into the
     # bridge so the forwarder can fail a stuck turn with the cause.
     certificate_failure: CertificateFailure | None = field(default=None, init=False)
     _stderr_diagnostics: CodexStderrDiagnostics | None = field(default=None, init=False)
 
+    def _prepare_contained_launch(self, proc_env: dict[str, str]) -> CodexWorkerLaunch | None:
+        """
+        Build the sandbox launcher for a contained spawn, or ``None``.
+
+        Containment activates only when the session's declared ``os_env``
+        resolves to an ACTIVE sandbox (e.g. required hard-bwrap). A ``None``
+        spec or ``type: none`` returns ``None`` — the launch is left exactly
+        as before, and no external-sandbox policy is applied to an
+        unsandboxed app-server.
+
+        :param proc_env: Mutable environment dict for the spawn; the prepared
+            worker may restage it in place (relay variables, allowlist).
+        :returns: The owned worker launch, or ``None`` when not contained.
+        :raises OSError: When the declared sandbox cannot contain the Codex
+            app-server (fail closed — the safe failure is preserved).
+        """
+        if self.containment_os_env is None:
+            return None
+        sandbox_spec = self.containment_os_env.sandbox
+        if sandbox_spec is None or sandbox_spec.type == "none":
+            return None
+        launch = prepare_codex_worker(
+            codex_path=self.codex_path,
+            cwd=self.cwd,
+            codex_home=self.codex_home,
+            os_env=self.containment_os_env,
+            spawn_env_names=list(proc_env),
+            worker_env=proc_env,
+        )
+        if not launch.sandboxed:
+            # The declared sandbox resolved to nothing enforceable: fail
+            # closed instead of launching the app-server unwrapped while
+            # the session requires containment.
+            launch.close()
+            raise OSError(
+                "The session requires sandbox containment but the declared "
+                "os_env resolved to no active sandbox; refusing to launch "
+                "the Codex app-server unsandboxed."
+            )
+        return launch
+
     async def _spawn_app_server_process(self, resolved_listen: str) -> None:
         """
         Spawn one app-server attempt, for the initial launch or a silent-start respawn.
+
+        When :attr:`containment_os_env` declares an active sandbox, the
+        app-server is spawned through an omnigent sandbox launcher
+        (hard-bwrap) and codex's own tool sandbox is delegated via the
+        supported ``sandbox_mode="external-sandbox"`` config override — the
+        outer sandbox retains the filesystem/env/credential/network
+        boundaries for the app-server itself and every tool descendant,
+        across initial thread, turn, TUI attach and resume (config-level).
 
         :param resolved_listen: Resolved listen URL (unix:// or ws://).
         :returns: None.
         """
         self.process_registry_tag = f"codex-native-{uuid.uuid4().hex}"
         executable, *launch_args = self.app_server_command or (self.codex_path,)
-        argv = _build_native_codex_app_server_argv(
-            tagged_argv0=_tagged_codex_argv0(executable, self.process_registry_tag),
-            listen_url=resolved_listen,
-            config_overrides=self.config_overrides,
-            launch_args=launch_args,
-        )
         proc_env = codex_app_server_diagnostic_env(
             {**self.env, "CODEX_HOME": str(self.codex_home)}
         )
-        self.process_owner_lock = acquire_codex_native_process_owner_lock()
+        contained_launch = await asyncio.to_thread(self._prepare_contained_launch, proc_env)
         try:
-            self.proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-                env=proc_env,
-                cwd=str(self.cwd),
-                executable=executable,
-                **_proc.spawn_kwargs(),
-            )
+            if contained_launch is not None and contained_launch.sandboxed:
+                # Delegate tool-sandbox enforcement to the outer sandbox via
+                # codex's supported external-sandbox policy. Appended LAST so
+                # it wins over any earlier sandbox_mode override.
+                config_overrides = [
+                    *self.config_overrides,
+                    'sandbox_mode="external-sandbox"',
+                ]
+                argv = [
+                    contained_launch.launch_path,
+                    *launch_args,
+                    # The launcher forwards sys.argv[1:] to the target, so the
+                    # tagged argv0 cannot ride argv[0]; carry the crash-reap
+                    # tag as the registry's inert cmdline marker instead.
+                    *[arg for override in config_overrides for arg in ("-c", override)],
+                    "app-server",
+                    "--listen",
+                    resolved_listen,
+                    codex_native_session_tag_cmdline_arg(self.process_registry_tag),
+                ]
+                spawn_executable: str | None = contained_launch.launch_path
+            else:
+                argv = _build_native_codex_app_server_argv(
+                    tagged_argv0=_tagged_codex_argv0(executable, self.process_registry_tag),
+                    listen_url=resolved_listen,
+                    config_overrides=self.config_overrides,
+                    launch_args=launch_args,
+                )
+                spawn_executable = executable
+            self._worker_launch = contained_launch
+            self.process_owner_lock = acquire_codex_native_process_owner_lock()
+            try:
+                self.proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=proc_env,
+                    cwd=str(self.cwd),
+                    executable=spawn_executable,
+                    **_proc.spawn_kwargs(),
+                )
+            except BaseException:
+                if self.process_owner_lock is not None:
+                    self.process_owner_lock.close()
+                    self.process_owner_lock = None
+                raise
         except BaseException:
-            if self.process_owner_lock is not None:
-                self.process_owner_lock.close()
-                self.process_owner_lock = None
+            if contained_launch is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(contained_launch.close)
+                self._worker_launch = None
             raise
         if self.process_owner_lock is not None:
             register_codex_native_process(
@@ -2819,6 +2910,11 @@ class CodexNativeAppServer:
             unregister_codex_native_process(self.process_registry_tag)
         if self.process_owner_lock is not None:
             self.process_owner_lock.close()
+        worker_launch = self._worker_launch
+        self._worker_launch = None
+        if worker_launch is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(worker_launch.close)
         try:
             if self.stderr_task is not None and self._stderr_diagnostics is not None:
                 # The process has exited; allow buffered output to reach EOF.
@@ -3780,6 +3876,7 @@ def build_codex_native_server(
     model_catalog_rows: list[_JsonObject] | None = None,
     reconcile_process_registry: bool = True,
     terminal_launch_args: Sequence[str] = (),
+    containment_os_env: OSEnvSpec | None = None,
 ) -> CodexNativeAppServer:
     """
     Build a configured native Codex app-server process wrapper.
@@ -3838,13 +3935,31 @@ def build_codex_native_server(
     :param terminal_launch_args: Original CLI options used to select the Codex
         config-file profile (distinct from the Databricks routing profile)
         and the ``--add-dir`` roots the app-server owns.
+    :param containment_os_env: Declared ``os_env`` for the session. When it
+        resolves to an ACTIVE sandbox, the app-server is spawned inside that
+        sandbox (hard-bwrap) and codex's tool sandbox is delegated via the
+        supported ``external-sandbox`` policy through threads, turns, TUI and
+        resume. ``None`` or ``type: none`` leaves the launch unchanged.
     :returns: Configured app-server process wrapper.
     :raises ImportError: If no Codex CLI is available.
     :raises OSError: If Databricks routing was requested but no
         credentials can be resolved.
-    :raises ValueError: If launch arguments select the runner-owned transport.
+    :raises ValueError: If launch arguments select the runner-owned transport,
+        or sandbox containment is requested together with ``bypass_sandbox``.
     """
     reject_reserved_codex_transport_args(terminal_launch_args)
+    containment_active = (
+        containment_os_env is not None
+        and containment_os_env.sandbox is not None
+        and containment_os_env.sandbox.type != "none"
+    )
+    if containment_active and bypass_sandbox:
+        # The contract forbids carrying required containment through a
+        # bypass: fail closed instead of silently downgrading either stance.
+        raise ValueError(
+            "sandbox containment is required for this session but the launch "
+            "also requested bypass_sandbox; refusing the conflicting launch"
+        )
     resolved_codex = codex_path or _find_codex_cli()
     if not resolved_codex:
         raise ImportError(
@@ -3912,6 +4027,7 @@ def build_codex_native_server(
         reconcile_process_registry=reconcile_process_registry,
         writable_roots=tuple(codex_workspace_roots(terminal_launch_args, cwd)[1]),
         app_server_command=_configured_app_server_command(),
+        containment_os_env=containment_os_env,
     )
 
 
