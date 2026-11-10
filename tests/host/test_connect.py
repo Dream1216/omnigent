@@ -26,6 +26,7 @@ from websockets.frames import Close
 from websockets.http11 import Response
 
 from omnigent import debug_logging
+from omnigent.harness_availability import HarnessAvailability
 from omnigent.host import HOST_FATAL_EXIT_CODE
 from omnigent.host.connect import (
     HostConnectError,
@@ -53,8 +54,11 @@ from omnigent.host.frames import (
     HostFsRequestFrame,
     HostHarnessLoginCancelFrame,
     HostHarnessLoginCancelResultFrame,
+    HostHarnessLoginCompletedFrame,
     HostHarnessLoginFrame,
     HostHarnessLoginResultFrame,
+    HostHarnessLogoutFrame,
+    HostHarnessLogoutResultFrame,
     HostHarnessReadinessFrame,
     HostHarnessStartupFrame,
     HostHarnessStartupResultFrame,
@@ -1906,6 +1910,49 @@ async def test_live_host_does_not_repeat_unchanged_readiness(
     _cleanup_host(host)
 
 
+async def test_live_host_readiness_timeout_publishes_only_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A timed-out refresh sends no frame and a later complete map still publishes."""
+    import omnigent.host.connect as connect
+
+    probe_release = threading.Event()
+
+    def _configured() -> dict[str, str]:
+        if not probe_release.wait(timeout=2.0):
+            raise AssertionError("test did not release readiness probe")
+        return {"codex-native": "needs-auth"}
+
+    monkeypatch.setattr(connect, "configured_harness_map", _configured)
+    monkeypatch.setattr(connect, "gateway_inference_map", lambda: {"codex-native": True})
+    monkeypatch.setattr(connect, "HARNESS_READINESS_FULL_REFRESH_INTERVAL_S", 0.04)
+    monkeypatch.setattr(connect, "_HOST_READINESS_REFRESH_TIMEOUT_S", 0.02)
+    host = _make_host_process()
+    host._configured_harnesses = {"codex-native": True}
+    host._gateway_inference = {"codex-native": False}
+    ws = _RecordingWS()
+    task = asyncio.create_task(host._harness_readiness_loop(ws))
+    try:
+        async with asyncio.timeout(1.0):
+            while "timed out without a new result" not in caplog.text:
+                await asyncio.sleep(0.005)
+        assert ws.sent == []
+        assert host._configured_harnesses == {"codex-native": True}
+        assert len(host._host_subprocess_tasks) == 1
+
+        probe_release.set()
+        await asyncio.wait_for(ws.first_send.wait(), timeout=1.0)
+        assert len(ws.sent) == 1
+        refreshed = decode_host_frame(ws.sent[0])
+        assert isinstance(refreshed, HostHarnessReadinessFrame)
+        assert refreshed.configured_harnesses == {"codex-native": "needs-auth"}
+    finally:
+        probe_release.set()
+        await _cancel(task)
+        _cleanup_host(host)
+
+
 async def test_live_host_repushes_when_only_gateway_inference_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2821,19 +2868,24 @@ async def test_connection_auth_overlaps_capability_discovery(
     assert host._owned_subprocess_ops == 0
 
 
+@pytest.mark.parametrize("new_generation", [False, True])
 async def test_cancelled_readiness_probe_keeps_orphan_reaper_paused(
     monkeypatch: pytest.MonkeyPatch,
+    new_generation: bool,
 ) -> None:
-    """Cancellation cannot release subprocess ownership before its worker exits."""
+    """After cancellation, reuse the worker or wait for it before a fresh probe."""
     host = _make_host_process()
     probe_started = threading.Event()
     probe_release = threading.Event()
+    calls = 0
 
     def _configured() -> dict[str, bool]:
+        nonlocal calls
+        calls += 1
         probe_started.set()
         if not probe_release.wait(timeout=1.0):
             raise AssertionError("test did not release readiness probe")
-        return {"claude-native": True}
+        return {"claude-native": calls == 1}
 
     monkeypatch.setattr("omnigent.host.connect.configured_harness_map", _configured)
     probe_task = asyncio.create_task(host._probe_configured_harnesses(startup=True))
@@ -2846,13 +2898,130 @@ async def test_cancelled_readiness_probe_keeps_orphan_reaper_paused(
     assert host._owned_subprocess_ops == 1
     assert len(host._host_subprocess_tasks) == 1
 
-    probe_release.set()
-    for _ in range(100):
-        if host._owned_subprocess_ops == 0:
-            break
-        await asyncio.sleep(0.01)
+    if new_generation:
+        host._replace_capabilities({"claude-native": False}, None)
+    next_probe = asyncio.create_task(host._probe_configured_harnesses(startup=False))
+    try:
+        await asyncio.sleep(0)
+        assert host._owned_subprocess_ops == 1
+        assert len(host._host_subprocess_tasks) == 1
+    finally:
+        probe_release.set()
+    assert await asyncio.wait_for(next_probe, timeout=1.0) == {"claude-native": not new_generation}
+    assert calls == (2 if new_generation else 1)
     assert host._owned_subprocess_ops == 0
     assert host._host_subprocess_tasks == set()
+
+
+async def test_managed_host_readiness_limits_worker_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IS_SANDBOX", "1")
+    workers: list[int] = []
+
+    def _configured(*, max_workers: int) -> dict[str, bool]:
+        workers.append(max_workers)
+        return {"codex-native": True}
+
+    monkeypatch.setattr("omnigent.host.connect.configured_harness_map", _configured)
+    host = _make_host_process()
+    assert await host._probe_configured_harnesses(startup=False) == {"codex-native": True}
+    assert workers == [1]
+
+
+@pytest.mark.parametrize("action", ["login", "logout"])
+async def test_successful_auth_change_discards_inflight_readiness(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    host = _make_host_process()
+    tunnel = _FakeTunnel()
+    authenticated = action == "logout"
+    cached_auth: bool | None = None
+    observed: list[bool] = []
+    old_started = threading.Event()
+    old_release = threading.Event()
+    refresh_entered = asyncio.Event()
+
+    def _configured() -> dict[str, bool | str]:
+        nonlocal cached_auth
+        verdict = authenticated if cached_auth is None else cached_auth
+        observed.append(verdict)
+        if len(observed) == 1:
+            old_started.set()
+            if not old_release.wait(timeout=2.0):
+                raise AssertionError("test did not release the old readiness worker")
+        # A slow probe can cache a logged-in verdict after logout completes.
+        cached_auth = True if verdict else None
+        return {"codex-native": True if verdict else "needs-auth"}
+
+    def _invalidate() -> None:
+        nonlocal cached_auth
+        cached_auth = None
+
+    async def _change_credentials() -> None:
+        nonlocal authenticated
+        authenticated = action == "login"
+
+    async def _complete_login(login_id: str) -> tuple[bool, None]:
+        assert login_id == "vendor-login"
+        await _change_credentials()
+        return True, None
+
+    probe = host._probe_configured_harnesses
+
+    async def _observe_refresh(*, startup: bool) -> dict[str, HarnessAvailability] | None:
+        refresh_entered.set()
+        return await probe(startup=startup)
+
+    monkeypatch.setattr("omnigent.host.connect.configured_harness_map", _configured)
+    monkeypatch.setattr("omnigent.host.connect.invalidate_harness_probe_caches", _invalidate)
+    monkeypatch.setattr(host, "_probe_configured_harnesses", _observe_refresh)
+    monkeypatch.setattr(host, "_probe_harness_accounts", AsyncMock(return_value={}))
+    old_probe = asyncio.create_task(probe(startup=True))
+    auth_task: asyncio.Task[None] | None = None
+    try:
+        assert await asyncio.to_thread(old_started.wait, 1.0)
+        if action == "login":
+            session = AsyncMock()
+            session.wait_completed.side_effect = _complete_login
+            auth_task = asyncio.create_task(
+                host._watch_harness_login(
+                    tunnel,
+                    "codex",
+                    "login-1",
+                    "vendor-login",
+                    session,  # type: ignore[arg-type]
+                )
+            )
+        else:
+            monkeypatch.setattr("omnigent.host.connect.codex_logout", _change_credentials)
+            auth_task = asyncio.create_task(
+                host._dispatch_host_frame(
+                    tunnel,  # type: ignore[arg-type]
+                    HostHarnessLogoutFrame(request_id="logout-1", harness="codex"),
+                )
+            )
+        await asyncio.wait_for(refresh_entered.wait(), timeout=1.0)
+        assert host._owned_subprocess_ops == 1
+        assert len(host._host_subprocess_tasks) == 1
+        assert tunnel.sent == []
+        old_release.set()
+        assert await asyncio.wait_for(old_probe, timeout=1.0) is None
+        await asyncio.wait_for(auth_task, timeout=1.0)
+    finally:
+        old_release.set()
+        await asyncio.gather(old_probe, return_exceptions=True)
+        if auth_task is not None:
+            await _cancel(auth_task)
+
+    assert observed == [action == "logout", action == "login"]
+    assert len(tunnel.sent) == 1
+    result = decode_host_frame(tunnel.sent[0])
+    if action == "login":
+        assert isinstance(result, HostHarnessLoginCompletedFrame) and result.success
+    else:
+        assert isinstance(result, HostHarnessLogoutResultFrame) and result.status == "ok"
+    expected = {"codex-native": True if action == "login" else "needs-auth"}
+    assert result.configured_harnesses == expected
+    assert host._configured_harnesses == expected
 
 
 async def test_cancelled_account_probe_request_does_not_block_disconnect(

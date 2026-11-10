@@ -751,15 +751,18 @@ def test_configured_harness_map_probes_codex_readiness_once(
     assert result["native-codex"] == "needs-auth"
 
 
-def test_configured_harness_map_runs_independent_probes_concurrently(
+@pytest.mark.parametrize("max_workers", [None, 1])
+def test_configured_harness_map_bounds_independent_probes(
     monkeypatch: pytest.MonkeyPatch,
+    max_workers: int | None,
 ) -> None:
-    """Independent readiness probes overlap without duplicating aliases."""
+    """The worker limit preserves all checks and alias deduplication."""
     lock = threading.Lock()
     release = threading.Event()
     active = 0
     max_active = 0
     calls: Counter[str] = Counter()
+    limit = _READINESS_PROBE_MAX_WORKERS if max_workers is None else max_workers
 
     def _availability(canonical: str) -> bool | str:
         nonlocal active, max_active
@@ -767,7 +770,7 @@ def test_configured_harness_map_runs_independent_probes_concurrently(
             calls[canonical] += 1
             active += 1
             max_active = max(max_active, active)
-            if active >= _READINESS_PROBE_MAX_WORKERS:
+            if active >= limit:
                 release.set()
         if not release.wait(timeout=1.0):
             raise AssertionError("readiness probes did not overlap")
@@ -782,10 +785,14 @@ def test_configured_harness_map_runs_independent_probes_concurrently(
         _availability,
     )
 
-    result = configured_harness_map()
+    result = (
+        configured_harness_map()
+        if max_workers is None
+        else configured_harness_map(max_workers=max_workers)
+    )
 
     assert result
-    assert max_active == _READINESS_PROBE_MAX_WORKERS
+    assert max_active == limit
     assert all(count == 1 for count in calls.values())
     assert result["claude-native"] is False
     assert result["native-claude"] is True
