@@ -24,12 +24,46 @@ index ba792c7..6369001 100644
 @@ -1795,0 +1797 @@ class TerminalInstance:
 +            _constrain_linux_sandbox_locale(env, sandbox_for_launcher)
 diff --git a/omnigent/onboarding/harness_readiness.py b/omnigent/onboarding/harness_readiness.py
-index b5f7867..a993827 100644
 --- a/omnigent/onboarding/harness_readiness.py
 +++ b/omnigent/onboarding/harness_readiness.py
-@@ -352,0 +353,2 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
+@@ -350,6 +350,8 @@ _AUTH_AWARE_NATIVE_HARNESSES: dict[str, str] = {
+     "opencode-native": OPENCODE_KEY,
+     "cursor-native": CURSOR_KEY,
+     "native-cursor": CURSOR_KEY,
 +    "kiro-native": KIRO_KEY,
 +    "native-kiro": KIRO_KEY,
+ }
+ 
+ 
+@@ -1033,7 +1035,9 @@ def _is_codex_family_harness(canonical: str) -> bool:
+     )
+ 
+ 
+-def configured_harness_map() -> dict[str, HarnessAvailability]:
++def configured_harness_map(
++    *, max_workers: int = _READINESS_PROBE_MAX_WORKERS
++) -> dict[str, HarnessAvailability]:
+     """Return per-harness readiness for every accepted harness spelling.
+ 
+     Built so the server/web UI can do a plain dict lookup with whatever
+@@ -1044,6 +1048,7 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
+     visible. Codex entries distinguish ``"binary-missing"`` from
+     ``"needs-auth"``.
+ 
++    :param max_workers: Maximum number of concurrent readiness checks.
+     :returns: Mapping of harness spelling to readiness, e.g.
+         ``{"claude-native": False, "codex-native": "needs-auth",
+         "claude-sdk": "needs-auth", "pi": True, "qwen": True}``.
+@@ -1089,7 +1094,7 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
+         cache_key_by_spelling[spelling] = cache_key
+ 
+     with ThreadPoolExecutor(
+-        max_workers=min(_READINESS_PROBE_MAX_WORKERS, len(canonical_by_cache_key)),
++        max_workers=min(max_workers, len(canonical_by_cache_key)),
+         thread_name_prefix="harness-readiness",
+     ) as executor:
+         futures = {
+
 diff --git a/omnigent/runner/_entry.py b/omnigent/runner/_entry.py
 index 44e3261..708d8f5 100644
 --- a/omnigent/runner/_entry.py

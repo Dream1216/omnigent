@@ -292,50 +292,6 @@ async def teardown_all_codex_native_app_servers() -> None:
             await teardown_codex_native_app_server(session_id)
 
 
-async def _abandon_failed_codex_launch(
-    session_id: str,
-    app_server: CodexNativeAppServer,
-    *,
-    event_client: CodexAppServerClient | None = None,
-    subagent_router: SubagentRouter | None = None,
-    turn_router: TurnRouter | None = None,
-) -> None:
-    """
-    Close and await one launch's own resources after a failed native launch.
-
-    A raise between ``app_server.start()`` and forwarder creation must not
-    leak the per-launch descendants: this helper closes the (half-open)
-    event listener and the app-server — whose ``close()`` terminates and
-    awaits its own subprocess tree — drops both the app-server registry
-    entry AND the remembered bridge directory, then tears down the
-    subagent/turn-routing endpoints this launch started.
-
-    Every cleanup is scoped to THIS launch's handles, so a successor launch
-    (or an unrelated runner) is never touched, and the failed session keeps
-    no registry state a later ensure would have to reason about: the next
-    ensure starts clean and can recover the same session without creating
-    a new one.
-
-    :param session_id: Session/conversation id, e.g. ``"conv_abc123"``.
-    :param app_server: This launch's app-server; always closed and awaited.
-    :param event_client: Listener to close first, when one was created.
-    :param subagent_router: Subagent-routing endpoint this launch started.
-    :param turn_router: Turn-routing endpoint this launch started.
-    :returns: None.
-    """
-    if event_client is not None:
-        with contextlib.suppress(Exception):
-            await event_client.close()
-    with contextlib.suppress(Exception):
-        await app_server.close()
-    _AUTO_CODEX_APP_SERVERS.pop(session_id, None)
-    # Only this launch's directory can be tracked for the session at this
-    # point: a successor cannot register before this failure path completes.
-    _AUTO_CODEX_BRIDGE_DIRS.pop(session_id, None)
-    await _shutdown_session_router_async(session_id, subagent_router)
-    await _shutdown_session_turn_router_async(session_id, turn_router)
-
-
 async def teardown_opencode_native_server(session_id: str) -> None:
     """Cancel the forwarder and close any remaining server for this session."""
     if session_id not in _AUTO_OPENCODE_SERVERS:
@@ -5677,12 +5633,6 @@ async def _auto_create_codex_terminal(
     )
     # SDK initialization can block on DNS/auth before model discovery times out.
     # Keep it off the runner loop so heartbeats and other sessions can progress.
-    # The agent's declared os_env drives sandbox containment: an active
-    # sandbox (e.g. required hard-bwrap) contains the app-server itself and
-    # every tool descendant via an omnigent sandbox launcher, with codex's
-    # tool sandbox delegated through the supported external-sandbox policy.
-    # ``None`` / ``type: none`` leaves the launch unchanged.
-    _codex_agent_os_env = _agent_os_env_from_spec(agent_spec)
     app_server = await asyncio.to_thread(
         build_codex_native_server,
         session_id=session_id,
@@ -5696,7 +5646,6 @@ async def _auto_create_codex_terminal(
         ap_server_url=launch_config.policy_server_url,
         ap_auth_headers=policy_headers,
         bypass_sandbox=launch_config.bypass_sandbox,
-        containment_os_env=_codex_agent_os_env,
         developer_instructions=_codex_developer_instructions,
         terminal_launch_args=launch_config.terminal_launch_args or (),
         reasoning_effort=launch_config.reasoning_effort,
@@ -5795,12 +5744,9 @@ async def _auto_create_codex_terminal(
                 # The app-server started above must not outlive a refused resume:
                 # without this close, every retry stacked another live codex
                 # process (and only the newest stayed tracked for teardown).
-                await _abandon_failed_codex_launch(
-                    session_id,
-                    app_server,
-                    subagent_router=_codex_router,
-                    turn_router=_codex_turn_router,
-                )
+                with contextlib.suppress(Exception):
+                    await app_server.close()
+                _AUTO_CODEX_APP_SERVERS.pop(session_id, None)
                 raise
             # Codex cannot load this thread's rollout, so no further retry can
             # resume it. Start a fresh thread on the same app-server instead of
@@ -5832,13 +5778,10 @@ async def _auto_create_codex_terminal(
             # connect() may have half-opened the ws before the initialize
             # handshake failed, so close the listener too — not just the
             # app-server.
-            await _abandon_failed_codex_launch(
-                session_id,
-                app_server,
-                event_client=event_client,
-                subagent_router=_codex_router,
-                turn_router=_codex_turn_router,
-            )
+            with contextlib.suppress(Exception):
+                await event_client.close()
+            await app_server.close()
+            _AUTO_CODEX_APP_SERVERS.pop(session_id, None)
             raise
 
     apply_plan_mode = (
@@ -5925,13 +5868,13 @@ async def _auto_create_codex_terminal(
         terminal_instance = launched.terminal_instance
         thread_start_timeout_seconds = launched.thread_start_timeout_seconds
     except BaseException:
-        await _abandon_failed_codex_launch(
-            session_id,
-            app_server,
-            event_client=event_client,
-            subagent_router=_codex_router,
-            turn_router=_codex_turn_router,
-        )
+        with contextlib.suppress(Exception):
+            await event_client.close()
+        with contextlib.suppress(Exception):
+            await app_server.close()
+        _AUTO_CODEX_APP_SERVERS.pop(session_id, None)
+        await _shutdown_session_router_async(session_id, _codex_router)
+        await _shutdown_session_turn_router_async(session_id, _codex_turn_router)
         raise
 
     # Known-thread resumes publish bridge state before the terminal starts;

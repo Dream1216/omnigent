@@ -12,6 +12,21 @@ records below remain audit history; the active limits are those in
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
+## Ordinary-M host-compat extension (2026-11-11)
+
+Patch 0005 (`omnigent/host/connect.py`) and patch 0010
+(`omnigent/onboarding/harness_readiness.py`) are extended with the reviewed
+single-flight harness readiness discovery (CLI fanout limits, process-local
+lock), so concurrent ensure calls can no longer fan out concurrent codex CLI
+processes that collectively OOM the host. Both sections are regenerated from
+the upstream baseline to the resolved product, keeping byte-exact replay.
+Patch count stays at nine; runner/native and codex_native app-server changes
+are deliberately NOT included (forbidden prefixes unchanged; preserved out of
+tree in BuildArtifacts Buddy-fix13-unreviewed-20261111). The measured budget
+increment (230 files / 7,090 net lines) is recorded in
+`saas/upstream-baseline.json` under `source_intrusion_budget_revision`
+key `ordinary_m_host_compat_20261111`.
+
 Patch 0010 also bounds repeated list-display harness resolution with a 1,024-entry
 cache keyed by workspace, current Agent identity/revision/bundle/provenance,
 sub-agent, session override and loader implementation. Page ACLs and Agent rows

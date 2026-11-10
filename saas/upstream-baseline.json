@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 226,
-    "max_upstream_net_added_loc": 6841,
+    "max_direct_upstream_files": 230,
+    "max_upstream_net_added_loc": 7090,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1412,6 +1412,35 @@
       "scope_paths": [
         "omnigent/server/routes/sessions/routes_events.py",
         "tests/server/integration/test_managed_startup_inputs.py"
+      ]
+    },
+    "ordinary_m_host_compat_20261111": {
+      "accepted_main": "PENDING_COMMIT_SHA",
+      "parent_source": "33391cffdfc2395a737565ba096d2c808c79c64b",
+      "authorization_source": {
+        "human_message": "当前3项阻塞，你直接帮我操作处理解决。",
+        "channel": "WorkBuddy session (dream), 2026-11-11 00:46 BJT",
+        "note": "Standing release-owner blanket authority 01a1987c (2026-11-09) covers budget increments without repeated approval; this record cites the direct instruction for the ordinary-M host-compat delivery."
+      },
+      "recorded_at": "2026-11-11",
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
+      "previous_max_direct_upstream_files": 226,
+      "previous_max_upstream_net_added_loc": 6841,
+      "max_direct_upstream_files": 230,
+      "max_upstream_net_added_loc": 7090,
+      "measured_direct_upstream_files": 230,
+      "measured_upstream_net_added_loc": 7090,
+      "reason": "Deliver the reviewed ordinary-M host-compat repair (single-flight harness readiness discovery with CLI fanout limits, Host-reviewed-10441.patch) and its affected tests. Regenerate patch 0005 connect.py and patch 0010 harness_readiness.py sections so patch replay matches product byte-for-byte; keep nine patches, forbidden prefixes untouched (runner/native and codex_native app-server changes withdrawn to working-tree preservation), adapter contract 0.2.0, Session protocol 2, .85 isolation floor and all historical budgets preserved. Only the exact measured increment (4 files, 249 net upstream lines) is added.",
+      "scope_paths": [
+        "omnigent/host/connect.py",
+        "omnigent/onboarding/harness_readiness.py",
+        "tests/host/test_connect.py",
+        "tests/onboarding/test_harness_readiness.py",
+        "tests/test_harness_readiness.py",
+        "saas/upstream-patches/0005-external-host-runtime-bridge.patch",
+        "saas/upstream-patches/0010-next-agent-session-reliability.patch",
+        "saas/upstream-patches/README.md",
+        "saas/upstream-baseline.json"
       ]
     }
   },
