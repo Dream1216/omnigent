@@ -1415,7 +1415,7 @@
       ]
     },
     "ordinary_m_host_compat_20261111": {
-      "accepted_main": "PENDING_COMMIT_SHA",
+      "accepted_main": "b53109e57c4",
       "parent_source": "33391cffdfc2395a737565ba096d2c808c79c64b",
       "authorization_source": {
         "human_message": "当前3项阻塞，你直接帮我操作处理解决。",
