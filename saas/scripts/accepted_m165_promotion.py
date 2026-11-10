@@ -1113,12 +1113,29 @@ def current_scan_evidence(
             descriptor = raw.get("descriptor", {})
             configuration = descriptor.get("configuration", {})
             status = descriptor.get("db", {}).get("status", {})
-            built = parse_database_status(status, now=now)
+            target = raw.get("source", {}).get("target", {})
+            disposition = receipt.get("database_age_disposition")
+            require(
+                disposition is None
+                or (
+                    isinstance(disposition, dict)
+                    and disposition.get("subject") == expected_subject
+                    and disposition.get("official_latest") == context["official_latest"]
+                    and disposition.get("official_latest_checked_at") == context["scan_started_at"]
+                ),
+                "current finite database receipt differs from its exact subject or catalog",
+            )
+            built = parse_database_status(
+                status,
+                now=now,
+                database_age_disposition=disposition,
+                subject=target,
+                report_sha256=file_sha256(report),
+            )
             latest = context.get("official_latest", {})
             started = datetime.fromisoformat(context["scan_started_at"])
             completed = datetime.fromisoformat(context["scan_completed_at"])
             checked = datetime.fromisoformat(context["official_latest_checked_at"])
-            target = raw.get("source", {}).get("target", {})
             parsed = scan.scan_report(raw)
             require(
                 descriptor.get("name") == "grype"
@@ -1127,7 +1144,6 @@ def current_scan_evidence(
                 and configuration.get("only-notfixed") is False
                 and configuration.get("exclude", []) == []
                 and configuration.get("vex-documents", []) == []
-                and receipt.get("database_age_disposition") is None
                 and context.get("subject") == expected_subject
                 and context.get("report_sha256") == file_sha256(report)
                 and context.get("signing_policy_revision") == policy
@@ -1162,6 +1178,7 @@ def current_scan_evidence(
                     receipt.get("component_disposition"),
                     image=images[role],
                     now=now,
+                    database_age_disposition=disposition,
                 )
                 component_expiry = (
                     verified.get("expires_at") or verified["runtime_condition"]["expires_at"]
@@ -1175,7 +1192,21 @@ def current_scan_evidence(
                 "database_status": status,
                 "raw_counts": parsed["counts"],
                 "component_expires_at": component_expiry,
+                **({"database_age_disposition": disposition} if disposition is not None else {}),
             }
+    finite = [row.get("database_age_disposition") is not None for row in rows.values()]
+    require(not any(finite) or all(finite), "current four reports mix finite and normal databases")
+    if all(finite):
+        # Recheck at return: OCI inspection must not carry finite eligibility past expiry.
+        for prefix, row in rows.items():
+            raw = read_json(reports / f"{prefix}.raw.grype.json")
+            parse_database_status(
+                row["database_status"],
+                now=datetime.now(UTC),
+                database_age_disposition=row["database_age_disposition"],
+                subject=raw["source"]["target"],
+                report_sha256=row["report_sha256"],
+            )
     return {
         "product_revision": PRODUCT,
         "signing_policy_revision": policy,

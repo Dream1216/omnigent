@@ -1597,7 +1597,11 @@ print(json.dumps(result))
 
 
 @pytest.fixture
-def current_m8c_scans(tmp_path, monkeypatch):
+def current_m8c_scans(tmp_path, monkeypatch, request):
+    from tests.saas import test_oci_promotion as oci_case
+
+    product = getattr(request, "param", REVISION)
+    monkeypatch.setattr(oci_case, "REVISION", product)
     root = tmp_path / "current-m8c"
     root.mkdir()
     labels, now = candidate(root)
@@ -1605,7 +1609,7 @@ def current_m8c_scans(tmp_path, monkeypatch):
     write_json(root / MANIFEST_NAME, manifest)
     value = {
         "repository": promotion.REPOSITORY,
-        "product_revision": REVISION,
+        "product_revision": product,
         "product_tree": recovery.M8C_TREE,
         "candidate_manifest_sha256": hashlib.sha256(
             (root / MANIFEST_NAME).read_bytes()
@@ -1614,8 +1618,8 @@ def current_m8c_scans(tmp_path, monkeypatch):
         "oci_artifact_id": 12,
         "oci_artifact_sha256": "c" * 64,
     }
-    monkeypatch.setattr(promotion, "PRODUCT", REVISION)
-    monkeypatch.setattr(recovery, "M8C_PRODUCT", REVISION)
+    monkeypatch.setattr(promotion, "PRODUCT", product)
+    monkeypatch.setattr(recovery, "M8C_PRODUCT", product)
     monkeypatch.setattr(promotion, "PROFILE", "M8c-clean-context")
     monkeypatch.setattr(promotion, "binding", lambda: copy.deepcopy(value))
     reports = root / "current"
@@ -1643,7 +1647,7 @@ def current_m8c_scans(tmp_path, monkeypatch):
                             "index_digest": image["index_digest"],
                             "manifest_digest": facts["manifest_digest"],
                             "config_digest": facts["config_digest"],
-                            "source_revision": REVISION,
+                            "source_revision": product,
                             "product_tree": recovery.M8C_TREE,
                         },
                         "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
@@ -1740,6 +1744,124 @@ def test_current_M8c_scans_require_fresh_original_reports_and_exact_native_subje
             promotion.predicate(POLICY, "92", "1", current_scans=evidence)
         with pytest.raises(ValueError, match="actual signing invocation"):
             promotion.predicate(POLICY, "91", "1")
+
+
+@pytest.mark.parametrize("current_m8c_scans", [db_age.PRODUCT], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "component",
+        "hard-expiry",
+        "after-expiry",
+        "expiry-during-inspection",
+        "wrong-archive",
+        "wrong-report",
+        "wrong-approval",
+        "changed-expiry",
+        "mixed",
+        "new-official",
+        "other-run",
+    ],
+)
+def test_current_finite_scans_keep_exact_original_approval_and_native_four_reports(
+    current_m8c_scans, monkeypatch, fault
+):
+    from saas.scripts import sqlite_component_disposition as sqlite
+
+    root, reports, images = current_m8c_scans
+    expiry = datetime.fromisoformat(promotion.scan.TEMPORARY_DATABASE_AGE["expires_at"])
+    clock_calls = []
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            clock_calls.append(True)
+            if fault in ("hard-expiry", "after-expiry"):
+                return expiry + timedelta(seconds=fault == "after-expiry")
+            if fault == "expiry-during-inspection" and len(clock_calls) > 1:
+                return expiry
+            return db_age.NOW
+
+    monkeypatch.setattr(promotion, "datetime", Clock)
+    component_calls = []
+    for role in ("server", "host"):
+        for arch in ("amd64", "arm64"):
+            prefix = f"{role}-{arch}"
+            path = reports / f"{prefix}.raw.grype.json"
+            receipt_path = reports / f"{prefix}.component-disposition.json"
+            raw, receipt = json.loads(path.read_bytes()), json.loads(receipt_path.read_bytes())
+            raw["descriptor"]["db"]["status"] = db_age.status()
+            if fault == "component":
+                raw["matches"] = [{"vulnerability": {"severity": "High"}, "artifact": {}}]
+                receipt.update(
+                    raw_counts={"Critical": 0, "High": 1},
+                    scanner_exit=2,
+                    component_disposition={"expires_at": expiry.isoformat()},
+                )
+            write_json(path, raw)
+            context = receipt["scan_context"]
+            context.update(
+                official_latest=copy.deepcopy(db_age.LATEST),
+                official_latest_checked_at=(db_age.NOW - timedelta(seconds=1)).isoformat(),
+                scan_started_at=db_age.NOW.isoformat(),
+                scan_completed_at=db_age.NOW.isoformat(),
+                report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            disposition = promotion.scan.make_database_age_disposition(
+                db_age.status(),
+                context["official_latest"],
+                context["subject"],
+                now=db_age.NOW,
+                checked_at=db_age.NOW,
+                report_sha256=context["report_sha256"],
+            )
+            receipt["database_age_disposition"] = disposition
+            if prefix == "server-amd64":
+                if fault == "wrong-archive":
+                    disposition["subject"]["archive_sha256"] = "f" * 64
+                elif fault == "wrong-report":
+                    disposition["report_sha256"] = "f" * 64
+                elif fault == "wrong-approval":
+                    disposition["approval_sha256"] = "f" * 64
+                elif fault == "changed-expiry":
+                    disposition["expires_at"] = (expiry + timedelta(seconds=1)).isoformat()
+                elif fault == "new-official":
+                    context["official_latest"]["checksum"] = "sha256:" + "f" * 64
+                elif fault == "other-run":
+                    context["signing_run_id"] = "92"
+            if fault == "mixed" and prefix == "host-arm64":
+                receipt["database_age_disposition"] = None
+                raw["descriptor"]["db"]["status"]["built"] = db_age.NOW.isoformat()
+                write_json(path, raw)
+                context["report_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+                context["official_latest"]["built"] = db_age.NOW.isoformat()
+            write_json(receipt_path, receipt)
+
+    def component(path, proof, *, image, now, database_age_disposition):
+        component_calls.append(database_age_disposition)
+        assert database_age_disposition["subject"]["source_revision"] == db_age.PRODUCT
+        assert image in images.values() and now < expiry
+        return proof
+
+    if fault == "component":
+        monkeypatch.setattr(sqlite, "validate_disposition", component)
+    if fault not in (None, "component"):
+        with pytest.raises(ValueError):
+            promotion.current_scan_evidence(
+                root, reports, images, policy=POLICY, run="91", attempt="1"
+            )
+    else:
+        evidence = promotion.current_scan_evidence(
+            root, reports, images, policy=POLICY, run="91", attempt="1"
+        )
+        assert len(evidence["reports"]) == 4
+        for row in evidence["reports"].values():
+            assert row["database_age_disposition"]["subject"] == row["subject"]
+            assert row["database_age_disposition"]["report_sha256"] == row["report_sha256"]
+        signed = promotion.predicate(POLICY, "91", "1", current_scans=evidence)
+        assert signed["buildDefinition"]["externalParameters"]["current_scans"] == evidence
+        assert len(component_calls) == (4 if fault == "component" else 0)
 
 
 @pytest.mark.parametrize("tamper", [False, True])
