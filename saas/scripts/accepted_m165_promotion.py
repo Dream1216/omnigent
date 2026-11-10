@@ -1074,7 +1074,7 @@ def current_scan_evidence(
         "current scan product, invocation or original seal differs",
     )
     now = datetime.now(UTC)
-    rows = {}
+    rows: dict[str, dict[str, Any]] = {}
     for role in ("server", "host"):
         for arch in ("amd64", "arm64"):
             platform = f"linux/{arch}"
