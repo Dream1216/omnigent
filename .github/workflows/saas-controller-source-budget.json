@@ -24,14 +24,14 @@
   ],
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 229,
-    "max_upstream_net_added_loc": 6841,
+    "max_direct_upstream_files": 230,
+    "max_upstream_net_added_loc": 7090,
     "min_isolated_custom_code_ratio": 0.85
   },
   "controller_budget_scope": {
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
-    "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
+    "frozen_product_baseline_sha256": "8f6cbc4c269c32a0bf20bd006e217eb07cd0a07de21df842644961ec54263da0",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 229,
     "reason": "Three proved asynchronous test observation boundaries: existing Kiro CI budget helper; await host callback completion before checking database/connection; drain the real archive PATCH stop before installing the direct-outage mock. All original business assertions and genuine SLOs remain; combined net LOC stays6841, other ceilings unchanged.",
