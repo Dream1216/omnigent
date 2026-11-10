@@ -148,11 +148,14 @@ def verify_controller_sources(controller: str, policy: str) -> dict[str, str]:
 
 def verify_policy_ci(run: dict[str, Any], path: str, policy: str) -> None:
     require(
-        run.get("head_sha") == policy
+        type(run.get("id")) is int
+        and run["id"] > 0
+        and run.get("head_sha") == policy
         and run.get("head_branch") == "main"
         and run.get("event") == "push"
         and run.get("path") == path
-        and run.get("run_attempt") == 1
+        and type(run.get("run_attempt")) is int
+        and run["run_attempt"] > 0
         and run.get("status") == "completed"
         and run.get("conclusion") == "success"
         and run.get("repository", {}).get("full_name") == REPOSITORY,
@@ -455,9 +458,28 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
             f"?head_sha={policy}&event=push&branch=main&per_page=100"
         )["workflow_runs"]
         require(bool(runs), "signing controller own Main CI is missing")
-        latest = max(runs, key=lambda run: (run["id"], run["run_attempt"]))
+        listed = max(runs, key=lambda run: (run["id"], run["run_attempt"]))
+        verify_policy_ci(listed, path, policy)
+        latest = api(f"{prefix}/runs/{listed['id']}")
         verify_policy_ci(latest, path, policy)
-        policy_evidence[path] = latest["id"]
+        require(
+            (latest["id"], latest["run_attempt"]) == (listed["id"], listed["run_attempt"]),
+            "signing controller own Main CI attempt changed",
+        )
+        policy_evidence[path] = {
+            key: latest[key]
+            for key in (
+                "id",
+                "run_attempt",
+                "head_sha",
+                "head_branch",
+                "event",
+                "path",
+                "status",
+                "conclusion",
+                "repository",
+            )
+        }
     product_ci = {}
     for identifier, path in (recovery.M8C_CI if _m8c() else recovery.CI).items():
         original_ci = api(f"{prefix}/runs/{identifier}")
@@ -526,6 +548,7 @@ def preflight(root: Path, policy: str) -> dict[str, Any]:
         "source_date_epoch": EPOCH,
         "candidate_run_id": producer,
         "candidate_run_attempt": 1,
+        "controller_own_Main_CI": policy_evidence,
         "candidate_controller_revision": controller,
         "candidate_build_job_id": builders[0]["id"],
         "candidate_build_completed_at": builders[0]["completed_at"],

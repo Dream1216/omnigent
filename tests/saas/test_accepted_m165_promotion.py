@@ -535,6 +535,16 @@ def test_actual_native_build_scan_and_controller_are_required(fault):
         "status",
         "conclusion",
         "repository",
+        "attempt2",
+        "attempt7",
+        "attempt-zero",
+        "attempt-negative",
+        "attempt-bool",
+        "attempt-string",
+        "attempt-missing",
+        "id-zero",
+        "id-bool",
+        "id-missing",
     ],
 )
 def test_signer_must_have_its_own_successful_main_ci(fault):
@@ -550,9 +560,21 @@ def test_signer_must_have_its_own_successful_main_ci(fault):
         "conclusion": "success",
         "repository": {"full_name": promotion.REPOSITORY},
     }
-    if fault:
+    if fault and fault.startswith("attempt"):
+        run["run_attempt"] = {
+            "attempt2": 2,
+            "attempt7": 7,
+            "attempt-zero": 0,
+            "attempt-negative": -1,
+            "attempt-bool": True,
+            "attempt-string": "2",
+            "attempt-missing": None,
+        }[fault]
+    elif fault and fault.startswith("id-"):
+        run["id"] = {"id-zero": 0, "id-bool": True, "id-missing": None}[fault]
+    elif fault:
         run[fault] = {"full_name": "foreign/repo"} if fault == "repository" else "wrong"
-    if fault:
+    if fault not in (None, "attempt2", "attempt7"):
         with pytest.raises(ValueError, match="own Main CI"):
             promotion.verify_policy_ci(run, path, POLICY)
     else:
@@ -647,23 +669,29 @@ def recovered(tmp_path, monkeypatch):
     run, scan, builder = producer_records()
     scan["started_at"] = manifest["sealed_at"]
     scan["completed_at"] = datetime.now(UTC).isoformat()
+    controller_runs = {
+        99 + index: {
+            "id": 99 + index,
+            "run_attempt": 1,
+            "head_sha": POLICY,
+            "head_branch": "main",
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": path,
+            "repository": {"full_name": promotion.REPOSITORY},
+        }
+        for index, path in enumerate(promotion.CI_PATHS)
+    }
 
     def api(endpoint):
         if "/workflows/" in endpoint:
             filename = endpoint.split("/workflows/")[1].split("/runs")[0]
             return {
                 "workflow_runs": [
-                    {
-                        "id": 99,
-                        "run_attempt": 1,
-                        "head_sha": POLICY,
-                        "head_branch": "main",
-                        "event": "push",
-                        "status": "completed",
-                        "conclusion": "success",
-                        "path": ".github/workflows/" + filename,
-                        "repository": {"full_name": promotion.REPOSITORY},
-                    }
+                    copy.deepcopy(row)
+                    for row in controller_runs.values()
+                    if row["path"] == ".github/workflows/" + filename
                 ]
             }
         if endpoint.endswith("/jobs?per_page=100"):
@@ -673,6 +701,8 @@ def recovered(tmp_path, monkeypatch):
         if "/artifacts/" in endpoint:
             return next(row for row in metadata if row["id"] == int(endpoint.rsplit("/", 1)[1]))
         identifier = int(endpoint.rsplit("/", 1)[-1])
+        if identifier in controller_runs:
+            return copy.deepcopy(controller_runs[identifier])
         if identifier in recovery.CI:
             return {
                 "id": identifier,
@@ -738,7 +768,22 @@ def test_artifact_coordinates_and_bounded_size_are_required(recovered, fault):
         promotion.verify_artifact(row, name, 16 * 1024**3, controller=PRODUCER_CONTROLLER)
 
 
-def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(recovered):
+@pytest.mark.parametrize("attempt", [1, 2])
+def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(
+    recovered, monkeypatch, attempt
+):
+    native_api = promotion.api
+
+    def api(endpoint):
+        value = native_api(endpoint)
+        if "/workflows/" in endpoint:
+            for run in value["workflow_runs"]:
+                run["run_attempt"] = attempt
+        elif value.get("id") in (99, 100, 101):
+            value["run_attempt"] = attempt
+        return value
+
+    monkeypatch.setattr(promotion, "api", api)
     root = recovered["root"]
     result = promotion.preflight(root / "report", POLICY)
     assert result["state"] == "NATIVE_PRODUCER_AUTHENTICATED_FULL_OCI_ADMISSION_PENDING"
@@ -746,10 +791,42 @@ def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(recover
     assert bound["oci_artifact_id"] == 12 and bound["artifacts"]["raw"]["id"] == 11
     assert bound["rebuilt"] is True and bound["signing_rebuilt_oci"] is False
     assert bound["production_authority"] is False
+    assert bound["controller_own_Main_CI"] == result["controller_own_Main_CI"]
+    for index, path in enumerate(promotion.CI_PATHS):
+        assert bound["controller_own_Main_CI"][path]["id"] == 99 + index
+        assert bound["controller_own_Main_CI"][path]["run_attempt"] == attempt
     promotion.download(root / "downloaded")
     assert (root / "downloaded/server-1.tar").is_file()
     assert bound["candidate_build_job_id"] == PRODUCER_BUILD_JOB
     assert bound["native_scan_job"]["id"] != bound["candidate_build_job_id"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "stale-attempt", "running", "failed", "head", "id"])
+def test_native_preflight_rejects_missing_or_changed_current_main_ci(
+    recovered, monkeypatch, fault
+):
+    native_api = promotion.api
+
+    def api(endpoint):
+        value = native_api(endpoint)
+        if fault == "missing" and "/workflows/" in endpoint:
+            value["workflow_runs"] = []
+        elif value.get("id") == 99:
+            if fault == "stale-attempt":
+                value["run_attempt"] = 2
+            elif fault == "running":
+                value.update(status="in_progress", conclusion=None)
+            elif fault == "failed":
+                value["conclusion"] = "failure"
+            elif fault == "head":
+                value["head_sha"] = "d" * 40
+            elif fault == "id":
+                value["id"] = 100
+        return value
+
+    monkeypatch.setattr(promotion, "api", api)
+    with pytest.raises(ValueError, match="own Main CI"):
+        promotion.preflight(recovered["root"] / "report", POLICY)
 
 
 @pytest.mark.parametrize("clean_context", [False, True])
