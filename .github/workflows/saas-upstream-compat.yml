@@ -199,6 +199,7 @@ jobs:
         if: matrix.shard == 0
         run: >-
           uv run python saas/scripts/check_upstream_delta.py
+          --manifest .github/workflows/saas-controller-source-budget.json
           --output artifacts/upstream-delta-report.json
       - name: Upload compatibility evidence
         if: always() && matrix.shard == 0

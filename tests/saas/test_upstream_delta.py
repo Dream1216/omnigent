@@ -70,6 +70,51 @@ def test_saas_workflows_and_sdks_are_owned_without_hiding_official_source() -> N
     assert report["metrics"]["isolated_custom_code_ratio"] == pytest.approx(300 / 323, 0.0001)
 
 
+def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
+    import hashlib
+
+    root = Path(__file__).resolve().parents[2]
+    baseline_path = root / "saas/upstream-baseline.json"
+    baseline = json.loads(baseline_path.read_bytes())
+    controller_path = ".github/workflows/saas-controller-source-budget.json"
+    controller = json.loads((root / controller_path).read_text())
+    for field in (
+        "upstream_revision",
+        "upstream_version",
+        "adapter_contract_version",
+        "patch_queue_directory",
+        "downstream_owned_prefixes",
+        "forbidden_upstream_prefixes",
+    ):
+        assert controller[field] == baseline[field]
+    scope = controller["controller_budget_scope"]
+    assert (
+        scope["frozen_product_baseline_sha256"]
+        == hashlib.sha256(baseline_path.read_bytes()).hexdigest()
+    )
+    assert scope["frozen_producer_control_revision"] == "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5"
+    budget = dict(baseline["source_intrusion_budget"])
+    assert budget["max_direct_upstream_files"] == 226
+    budget["max_direct_upstream_files"] = 229
+    assert controller["source_intrusion_budget"] == budget
+    workflow = (root / ".github/workflows/saas-upstream-compat.yml").read_text()
+    assert f"--manifest {controller_path}" in workflow
+    deltas = [FileDelta(f"tests/controller_case_{index}.py", 0, 0) for index in range(229)]
+    for count, expected in ((229, "pass"), (230, "fail")):
+        selected = deltas + ([FileDelta("tests/one_extra.py", 0, 0)] if count == 230 else [])
+        result = evaluate_delta(
+            selected,
+            controller,
+            active_patch_count=9,
+            reverse_dependencies=[],
+            lineage_ok=True,
+            version_ok=True,
+        )
+        assert result["status"] == expected
+        if count == 230:
+            assert "direct upstream file budget exceeded" in result["violations"]
+
+
 def test_forbidden_native_bridge_change_fails_budget() -> None:
     report = evaluate_delta(
         [

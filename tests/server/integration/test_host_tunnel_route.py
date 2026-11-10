@@ -966,11 +966,10 @@ async def test_host_tunnel_refreshes_harness_readiness_without_reconnect(
     )
 
     async def _wait_until_ready() -> None:
-        while True:
-            host = store.get_host(_HOST_ID)
-            if host is not None and host.configured_harnesses == {"pi": True}:
-                return
+        while updates != [_HOST_ID]:
             await asyncio.sleep(0.01)
+        host = store.get_host(_HOST_ID)
+        assert host is not None and host.configured_harnesses == {"pi": True}
 
     await asyncio.wait_for(_wait_until_ready(), timeout=budget(0.5))
 

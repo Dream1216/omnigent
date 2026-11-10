@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,12 +24,226 @@ from saas.scripts.resume_oci_promotion import (
     build_certificate_claims,
     verify_predicate,
 )
+from tests.saas import test_temporary_official_database_age as db_age
 from tests.saas.test_oci_promotion import EPOCH, REVISION, candidate, write_json
 
 POLICY = "b" * 40
 PRODUCER_RUN = 71
 PRODUCER_CONTROLLER = "c" * 40
 PRODUCER_BUILD_JOB = 82
+
+
+@pytest.mark.parametrize(
+    "role,architecture,fault",
+    [
+        ("server", "amd64", None),
+        ("server", "arm64", None),
+        ("host", "amd64", None),
+        ("host", "arm64", None),
+        *[
+            ("server", "amd64", fault)
+            for fault in (
+                "new-fresh",
+                "legacy-fresh",
+                "legacy-stale",
+                "no-findings",
+                "new-stale",
+                "at24",
+                "expired",
+                "disabled",
+                "other-product",
+                "wrong-image",
+                "corrupt-archive",
+                "latest-changed",
+                "report-other-db",
+                "report-other-subject",
+                "ignored",
+                "filtered",
+                "scanner-version",
+                "bad-exit",
+                "missing-report",
+                "unknown-finding",
+            )
+        ],
+    ],
+)
+def test_registry_sbom_scan_preserves_exact_database_and_component_authority(
+    tmp_path, monkeypatch, role, architecture, fault
+):
+    from saas.scripts import approved_disposition
+    from saas.scripts.compare_oci_rebuilds import inspect_oci_archive
+    from saas.scripts.oci_promotion import archive_index_digest
+    from tests.saas import test_oci_promotion as oci_case
+
+    product = "9" * 40 if fault == "other-product" else db_age.PRODUCT
+    if fault in {"legacy-fresh", "legacy-stale"}:
+        product = "165cebe8585a1a5fa8588e2a55f37505f89f3e55"
+    images = tmp_path / "images"
+    images.mkdir()
+    monkeypatch.setattr(oci_case, "REVISION", product)
+    candidate(images)
+    archive = images / f"{role}-1.tar"
+    facts = inspect_oci_archive(archive, label_profile="executable")
+    index_digest = archive_index_digest(archive)
+    root = tmp_path / "admitted"
+    root.mkdir()
+    platform = f"linux/{architecture}"
+    manifest = {
+        "images": {
+            role: {
+                "index_digest": index_digest,
+                "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "facts": copy.deepcopy(facts),
+            }
+        }
+    }
+    if fault == "wrong-image":
+        manifest["images"][role]["facts"]["platforms"][platform]["config_digest"] = (
+            "sha256:" + "a" * 64
+        )
+    write_json(root / MANIFEST_NAME, manifest)
+    value = {
+        "candidate_manifest_sha256": hashlib.sha256(
+            (root / MANIFEST_NAME).read_bytes()
+        ).hexdigest(),
+        "images": {role: index_digest},
+        "product_tree": "9" * 40 if fault == "other-product" else promotion.recovery.M8C_TREE,
+    }
+    monkeypatch.setattr(promotion, "PRODUCT", product)
+    if fault in {"legacy-fresh", "legacy-stale"}:
+        value.pop("product_tree")
+    monkeypatch.setattr(promotion, "binding", lambda: value)
+    now = (
+        datetime.fromisoformat(
+            promotion.scan.TEMPORARY_DATABASE_AGE["expires_at"].replace("Z", "+00:00")
+        )
+        if fault == "expired"
+        else db_age.BUILT + db_age.timedelta(hours=24)
+        if fault == "at24"
+        else db_age.NOW
+    )
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(promotion, "datetime", Clock)
+    if fault == "disabled":
+        monkeypatch.setattr(promotion.scan, "temporary_database_age_enabled", lambda: False)
+    latest_calls, commands, classified = [], [], []
+
+    def latest():
+        latest_calls.append(True)
+        changed = fault in {"new-fresh", "new-stale", "legacy-fresh"} or (
+            fault == "latest-changed" and len(latest_calls) > 1
+        )
+        return {**db_age.LATEST, **({"checksum": "sha256:" + "e" * 64} if changed else {})}
+
+    monkeypatch.setattr(promotion.scan, "official_database_latest", latest)
+    monkeypatch.setattr(
+        promotion.scan, "download_approved_database", lambda path: path.write_bytes(b"verified DB")
+    )
+    original_hash = promotion.file_sha256
+
+    def digest(path):
+        if path.name == "approved-database.tar.zst":
+            return (
+                "e" * 64
+                if fault == "corrupt-archive"
+                else promotion.scan.TEMPORARY_DATABASE_AGE["archive_SHA256"]
+            )
+        return original_hash(path)
+
+    monkeypatch.setattr(promotion, "file_sha256", digest)
+    status = (
+        {**db_age.status(), "built": now.isoformat()}
+        if fault in {"new-fresh", "legacy-fresh"}
+        else db_age.status()
+    )
+    monkeypatch.setattr(promotion.subprocess, "check_output", lambda *_a, **_k: json.dumps(status))
+    report = root / "registry.raw.grype.json"
+    output = root / "component.json"
+
+    def scanner(command, **kwargs):
+        commands.append(command)
+        if "--platform" in command and fault != "missing-report":
+            raw = db_age.raw_report(archive, platform)
+            raw["descriptor"]["db"]["status"] = status
+            raw["matches"] = [
+                {"vulnerability": {"severity": "High"}, "artifact": {}} for _ in range(2)
+            ]
+            if fault == "report-other-db":
+                raw["descriptor"]["db"]["status"] = {**status, "built": "2026-11-07T06:19:57Z"}
+            if fault == "report-other-subject":
+                raw["source"]["target"]["imageID"] = "sha256:" + "e" * 64
+            if fault == "ignored":
+                raw["ignoredMatches"] = [{}]
+            if fault == "no-findings":
+                raw["matches"] = []
+            if fault == "filtered":
+                raw["descriptor"]["configuration"]["only-fixed"] = True
+            if fault == "scanner-version":
+                raw["descriptor"]["version"] = "0.119.0"
+            report.write_text(json.dumps(raw))
+        return subprocess.CompletedProcess(
+            command,
+            (7 if fault == "bad-exit" else 0 if fault == "no-findings" else 2)
+            if "--platform" in command
+            else 0,
+        )
+
+    def classify(image, path, **kwargs):
+        assert image == archive and path == report and kwargs["platform"] == platform
+        if fault == "unknown-finding":
+            raise ValueError("unknown original finding remains blocking")
+        classified.append(kwargs["database_age_disposition"])
+        return {"existing_protected_component_verifier": True}
+
+    monkeypatch.setattr(promotion.subprocess, "run", scanner)
+    monkeypatch.setattr(approved_disposition, "inspect_approved_disposition", classify)
+
+    def call():
+        promotion.scan_registry_sbom(
+            root,
+            archive,
+            role=role,
+            architecture=architecture,
+            scanner=Path("/locked/grype"),
+            report=report,
+            output=output,
+        )
+
+    if fault not in (None, "new-fresh", "legacy-fresh", "at24", "no-findings"):
+        with pytest.raises(ValueError):
+            call()
+        assert not output.exists()
+        if fault in {"unknown-finding", "report-other-db", "report-other-subject", "filtered"}:
+            assert len(json.loads(report.read_bytes())["matches"]) == 2
+    else:
+        call()
+        result = json.loads(output.read_bytes())
+        assert result["raw_counts"] == {"Critical": 0, "High": 0 if fault == "no-findings" else 2}
+        assert result["component_disposition"] == (
+            None if fault == "no-findings" else {"existing_protected_component_verifier": True}
+        )
+        receipt = result["database_age_disposition"]
+        assert classified == ([] if fault == "no-findings" else [receipt])
+        assert (receipt is not None) is (fault in (None, "no-findings"))
+        if receipt is not None:
+            assert receipt["report_sha256"] == hashlib.sha256(report.read_bytes()).hexdigest()
+            assert (
+                receipt["subject"]["manifest_digest"]
+                == facts["platforms"][platform]["manifest_digest"]
+            )
+            assert (
+                receipt["subject"]["image"] == role and receipt["subject"]["platform"] == platform
+            )
+            assert len(latest_calls) == 2
+        config = json.loads((tmp_path / "sbom-grype-database/grype.json").read_text())
+        finite = fault in (None, "no-findings")
+        assert config["db"]["max-allowed-built-age"] == ("48h" if finite else "24h")
+        assert any("import" in command for command in commands) is finite
 
 
 @pytest.fixture(autouse=True)
@@ -321,6 +535,16 @@ def test_actual_native_build_scan_and_controller_are_required(fault):
         "status",
         "conclusion",
         "repository",
+        "attempt2",
+        "attempt7",
+        "attempt-zero",
+        "attempt-negative",
+        "attempt-bool",
+        "attempt-string",
+        "attempt-missing",
+        "id-zero",
+        "id-bool",
+        "id-missing",
     ],
 )
 def test_signer_must_have_its_own_successful_main_ci(fault):
@@ -336,9 +560,21 @@ def test_signer_must_have_its_own_successful_main_ci(fault):
         "conclusion": "success",
         "repository": {"full_name": promotion.REPOSITORY},
     }
-    if fault:
+    if fault and fault.startswith("attempt"):
+        run["run_attempt"] = {
+            "attempt2": 2,
+            "attempt7": 7,
+            "attempt-zero": 0,
+            "attempt-negative": -1,
+            "attempt-bool": True,
+            "attempt-string": "2",
+            "attempt-missing": None,
+        }[fault]
+    elif fault and fault.startswith("id-"):
+        run["id"] = {"id-zero": 0, "id-bool": True, "id-missing": None}[fault]
+    elif fault:
         run[fault] = {"full_name": "foreign/repo"} if fault == "repository" else "wrong"
-    if fault:
+    if fault not in (None, "attempt2", "attempt7"):
         with pytest.raises(ValueError, match="own Main CI"):
             promotion.verify_policy_ci(run, path, POLICY)
     else:
@@ -431,24 +667,31 @@ def recovered(tmp_path, monkeypatch):
             }
         )
     run, scan, builder = producer_records()
+    scan["started_at"] = manifest["sealed_at"]
     scan["completed_at"] = datetime.now(UTC).isoformat()
+    controller_runs = {
+        99 + index: {
+            "id": 99 + index,
+            "run_attempt": 1,
+            "head_sha": POLICY,
+            "head_branch": "main",
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "path": path,
+            "repository": {"full_name": promotion.REPOSITORY},
+        }
+        for index, path in enumerate(promotion.CI_PATHS)
+    }
 
     def api(endpoint):
         if "/workflows/" in endpoint:
             filename = endpoint.split("/workflows/")[1].split("/runs")[0]
             return {
                 "workflow_runs": [
-                    {
-                        "id": 99,
-                        "run_attempt": 1,
-                        "head_sha": POLICY,
-                        "head_branch": "main",
-                        "event": "push",
-                        "status": "completed",
-                        "conclusion": "success",
-                        "path": ".github/workflows/" + filename,
-                        "repository": {"full_name": promotion.REPOSITORY},
-                    }
+                    copy.deepcopy(row)
+                    for row in controller_runs.values()
+                    if row["path"] == ".github/workflows/" + filename
                 ]
             }
         if endpoint.endswith("/jobs?per_page=100"):
@@ -458,6 +701,8 @@ def recovered(tmp_path, monkeypatch):
         if "/artifacts/" in endpoint:
             return next(row for row in metadata if row["id"] == int(endpoint.rsplit("/", 1)[1]))
         identifier = int(endpoint.rsplit("/", 1)[-1])
+        if identifier in controller_runs:
+            return copy.deepcopy(controller_runs[identifier])
         if identifier in recovery.CI:
             return {
                 "id": identifier,
@@ -523,7 +768,22 @@ def test_artifact_coordinates_and_bounded_size_are_required(recovered, fault):
         promotion.verify_artifact(row, name, 16 * 1024**3, controller=PRODUCER_CONTROLLER)
 
 
-def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(recovered):
+@pytest.mark.parametrize("attempt", [1, 2])
+def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(
+    recovered, monkeypatch, attempt
+):
+    native_api = promotion.api
+
+    def api(endpoint):
+        value = native_api(endpoint)
+        if "/workflows/" in endpoint:
+            for run in value["workflow_runs"]:
+                run["run_attempt"] = attempt
+        elif value.get("id") in (99, 100, 101):
+            value["run_attempt"] = attempt
+        return value
+
+    monkeypatch.setattr(promotion, "api", api)
     root = recovered["root"]
     result = promotion.preflight(root / "report", POLICY)
     assert result["state"] == "NATIVE_PRODUCER_AUTHENTICATED_FULL_OCI_ADMISSION_PENDING"
@@ -531,10 +791,42 @@ def test_native_preflight_uses_actual_coordinates_then_rechecks_full_oci(recover
     assert bound["oci_artifact_id"] == 12 and bound["artifacts"]["raw"]["id"] == 11
     assert bound["rebuilt"] is True and bound["signing_rebuilt_oci"] is False
     assert bound["production_authority"] is False
+    assert bound["controller_own_Main_CI"] == result["controller_own_Main_CI"]
+    for index, path in enumerate(promotion.CI_PATHS):
+        assert bound["controller_own_Main_CI"][path]["id"] == 99 + index
+        assert bound["controller_own_Main_CI"][path]["run_attempt"] == attempt
     promotion.download(root / "downloaded")
     assert (root / "downloaded/server-1.tar").is_file()
     assert bound["candidate_build_job_id"] == PRODUCER_BUILD_JOB
     assert bound["native_scan_job"]["id"] != bound["candidate_build_job_id"]
+
+
+@pytest.mark.parametrize("fault", ["missing", "stale-attempt", "running", "failed", "head", "id"])
+def test_native_preflight_rejects_missing_or_changed_current_main_ci(
+    recovered, monkeypatch, fault
+):
+    native_api = promotion.api
+
+    def api(endpoint):
+        value = native_api(endpoint)
+        if fault == "missing" and "/workflows/" in endpoint:
+            value["workflow_runs"] = []
+        elif value.get("id") == 99:
+            if fault == "stale-attempt":
+                value["run_attempt"] = 2
+            elif fault == "running":
+                value.update(status="in_progress", conclusion=None)
+            elif fault == "failed":
+                value["conclusion"] = "failure"
+            elif fault == "head":
+                value["head_sha"] = "d" * 40
+            elif fault == "id":
+                value["id"] = 100
+        return value
+
+    monkeypatch.setattr(promotion, "api", api)
+    with pytest.raises(ValueError, match="own Main CI"):
+        promotion.preflight(recovered["root"] / "report", POLICY)
 
 
 @pytest.mark.parametrize("clean_context", [False, True])
@@ -892,14 +1184,50 @@ def test_workflow_has_no_borrowed_wheel_or_future_static_artifact_coordinates():
     assert len(runtime_guards) == 2
     assert all(guard in text for guard in runtime_guards)
     steps = publisher["steps"]
+    attestations = [s for s in steps if s.get("uses", "").startswith("actions/attest@")]
+    assert len(attestations) == 9
+    assert {s["uses"] for s in attestations} == {
+        "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
+    }
+    sboms = [s["with"] for s in attestations if "sbom-path" in s["with"]]
+    assert len(sboms) == 4
+    for role in ("server", "host"):
+        for arch in ("amd64", "arm64"):
+            options = next(
+                s
+                for s in sboms
+                if s["sbom-path"] == f"artifacts/supply-chain/{role}-{arch}.spdx.json"
+            )
+            assert options["subject-name"].endswith(f"/omnigent-saas-{role}")
+            assert (
+                options["subject-digest"]
+                == "${{ steps.coordinates.outputs." + role + "-" + arch + " }}"
+            )
+            assert options["push-to-registry"] == "false"
+    registry_provenance = [
+        s
+        for s in attestations
+        if "sbom-path" not in s["with"] and s["with"].get("push-to-registry") == "true"
+    ]
+    assert len(registry_provenance) == 4
+    for job in (publisher, value["jobs"]["verify-published-source"]):
+        commands = "\n".join(s.get("run", "") for s in job["steps"])
+        assert "--bundle-from-oci" not in commands
+        assert "--predicate-type https://spdx.dev/Document --format json" in commands
+        assert "accepted_m165_promotion verify-sbom" in commands
     scan = next(
         s
         for s in steps
         if s.get("name") == "Generate per-architecture SBOMs and check raw findings"
     )
     assert 'supply-chain-tools/syft" "registry:$image"' in scan["run"]
-    assert 'supply-chain-tools/grype" "registry:$image"' in scan["run"]
-    assert "|| grype_exit=$?" in scan["run"]
+    assert "accepted_m165_promotion scan-registry-sbom" in scan["run"]
+    assert '--scanner "${RUNNER_TEMP}/supply-chain-tools/grype"' in scan["run"]
+    assert '--role "$artifact" --architecture "$arch"' in scan["run"]
+    assert '--image "${RUNNER_TEMP}/admitted-layouts/${artifact}"' in scan["run"]
+    assert '--report "${prefix}.raw.grype.json"' in scan["run"]
+    assert '--output "${prefix}.component-disposition.json"' in scan["run"]
+    assert '-c "${RUNNER_TEMP}/sbom-grype-database/grype.json" db status -o json' in scan["run"]
     retention = next(s for s in steps if s.get("name") == "Upload exact signed-image scan reports")
     assert retention["if"] == "always()"
     assert "artifacts/supply-chain/*.json" in retention["with"]["path"].splitlines()
@@ -975,6 +1303,7 @@ def test_M8c_binding_and_predicate_keep_exact_original_materials(tmp_path, monke
         "native_run": {"head_sha": PRODUCER_CONTROLLER},
         "native_builder_job": {"id": PRODUCER_BUILD_JOB},
         "candidate_build_job_id": PRODUCER_BUILD_JOB,
+        "candidate_manifest_sha256": "a" * 64,
         "parent_raw_checkpoint": {
             "run_id": recovery.M8C_RUN,
             "attempt": 1,
@@ -1020,10 +1349,27 @@ def test_M8c_binding_and_predicate_keep_exact_original_materials(tmp_path, monke
             promotion.binding()
     else:
         assert promotion.binding() == value
+        current = {
+            "product_revision": recovery.M8C_PRODUCT,
+            "signing_policy_revision": POLICY,
+            "signing_run_id": "91",
+            "signing_run_attempt": "1",
+            "candidate_manifest_sha256": value["candidate_manifest_sha256"],
+            "reports": {
+                f"{role}-{arch}": {
+                    "report_sha256": "d" * 64,
+                    "signing_policy_revision": POLICY,
+                    "signing_run_id": "91",
+                    "signing_run_attempt": "1",
+                }
+                for role in ("server", "host")
+                for arch in ("amd64", "arm64")
+            },
+        }
         for wheel in (False, True):
-            params = promotion.predicate(POLICY, "91", "1", wheel=wheel)["buildDefinition"][
-                "externalParameters"
-            ]
+            params = promotion.predicate(POLICY, "91", "1", wheel=wheel, current_scans=current)[
+                "buildDefinition"
+            ]["externalParameters"]
             assert params["product_source_revision"] == recovery.M8C_PRODUCT
             assert (
                 params["signing_policy_revision"] == POLICY
@@ -1248,3 +1594,338 @@ print(json.dumps(result))
         timeout=30,
     )
     assert result.returncode == 0 and "m8c-clean-first" in result.stdout, result.stderr
+
+
+@pytest.fixture
+def current_m8c_scans(tmp_path, monkeypatch, request):
+    from tests.saas import test_oci_promotion as oci_case
+
+    product = getattr(request, "param", REVISION)
+    monkeypatch.setattr(oci_case, "REVISION", product)
+    root = tmp_path / "current-m8c"
+    root.mkdir()
+    labels, now = candidate(root)
+    manifest = seal_candidate(root, labels=labels, source_date_epoch=EPOCH, now=now)
+    write_json(root / MANIFEST_NAME, manifest)
+    value = {
+        "repository": promotion.REPOSITORY,
+        "product_revision": product,
+        "product_tree": recovery.M8C_TREE,
+        "candidate_manifest_sha256": hashlib.sha256(
+            (root / MANIFEST_NAME).read_bytes()
+        ).hexdigest(),
+        "images": {role: row["index_digest"] for role, row in manifest["images"].items()},
+        "oci_artifact_id": 12,
+        "oci_artifact_sha256": "c" * 64,
+    }
+    monkeypatch.setattr(promotion, "PRODUCT", product)
+    monkeypatch.setattr(recovery, "M8C_PRODUCT", product)
+    monkeypatch.setattr(promotion, "PROFILE", "M8c-clean-context")
+    monkeypatch.setattr(promotion, "binding", lambda: copy.deepcopy(value))
+    reports = root / "current"
+    reports.mkdir()
+    for role in ("server", "host"):
+        for arch in ("amd64", "arm64"):
+            prefix = f"{role}-{arch}"
+            raw = json.loads((root / f"grype/{prefix}-grype.json").read_text())
+            report = reports / f"{prefix}.raw.grype.json"
+            write_json(report, raw)
+            image = manifest["images"][role]
+            facts = image["facts"]["platforms"][f"linux/{arch}"]
+            write_json(
+                reports / f"{prefix}.component-disposition.json",
+                {
+                    "raw_counts": {"Critical": 0, "High": 0},
+                    "scanner_exit": 0,
+                    "component_disposition": None,
+                    "database_age_disposition": None,
+                    "scan_context": {
+                        "subject": {
+                            "image": role,
+                            "platform": f"linux/{arch}",
+                            "archive_sha256": image["archive_sha256"],
+                            "index_digest": image["index_digest"],
+                            "manifest_digest": facts["manifest_digest"],
+                            "config_digest": facts["config_digest"],
+                            "source_revision": product,
+                            "product_tree": recovery.M8C_TREE,
+                        },
+                        "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
+                        "official_latest": {**db_age.LATEST, "built": now.isoformat()},
+                        "official_latest_checked_at": now.isoformat(),
+                        "scan_started_at": now.isoformat(),
+                        "scan_completed_at": now.isoformat(),
+                        "signing_policy_revision": POLICY,
+                        "signing_run_id": "91",
+                        "signing_run_attempt": "1",
+                    },
+                },
+            )
+    return root, reports, {role: root / f"{role}-1.tar" for role in ("server", "host")}
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "stale",
+        "future-database",
+        "other-run",
+        "other-policy",
+        "other-child",
+        "filtered",
+        "ignored",
+        "unknown-high",
+        "hash",
+        "partial-platform",
+        "missing-context",
+        "future-scan",
+        "catalog-database",
+        "temporary-receipt",
+    ],
+)
+def test_current_M8c_scans_require_fresh_original_reports_and_exact_native_subjects(
+    current_m8c_scans, fault
+):
+    root, reports, images = current_m8c_scans
+    report = reports / "server-amd64.raw.grype.json"
+    receipt_path = reports / "server-amd64.component-disposition.json"
+    raw = json.loads(report.read_text())
+    receipt = json.loads(receipt_path.read_text())
+    context = receipt["scan_context"]
+    if fault in ("stale", "future-database"):
+        built = datetime.now(UTC) + timedelta(hours=-25 if fault == "stale" else 1)
+        raw["descriptor"]["db"]["status"]["built"] = built.isoformat()
+        context["official_latest"]["built"] = built.isoformat()
+    elif fault == "other-run":
+        context["signing_run_id"] = "92"
+    elif fault == "other-policy":
+        context["signing_policy_revision"] = "f" * 40
+    elif fault == "other-child":
+        raw["source"]["target"]["manifestDigest"] = "sha256:" + "f" * 64
+    elif fault == "filtered":
+        raw["descriptor"]["configuration"]["only-fixed"] = True
+    elif fault == "ignored":
+        raw["ignoredMatches"] = [{}]
+    elif fault == "unknown-high":
+        raw["matches"] = [{"vulnerability": {"severity": "High"}, "artifact": {}}]
+        receipt["raw_counts"]["High"] = 1
+        receipt["scanner_exit"] = 2
+    elif fault == "partial-platform":
+        (reports / "host-arm64.raw.grype.json").unlink()
+    elif fault == "missing-context":
+        del context["scan_completed_at"]
+    elif fault == "future-scan":
+        context["scan_completed_at"] = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    elif fault == "catalog-database":
+        context["official_latest"]["built"] = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    elif fault == "temporary-receipt":
+        receipt["database_age_disposition"] = {}
+    write_json(report, raw)
+    context["report_sha256"] = (
+        "f" * 64 if fault == "hash" else hashlib.sha256(report.read_bytes()).hexdigest()
+    )
+    write_json(receipt_path, receipt)
+    if fault:
+        with pytest.raises(ValueError):
+            promotion.current_scan_evidence(
+                root, reports, images, policy=POLICY, run="91", attempt="1"
+            )
+    else:
+        evidence = promotion.current_scan_evidence(
+            root, reports, images, policy=POLICY, run="91", attempt="1"
+        )
+        assert set(evidence["reports"]) == {
+            f"{role}-{arch}" for role in ("server", "host") for arch in ("amd64", "arm64")
+        }
+        signed = promotion.predicate(POLICY, "91", "1", current_scans=evidence)
+        assert signed["buildDefinition"]["externalParameters"]["current_scans"] == evidence
+        with pytest.raises(ValueError, match="actual signing invocation"):
+            promotion.predicate(POLICY, "92", "1", current_scans=evidence)
+        with pytest.raises(ValueError, match="actual signing invocation"):
+            promotion.predicate(POLICY, "91", "1")
+
+
+@pytest.mark.parametrize("current_m8c_scans", [db_age.PRODUCT], indirect=True)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "component",
+        "hard-expiry",
+        "after-expiry",
+        "expiry-during-inspection",
+        "wrong-archive",
+        "wrong-report",
+        "wrong-approval",
+        "changed-expiry",
+        "mixed",
+        "new-official",
+        "other-run",
+    ],
+)
+def test_current_finite_scans_keep_exact_original_approval_and_native_four_reports(
+    current_m8c_scans, monkeypatch, fault
+):
+    from saas.scripts import sqlite_component_disposition as sqlite
+
+    root, reports, images = current_m8c_scans
+    expiry = datetime.fromisoformat(promotion.scan.TEMPORARY_DATABASE_AGE["expires_at"])
+    clock_calls = []
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            clock_calls.append(True)
+            if fault in ("hard-expiry", "after-expiry"):
+                return expiry + timedelta(seconds=fault == "after-expiry")
+            if fault == "expiry-during-inspection" and len(clock_calls) > 1:
+                return expiry
+            return db_age.NOW
+
+    monkeypatch.setattr(promotion, "datetime", Clock)
+    component_calls = []
+    for role in ("server", "host"):
+        for arch in ("amd64", "arm64"):
+            prefix = f"{role}-{arch}"
+            path = reports / f"{prefix}.raw.grype.json"
+            receipt_path = reports / f"{prefix}.component-disposition.json"
+            raw, receipt = json.loads(path.read_bytes()), json.loads(receipt_path.read_bytes())
+            raw["descriptor"]["db"]["status"] = db_age.status()
+            if fault == "component":
+                raw["matches"] = [{"vulnerability": {"severity": "High"}, "artifact": {}}]
+                receipt.update(
+                    raw_counts={"Critical": 0, "High": 1},
+                    scanner_exit=2,
+                    component_disposition={"expires_at": expiry.isoformat()},
+                )
+            write_json(path, raw)
+            context = receipt["scan_context"]
+            context.update(
+                official_latest=copy.deepcopy(db_age.LATEST),
+                official_latest_checked_at=(db_age.NOW - timedelta(seconds=1)).isoformat(),
+                scan_started_at=db_age.NOW.isoformat(),
+                scan_completed_at=db_age.NOW.isoformat(),
+                report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            disposition = promotion.scan.make_database_age_disposition(
+                db_age.status(),
+                context["official_latest"],
+                context["subject"],
+                now=db_age.NOW,
+                checked_at=db_age.NOW,
+                report_sha256=context["report_sha256"],
+            )
+            receipt["database_age_disposition"] = disposition
+            if prefix == "server-amd64":
+                if fault == "wrong-archive":
+                    disposition["subject"]["archive_sha256"] = "f" * 64
+                elif fault == "wrong-report":
+                    disposition["report_sha256"] = "f" * 64
+                elif fault == "wrong-approval":
+                    disposition["approval_sha256"] = "f" * 64
+                elif fault == "changed-expiry":
+                    disposition["expires_at"] = (expiry + timedelta(seconds=1)).isoformat()
+                elif fault == "new-official":
+                    context["official_latest"]["checksum"] = "sha256:" + "f" * 64
+                elif fault == "other-run":
+                    context["signing_run_id"] = "92"
+            if fault == "mixed" and prefix == "host-arm64":
+                receipt["database_age_disposition"] = None
+                raw["descriptor"]["db"]["status"]["built"] = db_age.NOW.isoformat()
+                write_json(path, raw)
+                context["report_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+                context["official_latest"]["built"] = db_age.NOW.isoformat()
+            write_json(receipt_path, receipt)
+
+    def component(path, proof, *, image, now, database_age_disposition):
+        component_calls.append(database_age_disposition)
+        assert database_age_disposition["subject"]["source_revision"] == db_age.PRODUCT
+        assert image in images.values() and now < expiry
+        return proof
+
+    if fault == "component":
+        monkeypatch.setattr(sqlite, "validate_disposition", component)
+    if fault not in (None, "component"):
+        with pytest.raises(ValueError):
+            promotion.current_scan_evidence(
+                root, reports, images, policy=POLICY, run="91", attempt="1"
+            )
+    else:
+        evidence = promotion.current_scan_evidence(
+            root, reports, images, policy=POLICY, run="91", attempt="1"
+        )
+        assert len(evidence["reports"]) == 4
+        for row in evidence["reports"].values():
+            assert row["database_age_disposition"]["subject"] == row["subject"]
+            assert row["database_age_disposition"]["report_sha256"] == row["report_sha256"]
+        signed = promotion.predicate(POLICY, "91", "1", current_scans=evidence)
+        assert signed["buildDefinition"]["externalParameters"]["current_scans"] == evidence
+        assert len(component_calls) == (4 if fault == "component" else 0)
+
+
+@pytest.mark.parametrize("tamper", [False, True])
+def test_independent_reader_initializes_and_compares_current_scans_in_its_own_step(
+    current_m8c_scans, tmp_path, tamper
+):
+    root, reports, images = current_m8c_scans
+    evidence = promotion.current_scan_evidence(
+        root, reports, images, policy=POLICY, run="91", attempt="1"
+    )
+    workflow = yaml.load(Path(promotion.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    step = next(
+        s
+        for s in workflow["jobs"]["verify-published-source"]["steps"]
+        if s.get("name") == "Independently verify registry digests, source labels and signatures"
+    )
+    script = step["run"].split("server_seen=0", 1)[0]
+    release = tmp_path / "release-facts"
+    release.mkdir()
+    bound = {
+        **promotion.binding(),
+        "rebuilt": False,
+        "temporary_database_age": {"historical_only": True},
+    }
+    binding_path = tmp_path / "original-binding.json"
+    write_json(binding_path, bound)
+    write_json(release / "current-scan-evidence.json", evidence)
+    facts = {
+        "schema_version": 1,
+        "product_revision": REVISION,
+        "signing_policy_revision": POLICY,
+        "signing_run_id": "91",
+        "signing_run_attempt": "1",
+        "original_candidate_run_id": PRODUCER_RUN,
+        "workflow_identity": "native-workflow-ref",
+        "promotion": {
+            "candidate_manifest_sha256": bound["candidate_manifest_sha256"],
+            "original_artifact_id": "12",
+            "original_artifact_sha256": bound["oci_artifact_sha256"],
+            "rebuilt": False,
+            "signing_rebuilt_oci": False,
+        },
+        "temporary_database_age": bound["temporary_database_age"],
+        "current_scans": copy.deepcopy(evidence),
+        "images": [{}, {}],
+    }
+    if tamper:
+        facts["current_scans"]["signing_run_id"] = "92"
+    write_json(release / "signed-release-candidate.json", facts)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=tmp_path,
+        capture_output=True,
+        env={
+            **os.environ,
+            "OMNIGENT_ACCEPTED_PRODUCT_PROFILE": "M8c-clean-context",
+            "PRODUCT_REVISION": REVISION,
+            "SIGNING_POLICY_REVISION": POLICY,
+            "GITHUB_RUN_ID": "91",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "ORIGINAL_CANDIDATE_RUN_ID": str(PRODUCER_RUN),
+            "GITHUB_WORKFLOW_REF": "native-workflow-ref",
+            "CANDIDATE_MANIFEST_SHA256": bound["candidate_manifest_sha256"],
+            "OMNIGENT_M165_BINDING": str(binding_path),
+        },
+    )
+    assert (result.returncode == 0) is (not tamper), result.stderr.decode()
